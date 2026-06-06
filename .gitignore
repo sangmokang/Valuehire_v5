@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+.omc/
+tmp/
+.DS_Store
