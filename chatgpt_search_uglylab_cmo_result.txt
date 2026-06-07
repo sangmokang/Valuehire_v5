@@ -1,0 +1,603 @@
+공개 프로필·인터뷰·회사/채용/행사 페이지 등 검증 가능한 URL이 있는 국내 소비자 서비스 CMO/그로스/마케팅 리더를 중심으로 후보군을 수집하겠습니다. 역할·성과·콘텐츠/퍼포먼스·제품/데이터 근거가 약한 인물은 제외하거나 낮게 평가하고, 업무용으로 명시 공개된 연락처만 포함하겠습니다.
+
+---ASSISTANT---
+
+1차로 10명 수준까지 좁혔고, 여행·커머스·콘텐츠 플랫폼·그로스 분석·CRM/멤버십·리테일미디어 축으로 나눠 비교하겠습니다. 강연/컨설팅 중심으로 보이는 인물은 별도 리스크로 표시하겠습니다.
+
+---ASSISTANT---
+
+중간 확인 결과, 단순 마케팅 임원보다 그로스/성과 근거가 뚜렷한 후보로 더 좁히고 있습니다. 헤이딜러, 오늘의집, 컬리, 에이블리, 마이리얼트립, 틱톡/숏폼 성장 경험자가 강하게 보입니다.
+
+---ASSISTANT---
+
+아래는 공개 URL에서 역할·경력·업무 사례가 확인되는 후보만 포함한 후보군입니다. 후보자가 명시적으로 공개한 개인 업무 연락처는 확인된 경우만 기재해야 하므로, 이번 목록에서는 대부분 “확인된 공개 업무 연락처 없음”으로 처리했습니다.
+
+1. 김고운 / Go Woon Kim
+
+현재/최근 역할: XEXYMIX CMO / Growth & Brand Lead, 전 오늘의집 마케팅 본부장
+LinkedIn URL: https://kr.linkedin.com/in/go-woon-kim-881b3511b
+
+profile_url: https://business.google.com/kr/think/future-of-marketing/leaders-interview-todayhouse-growth-strategy-focused-on-content-and-users/
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 서강대학교로 공개 프로필에 표기
+경력사항 요약: 오늘의집에서 콘텐츠 커뮤니티와 커머스의 결합을 중심으로 성장 전략을 설명한 공개 인터뷰가 있으며, 오늘의집 마케팅 조직에서 performance, CRM, content, ad design, video, data analyst가 함께 일했다고 공개 사례가 나옵니다. 2019년에는 사용자 수가 2014~2018 누적 다운로드와 비슷한 수준으로 증가했고, 매출 5배 성장, paid marketing 구매전환율 2배 이상 개선, YouTube 영상 광고 기반 re-engagement 사례가 공개되어 있습니다. 
+Google
++1
+
+적합 이유: 콘텐츠 기반 consumer commerce 성장, 영상 광고, 퍼포먼스, CRM, LTV/CAC, 제품/랜딩 최적화 근거가 모두 공개되어 있어 어글리랩의 “콘텐츠+제품+데이터 Growth 리더” 조건에 매우 잘 맞습니다.
+리스크/확인 필요: 현재 XEXYMIX 역할은 LinkedIn 공개 프로필 기준이므로 최신 재직 여부와 full-time 의향 확인 필요.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/go-woon-kim-881b3511b
+
+https://business.google.com/kr/think/future-of-marketing/leaders-interview-todayhouse-growth-strategy-focused-on-content-and-users/
+
+https://brunch.co.kr/@bucketplace/12
+
+https://brunch.co.kr/@kakaomoment/14
+
+2. 최정윤 / Nicole Choi
+
+현재/최근 역할: 당근 Marketing Lead / 마케팅 팀장
+LinkedIn URL: https://kr.linkedin.com/in/nicole-choi-207801101
+
+profile_url: https://business.google.com/kr/think/future-of-marketing/leaders-interview-daangn-market-growth-secret-of-koreas-20-million-user-secondhand-platform/
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: 당근에서 performance marketing에서 brand/content 영역까지 확장한 마케팅 리더로 소개됩니다. 공개 인터뷰에는 MAU 100만 미만 지역 확장, 400만 MAU 이후의 성장 정체, Growth TF 구성, 크리에이티브·광고 상품 테스트, acquisition/reactivation 최적화, 예산 배분과 실험 설계 등 실무 근거가 나옵니다. 
+Google
++2
+Google
++2
+
+적합 이유: 로컬 marketplace consumer app에서 퍼포먼스, 리텐션, 콘텐츠/브랜드, 데이터 기반 성장 실험을 모두 경험한 후보입니다.
+리스크/확인 필요: 공개 인터뷰 기준으로는 영상/콘텐츠 자체보다 acquisition, reactivation, Growth TF 쪽 근거가 더 강합니다.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/nicole-choi-207801101
+
+https://business.google.com/kr/think/future-of-marketing/leaders-interview-daangn-market-growth-secret-of-koreas-20-million-user-secondhand-platform/
+
+https://trend-m.com/lecture_specialist/?bmode=view&idx=8899812
+
+3. 윤민정 / Minjung Yoon
+
+현재/최근 역할: Toss Growth Domain Leader, 전 토스증권 해외주식 Product Owner
+LinkedIn URL: https://kr.linkedin.com/in/minjungsamyoon
+
+profile_url: https://toss.im/career/article/growth-domain
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: 토스 Growth Domain Leader로 공개 채용 콘텐츠에 등장하며, 별도 공개 포스트에는 토스증권 해외주식 PO로서 해외주식 시장점유율 1.40%에서 12.50%, 해외주식 MAU 100만 이상 성과가 언급됩니다. 
+토스
++1
+
+적합 이유: 단순 마케팅 집행보다 제품, 데이터, KPI, funnel 관점에서 성장 문제를 푸는 후보로 적합합니다. 어글리랩이 제품 분석과 마케팅 성과 측정을 함께 보는 리더를 찾는다면 강한 후보입니다.
+리스크/확인 필요: 마케팅 CMO형보다는 product-led growth / growth domain 리더에 가깝습니다. 영상·콘텐츠 기반 퍼포먼스 마케팅 직접 근거는 약하므로 확인 필요.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/minjungsamyoon
+
+https://toss.im/career/article/growth-domain
+
+https://www.linkedin.com/posts/minjungsamyoon_%EA%B7%B8%EB%A1%9C%EC%8A%A4-%EB%8F%84%EB%A9%94%EC%9D%B8%EC%9D%B4-%ED%86%A0%EC%8A%A4%EB%A5%BC-%EC%84%B1%EC%9E%A5%EC%8B%9C%ED%82%A4%EB%8A%94-%EB%B0%A9%EB%B2%95-activity-7209743964831191040-p_6m
+
+https://www.linkedin.com/posts/%EB%8F%99%EC%99%84-%EA%B3%A0-333056219_%ED%86%A0%EC%8A%A4-%ED%86%A0%EC%8A%A4%EC%A6%9D%EA%B6%8C-%ED%86%A0%EC%8A%A4%EC%B1%84%EC%9A%A9-activity-6947079135164792832-8aLP
+
+4. 양승화 / Leo Yang
+
+현재/최근 역할: 딜라이트룸 Head of Growth, 전 마이리얼트립 그로스 실장 / Growth Lead
+LinkedIn URL: https://kr.linkedin.com/in/leoyang99
+
+profile_url: https://groschool.kr/category/conference/post/how-to-yozm-growth-marketing-yangseunghwa
+
+GitHub/Portfolio/Notion: Medium 공개 글 있음 — https://medium.com/myrealtrip-product/data-driven-marketing-%EC%8B%9C%EC%9E%91%ED%95%98%EA%B8%B0-e82f66ff9c41
+
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: 마이리얼트립에서 데이터 조직과 마케팅 조직을 결합해 Growth 조직을 만들고, marketer가 SQL을 배우는 조직 운영, 타겟팅 실험, Facebook targeting API, 클릭률 3배 개선, 캠페인·크리에이티브 성과 대시보드 자동화 사례가 공개되어 있습니다. 마이리얼트립 국내여행 GMV 1년 2000% 성장 맥락도 공개되어 있습니다. 
+AB180 블로그
++3
+그로스쿨
++3
+그로스쿨
++3
+
+적합 이유: 제품/데이터/마케팅 조직을 묶어 growth operating system을 만드는 경험이 강합니다. 어글리랩의 데이터 기반 실험, retention, referral, lock-in 설계와 잘 맞습니다.
+리스크/확인 필요: 공개 근거상 영상/콘텐츠 기반 성과보다는 데이터·퍼포먼스·CRM·growth system 근거가 더 강합니다.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/leoyang99
+
+https://groschool.kr/category/conference/post/how-to-yozm-growth-marketing-yangseunghwa
+
+https://medium.com/myrealtrip-product/data-driven-marketing-%EC%8B%9C%EC%9E%91%ED%95%98%EA%B8%B0-e82f66ff9c41
+
+https://blog.ab180.co/posts/myrealtrip-interview
+
+5. 김용훈 / Levi Yonghun Kim
+
+현재/최근 역할: 김용훈그로스연구소 소장 / Growth Consultant, 전 월급쟁이부자들 CMO, 전 펫프렌즈 CMO
+LinkedIn URL: https://kr.linkedin.com/in/leviyonghun
+
+profile_url: https://www.levigrowth.com/
+
+GitHub/Portfolio/Notion: 개인/비즈니스 사이트 — https://www.levigrowth.com/
+
+공개 채용/업무 연락처: 후보자 개인 연락처로 명시된 공개 연락처는 확인 안 됨
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: 펫프렌즈 CMO로서 marketing/growth hacking 전반을 담당한 공개 인터뷰가 있으며, Goodoc과 Petfriends 경력, 월급쟁이부자들 CMO 영입 보도, first purchase·repurchase·funnel test·MVP 실험·Amplitude 기반 data-driven decision 문화 관련 설명이 공개되어 있습니다. 펫프렌즈는 1년 재구매율 84%와 GS/IMM 인수 및 기업가치 1500억 원 맥락이 공개 기사에 나옵니다. 
+유니콘팩토리
++2
+AB180 블로그
++2
+
+적합 이유: food/pet commerce에 가까운 consumer commerce에서 retention, repurchase, funnel, CRM, media operation까지 공개 근거가 강합니다.
+리스크/확인 필요: 현재는 컨설팅·강연·연구소 중심 활동으로 보여 full-time CMO 후보로는 우선순위를 낮추고 의향 확인이 필요합니다.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/leviyonghun
+
+https://www.levigrowth.com/
+
+https://www.unicornfactory.co.kr/article/2023032709485982115
+
+https://blog.ab180.co/posts/petfriends-interview
+
+https://www.tech42.co.kr/%EA%B9%80%EC%9A%A9%ED%9B%88-%ED%8E%AB%ED%94%84%EB%A0%8C%EC%A6%88-cmo-%EC%9E%AC%EA%B5%AC%EB%A7%A4%EC%9C%A8-84-%EB%94%94%EC%A7%80%ED%84%B8-%EB%A7%88%EC%BC%80%ED%8C%85-%EC%84%B1%EA%B3%B5/
+
+https://groschool.kr/category/conference/post/yozm-conference-%20growthhacking-kimyonghun
+
+6. 이소해 / Sohae Lee
+
+현재/최근 역할: 정육각 CMO
+LinkedIn URL: https://kr.linkedin.com/in/sohae-lee-66221369
+
+profile_url: https://brunch.co.kr/@partnerswkakao/153
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: 정육각 CMO로 공개 인터뷰에 등장하며, 신규 구매 확대, 3회 이상 구매 고객의 높은 retention, D2C feedback loop, BizBoard targeting, funnel drop-off 분석, Kakao Sync 기반 전환 개선, 결제 모듈 개선 등 product/funnel/performance 연결 사례가 공개되어 있습니다. 
+Brunch Story
++2
+Brunch Story
++2
+
+적합 이유: food commerce, D2C, 구매전환, retention, product 개선과 marketing 성과를 연결한 근거가 있어 어글리랩과 업종 유사도가 높습니다.
+리스크/확인 필요: 정육각/초록마을 관련 회생·M&A 이슈가 공개 보도되어 있어 현재 역할과 조직 상황은 별도 확인이 필요합니다. 영상/콘텐츠 기반 퍼포먼스 마케팅 근거는 상대적으로 약합니다. 
+유니콘팩토리
++1
+
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/sohae-lee-66221369
+
+https://brunch.co.kr/@partnerswkakao/153
+
+https://www.unicornfactory.co.kr/article/2025070414280259557
+
+https://www.yna.co.kr/view/AKR20250829127500030
+
+7. 조미선 / Mi-seon Cho
+
+현재/최근 역할: NOL UNIVERSE CMO / 최고마케팅책임자
+LinkedIn URL: https://kr.linkedin.com/in/mi-seon-cho-aab64232
+
+profile_url: https://nol-universe.com/newsroom/pressRelease/detail?prNo=2475
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: NOL UNIVERSE 공식 보도자료에서 최고마케팅책임자로 소개됩니다. 공개 경력에는 Growth Marketing Lead, Data Marketing, NOL Marketing, 야놀자·인터파크·트리플 관련 마케팅, platform manager와 KPI 관리, 현대카드 PLCC와 AI data science/여가 데이터 결합 프로젝트 등이 확인됩니다. NOL Money 관련 월 거래액 평균 41% 증가 보도에서도 마케팅 리더 코멘트가 확인됩니다. 
+놀유니버스
++2
+야놀자
++2
+
+적합 이유: travel platform에서 loyalty, CRM, platform integration, data marketing, growth marketing을 총괄한 경험이 공개되어 있습니다.
+리스크/확인 필요: 영상/콘텐츠 기반 퍼포먼스 근거보다는 플랫폼 마케팅, loyalty, 제휴, CRM, 데이터 마케팅 근거가 강합니다.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/mi-seon-cho-aab64232
+
+https://nol-universe.com/newsroom/pressRelease/detail?prNo=2475
+
+https://www.yanoljagroup.com/ko/blog/view?id=54
+
+https://nol-universe.com/newsroom/pressRelease/detail?prNo=2453
+
+https://www.etnews.com/20260320000237
+
+8. 전민승 / Minsung Jeon
+
+현재/최근 역할: 위블링 CMO / snaps, oh.printme, pod shop, 전 RXC Head of Marketing, 전 GRIP Head of Marketing
+LinkedIn URL: https://kr.linkedin.com/in/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a
+
+profile_url: https://kr.linkedin.com/in/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 경희대학교로 공개 프로필에 표기
+경력사항 요약: 공개 프로필에는 위블링 CMO, RXC Head of Marketing, GRIP Head of Marketing 경력이 확인됩니다. GRIP 관련 공개 포스트에는 첫 캠페인, 첫 TV 광고, 라이브커머스 브랜드 identity/awareness, 마케팅 채용 등 마케팅 리더십 활동이 확인됩니다. 
+LinkedIn
++2
+LinkedIn
++2
+
+적합 이유: live commerce / creator-commerce 성격의 GRIP, commerce 플랫폼 RXC, 위블링의 SNAPS/OHPRINTME/POD SHOP 등 consumer commerce·content/creative 기반 마케팅 경험이 포지션과 맞습니다.
+리스크/확인 필요: 공개 정량 성과, product analytics, referral/retention 실험 근거는 약하므로 인터뷰에서 깊게 검증해야 합니다.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a
+
+https://kr.linkedin.com/posts/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a_%EC%B5%9C%EA%B7%BC-%EB%AA%85%ED%92%88-%ED%94%8C%EB%9E%AB%ED%8F%BC%EB%93%A4%EC%9D%B4-%EA%B4%91%EA%B3%A0%EC%99%80-%EB%A7%88%EC%BC%80%ED%8C%85%EC%97%90-%EC%A7%91%EC%A4%91%ED%95%98%EB%8A%94-%EB%AA%A8%EC%96%91%EC%83%88%EC%9D%B8%EB%8D%B0-%EA%B7%B8%EC%A4%91-%ED%95%9C-%EA%B5%B0%EB%8D%B0%EA%B0%80-activity-6869212909898207232-3v7S
+
+https://kr.linkedin.com/posts/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a_%EB%9D%BC%EC%9D%B4%EB%B8%8C%EC%BB%A4%EB%A8%B8%EC%8A%A4-%EA%B7%B8%EB%A6%BD%EC%9D%98-%EC%B2%AB-tv-%EA%B4%91%EA%B3%A0%EA%B0%80-%EC%98%A8%EC%97%90%EC%96%B4-%EB%90%98%EC%97%88%EC%8A%B5%EB%8B%88%EB%8B%A4-%ED%95%98%EB%A3%A8%EA%B0%80-%EB%8B%A4%EB%A5%B4%EA%B2%8C-%EC%B9%98%EC%97%B4%ED%95%B4%EC%A7%80%EB%8A%94-activity-6866970168493449216-sART
+
+https://kr.linkedin.com/company/webling-co
+
+9. 김서현 / Seohyun “Sienna” Kim
+
+현재/최근 역할: RIDI Global Growth Marketing / Group Marketing Manager, 전 Tapas Director of Growth, 전 Radish performance/global performance marketing
+LinkedIn URL: https://kr.linkedin.com/in/seohyun-kim-sienna
+
+profile_url: https://kr.linkedin.com/in/seohyun-kim-sienna
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 숙명여자대학교로 공개 프로필에 표기
+경력사항 요약: 공개 프로필에는 RIDI, Tapas Director of Growth, Radish performance/global performance marketing 관련 경력이 확인됩니다. RIDI의 Manta는 글로벌 digital comics/content platform으로, 2026년 manga service launch와 175개국 1900만 다운로드가 공식 보도자료에 공개되어 있습니다. 
+LinkedIn
++2
+LinkedIn
++2
+
+적합 이유: content platform, subscription, global growth, performance marketing 경험이 어글리랩의 영상/콘텐츠 기반 성장 리더 요건과 맞을 가능성이 큽니다.
+리스크/확인 필요: 공개 수치는 Manta/RIDI 서비스 지표이지 후보 개인이 직접 만든 성과로 단정하면 안 됩니다. 현재 title이 공개 프로필마다 다르게 표시되어 최신 역할 확인 필요.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/seohyun-kim-sienna
+
+https://ridicorp.com/2026/04/manga_on_manta/
+
+https://about.manta.net/
+
+https://www.wanted.co.kr/wd/91074
+
+10. 권채정 / Chaejeong Kwon
+
+현재/최근 역할: 에이블리 마케팅 리더 / 마케팅 실장급 공개 인터뷰 등장
+LinkedIn URL: https://kr.linkedin.com/in/chaejeongkwon
+
+profile_url: https://kr.linkedin.com/in/chaejeongkwon
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: 공개 프로필에는 에이블리 초기 론칭부터 marketing 전반, paid marketing, CRM을 리드한 경력이 확인됩니다. 에이블리 공개 인터뷰에는 2018년 앱 론칭부터 마케팅 전반을 이끌었고, Z세대 push, 앱 기획, 커뮤니티, 패션 플랫폼에서 dessert 카테고리 판매 등 product/marketing 연결 사례가 나옵니다. 
+LinkedIn
++1
+
+적합 이유: fashion commerce consumer app에서 paid marketing, CRM, push, community, app planning을 연결한 성장 경험이 포지션과 잘 맞습니다.
+리스크/확인 필요: 외부 공개 정량 성과와 영상/콘텐츠 퍼포먼스 연결 근거는 제한적입니다. 현재 역할명과 책임 범위 확인 필요.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/chaejeongkwon
+
+https://kr.linkedin.com/posts/seulki-l-4a0934229_c-%EC%BB%A4%EB%A8%B8%EC%8A%A4-%EC%A3%BC%EC%B6%A4%ED%95%9C-%EC%83%88-%EC%97%90%EC%9D%B4%EB%B8%94%EB%A6%AC-%EC%9D%B4%EC%9A%A9%EC%9E%90-%ED%86%B5%ED%95%A9-%EC%88%9C%EC%9C%84-2%EC%9C%84%EB%A1%9C-https-activity-7203983600290045952-55nq
+
+https://kr.linkedin.com/company/ably-corp
+
+11. 지웅천 / Jiung Chun
+
+현재/최근 역할: Kurly Head of User Marketing / Head of Acquisition and Retention Group / CRM Lead
+LinkedIn URL: https://kr.linkedin.com/in/jiung-chun-11761323
+
+profile_url: https://kr.linkedin.com/in/jiung-chun-11761323
+
+GitHub/Portfolio/Notion: 확인된 공개 URL 없음
+공개 채용/업무 연락처: 확인된 공개 업무 연락처 없음
+연락처 출처 URL: 없음
+학력 요약: 공개 근거 확인 안 됨
+경력사항 요약: 공개 프로필에는 Kurly Head of User Marketing, Acquisition and Retention Group, CRM 관련 리더십이 확인됩니다. Kurly는 기술과 데이터를 통한 유통 혁신을 강조하는 consumer commerce 플랫폼으로 공개 회사 프로필에 소개됩니다. 
+LinkedIn
++1
+
+적합 이유: food commerce / grocery commerce에서 acquisition, retention, CRM을 맡은 user marketing 리더로, 어글리랩의 recurring purchase, lock-in, retention 실험과 맞을 수 있습니다.
+리스크/확인 필요: 후보 개인의 정량 성과, 영상/콘텐츠 기반 퍼포먼스, product analytics 사례가 공개 URL에서는 충분히 확인되지 않습니다. 인터뷰 우선순위는 중하로 두고 검증 필요.
+근거 URL 직접 목록:
+
+https://kr.linkedin.com/in/jiung-chun-11761323
+
+https://kr.linkedin.com/company/kurly
+
+https://u.educe.co.kr/educe/recruit/view/67503
+
+JSON
+[
+  {
+    "name": "김고운 / Go Woon Kim",
+    "priority": "high",
+    "current_or_recent_role": "XEXYMIX CMO / Growth & Brand Lead; 전 오늘의집 마케팅 본부장",
+    "linkedin_url": "https://kr.linkedin.com/in/go-woon-kim-881b3511b",
+    "profile_url": "https://business.google.com/kr/think/future-of-marketing/leaders-interview-todayhouse-growth-strategy-focused-on-content-and-users/",
+    "other_public_urls": [
+      "https://brunch.co.kr/@bucketplace/12",
+      "https://brunch.co.kr/@kakaomoment/14"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": "서강대학교로 공개 프로필에 표기",
+    "career_summary": "오늘의집 마케팅 본부장으로 콘텐츠 커뮤니티와 커머스 결합, performance, CRM, content, ad design, video, data analyst 협업 조직 운영 사례가 공개됨. 2019년 사용자 성장, 매출 5배, paid marketing 구매전환율 2배 이상, YouTube 영상 광고 re-engagement 사례가 공개됨.",
+    "summary": "콘텐츠 기반 consumer commerce 성장, 영상 광고, CRM, LTV/CAC, 제품/랜딩 최적화 근거가 모두 있어 어글리랩 CMO/Growth 리더 포지션에 매우 적합.",
+    "fit_reason": "콘텐츠와 제품 경험을 결합해 성장을 만든 공개 사례가 강하고, 영상/콘텐츠 기반 퍼포먼스 및 데이터 기반 성과 측정 근거가 있음.",
+    "risks_or_verification_needed": "현재 XEXYMIX 역할과 full-time 이직 의향 확인 필요.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/go-woon-kim-881b3511b",
+      "https://business.google.com/kr/think/future-of-marketing/leaders-interview-todayhouse-growth-strategy-focused-on-content-and-users/",
+      "https://brunch.co.kr/@bucketplace/12",
+      "https://brunch.co.kr/@kakaomoment/14"
+    ]
+  },
+  {
+    "name": "최정윤 / Nicole Choi",
+    "priority": "high",
+    "current_or_recent_role": "당근 Marketing Lead / 마케팅 팀장",
+    "linkedin_url": "https://kr.linkedin.com/in/nicole-choi-207801101",
+    "profile_url": "https://business.google.com/kr/think/future-of-marketing/leaders-interview-daangn-market-growth-secret-of-koreas-20-million-user-secondhand-platform/",
+    "other_public_urls": [
+      "https://trend-m.com/lecture_specialist/?bmode=view&idx=8899812"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "당근에서 performance marketing에서 brand/content 영역까지 확장한 마케팅 리더. MAU 확장, Growth TF, 크리에이티브·광고 상품 테스트, acquisition/reactivation 최적화, 예산 배분과 실험 설계 관련 공개 인터뷰가 있음.",
+    "summary": "로컬 marketplace consumer app에서 퍼포먼스, 리텐션, 콘텐츠/브랜드, 데이터 기반 growth를 경험한 후보.",
+    "fit_reason": "대규모 consumer app의 acquisition, reactivation, Growth TF, user data 기반 실험 경험이 포지션과 부합.",
+    "risks_or_verification_needed": "영상/콘텐츠 자체보다 acquisition, reactivation, Growth TF 근거가 강함. 영상 기반 퍼포먼스 운영 깊이는 확인 필요.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/nicole-choi-207801101",
+      "https://business.google.com/kr/think/future-of-marketing/leaders-interview-daangn-market-growth-secret-of-koreas-20-million-user-secondhand-platform/",
+      "https://trend-m.com/lecture_specialist/?bmode=view&idx=8899812"
+    ]
+  },
+  {
+    "name": "윤민정 / Minjung Yoon",
+    "priority": "medium-high",
+    "current_or_recent_role": "Toss Growth Domain Leader; 전 토스증권 해외주식 Product Owner",
+    "linkedin_url": "https://kr.linkedin.com/in/minjungsamyoon",
+    "profile_url": "https://toss.im/career/article/growth-domain",
+    "other_public_urls": [
+      "https://www.linkedin.com/posts/minjungsamyoon_%EA%B7%B8%EB%A1%9C%EC%8A%A4-%EB%8F%84%EB%A9%94%EC%9D%B8%EC%9D%B4-%ED%86%A0%EC%8A%A4%EB%A5%BC-%EC%84%B1%EC%9E%A5%EC%8B%9C%ED%82%A4%EB%8A%94-%EB%B0%A9%EB%B2%95-activity-7209743964831191040-p_6m",
+      "https://www.linkedin.com/posts/%EB%8F%99%EC%99%84-%EA%B3%A0-333056219_%ED%86%A0%EC%8A%A4-%ED%86%A0%EC%8A%A4%EC%A6%9D%EA%B6%8C-%ED%86%A0%EC%8A%A4%EC%B1%84%EC%9A%A9-activity-6947079135164792832-8aLP"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "토스 Growth Domain Leader로 공개 채용 콘텐츠에 등장. 토스증권 해외주식 PO로서 시장점유율 1.40%에서 12.50%, 해외주식 MAU 100만 이상 성과가 공개 포스트에 언급됨.",
+    "summary": "제품, 데이터, KPI, funnel 관점에서 성장 문제를 푸는 product-led growth형 후보.",
+    "fit_reason": "마케팅 집행보다 제품 분석과 growth system 설계가 중요한 포지션이라면 강한 후보.",
+    "risks_or_verification_needed": "CMO형 마케팅 리더보다는 product/growth domain 리더에 가까움. 영상·콘텐츠 퍼포먼스 경험은 별도 확인 필요.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/minjungsamyoon",
+      "https://toss.im/career/article/growth-domain",
+      "https://www.linkedin.com/posts/minjungsamyoon_%EA%B7%B8%EB%A1%9C%EC%8A%A4-%EB%8F%84%EB%A9%94%EC%9D%B8%EC%9D%B4-%ED%86%A0%EC%8A%A4%EB%A5%BC-%EC%84%B1%EC%9E%A5%EC%8B%9C%ED%82%A4%EB%8A%94-%EB%B0%A9%EB%B2%95-activity-7209743964831191040-p_6m",
+      "https://www.linkedin.com/posts/%EB%8F%99%EC%99%84-%EA%B3%A0-333056219_%ED%86%A0%EC%8A%A4-%ED%86%A0%EC%8A%A4%EC%A6%9D%EA%B6%8C-%ED%86%A0%EC%8A%A4%EC%B1%84%EC%9A%A9-activity-6947079135164792832-8aLP"
+    ]
+  },
+  {
+    "name": "양승화 / Leo Yang",
+    "priority": "high",
+    "current_or_recent_role": "딜라이트룸 Head of Growth; 전 마이리얼트립 그로스 실장 / Growth Lead",
+    "linkedin_url": "https://kr.linkedin.com/in/leoyang99",
+    "profile_url": "https://groschool.kr/category/conference/post/how-to-yozm-growth-marketing-yangseunghwa",
+    "other_public_urls": [
+      "https://medium.com/myrealtrip-product/data-driven-marketing-%EC%8B%9C%EC%9E%91%ED%95%98%EA%B8%B0-e82f66ff9c41",
+      "https://blog.ab180.co/posts/myrealtrip-interview"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "마이리얼트립에서 데이터 조직과 마케팅 조직을 결합해 Growth 조직을 만들고, 타겟팅 실험, Facebook targeting API, 클릭률 3배 개선, 캠페인·크리에이티브 성과 대시보드 자동화 사례를 공개함.",
+    "summary": "데이터, 마케팅, 제품 협업을 묶어 growth operating system을 만드는 경험이 강한 후보.",
+    "fit_reason": "제품 분석, 마케팅 성과 측정, CRM, retention, 실험 설계 중심의 Growth 총괄 역할에 잘 맞음.",
+    "risks_or_verification_needed": "영상/콘텐츠 퍼포먼스보다 데이터·퍼포먼스·CRM·growth system 근거가 더 강함.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/leoyang99",
+      "https://groschool.kr/category/conference/post/how-to-yozm-growth-marketing-yangseunghwa",
+      "https://medium.com/myrealtrip-product/data-driven-marketing-%EC%8B%9C%EC%9E%91%ED%95%98%EA%B8%B0-e82f66ff9c41",
+      "https://blog.ab180.co/posts/myrealtrip-interview"
+    ]
+  },
+  {
+    "name": "김용훈 / Levi Yonghun Kim",
+    "priority": "medium",
+    "current_or_recent_role": "김용훈그로스연구소 소장 / Growth Consultant; 전 월급쟁이부자들 CMO; 전 펫프렌즈 CMO",
+    "linkedin_url": "https://kr.linkedin.com/in/leviyonghun",
+    "profile_url": "https://www.levigrowth.com/",
+    "other_public_urls": [
+      "https://www.unicornfactory.co.kr/article/2023032709485982115",
+      "https://blog.ab180.co/posts/petfriends-interview",
+      "https://www.tech42.co.kr/%EA%B9%80%EC%9A%A9%ED%9B%88-%ED%8E%AB%ED%94%84%EB%A0%8C%EC%A6%88-cmo-%EC%9E%AC%EA%B5%AC%EB%A7%A4%EC%9C%A8-84-%EB%94%94%EC%A7%80%ED%84%B8-%EB%A7%88%EC%BC%80%ED%8C%85-%EC%84%B1%EA%B3%B5/",
+      "https://groschool.kr/category/conference/post/yozm-conference-%20growthhacking-kimyonghun"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "펫프렌즈 CMO로 marketing/growth hacking 전반, first purchase, repurchase, funnel test, MVP 실험, Amplitude 기반 data-driven decision culture 관련 공개 인터뷰가 있음. 월급쟁이부자들 CMO 영입 보도도 확인됨.",
+    "summary": "food/pet commerce에 가까운 consumer commerce에서 retention, repurchase, funnel, CRM, media operation 근거가 강한 후보.",
+    "fit_reason": "구매전환, 재구매, CRM, 제품 데이터 기반 성장 실험을 중시하는 포지션과 맞음.",
+    "risks_or_verification_needed": "현재 컨설팅·강연·연구소 중심 활동으로 보여 full-time CMO 우선순위는 낮추고 의향 확인 필요.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/leviyonghun",
+      "https://www.levigrowth.com/",
+      "https://www.unicornfactory.co.kr/article/2023032709485982115",
+      "https://blog.ab180.co/posts/petfriends-interview",
+      "https://www.tech42.co.kr/%EA%B9%80%EC%9A%A9%ED%9B%88-%ED%8E%AB%ED%94%84%EB%A0%8C%EC%A6%88-cmo-%EC%9E%AC%EA%B5%AC%EB%A7%A4%EC%9C%A8-84-%EB%94%94%EC%A7%80%ED%84%B8-%EB%A7%88%EC%BC%80%ED%8C%85-%EC%84%B1%EA%B3%B5/",
+      "https://groschool.kr/category/conference/post/yozm-conference-%20growthhacking-kimyonghun"
+    ]
+  },
+  {
+    "name": "이소해 / Sohae Lee",
+    "priority": "medium-high",
+    "current_or_recent_role": "정육각 CMO",
+    "linkedin_url": "https://kr.linkedin.com/in/sohae-lee-66221369",
+    "profile_url": "https://brunch.co.kr/@partnerswkakao/153",
+    "other_public_urls": [
+      "https://www.unicornfactory.co.kr/article/2025070414280259557",
+      "https://www.yna.co.kr/view/AKR20250829127500030"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "정육각 CMO로 신규 구매 확대, D2C feedback loop, BizBoard targeting, funnel drop-off 분석, Kakao Sync 기반 전환 개선, 결제 모듈 개선 관련 공개 사례가 있음.",
+    "summary": "food commerce, D2C, 구매전환, retention, product 개선과 marketing 성과 연결 근거가 있는 후보.",
+    "fit_reason": "어글리랩과 업종 유사성이 높고, 제품 개선과 마케팅 성과를 함께 본 경험이 공개되어 있음.",
+    "risks_or_verification_needed": "정육각/초록마을 관련 회생·M&A 이슈가 있어 현재 역할과 조직 상황 확인 필요. 영상/콘텐츠 기반 퍼포먼스 근거는 상대적으로 약함.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/sohae-lee-66221369",
+      "https://brunch.co.kr/@partnerswkakao/153",
+      "https://www.unicornfactory.co.kr/article/2025070414280259557",
+      "https://www.yna.co.kr/view/AKR20250829127500030"
+    ]
+  },
+  {
+    "name": "조미선 / Mi-seon Cho",
+    "priority": "medium-high",
+    "current_or_recent_role": "NOL UNIVERSE CMO / 최고마케팅책임자",
+    "linkedin_url": "https://kr.linkedin.com/in/mi-seon-cho-aab64232",
+    "profile_url": "https://nol-universe.com/newsroom/pressRelease/detail?prNo=2475",
+    "other_public_urls": [
+      "https://www.yanoljagroup.com/ko/blog/view?id=54",
+      "https://nol-universe.com/newsroom/pressRelease/detail?prNo=2453",
+      "https://www.etnews.com/20260320000237"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "NOL UNIVERSE 공식 보도자료에서 최고마케팅책임자로 확인됨. Growth Marketing Lead, Data Marketing, NOL Marketing, 야놀자·인터파크·트리플 관련 마케팅, platform manager와 KPI 관리, 현대카드 PLCC와 AI data science/여가 데이터 결합 프로젝트 경험이 공개됨.",
+    "summary": "travel platform에서 loyalty, CRM, platform integration, data marketing, growth marketing을 총괄한 후보.",
+    "fit_reason": "전사 플랫폼 growth, CRM, lock-in, loyalty, 제휴 성장 설계에 강점이 있음.",
+    "risks_or_verification_needed": "영상/콘텐츠 기반 퍼포먼스보다 플랫폼 마케팅, loyalty, 제휴, CRM, 데이터 마케팅 근거가 강함.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/mi-seon-cho-aab64232",
+      "https://nol-universe.com/newsroom/pressRelease/detail?prNo=2475",
+      "https://www.yanoljagroup.com/ko/blog/view?id=54",
+      "https://nol-universe.com/newsroom/pressRelease/detail?prNo=2453",
+      "https://www.etnews.com/20260320000237"
+    ]
+  },
+  {
+    "name": "전민승 / Minsung Jeon",
+    "priority": "medium",
+    "current_or_recent_role": "위블링 CMO / snaps, oh.printme, pod shop; 전 RXC Head of Marketing; 전 GRIP Head of Marketing",
+    "linkedin_url": "https://kr.linkedin.com/in/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a",
+    "profile_url": "https://kr.linkedin.com/in/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a",
+    "other_public_urls": [
+      "https://kr.linkedin.com/posts/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a_%EC%B5%9C%EA%B7%BC-%EB%AA%85%ED%92%88-%ED%94%8C%EB%9E%AB%ED%8F%BC%EB%93%A4%EC%9D%B4-%EA%B4%91%EA%B3%A0%EC%99%80-%EB%A7%88%EC%BC%80%ED%8C%85%EC%97%90-%EC%A7%91%EC%A4%91%ED%95%98%EB%8A%94-%EB%AA%A8%EC%96%91%EC%83%88%EC%9D%B8%EB%8D%B0-%EA%B7%B8%EC%A4%91-%ED%95%9C-%EA%B5%B0%EB%8D%B0%EA%B0%80-activity-6869212909898207232-3v7S",
+      "https://kr.linkedin.com/posts/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a_%EB%9D%BC%EC%9D%B4%EB%B8%8C%EC%BB%A4%EB%A8%B8%EC%8A%A4-%EA%B7%B8%EB%A6%BD%EC%9D%98-%EC%B2%AB-tv-%EA%B4%91%EA%B3%A0%EA%B0%80-%EC%98%A8%EC%97%90%EC%96%B4-%EB%90%98%EC%97%88%EC%8A%B5%EB%8B%88%EB%8B%A4-%ED%95%98%EB%A3%A8%EA%B0%80-%EB%8B%A4%EB%A5%B4%EA%B2%8C-%EC%B9%98%EC%97%B4%ED%95%B4%EC%A7%80%EB%8A%94-activity-6866970168493449216-sART",
+      "https://kr.linkedin.com/company/webling-co"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": "경희대학교로 공개 프로필에 표기",
+    "career_summary": "위블링 CMO, RXC Head of Marketing, GRIP Head of Marketing 경력이 공개 프로필에 확인됨. GRIP 첫 캠페인, 첫 TV 광고, 라이브커머스 브랜드 identity/awareness, 마케팅 채용 관련 공개 포스트가 있음.",
+    "summary": "live commerce, creator-commerce, consumer commerce, content/creative 기반 마케팅 경험이 있는 후보.",
+    "fit_reason": "영상·라이브커머스·브랜드 캠페인과 consumer commerce 경험이 어글리랩 콘텐츠 기반 growth와 일부 부합.",
+    "risks_or_verification_needed": "공개 정량 성과, product analytics, referral/retention 실험 근거는 약하므로 검증 필요.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a",
+      "https://kr.linkedin.com/posts/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a_%EC%B5%9C%EA%B7%BC-%EB%AA%85%ED%92%88-%ED%94%8C%EB%9E%AB%ED%8F%BC%EB%93%A4%EC%9D%B4-%EA%B4%91%EA%B3%A0%EC%99%80-%EB%A7%88%EC%BC%80%ED%8C%85%EC%97%90-%EC%A7%91%EC%A4%91%ED%95%98%EB%8A%94-%EB%AA%A8%EC%96%91%EC%83%88%EC%9D%B8%EB%8D%B0-%EA%B7%B8%EC%A4%91-%ED%95%9C-%EA%B5%B0%EB%8D%B0%EA%B0%80-activity-6869212909898207232-3v7S",
+      "https://kr.linkedin.com/posts/%EB%AF%BC%EC%8A%B9-%EC%A0%84-a9b3bb17a_%EB%9D%BC%EC%9D%B4%EB%B8%8C%EC%BB%A4%EB%A8%B8%EC%8A%A4-%EA%B7%B8%EB%A6%BD%EC%9D%98-%EC%B2%AB-tv-%EA%B4%91%EA%B3%A0%EA%B0%80-%EC%98%A8%EC%97%90%EC%96%B4-%EB%90%98%EC%97%88%EC%8A%B5%EB%8B%88%EB%8B%A4-%ED%95%98%EB%A3%A8%EA%B0%80-%EB%8B%A4%EB%A5%B4%EA%B2%8C-%EC%B9%98%EC%97%B4%ED%95%B4%EC%A7%80%EB%8A%94-activity-6866970168493449216-sART",
+      "https://kr.linkedin.com/company/webling-co"
+    ]
+  },
+  {
+    "name": "김서현 / Seohyun “Sienna” Kim",
+    "priority": "medium-high",
+    "current_or_recent_role": "RIDI Global Growth Marketing / Group Marketing Manager; 전 Tapas Director of Growth; 전 Radish performance/global performance marketing",
+    "linkedin_url": "https://kr.linkedin.com/in/seohyun-kim-sienna",
+    "profile_url": "https://kr.linkedin.com/in/seohyun-kim-sienna",
+    "other_public_urls": [
+      "https://ridicorp.com/2026/04/manga_on_manta/",
+      "https://about.manta.net/",
+      "https://www.wanted.co.kr/wd/91074"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": "숙명여자대학교로 공개 프로필에 표기",
+    "career_summary": "RIDI, Tapas Director of Growth, Radish performance/global performance marketing 관련 경력이 공개 프로필에 확인됨. RIDI Manta는 글로벌 digital comics/content platform으로 2026년 manga service launch, 175개국 1900만 다운로드가 공식 보도자료에 공개됨.",
+    "summary": "content platform, subscription, global growth, performance marketing 경험이 있는 후보.",
+    "fit_reason": "콘텐츠 기반 서비스의 acquisition, subscription growth, global performance marketing 경험이 어글리랩 growth 포지션과 맞을 가능성이 큼.",
+    "risks_or_verification_needed": "공개 수치는 서비스 지표이지 후보 개인 성과로 단정하면 안 됨. 현재 title이 공개 프로필마다 다르게 표시되어 최신 역할 확인 필요.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/seohyun-kim-sienna",
+      "https://ridicorp.com/2026/04/manga_on_manta/",
+      "https://about.manta.net/",
+      "https://www.wanted.co.kr/wd/91074"
+    ]
+  },
+  {
+    "name": "권채정 / Chaejeong Kwon",
+    "priority": "medium-high",
+    "current_or_recent_role": "에이블리 마케팅 리더 / 마케팅 실장급 공개 인터뷰 등장",
+    "linkedin_url": "https://kr.linkedin.com/in/chaejeongkwon",
+    "profile_url": "https://kr.linkedin.com/in/chaejeongkwon",
+    "other_public_urls": [
+      "https://kr.linkedin.com/posts/seulki-l-4a0934229_c-%EC%BB%A4%EB%A8%B8%EC%8A%A4-%EC%A3%BC%EC%B6%A4%ED%95%9C-%EC%83%88-%EC%97%90%EC%9D%B4%EB%B8%94%EB%A6%AC-%EC%9D%B4%EC%9A%A9%EC%9E%90-%ED%86%B5%ED%95%A9-%EC%88%9C%EC%9C%84-2%EC%9C%84%EB%A1%9C-https-activity-7203983600290045952-55nq",
+      "https://kr.linkedin.com/company/ably-corp"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "에이블리 초기 론칭부터 marketing 전반, paid marketing, CRM을 리드한 경력이 공개 프로필에 확인됨. 공개 인터뷰에는 Z세대 push, 앱 기획, 커뮤니티, 패션 플랫폼의 카테고리 확장 등 product/marketing 연결 사례가 나옴.",
+    "summary": "fashion commerce consumer app에서 paid marketing, CRM, push, community, app planning을 연결한 후보.",
+    "fit_reason": "consumer app 성장과 제품/마케팅 결합 경험이 포지션과 부합.",
+    "risks_or_verification_needed": "외부 공개 정량 성과와 영상/콘텐츠 퍼포먼스 연결 근거는 제한적. 현재 역할명과 책임 범위 확인 필요.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/chaejeongkwon",
+      "https://kr.linkedin.com/posts/seulki-l-4a0934229_c-%EC%BB%A4%EB%A8%B8%EC%8A%A4-%EC%A3%BC%EC%B6%A4%ED%95%9C-%EC%83%88-%EC%97%90%EC%9D%B4%EB%B8%94%EB%A6%AC-%EC%9D%B4%EC%9A%A9%EC%9E%90-%ED%86%B5%ED%95%A9-%EC%88%9C%EC%9C%84-2%EC%9C%84%EB%A1%9C-https-activity-7203983600290045952-55nq",
+      "https://kr.linkedin.com/company/ably-corp"
+    ]
+  },
+  {
+    "name": "지웅천 / Jiung Chun",
+    "priority": "medium-low",
+    "current_or_recent_role": "Kurly Head of User Marketing / Head of Acquisition and Retention Group / CRM Lead",
+    "linkedin_url": "https://kr.linkedin.com/in/jiung-chun-11761323",
+    "profile_url": "https://kr.linkedin.com/in/jiung-chun-11761323",
+    "other_public_urls": [
+      "https://kr.linkedin.com/company/kurly",
+      "https://u.educe.co.kr/educe/recruit/view/67503"
+    ],
+    "public_contact": null,
+    "contact_source_url": null,
+    "education_summary": null,
+    "career_summary": "Kurly Head of User Marketing, Acquisition and Retention Group, CRM 관련 리더십이 공개 프로필에 확인됨. Kurly는 기술과 데이터를 통한 유통 혁신을 강조하는 consumer commerce 플랫폼으로 공개 회사 프로필에 소개됨.",
+    "summary": "food/grocery commerce에서 acquisition, retention, CRM을 맡은 user marketing 리더 후보.",
+    "fit_reason": "반복구매, CRM, retention, lock-in 실험이 중요한 어글리랩 포지션과 일부 부합.",
+    "risks_or_verification_needed": "후보 개인의 정량 성과, 영상/콘텐츠 기반 퍼포먼스, product analytics 사례가 공개 URL에서는 충분히 확인되지 않음.",
+    "source_urls": [
+      "https://kr.linkedin.com/in/jiung-chun-11761323",
+      "https://kr.linkedin.com/company/kurly",
+      "https://u.educe.co.kr/educe/recruit/view/67503"
+    ]
+  }
+]

@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Valuehire AI Search Harness — Adversarial Review</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #111827;
+      --panel2: #0f172a;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #93c5fd;
+      --danger: #fca5a5;
+      --danger-bg: rgba(127, 29, 29, 0.42);
+      --rule: #fcd34d;
+      --rule-bg: rgba(120, 53, 15, 0.36);
+      --border: #334155;
+      --code-bg: #020617;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #172554 0, transparent 34%), var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+      line-height: 1.68;
+    }
+    main {
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 52px 28px 90px;
+    }
+    .doc {
+      background: linear-gradient(180deg, rgba(17,24,39,0.96), rgba(15,23,42,0.98));
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 22px;
+      padding: 44px;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.38);
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-bottom: 18px;
+    }
+    h1, h2, h3 { line-height: 1.25; color: #f8fafc; }
+    h1 {
+      font-size: 2.35rem;
+      letter-spacing: -0.035em;
+      margin-top: 0;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    h2 {
+      margin-top: 2.7rem;
+      color: #bfdbfe;
+      padding-top: 0.4rem;
+      border-top: 1px solid rgba(51,65,85,0.58);
+    }
+    h3 { margin-top: 1.8rem; color: #dbeafe; }
+    p { margin: 0.85rem 0; }
+    ul, ol { padding-left: 1.35rem; }
+    li { margin: 0.36rem 0; }
+    pre {
+      background: var(--code-bg);
+      color: #d1d5db;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      overflow-x: auto;
+      white-space: pre;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+    }
+    code {
+      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      font-size: 0.92rem;
+    }
+    .callout {
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin: 1.1rem 0;
+      border: 1px solid var(--border);
+    }
+    .callout.danger {
+      background: var(--danger-bg);
+      border-color: rgba(252,165,165,0.44);
+      color: #fee2e2;
+    }
+    .callout.rule {
+      background: var(--rule-bg);
+      border-color: rgba(252,211,77,0.42);
+      color: #fef3c7;
+    }
+    .callout strong { color: #fff; }
+    .checklist { columns: 2; column-gap: 36px; }
+    .checklist li { break-inside: avoid; list-style: none; margin-left: -1rem; }
+    input[type="checkbox"] { margin-right: 0.45rem; }
+    @media (max-width: 760px) {
+      main { padding: 20px 12px 60px; }
+      .doc { padding: 24px 18px; border-radius: 16px; }
+      h1 { font-size: 1.75rem; }
+      .checklist { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="doc">
+      <div class="meta">Generated adversarial review from valuehire-ai-search-harness-engineering-prompt.html</div>
+      <h1>Valuehire AI Search 정식 재구현 프롬프트 — 적대적 리뷰 반영본</h1>
+<p>이 문서는 기존 Harness Engineering 프롬프트를 그대로 구현팀에 넘기기 전에, 실패·오용·운영 리스크를 의도적으로 공격적으로 검토한 뒤 다시 정리한 HTML 문서입니다.</p>
+<div class="callout danger"><strong>적대적 리뷰 결론</strong><br>결론: 기존 문서는 방향은 좋지만, 실제 구현 프롬프트로는 아직 느슨합니다. 특히 ‘검색 품질’, ‘후보 신원 검증’, ‘프라이버시’, ‘LLM 환각 방지’, ‘재현 가능한 평가’, ‘운영 실패 상태’가 더 강하게 계약화되어야 합니다.</div>
+<h2>1. 적대적 리뷰 요약</h2>
+<p>기존 문서는 하네스의 이름과 범위는 잘 잡았지만, 구현자가 편한 방식으로 해석하면 다음 문제가 발생할 수 있습니다.</p>
+<ul><li>schema가 예시 수준이라 실제 validator 계약으로 강제되지 않을 수 있습니다.</li><li>검색 채널 adapter가 실검색과 mock/replay를 명확히 분리하지 않아 테스트가 flaky해질 수 있습니다.</li><li>LinkedIn URL, GitHub URL, 블로그 URL 등 여러 출처가 같은 사람인지 검증하는 identity resolution 기준이 약합니다.</li><li>LLM이 검색 결과 snippet만 보고 경력/학력/기술 역량을 과장할 위험이 있습니다.</li><li>프라이버시 정책은 선언되어 있지만, 수집/저장/출력 단계별 enforcement point가 부족합니다.</li><li>점수 산정은 rubric이 있으나 evidence 부족 시 점수 상한을 강제하는 rule이 약합니다.</li><li>Definition of Done이 ‘샘플 run 통과’라고 되어 있으나, 무엇을 통과로 볼지 수치 기준이 부족합니다.</li><li>실제 후보자 데이터가 섞이는 시스템인데 감사 로그, 삭제 정책, 데이터 보존 기간이 빠져 있습니다.</li><li>outreach 금지는 되어 있으나, downstream 시스템으로 넘어갈 때 발송 가능 상태로 오인될 위험이 있습니다.</li><li>문서가 길지만 구현자에게 ‘무엇부터 실패하면 안 되는지’ 우선순위가 충분히 선명하지 않습니다.</li></ul>
+<h2>2. 기존 프롬프트의 가장 위험한 빈틈</h2>
+<h3>2.1 ‘공개 URL이 있다’와 ‘후보 정보가 검증되었다’를 혼동할 위험</h3>
+<p>공개 URL이 존재한다고 해서 경력, 학력, 현재 직무, 기술 역량이 검증된 것은 아닙니다. 특히 검색엔진 snippet, LinkedIn 미열람 URL, 제3자 사이트 요약은 낮은 신뢰도로 취급해야 합니다.</p>
+<div class="callout rule"><strong>강화 규칙</strong><br>개선 규칙: 모든 claim은 evidence item에 연결되어야 하며, URL 접근 상태가 url_only 또는 blocked이면 career/education/technical claim의 confidence는 high가 될 수 없습니다.</div>
+<h3>2.2 LLM이 후보를 ‘그럴듯하게 보강’할 위험</h3>
+<p>AI Search의 가장 큰 위험은 후보를 못 찾는 것이 아니라, 찾은 것처럼 보이게 만드는 것입니다. 기존 문서에는 fake 후보 금지가 있지만, hallucinated claim 금지와 unsupported claim rejection이 더 강해야 합니다.</p>
+<div class="callout rule"><strong>강화 규칙</strong><br>개선 규칙: source_urls에 없는 정보는 candidate summary, career_summary, education_summary, fit_reason에 포함할 수 없습니다. unsupported claim이 발견되면 validation failure로 처리합니다.</div>
+<h3>2.3 검색 품질을 ‘결과 개수’로 착각할 위험</h3>
+<p>후보 수가 많아도 같은 검색 쿼리에서 나온 중복/저품질 후보일 수 있습니다. 검색 품질은 query diversity, evidence coverage, duplicate rate, target pool coverage로 평가해야 합니다.</p>
+<div class="callout rule"><strong>강화 규칙</strong><br>개선 규칙: discovery run은 최소 3개 이상의 query family와 2개 이상의 channel family를 사용해야 하며, 단일 채널 실패를 후보 없음으로 결론내릴 수 없습니다.</div>
+<h3>2.4 개인정보 수집 정책의 enforcement point가 약함</h3>
+<p>‘수집하지 마세요’는 구현자에게는 정책 문구일 뿐입니다. 실제로는 raw_result 저장 전, evidence extraction 후, final output 전 세 지점에서 privacy scanner가 동작해야 합니다.</p>
+<div class="callout rule"><strong>강화 규칙</strong><br>개선 규칙: privacy scan은 ingest-time, evidence-time, output-time 세 단계에서 실행합니다. 위반 발견 시 원문 raw artifact는 redacted_raw로 저장하고 원본은 기본 저장하지 않습니다.</div>
+<h3>2.5 점수 상한 규칙이 부족함</h3>
+<p>Evidence Quality가 낮아도 다른 항목 점수를 높게 주면 85점 이상 후보가 될 수 있습니다. 이 경우 사람이 신뢰하기 어려운 후보가 우선 컨택 대상으로 올라갑니다.</p>
+<div class="callout rule"><strong>강화 규칙</strong><br>개선 규칙: Evidence Quality가 4점 이하이면 총점 상한 74점, 6점 이하이면 총점 상한 84점입니다. 필수 4요소 중 하나라도 누락되면 recommended_action은 priority_contact가 될 수 없습니다.</div>
+<h2>3. 재작성된 구현 프롬프트</h2>
+<pre><code>당신은 Valuehire AI Search를 정식 제품 수준으로 재구현하는 Staff-level AI Systems Engineer입니다.
+
+목표는 ClickUp 포지션 1건을 입력받아, 공개 근거 기반 후보자를 탐색하고, 포지션별 검색 전략을 생성하며, 후보를 점수화하고, 사람이 검토 가능한 report와 기계 처리 가능한 JSON artifact를 생성하는 AI Search 시스템을 구현하는 것입니다.
+
+하지만 이 작업의 핵심은 LLM prompt workflow가 아닙니다. 핵심은 Harness Engineering입니다. 즉, 각 단계가 schema, validator, fixture, replay test, privacy scan, observability artifact로 검증되어야 합니다.
+
+최우선 목표는 후보를 많이 찾는 것이 아니라, 검증 불가능한 후보와 검증 불가능한 주장을 시스템 밖으로 내보내지 않는 것입니다.
+
+절대 원칙:
+1. 기존 Valuehire_v4 코드, npm script, DB adapter, Kanban route, Chrome/CDP 자동화 구현체에 의존하지 마세요.
+2. ClickUp task가 포지션 원천 정보입니다.
+3. ClickUp 조회는 브라우저가 아니라 ClickUp API로 수행하세요.
+4. 후보자는 공개 URL로 확인 가능한 사람만 기록하세요.
+5. 공개 URL이 있더라도 그 URL에서 확인되지 않은 claim은 기록하지 마세요.
+6. placeholder/demo/fake 후보를 만들지 마세요.
+7. 후보자에게 이메일, 메시지, InMail, DM을 자동 발송하지 마세요.
+8. 나이, 성별, 학교 서열 등 차별 가능성이 있는 조건은 직접 필터로 사용하지 말고, 경력·역량·성과 조건으로 변환하세요.
+9. 확인되지 않은 정보는 추정하지 말고 risk_or_gap에 기록하세요.
+10. ClickUp token, API key, cookie, password, service key는 절대 출력하거나 로그에 남기지 마세요.
+11. 구현 완료의 기준은 코드 작성이 아니라 validation, privacy scan, replay test, sample run artifact가 통과하는 것입니다.
+12. 검색 채널 실패는 후보 없음이 아닙니다. 실패 사유를 구조화하세요.
+13. downstream system이 이 결과를 outreach-ready로 오해하지 않도록, 기본 output에는 outreach_sent=false와 outreach_allowed=false를 명시하세요.</code></pre>
+<h2>4. 강화된 Harness 요구사항</h2>
+<h3>4.1 Input Harness — ClickUp Intake</h3>
+<ul><li>ClickUp task URL 또는 task id를 입력받습니다.</li><li>ClickUp API만 사용합니다. 브라우저 로그인은 금지합니다.</li><li>token은 CLICKUP_API_TOKEN 또는 CLICKUP_TOKEN에서 읽되, 로그/에러/출력에 절대 노출하지 않습니다.</li><li>task name, status, list/folder, description/JD, custom fields를 수집합니다.</li><li>회사명/직무명 추출 결과에는 confidence를 붙입니다.</li><li>JD 원문과 정규화 결과를 분리 저장합니다.</li><li>민감조건 후보 문구를 intake 단계에서 감지해 strategy 단계로 전달합니다.</li></ul>
+<pre><code>필수 테스트:
+- 정상 task URL
+- task id만 입력
+- 잘못된 task id
+- token 없음
+- API 401/403/404/429/5xx
+- description 없음
+- 한국어/영어 혼합 JD
+- 회사명/직무명이 task name에 없는 경우
+- custom field 이름이 변경된 경우
+- ClickUp 응답에 예상 외 필드가 추가된 경우</code></pre>
+<h3>4.2 Strategy Harness — Search Strategy Contract</h3>
+<ul><li>strategy는 사람에게 읽히는 설명과 validator가 읽는 JSON을 동시에 생성해야 합니다.</li><li>민감조건은 forbidden_filter로 기록하고, capability_based_rewrite로 변환해야 합니다.</li><li>query는 query_family, channel, intent, expected_evidence_type을 포함해야 합니다.</li><li>검색 쿼리는 최소 10개가 아니라, 최소 3개 query family와 2개 channel family를 만족해야 합니다.</li><li>target pool이 없는 경우 adjacent pool 추론 근거를 명시해야 합니다.</li></ul>
+<pre><code>query object 예시:
+{
+  &quot;query_id&quot;: &quot;q_001&quot;,
+  &quot;query_family&quot;: &quot;linkedin_xray_target_company&quot;,
+  &quot;channel_family&quot;: &quot;search_engine_xray&quot;,
+  &quot;query&quot;: &quot;site:linkedin.com/in (&quot;AI Engineer&quot; OR &quot;Machine Learning Engineer&quot;) (&quot;PyTorch&quot; OR &quot;MLOps&quot;) Korea&quot;,
+  &quot;intent&quot;: &quot;Find public LinkedIn profile URLs for AI/ML engineers in Korea&quot;,
+  &quot;expected_evidence_type&quot;: [&quot;identity&quot;, &quot;current_role&quot;, &quot;career&quot;],
+  &quot;risk&quot;: &quot;LinkedIn body may not be accessible; treat as url_only unless opened&quot;
+}</code></pre>
+<h3>4.3 Discovery Harness — 채널 실패를 정직하게 기록</h3>
+<ul><li>raw search result와 normalized lead를 분리 저장합니다.</li><li>실시간 검색 adapter와 replay fixture adapter를 분리합니다.</li><li>검색엔진 차단, captcha, 429, parser error를 no_results와 구분합니다.</li><li>같은 후보가 LinkedIn/GitHub/portfolio에 흩어져 있을 때 identity resolution을 별도 단계로 처리합니다.</li><li>동명이인 가능성이 있으면 merge하지 말고 separate candidates로 유지합니다.</li></ul>
+<div class="callout rule"><strong>강화 규칙</strong><br>Discovery 단계 산출물은 ‘후보 확정’이 아니라 lead입니다. match_score와 recommended_action은 Scoring 단계 이전에 생성할 수 없습니다.</div>
+<h3>4.4 Identity Resolution Harness — 같은 사람인지 검증</h3>
+<p>기존 문서에서 가장 부족한 부분입니다. 후보의 LinkedIn, GitHub, Scholar, portfolio가 같은 사람인지 확인하는 계약이 필요합니다.</p>
+<ul><li>이름만 같으면 동일인으로 merge하지 않습니다.</li><li>동일인 판단에는 최소 2개 이상의 corroborating signal이 필요합니다.</li><li>허용 signal: 같은 개인 도메인 링크, GitHub bio의 LinkedIn 링크, portfolio의 GitHub 링크, 동일 회사/직무/프로젝트 교차 언급, 공식 발표자 프로필 링크.</li><li>약한 signal: 이름, 지역, 기술 키워드만 일치.</li><li>약한 signal만 있으면 identity_confidence=low로 두고 merge하지 않습니다.</li></ul>
+<pre><code>identity_resolution schema:
+{
+  &quot;candidate_cluster_id&quot;: &quot;string&quot;,
+  &quot;profiles&quot;: [&quot;url&quot;],
+  &quot;merge_decision&quot;: &quot;merged|kept_separate|needs_review&quot;,
+  &quot;identity_confidence&quot;: &quot;high|medium|low&quot;,
+  &quot;corroborating_signals&quot;: [&quot;string&quot;],
+  &quot;conflicting_signals&quot;: [&quot;string&quot;],
+  &quot;review_required&quot;: true
+}</code></pre>
+<h3>4.5 Evidence Harness — claim 단위 검증</h3>
+<ul><li>candidate summary의 모든 문장은 evidence item에 연결되어야 합니다.</li><li>검색 snippet은 low confidence evidence입니다.</li><li>LinkedIn URL만 있고 본문을 열람하지 못한 경우 career/education/technical claim에 사용하지 않습니다.</li><li>GitHub repo 존재만으로 ML production 경험을 주장하지 않습니다.</li><li>논문 공저자라고 해서 실무 production 경험을 주장하지 않습니다.</li><li>회사명만으로 도메인 fit을 과장하지 않습니다.</li></ul>
+<pre><code>unsupported_claim_policy:
+- source_urls에 없는 claim: reject
+- snippet-only claim: max confidence low
+- inaccessible LinkedIn body: profile_url evidence only
+- inferred seniority without dates/title: risk_or_gap에 기록
+- inferred education without source: education_summary=null</code></pre>
+<h3>4.6 Scoring Harness — 점수 상한과 action guardrail</h3>
+<ul><li>Evidence Quality 0~4: total score cap 74, recommended_action cannot be priority_contact.</li><li>Evidence Quality 5~6: total score cap 84.</li><li>필수 4요소 누락: recommended_action은 verify_more 또는 reject.</li><li>source_urls 1개 미만: reject.</li><li>identity_confidence=low: priority_contact 금지.</li><li>privacy_warnings 중 critical이 있으면 output 후보에서 제거.</li><li>Freelancer/Freelance 현재 상태: 전체 추천 우선순위 최하위, risk_or_gap 필수.</li></ul>
+<pre><code>recommended_action rules:
+- priority_contact: score &gt;= 85 AND evidence_quality &gt;= 7 AND identity_confidence in [high, medium] AND no critical privacy warning
+- verify_more: score &gt;= 75 OR evidence gaps exist
+- hold: score 65~74 with some fit but insufficient evidence
+- reject: score &lt; 65 OR no public source URL OR critical validation failure</code></pre>
+<h3>4.7 Privacy &amp; Safety Harness — 세 단계 스캔</h3>
+<ul><li>Ingest-time scan: raw result 저장 전에 금지 정보 탐지 및 redaction.</li><li>Evidence-time scan: contact/evidence 추출 직후 금지 연락처 및 민감정보 제거.</li><li>Output-time scan: report/JSON 생성 직전 최종 검사.</li><li>recruiting_contact가 있으면 contact_source_url이 필수입니다.</li><li>contact_source_url 없이 발견된 이메일/전화번호는 출력하지 않습니다.</li><li>commit metadata, breach dump, data broker, private community 정보는 수집하지 않습니다.</li></ul>
+<h3>4.8 Evaluation Harness — 통과 기준을 수치화</h3>
+<ul><li>최소 5개 fixture가 아니라, happy path 3개 + failure path 5개 + privacy red-team 5개를 요구합니다.</li><li>schema pass rate는 100%여야 합니다.</li><li>privacy violation output rate는 0이어야 합니다.</li><li>unsupported claim rate는 0이어야 합니다.</li><li>replay test는 네트워크 없이 통과해야 합니다.</li><li>live search test는 실패해도 failure classification이 정확하면 통과할 수 있습니다.</li><li>golden fixture 변경 시 diff report를 생성해야 합니다.</li></ul>
+<h3>4.9 Observability Harness — 감사 가능한 run artifact</h3>
+<ul><li>모든 run에 run_id와 timestamp를 부여합니다.</li><li>입력, 전략, 쿼리, raw result, redacted raw, leads, identity resolution, evidence, score, privacy scan, final report를 분리 저장합니다.</li><li>secret은 로그에 남기지 않습니다.</li><li>실패 원인을 구조화합니다.</li><li>데이터 보존 기간과 삭제 전략을 명시합니다.</li><li>후보자 개인정보가 포함될 수 있는 artifact는 local/private storage에만 저장하고 외부 전송하지 않습니다.</li></ul>
+<h2>5. 강화된 Architecture 제안</h2>
+<pre><code>src/
+  clickup/
+    client.ts
+    intake.ts
+    parse-task-url.ts
+    redact-secret.ts
+  schemas/
+    position.schema.ts
+    strategy.schema.ts
+    query.schema.ts
+    lead.schema.ts
+    identity.schema.ts
+    evidence.schema.ts
+    candidate.schema.ts
+    validation-result.schema.ts
+  strategy/
+    normalize-requirements.ts
+    sensitive-condition-rewrite.ts
+    build-keyword-matrix.ts
+    generate-query-families.ts
+    build-rubric.ts
+    build-handoff-prompt.ts
+  discovery/
+    adapters/
+      replay-fixture.ts
+      chatgpt-search-handoff.ts
+      bing.ts
+      brave.ts
+      github.ts
+      scholar.ts
+      notion.ts
+      portfolio.ts
+    raw-result-store.ts
+    lead-normalizer.ts
+    dedupe.ts
+  identity/
+    resolve-identity.ts
+    merge-policy.ts
+    conflict-detector.ts
+  evidence/
+    fetch-url.ts
+    extract-evidence.ts
+    map-claim-to-source.ts
+    verify-claims.ts
+    contact-policy.ts
+  scoring/
+    score-candidate.ts
+    score-caps.ts
+    action-guardrails.ts
+  privacy/
+    privacy-scan.ts
+    contact-scan.ts
+    redact.ts
+    policy.ts
+  output/
+    markdown-report.ts
+    json-output.ts
+    outreach-safety-flags.ts
+  evaluation/
+    fixtures/
+      happy-path/
+      failure-path/
+      privacy-red-team/
+    replay-runner.ts
+    golden-runner.ts
+    metrics.ts
+    diff-report.ts
+  observability/
+    run-artifacts.ts
+    logger.ts
+    retention-policy.ts
+  validation/
+    validate.ts
+    unsupported-claim-check.ts
+    schema-check.ts</code></pre>
+<h2>6. 강화된 Definition of Done</h2>
+<ol><li>ClickUp task URL 또는 task id intake가 동작합니다.</li><li>token 없음, API 실패, rate limit, 잘못된 task id가 안전하게 실패합니다.</li><li>모든 output schema validation이 100% 통과합니다.</li><li>strategy는 최소 3개 query family와 2개 channel family를 생성합니다.</li><li>live discovery 실패는 구조화된 failure reason으로 기록됩니다.</li><li>replay fixture 기반 E2E 테스트가 네트워크 없이 통과합니다.</li><li>identity resolution이 동명이인 merge를 방지합니다.</li><li>candidate summary의 모든 claim이 evidence item에 연결됩니다.</li><li>unsupported claim rate가 0입니다.</li><li>privacy violation output rate가 0입니다.</li><li>Evidence Quality 기반 score cap이 적용됩니다.</li><li>필수 4요소 누락 후보는 priority_contact가 될 수 없습니다.</li><li>critical privacy warning 후보는 final output에서 제외됩니다.</li><li>markdown report와 JSON artifact가 모두 생성됩니다.</li><li>outreach_sent=false, outreach_allowed=false가 final output에 명시됩니다.</li><li>DB write, Kanban update, outreach는 기본 구현에서 발생하지 않습니다.</li><li>sample run artifact 디렉토리가 생성됩니다.</li><li>실제 테스트 명령과 결과가 보고됩니다. 실행하지 않은 테스트 결과를 만들지 않습니다.</li></ol>
+<h2>7. 구현팀에 넘길 최종 짧은 프롬프트</h2>
+<pre><code>Valuehire AI Search를 fresh implementation으로 구현하세요.
+기존 Valuehire_v4 코드와 자동화에 의존하지 말고, ClickUp API intake → strategy → discovery → identity resolution → evidence verification → scoring → markdown/JSON handoff까지 구현하세요.
+
+핵심은 Harness Engineering입니다. 입력, 전략, 검색, 신원해결, 근거, 점수화, 개인정보, 출력, 평가, 관측 가능성 하네스를 각각 schema/test/artifact 중심으로 설계하세요.
+
+가짜 후보 생성 금지, 공개 URL 없는 후보 기록 금지, 출처 없는 claim 금지, outreach 자동 발송 금지, 민감정보/비공개정보 수집 금지, token/secret 로그 출력 금지입니다.
+
+완료 기준은 코드 작성이 아니라 schema validation 100%, privacy violation output 0, unsupported claim 0, replay regression 통과, sample run artifact 생성입니다.</code></pre>
+<h2>8. 최종 체크리스트</h2>
+<ul class="checklist"><li><input type="checkbox" disabled> ClickUp API 기반 intake</li><li><input type="checkbox" disabled> Secret redaction</li><li><input type="checkbox" disabled> Position schema</li><li><input type="checkbox" disabled> Strategy schema</li><li><input type="checkbox" disabled> Query object schema</li><li><input type="checkbox" disabled> Lead schema</li><li><input type="checkbox" disabled> Identity resolution schema</li><li><input type="checkbox" disabled> Evidence schema</li><li><input type="checkbox" disabled> Candidate schema</li><li><input type="checkbox" disabled> Unsupported claim checker</li><li><input type="checkbox" disabled> Privacy policy scanner</li><li><input type="checkbox" disabled> Contact collection policy</li><li><input type="checkbox" disabled> Search channel adapters</li><li><input type="checkbox" disabled> Replay fixture adapter</li><li><input type="checkbox" disabled> Raw result artifact 저장</li><li><input type="checkbox" disabled> Redacted raw artifact 저장</li><li><input type="checkbox" disabled> Dedupe logic</li><li><input type="checkbox" disabled> Identity merge policy</li><li><input type="checkbox" disabled> Scoring rubric</li><li><input type="checkbox" disabled> Score caps</li><li><input type="checkbox" disabled> Action guardrails</li><li><input type="checkbox" disabled> Markdown report</li><li><input type="checkbox" disabled> JSON output</li><li><input type="checkbox" disabled> Outreach safety flags</li><li><input type="checkbox" disabled> Happy path fixtures</li><li><input type="checkbox" disabled> Failure path fixtures</li><li><input type="checkbox" disabled> Privacy red-team fixtures</li><li><input type="checkbox" disabled> Regression test</li><li><input type="checkbox" disabled> Observability artifacts</li><li><input type="checkbox" disabled> Retention/delete policy</li><li><input type="checkbox" disabled> No DB write by default</li><li><input type="checkbox" disabled> No Kanban update by default</li><li><input type="checkbox" disabled> No outreach by default</li></ul>
+    </section>
+  </main>
+</body>
+</html>
