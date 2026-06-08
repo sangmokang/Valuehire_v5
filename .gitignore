@@ -2,5 +2,12 @@
 .env.*
 !.env.example
 .omc/
+.omx/
 tmp/
 .DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+artifacts/multi_position_sourcing/*.json
+artifacts/multi_position_sourcing/*.csv
+artifacts/multi_position_sourcing/*.md
