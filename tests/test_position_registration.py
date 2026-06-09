@@ -1,0 +1,521 @@
+from __future__ import annotations
+
+import unittest
+
+from tools.multi_position_sourcing.posting_models import (
+    ExistingPositionTask,
+    ExtractedPosting,
+    FetchResult,
+    VisionAnalysis,
+)
+from tools.multi_position_sourcing.request_parser import (
+    parse_discord_position_registration_request,
+)
+from tools.multi_position_sourcing.position_registration import (
+    build_registration_body,
+    build_task_title,
+    run_position_registration,
+)
+
+
+# --- Fakes for injected callables (DI; never touch real network/ClickUp) ------
+
+
+def make_http_fetch(html: str, *, ok: bool = True, status_code: int = 200, reason: str = ""):
+    """Return a fake http_fetch returning a canned FetchResult; records calls."""
+
+    calls: list[str] = []
+
+    def http_fetch(url: str) -> FetchResult:
+        calls.append(url)
+        return FetchResult(
+            url=url,
+            ok=ok,
+            status_code=status_code,
+            html=html,
+            fetch_method="httpx",
+            reason=reason,
+        )
+
+    http_fetch.calls = calls  # type: ignore[attr-defined]
+    return http_fetch
+
+
+def make_render_fetch(html: str, *, ok: bool = True):
+    calls: list[str] = []
+
+    def render_fetch(url: str) -> FetchResult:
+        calls.append(url)
+        return FetchResult(
+            url=url,
+            ok=ok,
+            status_code=200 if ok else 0,
+            html=html,
+            fetch_method="playwright",
+            reason="" if ok else "render failed",
+        )
+
+    render_fetch.calls = calls  # type: ignore[attr-defined]
+    return render_fetch
+
+
+def make_image_downloader(paths: tuple[str, ...]):
+    calls: list[tuple[tuple[str, ...], str]] = []
+
+    def image_downloader(urls: tuple[str, ...], artifacts_dir: str) -> tuple[str, ...]:
+        calls.append((tuple(urls), artifacts_dir))
+        return paths
+
+    image_downloader.calls = calls  # type: ignore[attr-defined]
+    return image_downloader
+
+
+def make_vision(analysis: VisionAnalysis):
+    calls: list[tuple[str, ...]] = []
+
+    def analyzer(image_paths: tuple[str, ...]) -> VisionAnalysis:
+        calls.append(tuple(image_paths))
+        return analysis
+
+    analyzer.calls = calls  # type: ignore[attr-defined]
+    return analyzer
+
+
+def make_clickup_search(existing: list[ExistingPositionTask]):
+    calls: list = []
+
+    def clickup_search(recognition) -> list[ExistingPositionTask]:
+        calls.append(recognition)
+        return existing
+
+    clickup_search.calls = calls  # type: ignore[attr-defined]
+    return clickup_search
+
+
+def make_clickup_create_task(task_id: str = "TASK123", task_url: str = "https://app.clickup.com/t/TASK123"):
+    calls: list[tuple[str, str]] = []
+
+    def clickup_create_task(title: str, body: str) -> tuple[str, str]:
+        calls.append((title, body))
+        return task_id, task_url
+
+    clickup_create_task.calls = calls  # type: ignore[attr-defined]
+    return clickup_create_task
+
+
+def make_clickup_create_comment(comment_id: str = "CMT456"):
+    calls: list[tuple[str, str]] = []
+
+    def clickup_create_comment(task_id: str, body: str) -> str:
+        calls.append((task_id, body))
+        return comment_id
+
+    clickup_create_comment.calls = calls  # type: ignore[attr-defined]
+    return clickup_create_comment
+
+
+# --- Rich Wanted HTML fixture (text path: company + role + JD signals) --------
+
+RICH_WANTED_HTML = """
+<html><head>
+<meta property="og:site_name" content="Acme">
+<meta property="og:title" content="Backend Engineer">
+<title>Backend Engineer | Acme</title>
+</head><body>
+<h2>주요업무</h2><p>백엔드 API 설계 및 구현, 데이터 파이프라인 운영을 담당합니다.</p>
+<h2>담당업무</h2><p>대규모 분산 시스템 운영 및 채용 포지션 관련 업무를 수행합니다.</p>
+<h2>자격요건</h2><p>Python 3년 이상 경력, 분산 시스템 경험이 필요합니다.</p>
+<h2>우대사항</h2><p>Kubernetes 경험 우대.</p>
+<h2>회사소개</h2><p>Acme는 핀테크 스타트업입니다. responsibilities requirements qualifications.</p>
+</body></html>
+"""
+
+# Image-heavy, thin-text HTML: not enough text signals so extractor falls to images.
+IMAGE_HEAVY_HTML = """
+<html><head>
+<meta property="og:site_name" content="ImageCorp">
+<meta property="og:title" content="Poster Role">
+<meta property="og:image" content="https://cdn.example.com/jd-poster.png">
+</head><body>
+<img src="https://cdn.example.com/jd-1.png">
+<img src="/assets/jd-2.png">
+<p>채용</p>
+</body></html>
+"""
+
+
+class BuildHelpersTests(unittest.TestCase):
+    def test_build_task_title_company_role(self) -> None:
+        from tools.multi_position_sourcing.posting_models import PostingRecognition
+
+        rec = PostingRecognition(
+            is_job_posting=True,
+            source_url="https://www.wanted.co.kr/wd/363433",
+            recognition_mode="text",
+            company="Acme",
+            role="Backend Engineer",
+        )
+        self.assertEqual(build_task_title(rec), "Acme - Backend Engineer")
+
+    def test_build_body_has_url_and_evidence_no_secrets(self) -> None:
+        from tools.multi_position_sourcing.posting_models import PostingRecognition
+
+        rec = PostingRecognition(
+            is_job_posting=True,
+            source_url="https://www.wanted.co.kr/wd/363433",
+            recognition_mode="vision",
+            company="Acme",
+            role="Backend Engineer",
+            jd_text="백엔드 엔지니어 채용 요약",
+            image_evidence_paths=("artifacts/position_registration/img_0.png",),
+        )
+        body = build_registration_body(rec)
+        self.assertIn("https://www.wanted.co.kr/wd/363433", body)
+        self.assertIn("Acme", body)
+        self.assertIn("Backend Engineer", body)
+        self.assertIn("artifacts/position_registration/img_0.png", body)
+        # never any secret-looking tokens
+        self.assertNotIn("token", body.lower())
+
+
+class DoD1NewDryRunTests(unittest.TestCase):
+    def test_new_position_dry_run_created_no_task_call(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        self.assertTrue(parsed.should_route_to_registration)
+
+        http_fetch = make_http_fetch(RICH_WANTED_HTML)
+        clickup_search = make_clickup_search([])
+        clickup_create_task = make_clickup_create_task()
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            dry_run=True,
+        )
+
+        self.assertEqual(outcome.status, "created")
+        self.assertTrue(outcome.is_new_task)
+        self.assertTrue(outcome.dry_run)
+        # planned only: create_task must NOT be called in dry-run
+        self.assertEqual(clickup_create_task.calls, [])  # type: ignore[attr-defined]
+        self.assertFalse(outcome.external_posting_sent)
+        self.assertFalse(outcome.secret_emitted)
+
+
+class DoD2ImageVisionTests(unittest.TestCase):
+    def test_image_path_uses_vision_and_body_has_company_role(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        # thin-text but image-heavy for both fetchers
+        http_fetch = make_http_fetch(IMAGE_HEAVY_HTML)
+        render_fetch = make_render_fetch(IMAGE_HEAVY_HTML)
+        image_downloader = make_image_downloader(
+            ("artifacts/position_registration/img_0.png",)
+        )
+        vision = make_vision(
+            VisionAnalysis(
+                is_job_posting=True,
+                company="VisionCo",
+                role="Data Engineer",
+                summary="데이터 엔지니어 채용 공고",
+                key_requirements=("Python", "SQL"),
+                confidence=0.92,
+            )
+        )
+        clickup_search = make_clickup_search([])
+        clickup_create_task = make_clickup_create_task()
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            render_fetch=render_fetch,
+            image_downloader=image_downloader,
+            vision_analyzer=vision,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            dry_run=True,
+        )
+
+        self.assertEqual(outcome.recognition_mode, "vision")
+        self.assertIn(outcome.status, ("created", "linked"))
+        # vision analyzer was invoked with the downloaded evidence
+        self.assertEqual(len(vision.calls), 1)  # type: ignore[attr-defined]
+        self.assertFalse(outcome.external_posting_sent)
+        self.assertFalse(outcome.secret_emitted)
+
+        # The body that would have been registered must carry vision company/role.
+        from tools.multi_position_sourcing.posting_models import PostingRecognition
+
+        # Build the recognition the same way to assert body content.
+        # (handler carries recognition into outcome via mode/confidence; body
+        # content is validated by re-running build with the recognition derived.)
+        # Run again with dry_run False to capture the actual body sent.
+        http_fetch2 = make_http_fetch(IMAGE_HEAVY_HTML)
+        render_fetch2 = make_render_fetch(IMAGE_HEAVY_HTML)
+        image_downloader2 = make_image_downloader(
+            ("artifacts/position_registration/img_0.png",)
+        )
+        vision2 = make_vision(
+            VisionAnalysis(
+                is_job_posting=True,
+                company="VisionCo",
+                role="Data Engineer",
+                summary="데이터 엔지니어 채용 공고",
+                confidence=0.92,
+            )
+        )
+        create_task2 = make_clickup_create_task()
+        run_position_registration(
+            parsed,
+            http_fetch=http_fetch2,
+            render_fetch=render_fetch2,
+            image_downloader=image_downloader2,
+            vision_analyzer=vision2,
+            clickup_search=make_clickup_search([]),
+            clickup_create_task=create_task2,
+            dry_run=False,
+        )
+        self.assertEqual(len(create_task2.calls), 1)  # type: ignore[attr-defined]
+        title, body = create_task2.calls[0]  # type: ignore[attr-defined]
+        self.assertIn("VisionCo", title)
+        self.assertIn("Data Engineer", title)
+        self.assertIn("VisionCo", body)
+        self.assertIn("Data Engineer", body)
+
+
+class DoD3DuplicateTests(unittest.TestCase):
+    def test_duplicate_dry_run_linked_no_calls(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        http_fetch = make_http_fetch(RICH_WANTED_HTML)
+        existing = [
+            ExistingPositionTask(
+                task_id="EXIST1",
+                task_url="https://app.clickup.com/t/EXIST1",
+                company="Acme",
+                role="Backend Engineer",
+                source_url="https://www.wanted.co.kr/wd/363433",
+            )
+        ]
+        clickup_search = make_clickup_search(existing)
+        clickup_create_task = make_clickup_create_task()
+        clickup_create_comment = make_clickup_create_comment()
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            clickup_create_comment=clickup_create_comment,
+            dry_run=True,
+        )
+
+        self.assertEqual(outcome.status, "linked")
+        self.assertFalse(outcome.is_new_task)
+        self.assertEqual(outcome.task_id, "EXIST1")
+        # planned only in dry-run: no comment created
+        self.assertEqual(clickup_create_comment.calls, [])  # type: ignore[attr-defined]
+        self.assertEqual(clickup_create_task.calls, [])  # type: ignore[attr-defined]
+
+    def test_duplicate_live_creates_comment_not_task(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        http_fetch = make_http_fetch(RICH_WANTED_HTML)
+        existing = [
+            ExistingPositionTask(
+                task_id="EXIST1",
+                task_url="https://app.clickup.com/t/EXIST1",
+                source_url="https://www.wanted.co.kr/wd/363433",
+            )
+        ]
+        clickup_search = make_clickup_search(existing)
+        clickup_create_task = make_clickup_create_task()
+        clickup_create_comment = make_clickup_create_comment("CMT789")
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            clickup_create_comment=clickup_create_comment,
+            dry_run=False,
+        )
+
+        self.assertEqual(outcome.status, "linked")
+        self.assertFalse(outcome.is_new_task)
+        self.assertEqual(outcome.comment_id, "CMT789")
+        self.assertEqual(len(clickup_create_comment.calls), 1)  # type: ignore[attr-defined]
+        self.assertEqual(clickup_create_task.calls, [])  # type: ignore[attr-defined]
+
+
+class DoD4FailClosedTests(unittest.TestCase):
+    def test_extractor_blocked_is_skipped_no_clickup_calls(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        http_fetch = make_http_fetch("", ok=False, status_code=403, reason="403 blocked")
+        clickup_search = make_clickup_search([])
+        clickup_create_task = make_clickup_create_task()
+        clickup_create_comment = make_clickup_create_comment()
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            clickup_create_comment=clickup_create_comment,
+            dry_run=False,
+        )
+
+        self.assertEqual(outcome.status, "skipped")
+        self.assertNotEqual(outcome.reason, "")
+        self.assertEqual(clickup_create_task.calls, [])  # type: ignore[attr-defined]
+        self.assertEqual(clickup_create_comment.calls, [])  # type: ignore[attr-defined]
+        self.assertEqual(clickup_search.calls, [])  # type: ignore[attr-defined]
+        self.assertFalse(outcome.external_posting_sent)
+        self.assertFalse(outcome.secret_emitted)
+
+    def test_recognizer_low_confidence_is_skipped(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        # ok html but thin text, no images/vision -> recognizer returns none/low
+        thin_html = (
+            '<html><head><meta property="og:site_name" content="Acme">'
+            "<title>hi</title></head><body><p>안녕하세요</p></body></html>"
+        )
+        http_fetch = make_http_fetch(thin_html)
+        clickup_search = make_clickup_search([])
+        clickup_create_task = make_clickup_create_task()
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            dry_run=True,
+        )
+
+        self.assertEqual(outcome.status, "skipped")
+        self.assertNotEqual(outcome.reason, "")
+        self.assertEqual(clickup_create_task.calls, [])  # type: ignore[attr-defined]
+
+    def test_not_routed_request_is_skipped(self) -> None:
+        # An AI Search request must not route to registration.
+        parsed = parse_discord_position_registration_request("후보자 찾아줘")
+        self.assertFalse(parsed.should_route_to_registration)
+
+        http_fetch = make_http_fetch(RICH_WANTED_HTML)
+        clickup_search = make_clickup_search([])
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            clickup_search=clickup_search,
+            dry_run=True,
+        )
+        self.assertEqual(outcome.status, "skipped")
+        self.assertEqual(http_fetch.calls, [])  # type: ignore[attr-defined]
+        self.assertEqual(clickup_search.calls, [])  # type: ignore[attr-defined]
+
+
+class WiringLiveCreateTests(unittest.TestCase):
+    def test_live_new_creates_task_returns_id_url(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        http_fetch = make_http_fetch(RICH_WANTED_HTML)
+        clickup_search = make_clickup_search([])
+        clickup_create_task = make_clickup_create_task(
+            "TASK123", "https://app.clickup.com/t/TASK123"
+        )
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=http_fetch,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            dry_run=False,
+        )
+
+        self.assertEqual(outcome.status, "created")
+        self.assertTrue(outcome.is_new_task)
+        self.assertEqual(outcome.task_id, "TASK123")
+        self.assertEqual(outcome.task_url, "https://app.clickup.com/t/TASK123")
+        self.assertEqual(len(clickup_create_task.calls), 1)  # type: ignore[attr-defined]
+        self.assertFalse(outcome.dry_run)
+
+
+class PastedJdTests(unittest.TestCase):
+    def test_pasted_jd_no_url_recognized_and_created(self) -> None:
+        jd = (
+            "포지션 등록\n"
+            "회사소개\nAcme는 핀테크 스타트업입니다.\n"
+            "주요업무\n- 백엔드 API 설계 및 구현\n- 데이터 파이프라인 운영\n"
+            "담당업무\n- 대규모 분산 시스템 운영\n"
+            "자격요건\n- Python 3년 이상\n- 분산 시스템 경험\n"
+            "우대사항\n- Kubernetes 경험\n"
+            "responsibilities requirements qualifications 채용 포지션"
+        )
+        parsed = parse_discord_position_registration_request(jd)
+        self.assertEqual(parsed.input_kind, "pasted_jd")
+
+        # No fetchers needed for pasted JD; pass a fetch that would fail if called.
+        def exploding_fetch(url: str) -> FetchResult:  # pragma: no cover - must not run
+            raise AssertionError("http_fetch must not be called for pasted JD")
+
+        clickup_search = make_clickup_search([])
+        clickup_create_task = make_clickup_create_task()
+
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=exploding_fetch,
+            clickup_search=clickup_search,
+            clickup_create_task=clickup_create_task,
+            dry_run=True,
+        )
+
+        self.assertEqual(outcome.status, "created")
+        self.assertTrue(outcome.is_new_task)
+        self.assertFalse(outcome.external_posting_sent)
+
+
+class SafetyTests(unittest.TestCase):
+    def test_every_outcome_no_external_no_secret(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=make_http_fetch(RICH_WANTED_HTML),
+            clickup_search=make_clickup_search([]),
+            clickup_create_task=make_clickup_create_task(),
+            dry_run=True,
+        )
+        self.assertFalse(outcome.external_posting_sent)
+        self.assertFalse(outcome.secret_emitted)
+
+    def test_module_has_no_external_send_surface(self) -> None:
+        import tools.multi_position_sourcing.position_registration as mod
+
+        source_names = set(dir(mod))
+        forbidden = {
+            "send_email",
+            "post_to_saramin",
+            "post_to_jobkorea",
+            "post_to_linkedin",
+            "send_inmail",
+            "post_external",
+        }
+        self.assertEqual(source_names & forbidden, set())
+
+
+if __name__ == "__main__":
+    unittest.main()

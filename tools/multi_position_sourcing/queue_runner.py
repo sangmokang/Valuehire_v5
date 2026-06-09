@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from .models import QueueCycleSummary, QueueItem
+from .models import Channel, QueueCycleSummary, QueueItem
+from .portal_session import portal_session_pending_reason, portal_session_ready
 
 STOP_REASONS = {
     "captcha": "captcha/security challenge detected",
@@ -29,6 +31,7 @@ def run_queue_cycle(
     *,
     now_iso: str,
     chrome_connected: bool,
+    portal_sessions: Mapping[Channel, bool] | None = None,
     owner_activity_detected: bool = False,
     stop_signal: str = "",
     max_items_per_cycle: int = 2,
@@ -44,16 +47,23 @@ def run_queue_cycle(
         stopped.append(STOP_REASONS.get(stop_signal, stop_signal))
     if not chrome_connected:
         stopped.append("Chrome CDP not connected; pending queue preserved for resume")
+    global_stop = bool(stopped)
 
     processed = 0
     for item in queue:
         if item.status not in {"pending", "failed"}:
             updated.append(item)
             continue
-        if processed >= max_items_per_cycle or stopped:
+        if processed >= max_items_per_cycle or global_stop:
             updated.append(item)
             continue
         if _parse_due(item.next_run_at, now) > now:
+            updated.append(item)
+            continue
+        if not portal_session_ready(item.channel, portal_sessions):
+            reason = portal_session_pending_reason(item.channel)
+            if reason not in stopped:
+                stopped.append(reason)
             updated.append(item)
             continue
 

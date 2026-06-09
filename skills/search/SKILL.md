@@ -21,6 +21,7 @@ metadata:
 원칙:
 - ClickUp task가 포지션 원천 정보다.
 - ClickUp 조회는 브라우저가 아니라 ClickUp API로 한다.
+- Discord 메시지에 ClickUp/Wanted URL과 JD 본문이 함께 있으면 JD 본문을 우선 사용하고 URL은 참조로만 둔다.
 - 기존 Valuehire_v4 코드, package script, DB adapter, Kanban 구현체를 읽거나 실행하지 않는다.
 - 실후보만 다룬다. placeholder/demo/fake 후보를 만들지 않는다.
 - 후보자에게 메시지, 이메일, InMail을 자동 발송하지 않는다.
@@ -53,7 +54,8 @@ Don't use for:
 1. ClickUp task URL에서 task id를 추출한다.
 2. `GET https://api.clickup.com/api/v2/task/<task_id>`로 조회한다.
 3. 토큰은 `CLICKUP_API_TOKEN` 또는 `CLICKUP_TOKEN`에서 읽되 절대 출력하지 않는다.
-4. 다음 필드만 요약한다:
+4. 단, Discord 요청 본문에 충분한 JD 텍스트가 함께 있으면 ClickUp 조회 timeout을 기다리지 말고 그 본문으로 2단계 검색전략을 즉시 시작한다.
+5. 다음 필드만 요약한다:
    - task id, URL, name, status, list/folder
    - 회사명, 직무명
    - JD 본문
@@ -63,6 +65,7 @@ Don't use for:
 
 금지:
 - ClickUp 브라우저 로그인 시도
+- JD 본문이 이미 있는데 ClickUp 조회에 장시간 blocking
 - 기존 레포의 ClickUp sync 코드 조회
 - DB/Kanban 매칭 시도
 

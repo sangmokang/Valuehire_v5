@@ -151,15 +151,23 @@ def parse_discord_search_request(message: str) -> SearchRequestParseResult:
     search_intent = bool(SEARCH_WORD_RE.search(text))
     clickup = CLICKUP_TASK_RE.search(text)
     wanted = WANTED_RE.search(text)
+    pasted_jd = _looks_like_pasted_jd(text)
 
+    if pasted_jd and (clickup or wanted):
+        return SearchRequestParseResult(
+            True,
+            True,
+            "url_plus_pasted_jd",
+            text,
+            "Discord URL plus pasted JD input; use pasted JD immediately and treat URL as reference",
+        )
     if clickup:
         return SearchRequestParseResult(True, True, "clickup_url", clickup.group(0), "ClickUp URL position input")
     if wanted:
         return SearchRequestParseResult(True, True, "wanted_url", wanted.group(0), "Wanted URL position input")
 
     # Treat long pasted text as a JD even if it does not contain the search word.
-    jd_signals = ("담당업무", "자격요건", "우대사항", "주요업무", "채용", "포지션", "JD", "회사소개")
-    if len(text) >= 80 and any(signal in text for signal in jd_signals):
+    if pasted_jd:
         return SearchRequestParseResult(True, True, "pasted_jd", text, "pasted JD position input")
 
     # Short explicit position text is accepted only when the user clearly asks for search.

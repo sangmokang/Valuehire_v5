@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.valuehire.search-runner</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-dimsu</string>
+    <string>/Users/kangsangmo/Desktop/Valuehire_v5/scripts/valuehire-search-loop.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kangsangmo/Desktop/Valuehire_v5</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VALUEHIRE_REPO_DIR</key>
+    <string>/Users/kangsangmo/Desktop/Valuehire_v5</string>
+    <key>VALUEHIRE_SEARCH_INTERVAL_SECONDS</key>
+    <string>900</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/kangsangmo/Desktop/Valuehire_v5/logs/valuehire-search-runner.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/kangsangmo/Desktop/Valuehire_v5/logs/valuehire-search-runner.err.log</string>
+</dict>
+</plist>

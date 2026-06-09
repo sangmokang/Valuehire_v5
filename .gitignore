@@ -11,3 +11,10 @@ __pycache__/
 artifacts/multi_position_sourcing/*.json
 artifacts/multi_position_sourcing/*.csv
 artifacts/multi_position_sourcing/*.md
+
+# Transient run outputs and local-only dirs (never commit)
+artifacts/
+.venv-playwright/
+.venv*/
+.claude/
+logs/

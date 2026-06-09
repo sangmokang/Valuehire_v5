@@ -21,7 +21,10 @@ from .discord_routing import (
 from .fixtures import SAMPLE_POSITIONS, SAMPLE_PROFILE
 from .grouping import group_positions
 from .models import QueueItem, utc_now_iso
-from .portal_session import portal_session_flags, portal_session_statuses_from_storage_state
+from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
+from .portal_worker import DEFAULT_PROFILE_ROOT
+from .posting_models import ExistingPositionTask, FetchResult
+from .position_registration import run_position_registration
 from .queue_runner import run_queue_cycle
 from .request_parser import (
     parse_discord_position_registration_request,
@@ -30,13 +33,71 @@ from .request_parser import (
 from .scoring import top_matches_for_profile
 
 
+# Rich Wanted-style HTML fixture for the dry-run position-registration sample.
+# og:site_name -> company, og:title -> role, body carries >=3 distinct JD signals,
+# which yields a confident "text" recognition with no network access.
+_SAMPLE_REGISTRATION_HTML = """<!doctype html>
+<html lang="ko">
+<head>
+  <meta property="og:site_name" content="밸류커넥트">
+  <meta property="og:title" content="시니어 백엔드 엔지니어">
+</head>
+<body>
+  <h1>시니어 백엔드 엔지니어</h1>
+  <h2>주요업무</h2>
+  <p>백엔드 API 설계 및 개발을 담당합니다. 분산 시스템 운영 경험을 쌓습니다.</p>
+  <h2>자격요건</h2>
+  <p>서버 개발 5년 이상 경력, Python/Go 등 백엔드 언어 숙련.</p>
+  <h2>우대사항</h2>
+  <p>대규모 트래픽 처리 경험, 채용 포지션 관련 도메인 이해.</p>
+</body>
+</html>"""
+
+
+def _sample_position_registration_outcome() -> object:
+    """Run the position-registration execution layer over a sample Wanted URL.
+
+    Uses small inline fixture fakes (rich-HTML http_fetch, empty clickup_search)
+    in dry_run=True so there is NO real network or ClickUp side effect. Returns a
+    dry-run RegistrationOutcome demonstrating "dry-run 검증 포함".
+    """
+    parse_result = parse_discord_position_registration_request(
+        "포지션 등록 https://www.wanted.co.kr/wd/363433"
+    )
+
+    def _fixture_http_fetch(url: str) -> FetchResult:
+        return FetchResult(
+            url=url,
+            ok=True,
+            status_code=200,
+            html=_SAMPLE_REGISTRATION_HTML,
+            fetch_method="httpx",
+        )
+
+    def _fixture_clickup_search(_recognition) -> tuple[ExistingPositionTask, ...]:
+        return ()
+
+    return run_position_registration(
+        parse_result,
+        http_fetch=_fixture_http_fetch,
+        clickup_search=_fixture_clickup_search,
+        dry_run=True,
+    )
+
+
 def build_dry_run_payload() -> dict[str, object]:
     groups = group_positions(SAMPLE_POSITIONS)
     backend_group = next(group for group in groups if group.role_family == "backend")
     po_group = next(group for group in groups if group.role_family == "product_po")
     matches = top_matches_for_profile(SAMPLE_PROFILE, SAMPLE_POSITIONS, top_n=5)
-    portal_session_statuses = portal_session_statuses_from_storage_state(
-        "artifacts/portal_search_storage_state.json"
+    portal_session_statuses = tuple(
+        PortalSessionStatus(
+            channel=channel,
+            ready=False,
+            reason="persistent profile live check required; dry-run does not read plaintext storage state",
+            source=str(DEFAULT_PROFILE_ROOT),
+        )
+        for channel in PORTAL_SESSION_REQUIRED_CHANNELS
     )
     queue = tuple(
         QueueItem(
@@ -91,6 +152,9 @@ def build_dry_run_payload() -> dict[str, object]:
             "834330913469890570",
             is_dm=True,
             access_doc_path="docs/search-access.md",
+        ),
+        "sample_position_registration_execution": asdict(
+            _sample_position_registration_outcome()
         ),
         "sample_discord_position_registration_routing": {
             "registration": asdict(

@@ -4,6 +4,12 @@ Date: 2026-06-08 KST
 Mode: dry-run/read-only by default  
 Owner write gates: `OWNER_SIGNOFF`, `RPS_EXPORT_ALLOW_WRITE`, Supabase/ClickUp write gates required before live writes
 
+Safety update: the v5 layer must not implement 10-minute profile-click keepalives,
+LinkedIn automated profile traversal, bot-detection bypass, or automated outreach.
+Protected portal sessions are maintained by readiness checks and manual relogin
+alerts only. Run readiness on demand immediately before protected portal search,
+not as a timed heartbeat.
+
 ## 1. Current Implementation Inventory
 
 ### Repository reality in this checkout
@@ -227,8 +233,10 @@ Queue item:
 Cycle behavior:
 
 - If Chrome CDP is not connected, keep pending items unchanged for resume.
+- If Saramin, Jobkorea, or LinkedIn RPS login session is not confirmed, keep that protected channel pending for resume.
 - If owner activity is detected, stop the cycle and keep pending items unchanged.
-- If captcha, 2FA, IP security, abnormal access, selector failure, or missing write gate occurs, record a stopped reason and do not retry immediately.
+- If captcha, 2FA, checkpoint, IP security, or abnormal access appears during portal login preflight, wait for human intervention in the visible browser, then revalidate the persistent profile and capture only a validated encrypted snapshot. Runtime automatic login for Saramin/Jobkorea loads credentials from macOS Keychain, not from env; LinkedIn RPS never auto-logins.
+- If human intervention times out, headless mode disables intervention, selector failure occurs, or a write gate is missing, record a stopped reason and do not retry immediately.
 - Each cycle reports searched groups, opened profiles, saved profiles, matched profiles, stopped reasons, and updated queue items.
 - Live browser operations must use a single existing Chrome CDP session; do not launch a new browser.
 
@@ -245,6 +253,12 @@ New files:
 - `tools/multi_position_sourcing/selectors.py`
 - `tools/multi_position_sourcing/queue_runner.py`
 - `tools/multi_position_sourcing/dry_run.py`
+- `tools/multi_position_sourcing/discord_routing.py`
+- `tools/multi_position_sourcing/register_discord_commands.py`
+- `scripts/valuehire-search-loop.sh`
+- `scripts/valuehire-search-healthcheck.sh`
+- `scripts/launchd/com.valuehire.search-runner.plist`
+- `docs/ai-search/search-ops-machine-discord-runbook-2026-06-08.md`
 - `tests/test_multi_position_sourcing.py`
 
 Dry-run command:
@@ -257,4 +271,4 @@ Generated artifact:
 
 - `artifacts/multi_position_sourcing/dry-run-latest.json`
 
-This artifact contains 5 groups, Backend/PO keyword plans, canonical URL output, one sample candidate matched to multiple positions, queue summary, and zero side-effect flags.
+This artifact contains 5 groups, Backend/PO keyword plans, canonical URL output, one sample candidate matched to multiple positions, queue summary, Discord DM/server routing decisions, and zero side-effect flags.

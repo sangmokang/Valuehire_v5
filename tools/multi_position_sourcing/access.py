@@ -52,17 +52,28 @@ def is_authorized_discord_dm(discord_user_id: str, users: tuple[DiscordAuthorize
     return any(user.discord_id == str(discord_user_id) for user in users)
 
 
+# SOT invariant (docs/search-access.md): all three protected portals — Saramin,
+# Jobkorea, AND LinkedIn RPS — auto-login from the Keychain-backed secret store.
+# These env key names are import/preflight inputs only; runtime automatic login must
+# load credentials from MacKeychainPortalCredentialProvider. Never re-disable LinkedIn
+# auto-login. The only guardrails are the safety boundaries: a captcha / 2FA / checkpoint
+# is never auto-bypassed, credentials are never hardcoded, and outreach stays human-gated.
 PORTAL_CREDENTIAL_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
     "saramin": (("SARAMIN_USERNAME", "SARAMIN_PASSWORD"), ("JOB_PORTAL_USERNAME", "JOB_PORTAL_PASSWORD")),
     "jobkorea": (("JOBKOREA_USERNAME", "JOBKOREA_PASSWORD"), ("JOB_PORTAL_USERNAME", "JOB_PORTAL_PASSWORD")),
+    "linkedin_rps": (("LINKEDIN_USERNAME", "LINKEDIN_PASSWORD"), ("LINKEDIN_RPS_USERNAME", "LINKEDIN_RPS_PASSWORD")),
 }
 
 
-def _has_secret(value: object) -> bool:
+def _clean_secret(value: object) -> str:
     if value is None:
-        return False
+        return ""
     text = str(value).strip().strip('"').strip("'")
-    return bool(text and text != "<redacted>")
+    return "" if text == "<redacted>" else text
+
+
+def _has_secret(value: object) -> bool:
+    return bool(_clean_secret(value))
 
 
 def portal_credential_status(env: Mapping[str, str] | None = None) -> dict[str, dict[str, object]]:
@@ -71,9 +82,10 @@ def portal_credential_status(env: Mapping[str, str] | None = None) -> dict[str, 
     Per-portal keys are preferred:
     - SARAMIN_USERNAME / SARAMIN_PASSWORD
     - JOBKOREA_USERNAME / JOBKOREA_PASSWORD
+    - LINKEDIN_USERNAME / LINKEDIN_PASSWORD
 
     The shared JOB_PORTAL_USERNAME / JOB_PORTAL_PASSWORD pair remains supported as a
-    fallback for older docs and deployments.
+    fallback for older Saramin/Jobkorea docs and deployments.
     """
     source: Mapping[str, str] = os.environ if env is None else env
     status: dict[str, dict[str, object]] = {}
@@ -98,6 +110,26 @@ def portal_credential_status(env: Mapping[str, str] | None = None) -> dict[str, 
             "password_key": selected_password_key,
         }
     return status
+
+
+def resolve_portal_credentials(channel: str, env: Mapping[str, str] | None = None) -> tuple[str, str] | None:
+    """Return (username, password) for automatic login, or None when not configured.
+
+    Drives automatic portal login for all three protected portals — Saramin, Jobkorea,
+    AND LinkedIn RPS — and lets init-portal-credentials copy those secrets into macOS
+    Keychain. It returns actual secret values, so callers must never log or echo the
+    result, and credentials are only ever read from the secret store (never hardcoded).
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+    pairs = PORTAL_CREDENTIAL_KEYS.get(channel)
+    if not pairs:
+        return None
+    for username_key, password_key in pairs:
+        username = _clean_secret(source.get(username_key))
+        password = _clean_secret(source.get(password_key))
+        if username and password:
+            return username, password
+    return None
 
 
 def discord_dm_routing_guard(discord_user_id: str, *, is_dm: bool, access_doc_path: str | Path = "docs/search-access.md") -> dict[str, object]:

@@ -10,6 +10,28 @@ This document stores search-operation access points for Valuehire AI Search work
 - `.env` and `.env.*` are gitignored in this repo; use `.env.local` for local-only secrets.
 - Treat any credential pasted into chat as exposed. Rotate service role keys and passwords before production use.
 - Use the Supabase service role key only in server-side code and never in client/browser code.
+- Never write Discord bot tokens, portal passwords, JWTs, or service keys in this document. Record only account names, IDs, storage locations, and rotation notes.
+
+## Discord Bot Runtime
+
+| Item | Current standard |
+| --- | --- |
+| Production bot name | `hermes_v5` |
+| Production bot / client ID | `1512101118543397056` |
+| Token storage | Local repo: `.env.local` as `DISCORD_BOT_TOKEN`; Hermes Gateway runtime: `~/.hermes/.env` as `DISCORD_BOT_TOKEN` |
+| Client ID storage | Local repo and Hermes Gateway runtime both use `DISCORD_CLIENT_ID=1512101118543397056` |
+| Token handling rule | Do not paste or commit the token. Verify by Discord API bot ID or SHA-256 fingerprint only. |
+| Runtime note | After changing `~/.hermes/.env`, restart Hermes Gateway so the running Discord process loads the new token. |
+
+Server-channel command env:
+
+```bash
+DISCORD_ALLOWED_CHANNEL_IDS=123456789012345678,234567890123456789
+DISCORD_ALLOWED_ROLE_IDS=345678901234567890
+DISCORD_ALLOW_DM_COMMANDS=1
+```
+
+Server channels fail closed unless `DISCORD_ALLOWED_CHANNEL_IDS` contains the channel ID. Inside an allowed channel, a user must either be listed in `Discord Contacts` or have one of `DISCORD_ALLOWED_ROLE_IDS`. Slash command responses should be ephemeral. Bot-mention responses should post only a short public acknowledgement and move status details to DM.
 
 ## Discord Contacts
 
@@ -37,10 +59,21 @@ SUPABASE_SERVICE_ROLE_KEY=<redacted>
 
 ## External Search Accounts
 
+**SOT invariant — auto-login is never disabled.** All three protected portals — Saramin,
+Jobkorea, **and LinkedIn RPS** — auto-login from the secret store (`.env.local` / `~/.secrets`
+/ Mac Keychain): the runner enters id/password and submits, then runs the search through to
+result-card collection. Do not re-introduce a "LinkedIn is session-reuse / human-login only"
+restriction. The only guardrails are the safety boundaries below.
+
 | Service | Login / account | Secret storage |
 | --- | --- | --- |
-| Jobkorea / Saramin | valueconnect | Store password outside git as `JOB_PORTAL_PASSWORD` |
-| LinkedIn | sangmokang@valueconnect.kr | Store password outside git as `LINKEDIN_PASSWORD` |
+| Jobkorea / Saramin | valueconnect | Store password outside git as `JOB_PORTAL_PASSWORD` (or per-portal keys) |
+| LinkedIn RPS | sangmokang@valueconnect.kr | Store password outside git as `LINKEDIN_PASSWORD`; the runner auto-logs in like the other portals |
+
+**Safety boundaries (these never change):** a captcha / 2FA / 보안문자 / IP보안 / checkpoint /
+이상접근 is never auto-bypassed — on detection the automation stops and alerts a human. Credentials
+are loaded only from the secret store (never hardcoded/plaintext). Auto-login + search/collect is
+always allowed; external sending (candidate send / InMail / email) stays behind the human approval gate.
 
 Optional local env shape:
 
@@ -55,7 +88,9 @@ JOBKOREA_PASSWORD=<redacted>
 JOB_PORTAL_USERNAME=valueconnect
 JOB_PORTAL_PASSWORD=<redacted>
 
-LINKEDIN_EMAIL=sangmokang@valueconnect.kr
+# LinkedIn RPS auto-logs in from the secret store, like Saramin/Jobkorea.
+# A captcha / 2FA / checkpoint is never bypassed — it pauses for human resolution.
+LINKEDIN_USERNAME=sangmokang@valueconnect.kr
 LINKEDIN_PASSWORD=<redacted>
 ```
 

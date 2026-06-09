@@ -63,6 +63,19 @@ class PositionGroup:
 
 
 @dataclass(frozen=True)
+class CandidateResultCard:
+    """A single result card collected directly from a portal search results page.
+
+    Holds only public search-listing fields (profile URL + visible snippet). It never
+    carries credentials; outreach/sending is a separate, human-gated step.
+    """
+
+    profile_url: str
+    source_channel: Channel
+    snippet: str = ""
+
+
+@dataclass(frozen=True)
 class CapturedProfile:
     profile_url: str
     source_channel: Channel
