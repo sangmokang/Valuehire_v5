@@ -120,6 +120,27 @@ class QueueItem:
 
 
 @dataclass(frozen=True)
+class ItemSearchResult:
+    """Outcome of executing one queue item's keyword plan against a live portal.
+
+    Produced by the worker adapter (``portal_queue_executor.execute_queue_item``) and
+    consumed by ``run_live_queue_cycle`` to update item state and aggregate counts.
+
+    ``collected_cards`` is the honest live signal: the number of public result-listing
+    cards gathered. ``opened_profiles``/``saved_profiles``/``matched_profiles`` stay 0
+    until the profile-open, save-rail, and scoring stages are wired (follow-up work).
+    """
+
+    status: Literal["done", "failed", "stopped"]
+    collected_cards: int = 0
+    opened_profiles: int = 0
+    saved_profiles: int = 0
+    matched_profiles: int = 0
+    stop_reason: str = ""
+    last_error: str = ""
+
+
+@dataclass(frozen=True)
 class QueueCycleSummary:
     searched_groups: tuple[str, ...]
     opened_profiles: int
@@ -127,4 +148,5 @@ class QueueCycleSummary:
     matched_profiles: int
     stopped_reasons: tuple[str, ...]
     updated_items: tuple[QueueItem, ...]
+    collected_cards: int = 0
 
