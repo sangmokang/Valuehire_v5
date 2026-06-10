@@ -2,3 +2,6 @@
 # 신규 환경: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 # 기존: .venv-playwright 가 있으면 verify.sh 가 자동으로 그걸 우선 사용.
 pytest>=9,<10
+# 일부 테스트가 가져오는 소스 모듈이 import 시점에 playwright를 당긴다(브라우저 실행은 안 함 — 가짜 매니저 사용).
+# CI에서 ModuleNotFoundError 방지용. 브라우저 바이너리(playwright install)는 불필요.
+playwright==1.60.0
