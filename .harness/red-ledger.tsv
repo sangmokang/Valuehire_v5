@@ -1,4 +1,4 @@
 # Harness Red-Ledger — 미해결 RED 작업 추적 (게이트 0가 읽음)
 # 형식: <task-slug>\t<RED|GREEN>\t<issue>\t<note>
 # RED 행이 하나라도 있으면 `make red-ledger` 가 비-0 → 새 작업 시작 금지.
-profile-recovery-proof	RED	-	test_profile_recovery_proof_cli_writes_ready_artifact / _status_payload_accepts_snapshot_only_recovery_artifacts (사전 존재 실패, 별도 이슈로 분리)
+profile-recovery-proof	GREEN	-	하드코딩 generated_at(2026-06-09) → 24h staleness 시한폭탄. 두 테스트가 utc_now_live_check() 기반 fresh 타임스탬프 사용하도록 수정

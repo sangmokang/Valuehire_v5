@@ -55,6 +55,7 @@ from tools.multi_position_sourcing.portal_live_check import (
     capture_live_snapshot,
     cleanup_artifact_profiles_payload,
     current_utc_week_start,
+    utc_now_live_check,
     delete_profile_dir_if_confirmed,
     discord_webhook_from_env,
     init_discord_webhook_payload,
@@ -4893,6 +4894,7 @@ set search_path = public"""
     def test_profile_recovery_proof_status_payload_accepts_snapshot_only_recovery_artifacts(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
+            fresh_generated_at = utc_now_live_check()
             for site in ("saramin", "jobkorea"):
                 (root / f"portal_profile_recovery_{site}.json").write_text(
                     json.dumps(
@@ -4901,7 +4903,7 @@ set search_path = public"""
                             "site": site,
                             "worker_id": "default",
                             "keyword": "backend",
-                            "generated_at": "2026-06-09T00:00:00+00:00",
+                            "generated_at": fresh_generated_at,
                             "recovery_policy": "snapshot_only_no_auto_relogin",
                             "auto_relogin_disabled": True,
                             "mode": "guarded",
@@ -4935,6 +4937,7 @@ set search_path = public"""
     def test_profile_recovery_proof_cli_writes_ready_artifact(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
+            fresh_generated_at = utc_now_live_check()
             for site in ("saramin", "jobkorea"):
                 (root / f"portal_profile_recovery_{site}.json").write_text(
                     json.dumps(
@@ -4943,7 +4946,7 @@ set search_path = public"""
                             "site": site,
                             "worker_id": "default",
                             "keyword": "backend",
-                            "generated_at": "2026-06-09T00:00:00+00:00",
+                            "generated_at": fresh_generated_at,
                             "recovery_policy": "snapshot_only_no_auto_relogin",
                             "auto_relogin_disabled": True,
                             "mode": "guarded",
