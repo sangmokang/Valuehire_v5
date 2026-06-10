@@ -1,0 +1,4 @@
+# Harness 검증 러너 고정 — verify.sh / pytest 재현용.
+# 신규 환경: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+# 기존: .venv-playwright 가 있으면 verify.sh 가 자동으로 그걸 우선 사용.
+pytest>=9,<10

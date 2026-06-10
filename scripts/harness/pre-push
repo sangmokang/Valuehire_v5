@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Harness pre-push 훅 (정본). scripts/harness/install-hooks.sh 가 .git/hooks/pre-push 로 설치.
+# push 전 ./verify.sh 재실행 → RED면 push 거부. 우회: git push --no-verify
+set -uo pipefail
+repo="$(git rev-parse --show-toplevel)"
+echo "pre-push: ${repo}/verify.sh 재실행..."
+if ! "$repo/verify.sh"; then
+  echo "pre-push: verify RED — push 거부. (의도적 우회: git push --no-verify)" >&2
+  exit 1
+fi
+echo "pre-push: GREEN — push 진행."
