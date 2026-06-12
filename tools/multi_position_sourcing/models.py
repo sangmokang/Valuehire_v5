@@ -15,6 +15,16 @@ RoleFamily = Literal[
     "operations",
     "unknown",
 ]
+# 저수지 모델 단계 1 — 캐노니컬 세그먼트(직군 묶음). RoleFamily 위에 올린 상위 레이어로,
+# 단계 2의 연속 Harvest 단위(포지션 트리거 없이 segment_id만으로 도는)가 된다.
+# 매핑 표/헬퍼는 segments.py 참조.
+SegmentId = Literal[
+    "it_ai_data",
+    "marketing_growth",
+    "sales_bd",
+    "hr_finance_ops",
+    "unknown",
+]
 
 
 def utc_now_iso() -> str:
@@ -59,6 +69,7 @@ class PositionGroup:
     filters_by_channel: dict[Channel, dict[str, Any]]
     position_ids: tuple[str, ...]
     company_similarity_notes: tuple[str, ...]
+    segment_id: SegmentId = "unknown"
     keyword_plan: tuple[KeywordSession, ...] = ()
 
 
