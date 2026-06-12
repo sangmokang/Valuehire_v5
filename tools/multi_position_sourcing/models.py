@@ -87,6 +87,19 @@ class CandidateResultCard:
 
 
 @dataclass(frozen=True)
+class EmploymentTenure:
+    """경력 이력 한 줄 — 이직 안정성(저수지 단계 3) 계산용.
+
+    ``start_month``/``end_month`` 는 "YYYY-MM". ``end_month`` 가 빈 문자열이면 현재 재직(완료된
+    이직이 아니므로 짧은 이직 카운트에서 제외).
+    """
+
+    company: str
+    start_month: str
+    end_month: str = ""
+
+
+@dataclass(frozen=True)
 class CapturedProfile:
     profile_url: str
     source_channel: Channel
@@ -105,6 +118,8 @@ class CapturedProfile:
     language_signals: tuple[str, ...] = ()
     evidence_paths: tuple[str, ...] = ()
     risks: tuple[str, ...] = ()
+    # 저수지 단계 3 — 경력 이력(회사·입퇴사 시점). 이직 안정성 감점 계산에 사용.
+    employment_history: tuple[EmploymentTenure, ...] = ()
 
 
 @dataclass(frozen=True)

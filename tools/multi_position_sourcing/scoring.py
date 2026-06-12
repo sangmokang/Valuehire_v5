@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import CapturedProfile, Position, PositionMatch
+from .models import CapturedProfile, EmploymentTenure, Position, PositionMatch
 
 HIGH_TIER_COMPANY_SIGNALS = {
     "naver",
@@ -15,6 +15,88 @@ HIGH_TIER_COMPANY_SIGNALS = {
     "scaleup",
     "platform",
 }
+
+# 저수지 단계 3 — 우수 대학 티어 신호(소문자 비교). 새 신호 추가 시 같은 커밋에 테스트도 보강.
+HIGH_TIER_SCHOOL_SIGNALS = {
+    "서울대",
+    "연세",
+    "고려대",
+    "서강대",
+    "성균관",
+    "한양대",
+    "kaist",
+    "카이스트",
+    "postech",
+    "포스텍",
+    "포항공대",
+    "stanford",
+    "mit",
+    "berkeley",
+    "cmu",
+    "harvard",
+    "oxford",
+    "cambridge",
+}
+
+# 1년 미만 재직을 "짧은 재직(이직)"으로 본다.
+SHORT_TENURE_MONTHS = 12
+
+
+def _month_index(year_month: str) -> int | None:
+    """"YYYY-MM" → 절대 월 인덱스(year*12+month). 형식이 아니면 None."""
+    try:
+        year, month = str(year_month).split("-")[:2]
+        return int(year) * 12 + int(month)
+    except (ValueError, AttributeError):
+        return None
+
+
+def tenure_months(start_month: str, end_month: str) -> int | None:
+    """완료된 재직의 개월 수. ``end_month`` 가 비면 현재 재직 → None(감점 대상 아님)."""
+    start = _month_index(start_month)
+    if start is None or not end_month:
+        return None
+    end = _month_index(end_month)
+    if end is None:
+        return None
+    return end - start
+
+
+def count_short_tenure_hops(
+    history: tuple[EmploymentTenure, ...] | list[EmploymentTenure],
+    *,
+    threshold_months: int = SHORT_TENURE_MONTHS,
+) -> int:
+    """1년 미만 재직 후 이직(완료된 짧은 재직)의 횟수. 현재 재직(end 빈값)은 제외."""
+    hops = 0
+    for tenure in history:
+        months = tenure_months(tenure.start_month, tenure.end_month)
+        if months is not None and 0 <= months < threshold_months:
+            hops += 1
+    return hops
+
+
+def job_stability_penalty(hops: int) -> int:
+    """이직 안정성 감점. 2회부터 감점, 3회 이상은 더 크게(단조 증가, -30 캡)."""
+    if hops < 2:
+        return 0
+    return -min(30, 10 * (hops - 1))
+
+
+def _university_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
+    matched = _contains_any(profile.education, sorted(HIGH_TIER_SCHOOL_SIGNALS))
+    if matched:
+        return 8, (f"university tier signal: {matched[0]}",)
+    return 0, ()
+
+
+def _role_direct_score(profile: CapturedProfile, position: Position) -> tuple[int, tuple[str, ...]]:
+    """직무 직결성 — 후보 기술스택(skills)이 JD must/nice 키워드와 직결되면 가점."""
+    skills = " ".join(profile.skills).lower()
+    direct = [kw for kw in (position.must_haves + position.nice_to_haves) if kw.lower() in skills]
+    score = min(12, len(direct) * 4)
+    reasons = (f"role-direct skill match: {', '.join(direct[:3])}",) if direct else ()
+    return score, reasons
 
 
 def _contains_any(text: str, signals: tuple[str, ...] | list[str]) -> list[str]:
@@ -105,15 +187,32 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
     if profile.risks:
         why_not.extend(profile.risks)
 
+    # 저수지 단계 3 — 품질 4기준.
+    university_score, university_reasons = _university_tier_score(profile)
+    why_fit.extend(university_reasons)
+
+    role_direct_score, role_direct_reasons = _role_direct_score(profile, position)
+    why_fit.extend(role_direct_reasons)
+
+    hops = count_short_tenure_hops(profile.employment_history)
+    job_stability = job_stability_penalty(hops)
+    if job_stability < 0:
+        why_not.append(
+            f"job-hopping risk: {hops} short tenures (<1yr) ending in a move → stability penalty"
+        )
+
     breakdown = {
         "must_have": must_score,
         "seniority": seniority_score,
         "education": education_score,
         "company_tier": company_score,
+        "university_tier": university_score,
+        "role_direct": role_direct_score,
         "stage_industry_culture": industry_score,
         "korea_language_region": korea_score,
         "evidence_quality": evidence_score,
         "risk_penalty": -risk_penalty,
+        "job_stability": job_stability,
     }
     score = max(0, min(100, sum(breakdown.values())))
     return PositionMatch(
