@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import CapturedProfile, Position, utc_now_iso
+from .models import CapturedProfile, EmploymentTenure, Position, utc_now_iso
 
 
 SAMPLE_POSITIONS: tuple[Position, ...] = (
@@ -141,4 +141,29 @@ SAMPLE_PROFILE = CapturedProfile(
     location_signals=("Korea", "Seoul"),
     language_signals=("Korean", "English"),
     evidence_paths=("artifacts/profile-archiver/abc123.json", "artifacts/profile-archiver/abc123.png"),
+)
+
+
+# 저수지 단계 3 — 경력 이력(이직 안정성) 검증용 픽스처. 1년 미만 재직 후 이직이 3회로 감점 대상.
+SAMPLE_PROFILE_JOB_HOPPER = CapturedProfile(
+    profile_url="https://www.saramin.co.kr/profile/hopper-001",
+    source_channel="saramin",
+    visible_text=(
+        "Backend engineer with Java Spring and Node.js experience across several startups."
+    ),
+    summary="Backend engineer, frequent short tenures across early-stage startups.",
+    captured_at=utc_now_iso(),
+    years_experience=4,
+    education="무명대학교 컴퓨터공학",
+    current_or_past_companies=("Startup A", "Startup B", "Startup C", "Startup D"),
+    skills=("java", "spring", "node.js", "backend api"),
+    location_signals=("Korea", "Seoul"),
+    language_signals=("Korean",),
+    evidence_paths=("artifacts/profile-archiver/hopper-001.json",),
+    employment_history=(
+        EmploymentTenure("Startup A", "2021-01", "2021-08"),  # 7개월, 퇴사
+        EmploymentTenure("Startup B", "2021-09", "2022-05"),  # 8개월, 퇴사
+        EmploymentTenure("Startup C", "2022-06", "2023-02"),  # 8개월, 퇴사
+        EmploymentTenure("Startup D", "2023-03", ""),         # 현재 재직(미카운트)
+    ),
 )
