@@ -14,7 +14,8 @@
 주장이 거짓이 되면 RED 로 잡는다(escaped-defect 보호):
 
   A4  grouping.py 의 유사도는 규칙 기반 키 — 벡터/임베딩/코사인 아님
-  A5  multi_position_sourcing 에 임베딩/pgvector 매칭이 아직 없음("빠진 한 겹")
+  A5  임베딩/pgvector 벡터 레이어가 embed.py + embeddings.sql 에 구현됨(단계 4) —
+      grouping.py 는 여전히 규칙 기반(진화: 이전엔 "아직 없음"을 보호했음)
   A6  session_state 스키마가 3사(saramin/jobkorea/linkedin_rps) 암호화 세션 지속
 """
 from __future__ import annotations
@@ -43,10 +44,14 @@ EVIDENCE_PATHS = (
     "tools/multi_position_sourcing/dry_run.py",
     "tools/multi_position_sourcing/selectors.py",
     "docs/ai-search/session-state-supabase-schema-2026-06-09.sql",
+    # 저수지 단계 4에서 구현됨 — '신규(아직 없음)' → 실존 근거로 승격.
+    "tools/multi_position_sourcing/embed.py",
+    "docs/ai-search/embeddings.sql",
 )
 
 # 문서가 '신규(아직 없음)'로 명시한 제안 파일 — 실존 단언 대상이 아니다.
-FUTURE_FILES = frozenset({"embed.py", "match.py"})
+# 단계 4에서 embed.py 구현 → FUTURE 에서 제외(EVIDENCE_PATHS 로 이동). match.py 는 단계 5까지 미래.
+FUTURE_FILES = frozenset({"match.py"})
 
 EXPECTED_SECTION_IDS = [
     "diagnosis", "pivot", "pipeline", "actors", "machines",
@@ -125,19 +130,20 @@ def test_a4_grouping_is_rule_based_not_vector() -> None:
     assert "_similarity_key" in src, "규칙 기반 _similarity_key 함수 부재 — 문서 주장 불성립"
 
 
-# ── A5 · 임베딩/pgvector 매칭 아직 없음 ("빠진 한 겹" 보호) (4b B1 → 승격) ──
-def test_a5_no_vector_matching_implemented_yet() -> None:
-    needle = re.compile(
-        r"(?i)(pgvector|ivfflat|hnsw|text-embedding|embeddings\.create"
-        r"|openai\.embeddings|cosine_similarity)"
-    )
-    hits = []
-    for py in sorted(MPS.rglob("*.py")):
-        for m in needle.finditer(py.read_text(encoding="utf-8", errors="ignore")):
-            hits.append(f"{py.relative_to(REPO)}: {m.group(0)}")
-    assert not hits, (
-        "문서 주장: 임베딩/pgvector 매칭은 '아직 없다(빠진 한 겹)'. "
-        f"그러나 구현 흔적 발견: {hits[:10]}"
+# ── A5 · 임베딩/pgvector 벡터 레이어가 embed.py 에 구현됨 (단계 4 — "빠진 한 겹" 채움) ──
+# 진화(harness): 단계 4 이전에는 "벡터 매칭 아직 없음"을 보호했다. 단계 4가 그 레이어를
+# embed.py + embeddings.sql 로 구현했으므로, 가드를 뒤집어 "벡터 레이어는 embed.py(+match.py)에만
+# 있고 grouping.py 는 여전히 규칙 기반(A4)"을 고정한다.
+def test_a5_vector_layer_lives_in_embed_not_grouping() -> None:
+    embed = MPS / "embed.py"
+    assert embed.exists(), "embed.py 부재 — 단계 4 임베딩 레이어 미구현"
+    embed_src = embed.read_text(encoding="utf-8")
+    assert "cosine_similarity" in embed_src, "embed.py 에 cosine_similarity 부재 — 벡터 레이어 불성립"
+    assert (REPO / "docs" / "ai-search" / "embeddings.sql").exists(), "embeddings.sql(pgvector 스키마) 부재"
+    # 벡터화는 embed.py 에만 — grouping.py 는 규칙 기반 유지(A4 가 별도 보증, 여기서도 교차 확인).
+    grouping_src = (MPS / "grouping.py").read_text(encoding="utf-8")
+    assert not re.search(r"(?i)\b(pgvector|cosine|embedding|ivfflat|hnsw)\b", grouping_src), (
+        "grouping.py 가 벡터화됨 — '규칙 기반 키' 주장(A4) 위반"
     )
 
 
