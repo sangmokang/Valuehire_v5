@@ -93,6 +93,24 @@ class MatchTests(unittest.TestCase):
             [c.canonical_url for c in b.candidates],
         )
 
+    def test_determinism_url_tiebreak_on_full_tie(self) -> None:
+        # 품질·코사인이 완전 동률이면 canonical_url 오름차순으로 안정 정렬 — 타이브레이크를 실제로 가드.
+        def tie_entry(url: str) -> ReservoirEntry:
+            return ReservoirEntry(
+                canonical_url=url,
+                segment_id="it_ai_data",
+                vector=embed_text("identical reservoir text"),
+                profile=_profile(url, skills=("spring",)),
+            )
+
+        order_a = [tie_entry(u) for u in ("https://x/c", "https://x/a", "https://x/b")]
+        order_b = [tie_entry(u) for u in ("https://x/b", "https://x/c", "https://x/a")]
+        ra = match_jd_to_reservoir(JD, BACKEND_POS, order_a, segment_id="it_ai_data", run_id="r", today="2026-06-12")
+        rb = match_jd_to_reservoir(JD, BACKEND_POS, order_b, segment_id="it_ai_data", run_id="r", today="2026-06-12")
+        urls = [c.canonical_url for c in ra.candidates]
+        self.assertEqual(urls, [c.canonical_url for c in rb.candidates])  # 입력 순서 무관
+        self.assertEqual(urls, ["https://x/a", "https://x/b", "https://x/c"])  # url 오름차순 타이브레이크
+
     def test_top_k_limits_and_logs_dropped(self) -> None:
         entries = [
             _entry(f"https://x/{i:02d}", "it_ai_data", text=f"backend spring kotlin {i}", skills=("spring",))
