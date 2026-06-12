@@ -2,3 +2,4 @@
 # 형식: <task-slug>\t<RED|GREEN>\t<issue>\t<note>
 # RED 행이 하나라도 있으면 `make red-ledger` 가 비-0 → 새 작업 시작 금지.
 profile-recovery-proof	GREEN	-	하드코딩 generated_at(2026-06-09) → 24h staleness 시한폭탄. 두 테스트가 utc_now_live_check() 기반 fresh 타임스탬프 사용하도록 수정
+reservoir-doc-harden	GREEN	#1	PR#2 merged 2026-06-12 — test_reservoir_doc.py(A1~A8) GREEN, 4b 4렌즈 refuted=false. + 루트 CLAUDE.md(쉬운 한국어 SOT)
