@@ -3,3 +3,9 @@
 # RED 행이 하나라도 있으면 `make red-ledger` 가 비-0 → 새 작업 시작 금지.
 profile-recovery-proof	GREEN	-	하드코딩 generated_at(2026-06-09) → 24h staleness 시한폭탄. 두 테스트가 utc_now_live_check() 기반 fresh 타임스탬프 사용하도록 수정
 reservoir-doc-harden	GREEN	#1	PR#2 merged 2026-06-12 — test_reservoir_doc.py(A1~A8) GREEN, 4b 4렌즈 refuted=false. + 루트 CLAUDE.md(쉬운 한국어 SOT)
+reservoir-segment-taxonomy	GREEN	#5	PR#6 merged 2026-06-12 — segment_id taxonomy(명명4+unknown), 결정론 매핑. verify 400 passed, 4b 5렌즈 refuted=false(blockers 0)
+reservoir-harvest-queue	GREEN	#7	PR#9 merged 2026-06-12 — reservoir_log(12필드 계약)·harvest_policy(3머신)·harvest_runner(segment 구동+무조건저장). 4b medium(save_rail fail-closed) 기계테스트 승격. verify 419 passed
+reservoir-quality-scoring	GREEN	#8	PR#11 merged 2026-06-12 — 품질 4기준(대학·직무·회사·이직안정성), EmploymentTenure, 결정론 breakdown+회사문구 정렬. verify 429 passed
+reservoir-embeddings	GREEN	#10	PR#12 merged 2026-06-12 — embed.py(결정론 순수파이썬 임베더·cosine·dedup·index 로그)+embeddings.sql(pgvector HNSW 멱등). 문서가드 a5 진화. verify 437 passed
+reservoir-match-rerank	GREEN	#13	PR#15 merged 2026-06-12 — match.py(세그먼트필터·코사인 top-K·scoring 재랭킹·결정론 url 타이브레이크). 문서가드 match.py 승격. verify 445 passed
+reservoir-ab-harness	GREEN	#14	PR#16 merged 2026-06-12 — ab_harness.py(블라인드 A/B 배치·순도 리포트). 4b medium(BlindItem candidate_id 누설) 기계테스트 승격. verify 452 passed
