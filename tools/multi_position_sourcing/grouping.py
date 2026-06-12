@@ -6,6 +6,7 @@ from statistics import median
 
 from .keywords import build_keyword_plan, portal_keywords_for_family
 from .models import Position, PositionGroup, RoleFamily
+from .segments import segment_for_family
 
 ROLE_SIGNALS: dict[RoleFamily, tuple[str, ...]] = {
     "backend": ("backend", "server", "spring", "nestjs", "java", "kotlin", "api", "platform", "infra"),
@@ -100,6 +101,7 @@ def group_positions(positions: tuple[Position, ...] | list[Position]) -> tuple[P
             filters_by_channel=filters,
             position_ids=tuple(p.position_id for p in grouped_positions),
             company_similarity_notes=notes,
+            segment_id=segment_for_family(family),
         )
         groups.append(
             PositionGroup(
