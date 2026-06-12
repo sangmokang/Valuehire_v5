@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Valuehire AI Search 재설계 — 세그먼트 저수지 + 벡터 매칭</title>
+<style>
+  :root{
+    --ink:#0c1116; --ink2:#39434f; --ink3:#6b7785;
+    --line:#e4e8ee; --line2:#eef1f5;
+    --paper:#ffffff; --paper2:#f7f9fb; --paper3:#fbfcfd;
+    --brand:#1746d4; --brand-soft:#eaf0ff;
+    --ai:#1746d4; --ai-soft:#eaf0ff;
+    --hh:#0a7d5a; --hh-soft:#e3f6ee;
+    --pt:#b3551d; --pt-soft:#fbeee2;
+    --warn:#b4232a; --warn-soft:#fdecec;
+    --ok:#0a7d5a;
+    --gold:#9a7510; --gold-soft:#fbf4df;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--paper2); color:var(--ink);
+    font-family:var(--sans); line-height:1.7; font-size:16px;
+    -webkit-font-smoothing:antialiased; letter-spacing:-0.01em;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:0 28px}
+
+  /* ── masthead ── */
+  header.top{
+    background:
+      radial-gradient(1200px 400px at 80% -120px, rgba(23,70,212,.14), transparent 60%),
+      linear-gradient(180deg,#0c1116,#10161e);
+    color:#fff; padding:64px 0 52px; border-bottom:3px solid var(--brand);
+  }
+  .kicker{font-family:var(--mono); font-size:12.5px; letter-spacing:.22em;
+    text-transform:uppercase; color:#7fa0ff; margin:0 0 18px}
+  header.top h1{font-size:43px; line-height:1.12; margin:0 0 18px; letter-spacing:-0.03em; font-weight:800}
+  header.top h1 em{font-style:normal; color:#9fb8ff}
+  .sub{font-size:18.5px; color:#c4cdd9; max-width:760px; margin:0}
+  .meta-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:30px}
+  .chip{font-family:var(--mono); font-size:11.5px; letter-spacing:.04em;
+    border:1px solid rgba(255,255,255,.2); border-radius:999px;
+    padding:6px 13px; color:#cdd6e3; background:rgba(255,255,255,.04)}
+  .chip b{color:#fff; font-weight:600}
+
+  /* ── TL;DR ── */
+  .tldr{background:#fff; border:1px solid var(--line); border-left:4px solid var(--brand);
+    border-radius:14px; padding:28px 30px; margin:-30px 0 0; position:relative; z-index:3;
+    box-shadow:0 18px 50px -28px rgba(12,17,22,.4)}
+  .tldr h2{margin:0 0 6px; font-size:13px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink3); font-family:var(--mono)}
+  .tldr .diag{font-size:20px; font-weight:700; line-height:1.5; margin:8px 0 4px; letter-spacing:-0.02em}
+  .tldr .rx{font-size:17px; color:var(--ink2); margin:14px 0 0; line-height:1.6}
+  .tldr .rx b{color:var(--brand)}
+
+  section{padding:54px 0 6px}
+  .sec-no{font-family:var(--mono); font-size:13px; color:var(--brand); letter-spacing:.1em}
+  h2.title{font-size:29px; letter-spacing:-0.025em; margin:6px 0 8px; line-height:1.2; font-weight:800}
+  .lead{font-size:17.5px; color:var(--ink2); max-width:820px; margin:0 0 26px}
+  h3{font-size:20px; margin:34px 0 12px; letter-spacing:-0.02em; font-weight:700}
+  p{margin:0 0 16px}
+  strong{font-weight:680}
+  a{color:var(--brand)}
+  code{font-family:var(--mono); font-size:13.5px; background:var(--paper);
+    border:1px solid var(--line); border-radius:5px; padding:1px 6px; color:#243; white-space:nowrap}
+
+  /* cards */
+  .grid{display:grid; gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .card{background:#fff; border:1px solid var(--line); border-radius:13px; padding:22px 22px}
+  .card h4{margin:0 0 8px; font-size:16.5px; letter-spacing:-0.01em}
+  .card p{font-size:14.5px; color:var(--ink2); margin:0}
+  .card .ic{font-size:22px; margin-bottom:8px; display:block}
+
+  /* problem teardown */
+  .var-list{list-style:none; padding:0; margin:18px 0 0}
+  .var-list li{display:grid; grid-template-columns:46px 1fr; gap:16px; padding:18px 0; border-top:1px solid var(--line)}
+  .var-list li:first-child{border-top:1px solid var(--ink)}
+  .var-list .n{font-family:var(--mono); font-size:22px; font-weight:700; color:var(--warn); line-height:1}
+  .var-list h4{margin:0 0 5px; font-size:16.5px}
+  .var-list p{margin:0; color:var(--ink2); font-size:14.5px}
+
+  /* big contrast: before / after */
+  .ba{display:grid; grid-template-columns:1fr 56px 1fr; align-items:stretch; gap:0; margin:26px 0 8px}
+  .ba .col{border:1px solid var(--line); border-radius:13px; padding:22px 22px; background:#fff}
+  .ba .before{border-color:#f0d2d2; background:linear-gradient(180deg,#fffafa,#fff)}
+  .ba .after{border-color:#c9e6d8; background:linear-gradient(180deg,#f5fcf8,#fff)}
+  .ba .arrow{display:flex; align-items:center; justify-content:center; font-size:26px; color:var(--ink3)}
+  .ba .tag{font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; font-weight:600}
+  .ba .before .tag{color:var(--warn)}
+  .ba .after .tag{color:var(--ok)}
+  .ba h4{margin:8px 0 12px; font-size:18px}
+  .ba ul{margin:0; padding-left:18px}
+  .ba li{font-size:14px; color:var(--ink2); margin:7px 0}
+
+  /* pipeline */
+  .flow{display:grid; grid-template-columns:repeat(5,1fr); gap:0; margin:24px 0; border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff}
+  .flow .step{padding:20px 16px; border-right:1px solid var(--line); position:relative}
+  .flow .step:last-child{border-right:none}
+  .flow .ph{font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:var(--ink3)}
+  .flow .nm{font-size:15.5px; font-weight:700; margin:6px 0 6px; letter-spacing:-0.01em}
+  .flow .ds{font-size:12.8px; color:var(--ink2); line-height:1.5}
+  .flow .who{display:inline-block; margin-top:10px; font-family:var(--mono); font-size:10.5px;
+    padding:2px 7px; border-radius:5px; font-weight:600}
+  .who.ai{background:var(--ai-soft); color:var(--ai)}
+  .who.hh{background:var(--hh-soft); color:var(--hh)}
+  .who.pt{background:var(--pt-soft); color:var(--pt)}
+  .who.sys{background:#eceff3; color:var(--ink2)}
+  .flow .step.harvest{background:linear-gradient(180deg,#fbfdff,#fff)}
+  .flow .step.match{background:linear-gradient(180deg,#fafff9,#fff)}
+
+  /* reservoir diagram */
+  .reservoir{margin:26px 0; border:1px solid var(--line); border-radius:16px; background:
+    linear-gradient(180deg,#fbfcfe,#fff); padding:30px 28px}
+  .res-row{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; align-items:center}
+  .res-band{text-align:center}
+  .res-band .lbl{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink3); margin-bottom:10px}
+  .pool{border:1px dashed #b9c6f0; background:var(--brand-soft); border-radius:12px; padding:16px 12px}
+  .pool .seg{display:flex; justify-content:space-between; align-items:center; font-size:13px; padding:6px 10px; margin:5px 0; background:#fff; border:1px solid #d8e1f7; border-radius:7px}
+  .pool .seg b{font-family:var(--mono); color:var(--brand); font-size:12px}
+  .res-arrow{font-size:24px; color:var(--brand); text-align:center}
+
+  /* RACI table */
+  table{width:100%; border-collapse:collapse; margin:18px 0; font-size:14.5px; background:#fff;
+    border:1px solid var(--line); border-radius:12px; overflow:hidden}
+  th,td{text-align:left; padding:13px 16px; border-bottom:1px solid var(--line2); vertical-align:top}
+  thead th{background:var(--paper); font-size:12.5px; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--ink3); font-family:var(--mono); font-weight:600}
+  tbody tr:last-child td{border-bottom:none}
+  td.stage{font-weight:680; white-space:nowrap}
+  .dot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle}
+  .badge{display:inline-block; font-family:var(--mono); font-size:11px; font-weight:600; padding:2px 8px; border-radius:5px}
+  .b-ai{background:var(--ai-soft); color:var(--ai)}
+  .b-hh{background:var(--hh-soft); color:var(--hh)}
+  .b-pt{background:var(--pt-soft); color:var(--pt)}
+  .b-sys{background:#eceff3; color:var(--ink2)}
+
+  /* machines */
+  .machines{display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin:22px 0}
+  .mach{border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#fff}
+  .mach .hd{padding:16px 18px; color:#fff}
+  .mach.mb .hd{background:linear-gradient(135deg,#1746d4,#2a5cf0)}
+  .mach.mm .hd{background:linear-gradient(135deg,#0a7d5a,#0f9c72)}
+  .mach.ma .hd{background:linear-gradient(135deg,#b3551d,#d4691f)}
+  .mach .hd .role{font-family:var(--mono); font-size:11px; letter-spacing:.1em; opacity:.85}
+  .mach .hd .nm{font-size:18px; font-weight:700; margin-top:3px}
+  .mach .bd{padding:16px 18px}
+  .mach .bd .k{font-family:var(--mono); font-size:11px; color:var(--ink3); text-transform:uppercase; letter-spacing:.06em; margin:12px 0 4px}
+  .mach .bd .k:first-child{margin-top:0}
+  .mach .bd p{font-size:13.5px; color:var(--ink2); margin:0}
+  .mach .bd .driver{font-family:var(--mono); font-size:12px; color:var(--ink); font-weight:600}
+
+  /* loop / b2c */
+  .loop{display:grid; grid-template-columns:repeat(4,1fr) ; gap:10px; margin:22px 0}
+  .loop .node{border:1px solid var(--line); border-radius:12px; padding:16px; background:#fff; text-align:center; position:relative}
+  .loop .node .ic{font-size:24px}
+  .loop .node .t{font-size:14.5px; font-weight:700; margin:8px 0 4px}
+  .loop .node .d{font-size:12.5px; color:var(--ink2)}
+  .loop .node:not(:last-child)::after{content:"→"; position:absolute; right:-10px; top:50%; transform:translateY(-50%); color:var(--brand); font-size:18px; z-index:2}
+  .loopback{text-align:center; margin:6px 0 0; font-family:var(--mono); font-size:12.5px; color:var(--hh)}
+
+  /* phased roadmap */
+  .phase{border:1px solid var(--line); border-left:4px solid var(--brand); border-radius:0 12px 12px 0; background:#fff; padding:20px 24px; margin:14px 0}
+  .phase .ph-h{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap}
+  .phase .ph-tag{font-family:var(--mono); font-size:12px; font-weight:700; color:var(--brand); letter-spacing:.06em}
+  .phase .ph-t{font-size:18px; font-weight:700; letter-spacing:-0.01em}
+  .phase .ph-when{font-family:var(--mono); font-size:11.5px; color:var(--ink3); margin-left:auto}
+  .phase ul{margin:12px 0 0; padding-left:20px}
+  .phase li{font-size:14.5px; color:var(--ink2); margin:6px 0}
+  .phase.p0{border-left-color:var(--warn)} .phase.p0 .ph-tag{color:var(--warn)}
+  .phase.p3{border-left-color:var(--hh)} .phase.p3 .ph-tag{color:var(--hh)}
+
+  /* metrics */
+  .kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:20px 0}
+  .kpi{border:1px solid var(--line); border-radius:13px; padding:18px; background:#fff}
+  .kpi .now{font-family:var(--mono); font-size:11px; color:var(--ink3)}
+  .kpi .v{font-size:30px; font-weight:800; letter-spacing:-0.03em; margin:6px 0 2px; line-height:1}
+  .kpi .v .u{font-size:15px; color:var(--ink3); font-weight:600}
+  .kpi .nm{font-size:13.5px; color:var(--ink2); margin-top:6px}
+  .kpi .tgt{font-family:var(--mono); font-size:11px; color:var(--ok); margin-top:8px; font-weight:600}
+
+  /* code-grounded actions */
+  .act{border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:12px 0; background:#fff}
+  .act .ah{display:flex; gap:10px; align-items:center; margin-bottom:8px}
+  .act .ah .num{font-family:var(--mono); background:var(--ink); color:#fff; font-size:12px; font-weight:700; width:24px; height:24px; border-radius:6px; display:grid; place-items:center; flex:none}
+  .act .ah .at{font-size:16px; font-weight:700}
+  .act p{font-size:14px; color:var(--ink2); margin:0 0 8px}
+  .act .files{font-family:var(--mono); font-size:12px; color:var(--ink3)}
+  .act .files b{color:var(--brand); font-weight:600}
+
+  /* callouts */
+  .note{border-radius:12px; padding:16px 20px; margin:20px 0; font-size:14.5px}
+  .note.sot{background:var(--warn-soft); border:1px solid #f3c9cb; color:#5a1518}
+  .note.sot b{color:var(--warn)}
+  .note.insight{background:var(--gold-soft); border:1px solid #ecdca6; color:#5a4408}
+  .note.insight b{color:var(--gold)}
+
+  .legend{display:flex; gap:18px; flex-wrap:wrap; margin:8px 0 0; font-size:13px; color:var(--ink2)}
+  .legend span{display:flex; align-items:center; gap:6px}
+
+  footer{margin-top:60px; padding:36px 0 60px; border-top:1px solid var(--line); color:var(--ink3); font-size:13px}
+  footer b{color:var(--ink2)}
+
+  @media (max-width:880px){
+    .g2,.g3,.flow,.machines,.kpis,.loop,.res-row{grid-template-columns:1fr}
+    .ba{grid-template-columns:1fr}
+    .ba .arrow{transform:rotate(90deg); padding:6px 0}
+    header.top h1{font-size:32px}
+    .loop .node:not(:last-child)::after{content:"↓"; right:50%; top:auto; bottom:-16px; transform:translateX(50%)}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">Valuehire · AI Search 아키텍처 재설계 · 2026-06-12</p>
+    <h1>실시간 서치를 멈추고,<br/><em>세그먼트 저수지</em>를 채워라.</h1>
+    <p class="sub">AI는 24시간 인재를 길어 올리고, 헤드헌터는 "무엇이 우수한가"를 보정하고, 알바생은 미리 검증된 줄을 시간당 20건씩 발송한다. 세 주체가 한 생산라인에서 공존하기 위한 단 하나의 구조 변경.</p>
+    <div class="meta-row">
+      <span class="chip">무인 Harvest <b>사람인 · 잡코리아</b></span>
+      <span class="chip">실행 머신 <b>맥북 · 맥미니 · 맥에어</b></span>
+      <span class="chip">현 구조 <b>multi_position_sourcing</b></span>
+      <span class="chip">빠진 한 겹 <b>임베딩 + 벡터 매칭</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="tldr">
+    <h2>한 문장 진단 · 한 문장 처방</h2>
+    <p class="diag">실시간 서치는 라인 1에서 변동성을 <u>그 순간</u> 모두 떠안기 때문에, 안정적인 순도의 출력을 연속 생산할 수 없다.</p>
+    <p class="rx"><b>처방 —</b> 인재를 <b>찾는 행위(Harvest)</b>와 포지션에 <b>맞추는 행위(Match)</b>를 시간축에서 분리한다. AI는 세그먼트별로 우수 인재를 <b>미리·계속</b> 저수지에 저장하고, 포지션이 들어오면 DB에서 <b>결정론적 벡터 매칭</b>으로 즉시 정렬된 후보 줄을 뽑는다. 알바생은 그 줄을 발송만 한다.</p>
+  </div>
+
+  <!-- 1. DIAGNOSIS -->
+  <section id="diagnosis">
+    <div class="sec-no">01 / 진단</div>
+    <h2 class="title">왜 라인 1이 막히는가 — 변동성의 해부</h2>
+    <p class="lead">문제는 "AI가 부족해서"가 아니다. <strong>판단의 변동성을 가장 비싼 자리(실시간·일회성·브라우저 안)에서 처리</strong>하고 있기 때문이다. 같은 작업도 어디에 배치하느냐에 따라 변동성이 누적되거나 평준화된다.</p>
+
+    <ul class="var-list">
+      <li>
+        <span class="n">01</span>
+        <div><h4>DOM·UI 변동성</h4><p>포털의 검색 필터와 결과 카드 마크업이 수시로 바뀐다. 셀렉터가 한 번 틀어지면 그 세션의 출력 전체가 오염된다. <code>selectors.py</code>·<code>dom-selector-map</code>이 이를 버티지만, 실시간 일회성 판단에서는 복구할 시간이 없다.</p></div>
+      </li>
+      <li>
+        <span class="n">02</span>
+        <div><h4>필터 ≠ 적합도</h4><p>포털 필터(경력·지역·키워드)는 거친 그물이다. 필터를 아무리 정교하게 맞춰도 "이 JD에 진짜 맞는 사람"과는 자주 어긋난다. 실시간으로 하나하나 열어 확인하는 비용이 폭발한다.</p></div>
+      </li>
+      <li>
+        <span class="n">03</span>
+        <div><h4>일회성 판단(no second chance)</h4><p>실시간 서치는 후보를 <em>한 번</em> 보고 즉시 채택/기각한다. 그 순간 모델 컨디션·프롬프트·브라우저 상태의 잡음이 그대로 결과 품질이 된다. 재시도·교차검증·재랭킹의 여지가 없다.</p></div>
+      </li>
+      <li>
+        <span class="n">04</span>
+        <div><h4>세션·레이트리밋 취약성</h4><p>로그인 만료·강제 로그아웃·쿠키 회전이 검색 한복판에서 터지면 그 포지션의 생산이 0이 된다. <code>portal_recovery.py</code>·<code>reauth_events</code>가 받쳐주지만, 동기 파이프라인에서는 곧 사용자 대기 시간으로 전가된다.</p></div>
+      </li>
+      <li>
+        <span class="n">05</span>
+        <div><h4>포지션 결합도(coupling)</h4><p>"포지션 → 검색 → 판단 → 저장"이 하나로 묶여 있어, 포지션 N개면 같은 직군을 N번 다시 긁는다. 어제 길어 올린 우수 인재가 오늘 다른 포지션에서 재사용되지 못한다. 데이터가 축적되지 않고 휘발한다.</p></div>
+      </li>
+    </ul>
+
+    <div class="note insight">
+      <b>핵심 통찰 —</b> 위 5가지는 모두 "변동성을 실시간·일회성으로 떠안는다"는 한 가지 결함의 증상이다. 변동성 자체는 없앨 수 없다(브라우저는 원래 그렇다). 하지만 <strong>변동성을 시간에 분산</strong>시키면 평균으로 수렴한다. 그것이 저수지 모델이다.
+    </div>
+  </section>
+
+  <!-- 2. THE PIVOT -->
+  <section id="pivot">
+    <div class="sec-no">02 / 전환</div>
+    <h2 class="title">Harvest와 Match의 분리 — 저수지 모델</h2>
+    <p class="lead">"실시간으로 길어 마시기"를 멈추고, "저수지를 채워두고 떠 쓰기"로 바꾼다. 더럽고 느리고 변동 큰 <strong>수확(Harvest)</strong>은 비동기·연속·내결함으로 돌리고, 깨끗하고 빠르고 결정론적인 <strong>매칭(Match)</strong>은 DB 안에서 순수 함수로 만든다.</p>
+
+    <div class="ba">
+      <div class="col before">
+        <span class="tag">AS-IS · 실시간 서치</span>
+        <h4>포지션을 그때그때 긁는다</h4>
+        <ul>
+          <li>포지션 1건 = 검색 세션 1회 (동기)</li>
+          <li>변동성을 <b>그 순간</b> 전부 흡수</li>
+          <li>후보 1회 판단 후 폐기 — 재사용 0</li>
+          <li>출력 순도가 세션 컨디션에 좌우</li>
+          <li>알바 투입 시점에 줄이 비어있거나 오염</li>
+        </ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="col after">
+        <span class="tag">TO-BE · 저수지 + 벡터매칭</span>
+        <h4>세그먼트를 미리 계속 채운다</h4>
+        <ul>
+          <li>세그먼트별 우수 인재를 <b>24시간 적립</b></li>
+          <li>변동성을 <b>시간에 분산</b> → 평균 수렴</li>
+          <li>한 번 길은 인재를 모든 포지션이 재사용</li>
+          <li>매칭은 DB 내부 벡터검색 = 결정론적·즉시</li>
+          <li>알바는 <b>항상 가득 찬</b> 검증 줄을 발송</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="reservoir">
+      <div class="res-row">
+        <div class="res-band">
+          <div class="lbl">① Harvest · 비동기 24h</div>
+          <div class="card" style="text-align:left">
+            <p style="font-size:13.5px;margin:0;color:var(--ink2)">맥미니·맥에어가 사람인·잡코리아에서 <b>세그먼트 기준</b>으로 우수 인재를 계속 검색·저장. 포지션이 아니라 <b>직군</b>을 향해 긁는다. 실패해도 다음 사이클이 메운다.</p>
+          </div>
+        </div>
+        <div class="res-band">
+          <div class="lbl">② 저수지 (Supabase + pgvector)</div>
+          <div class="pool">
+            <div class="seg"><span>백엔드/AI·데이터</span><b>임베딩</b></div>
+            <div class="seg"><span>마케팅·그로스</span><b>임베딩</b></div>
+            <div class="seg"><span>세일즈·BD</span><b>임베딩</b></div>
+            <div class="seg"><span>HR·재무·운영</span><b>임베딩</b></div>
+          </div>
+        </div>
+        <div class="res-band">
+          <div class="lbl">③ Match · 결정론적 즉시</div>
+          <div class="card" style="text-align:left">
+            <p style="font-size:13.5px;margin:0;color:var(--ink2)">ClickUp 포지션 JD → 임베딩 → 해당 세그먼트 안에서 <b>top-K 코사인 검색</b>. 같은 입력 = 같은 출력. 변동성 ≈0(고정 모델·인덱스 버전 내). 알바에게 넘길 <b>정렬된 줄</b>이 즉시 나온다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p style="font-size:13.5px;color:var(--ink3);text-align:center;margin:6px 0 0">저수지는 마르지 않는다 — Harvest가 유입을 만들고, Match가 유출을 만든다. 둘은 서로의 속도에 묶이지 않는다.</p>
+  </section>
+
+  <!-- 3. NEW PIPELINE -->
+  <section id="pipeline">
+    <div class="sec-no">03 / 파이프라인</div>
+    <h2 class="title">새 생산라인 — 5단계</h2>
+    <p class="lead">공장 비유 그대로다. 라인 1(Harvest)이 원자재를 계속 입고하고, 라인 2(Index)가 규격화·선반 정리하고, 라인 3(Match)이 주문에 맞춰 출고하고, 라인 4(알바)가 포장·발송한다. 각 라인은 자기 속도로 돈다.</p>
+
+    <div class="flow">
+      <div class="step harvest">
+        <div class="ph">LINE 1</div>
+        <div class="nm">Harvest</div>
+        <div class="ds">세그먼트별 검색 → 발견 즉시 프로필 무조건 저장(차감 0). 포털 워커가 24시간 순환.</div>
+        <span class="who ai">AI</span> <span class="who sys">Playwright</span>
+      </div>
+      <div class="step harvest">
+        <div class="ph">LINE 2</div>
+        <div class="nm">Index</div>
+        <div class="ds">저장 프로필 정규화 → 임베딩 생성 → pgvector 인덱스에 세그먼트 태그와 함께 적재. 중복은 dedup.</div>
+        <span class="who ai">AI</span> <span class="who sys">DB</span>
+      </div>
+      <div class="step match">
+        <div class="ph">LINE 3</div>
+        <div class="nm">Match</div>
+        <div class="ds">JD 임베딩 → 세그먼트 내 top-K 벡터검색 → 적합도 재랭킹. 결정론적·즉시·재현 가능.</div>
+        <span class="who ai">AI</span> <span class="who sys">DB</span>
+      </div>
+      <div class="step match">
+        <div class="ph">LINE 3.5</div>
+        <div class="nm">Calibrate</div>
+        <div class="ds">경계선 후보·세그먼트 기준은 헤드헌터가 게이트. 그 판단이 다음 임베딩의 기준점이 된다.</div>
+        <span class="who hh">헤드헌터</span>
+      </div>
+      <div class="step">
+        <div class="ph">LINE 4</div>
+        <div class="nm">Send</div>
+        <div class="ds">검증된 정렬 줄을 받아 채널별 제안 발송. 시간당 20건+ 딸깍. Send는 사람 게이트.</div>
+        <span class="who pt">알바생</span>
+      </div>
+    </div>
+
+    <div class="note sot">
+      <b>SOT 불변식 —</b> 3사(사람인·잡코리아·링크드인) 자동로그인을 절대 막지 않는다. 맥북에서 사장님 Chrome 점유가 감지되면 그 머신의 워커는 즉시 정지(R4). Send는 자동으로 누르지 않고 항상 사람 게이트를 통과한다.
+    </div>
+  </section>
+
+  <!-- 4. THREE ACTORS -->
+  <section id="actors">
+    <div class="sec-no">04 / 공존</div>
+    <h2 class="title">AI · 헤드헌터 · 알바생 — 누가 무엇을 하는가</h2>
+    <p class="lead">세 주체의 공존 원칙: <strong>각자가 가장 잘하는 변동성 구간</strong>에 배치한다. AI는 의미이해·대량처리, 헤드헌터는 희소한 최상위 판단(취향·기준·관계), 알바는 검증된 줄의 고속 처리량. 저수지 모델은 이 분업을 비로소 가능하게 만든다.</p>
+
+    <div class="legend">
+      <span><span class="dot" style="background:var(--ai)"></span>AI</span>
+      <span><span class="dot" style="background:var(--hh)"></span>헤드헌터(사장님)</span>
+      <span><span class="dot" style="background:var(--pt)"></span>알바생</span>
+      <span><span class="dot" style="background:var(--ink3)"></span>시스템</span>
+    </div>
+
+    <table>
+      <thead><tr><th>단계</th><th>주체</th><th>구체적 역할</th><th>왜 이 주체인가</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="stage">세그먼트 정의</td>
+          <td><span class="badge b-hh">헤드헌터</span></td>
+          <td>ClickUp 포지션을 4~6개 직군 세그먼트로 묶고, 각 세그먼트의 "우수" 기준(골드 시드 10~20명)을 직접 지정</td>
+          <td>가장 희소하고 비싼 판단. 사장님의 취향이 곧 임베딩의 기준점(anchor)이 된다.</td>
+        </tr>
+        <tr>
+          <td class="stage">Harvest</td>
+          <td><span class="badge b-ai">AI</span> <span class="badge b-sys">시스템</span></td>
+          <td>세그먼트 키워드로 24시간 검색, 발견 프로필 무조건 저장, 세션 자동복구</td>
+          <td>대량·반복·내구. 사람이 할 일이 아니다. 변동성은 시간이 평준화한다.</td>
+        </tr>
+        <tr>
+          <td class="stage">Index / 임베딩</td>
+          <td><span class="badge b-ai">AI</span></td>
+          <td>프로필 정규화·임베딩·세그먼트 분류·중복제거·골드시드와의 거리 사전계산</td>
+          <td>의미 이해의 규모화. AI의 핵심 강점 구간.</td>
+        </tr>
+        <tr>
+          <td class="stage">Match</td>
+          <td><span class="badge b-ai">AI</span> <span class="badge b-sys">시스템</span></td>
+          <td>JD 임베딩 → 벡터검색 → 적합도 재랭킹 → 정렬된 후보 줄 생성</td>
+          <td>결정론적이어야 하므로 사람이 개입할수록 나빠진다. 순수 함수로 둔다.</td>
+        </tr>
+        <tr>
+          <td class="stage">Calibrate(경계선)</td>
+          <td><span class="badge b-hh">헤드헌터</span></td>
+          <td>상위 점수대 경계선 후보 검수, 오탐 피드백 → 세그먼트 기준·골드시드 갱신</td>
+          <td>모델이 못 잡는 미묘한 적합/부적합. 적은 양의 고품질 판단이 전체를 보정한다.</td>
+        </tr>
+        <tr>
+          <td class="stage">제안 본문</td>
+          <td><span class="badge b-ai">AI</span></td>
+          <td>JD 셋·회사 브리핑 7요소 기반 개인화 제안 초안 생성</td>
+          <td>기존 jd-builder 스킬이 이미 수행. 초안 생성은 AI, 발송 결정은 사람.</td>
+        </tr>
+        <tr>
+          <td class="stage">Send</td>
+          <td><span class="badge b-pt">알바생</span></td>
+          <td>검증된 정렬 줄을 채널별로 시간당 20건+ 발송, 단순 응답 1차 처리</td>
+          <td>줄이 이미 순수하므로 판단 부담이 사라진다 — 비로소 throughput 작업이 된다.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note insight">
+      <b>왜 지금까지 알바 20건/시가 안 됐나 —</b> 라인 1이 불안정한 줄(낮은 순도)을 내보내면, 알바가 발송 전에 "이 사람 맞나?"를 다시 판단해야 한다. 그건 알바의 일이 아니라 헤드헌터의 일이다. 저수지 모델은 <strong>판단을 인덱스 시점으로 앞당겨</strong> 알바 손에는 순수한 줄만 쥐여준다. 그래야 딸깍이 가능하다.
+    </div>
+  </section>
+
+  <!-- 5. MACHINES -->
+  <section id="machines">
+    <div class="sec-no">05 / 토폴로지</div>
+    <h2 class="title">3대 머신 — 역할 고정</h2>
+    <p class="lead">세 머신을 "다 똑같이 AI Search"로 굴리지 않는다. 점유 패턴이 다르기 때문이다. 맥북은 사장님이 점유하므로 유인(有人)·고터치, 맥미니·맥에어는 무인(無人)·연속 Harvest로 <strong>역할을 고정</strong>한다.</p>
+
+    <div class="machines">
+      <div class="mach mb">
+        <div class="hd"><div class="role">유인 · 고터치 · 감독</div><div class="nm">MacBook</div></div>
+        <div class="bd">
+          <div class="k">드라이버</div><p class="driver">MCP Claude in Chrome</p>
+          <div class="k">담당</div><p>링크드인 RPS · 세그먼트 보정 · 경계선 검수 · 신규 스킬 디버깅 · 사장님 인터랙티브 작업</p>
+          <div class="k">가동</div><p>사장님 재석 시간대. <b>Chrome 점유 시 무인 워커는 양보(R4)</b></p>
+        </div>
+      </div>
+      <div class="mach mm">
+        <div class="hd"><div class="role">무인 · 연속 · Harvester A</div><div class="nm">Mac Mini</div></div>
+        <div class="bd">
+          <div class="k">드라이버</div><p class="driver">Playwright (headless persistent)</p>
+          <div class="k">담당</div><p><b>사람인</b> 세그먼트 Harvest 전담 — 마케팅·세일즈·HR·재무 직군 풀 순환</p>
+          <div class="k">가동</div><p>24시간. 아침 자동로그인 → 세션 스냅샷 지속 → 큐 사이클 무한 순환</p>
+        </div>
+      </div>
+      <div class="mach ma">
+        <div class="hd"><div class="role">무인 · 연속 · Harvester B</div><div class="nm">Mac Air</div></div>
+        <div class="bd">
+          <div class="k">드라이버</div><p class="driver">Playwright (headless persistent)</p>
+          <div class="k">담당</div><p><b>잡코리아</b> 세그먼트 Harvest 전담 — IT·AI·데이터·개발 직군 풀 순환</p>
+          <div class="k">가동</div><p>24시간. 동일 세션 지속 구조. 사람인/잡코리아 부하를 머신으로 분리</p>
+        </div>
+      </div>
+    </div>
+
+    <p style="font-size:14.5px;color:var(--ink2)">핵심은 <strong>"아침에든 언제든 로그인을 해두고 계속 서치하는 상태"</strong>의 실현이다. 이미 <code>session_state</code> 테이블이 사이트·워커별 <strong>암호화 세션 스냅샷</strong>을 검증된 것만 보관하고, <code>portal_recovery</code>가 만료 시 <em>snapshot 재주입 → 자동 재로그인 → (최후) 사람</em> 순으로 복구한다. 무인 머신이 끊기지 않고 도는 토대는 이미 깔려 있다. 남은 일은 "포지션 큐"를 "세그먼트 Harvest 큐"로 바꾸고, 그 위에 프로필 저장 레일·임베딩 한 겹을 얹는 것이다 — 저장·매칭 레일은 아직 후속(06·08 참조).</p>
+  </section>
+
+  <!-- 6. VECTOR LAYER -->
+  <section id="vector">
+    <div class="sec-no">06 / 구현</div>
+    <h2 class="title">벡터 레이어 — 현 코드 위에 얹는 한 겹</h2>
+    <p class="lead">좋은 소식: 토대의 90%가 이미 있다. <code>Position</code>(industry_segment 보유) · <code>CapturedProfile</code>(저장 모델) · <code>grouping.py</code>(세그먼트 키) · <code>scoring.py</code>(적합도) · Supabase · 프로필 아카이버. <strong>없는 것은 임베딩과 코사인 검색 단 한 겹</strong>이다. 현 <code>grouping.py</code>의 "유사도"는 규칙 기반 키일 뿐 — 진짜 벡터가 아니다. 거기를 채운다.</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <span class="ic">🗃️</span>
+        <h4>이미 있는 것 (재사용)</h4>
+        <p style="margin-bottom:0">
+          • <code>models.py</code> — <code>Position.industry_segment</code>, <code>CapturedProfile</code><br/>
+          • <code>grouping.py</code> — 규칙 기반 세그먼트 버킷<br/>
+          • <code>scoring.py</code> — 적합도 점수(좋은학교·이직안정성·직무직결성)<br/>
+          • <code>session_state</code>(Supabase) — 무인 세션 지속<br/>
+          • 프로필 아카이버 — SQLite + Supabase 적재
+        </p>
+      </div>
+      <div class="card" style="border-color:#c9e6d8;background:linear-gradient(180deg,#f5fcf8,#fff)">
+        <span class="ic">➕</span>
+        <h4>새로 얹을 것 (한 겹)</h4>
+        <p style="margin-bottom:0">
+          • 프로필·JD <b>임베딩 생성</b> 모듈<br/>
+          • Supabase <b>pgvector 컬럼 + 인덱스</b> (세그먼트 태그)<br/>
+          • <b>top-K 코사인 매치</b> 함수 (세그먼트 내)<br/>
+          • <b>골드시드 거리</b> 기반 "우수" 임계<br/>
+          • Harvest 큐 ↔ Match 큐 <b>분리</b>
+        </p>
+      </div>
+    </div>
+
+    <h3>매칭의 수학적 형태 — 왜 변동성이 사라지는가</h3>
+    <p>실시간 서치의 출력은 <code>f(JD, 브라우저상태, 모델컨디션, 시각) </code> — 인자 4개 중 3개가 잡음이다. 저수지 매칭의 출력은 <code>match(embed(JD), 저수지) = top-K cosine</code> — <strong>입력이 같으면 출력이 같다.</strong> 잡음 인자가 Harvest 단계(비동기)로 격리되고, 거기서 시간 평균으로 희석된다. 같은 포지션을 두 번 매칭하면 같은 줄이 나온다. 이 <strong>재현성</strong>이야말로 알바에게 안정적인 줄을 보장하는 근거다.</p>
+  </section>
+
+  <!-- 7. B2C LOOP -->
+  <section id="b2c">
+    <div class="sec-no">07 / 해자</div>
+    <h2 class="title">저수지는 데이터 해자이자 Valuehire 획득 퍼널이다</h2>
+    <p class="lead">저수지의 진짜 가치는 매칭 속도가 아니다. <strong>포털에 종속되지 않는 자체 인재 DB</strong>를 쌓는다는 것이다. Harvest한 모든 우수 인재는 동시에 Valuehire B2C 가입 대상이다 — 길어 올린 물을 그냥 흘려보내지 말고, 우리 호수로 이주시킨다.</p>
+
+    <div class="loop">
+      <div class="node"><div class="ic">🎣</div><div class="t">Harvest</div><div class="d">포털에서 우수 인재 발견·저장</div></div>
+      <div class="node"><div class="ic">✉️</div><div class="t">전도</div><div class="d">포지션 제안 + Valuehire 셀프베팅 초대</div></div>
+      <div class="node"><div class="ic">🪪</div><div class="t">가입</div><div class="d">Valuehire에서 자기검증 프로필 작성</div></div>
+      <div class="node"><div class="ic">💎</div><div class="t">자산화</div><div class="d">포털 무관 1st-party 인재 데이터</div></div>
+    </div>
+    <p class="loopback">↺ 자산화된 프로필이 저수지 순도를 높이고 → 더 좋은 매칭 → 더 좋은 제안 → 더 많은 전도</p>
+
+    <p style="font-size:14.5px;color:var(--ink2);margin-top:20px">포털 크롤링은 <strong>부트스트랩</strong>일 뿐이다. 종착지는 Valuehire 자체 DB다. 매번 포털을 다시 긁는 휘발성 모델에서, <strong>한 번 만난 인재와의 관계가 영구히 축적되는</strong> 모델로 옮겨간다. 저수지 모델이 B2C 전도와 한 몸인 이유 — Harvest 파이프라인에 "Valuehire 초대" 한 단계를 끼우면, 인재 소싱이 곧 사용자 획득이 된다.</p>
+  </section>
+
+  <!-- 8. ROADMAP -->
+  <section id="roadmap">
+    <div class="sec-no">08 / 이행</div>
+    <h2 class="title">단계적 전환 — 실시간을 끄지 말고 병행 측정</h2>
+    <p class="lead">한 번에 갈아엎지 않는다. 저수지를 <strong>실시간 서치와 병행</strong>으로 띄우고, 같은 포지션에 두 방식의 순도를 비교한다. 저수지가 이기면 트래픽을 옮긴다. 측정이 결정한다.</p>
+
+    <div class="phase p0">
+      <div class="ph-h"><span class="ph-tag">PHASE 0</span><span class="ph-t">세그먼트 정의 + 골드시드</span><span class="ph-when">1~2일 · 헤드헌터 주도</span></div>
+      <ul>
+        <li>ClickUp <code>FY26ClientsPosition</code> active 포지션을 4~6개 직군 세그먼트로 확정 (예: IT/AI·데이터 / 마케팅·그로스 / 세일즈·BD / HR·재무·운영)</li>
+        <li>세그먼트마다 사장님이 "이런 사람" 골드시드 10~20명 지정 — 임베딩 기준점</li>
+        <li>각 세그먼트 키워드 플랜 확정 (<code>keywords.py</code> 확장)</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <div class="ph-h"><span class="ph-tag">PHASE 1</span><span class="ph-t">Harvest 큐 분리 + 연속 적재</span><span class="ph-when">3~5일</span></div>
+      <ul>
+        <li>"포지션 큐"와 별개로 <strong>세그먼트 Harvest 큐</strong> 신설 — <code>queue_runner.py</code>/<code>portal_queue_executor.py</code> 분기</li>
+        <li>맥미니=사람인, 맥에어=잡코리아 무인 24h 가동, 발견 프로필 무조건 저장</li>
+        <li>저수지 유입량 측정: 세그먼트별 일일 신규 프로필 수</li>
+      </ul>
+    </div>
+    <div class="phase">
+      <div class="ph-h"><span class="ph-tag">PHASE 2</span><span class="ph-t">임베딩 + 벡터 매칭</span><span class="ph-when">5~7일</span></div>
+      <ul>
+        <li>Supabase pgvector 컬럼·인덱스 추가, 프로필·JD 임베딩 파이프라인</li>
+        <li><code>match()</code> top-K 코사인 + <code>scoring.py</code> 재랭킹 결합</li>
+        <li><strong>A/B</strong>: 동일 포지션에 [실시간 서치] vs [저수지 매칭] 후보를 헤드헌터가 블라인드 채점 → 순도 비교</li>
+      </ul>
+    </div>
+    <div class="phase p3">
+      <div class="ph-h"><span class="ph-tag">PHASE 3</span><span class="ph-t">알바 발송 + B2C 전도 루프</span><span class="ph-when">상시</span></div>
+      <ul>
+        <li>저수지 순도가 임계(예: 적합도 ≥85 비율) 통과한 세그먼트부터 알바 발송 줄로 승격</li>
+        <li>제안 본문에 Valuehire 셀프베팅 초대 1단계 삽입 → 가입 전환 측정</li>
+        <li>경계선 피드백 → 골드시드 갱신 → 임베딩 재보정 (주간 사이클)</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 9. METRICS -->
+  <section id="metrics">
+    <div class="sec-no">09 / 측정</div>
+    <h2 class="title">성공 지표 — 무엇으로 이겼다고 말하나</h2>
+    <p class="lead">"느낌"이 아니라 4개 숫자로 판정한다. 핵심은 <strong>순도</strong>(알바에게 줄 수 있는가)와 <strong>변동성</strong>(매번 같은 품질인가). 처리량은 그 두 개가 충족되면 자연히 따라온다.</p>
+
+    <div class="kpis">
+      <div class="kpi">
+        <div class="now">현재</div>
+        <div class="v">불안정<span class="u"></span></div>
+        <div class="nm">매칭 순도 — top-20 중 적합도 ≥85 비율</div>
+        <div class="tgt">목표 ≥ 70%</div>
+      </div>
+      <div class="kpi">
+        <div class="now">현재</div>
+        <div class="v">&lt;20<span class="u">/시</span></div>
+        <div class="nm">알바 발송 처리량 (검증된 줄 기준)</div>
+        <div class="tgt">목표 ≥ 20/시</div>
+      </div>
+      <div class="kpi">
+        <div class="now">현재</div>
+        <div class="v">0<span class="u"></span></div>
+        <div class="nm">저수지 적립 — 세그먼트별 누적 프로필</div>
+        <div class="tgt">목표 우상향 단조</div>
+      </div>
+      <div class="kpi">
+        <div class="now">현재</div>
+        <div class="v">높음<span class="u"></span></div>
+        <div class="nm">출력 변동성 — 동일 포지션 재매칭 편차</div>
+        <div class="tgt">목표 ≈ 0 (재현성)</div>
+      </div>
+    </div>
+
+    <p style="font-size:14px;color:var(--ink3);margin-top:6px">측정 부수효과 한 가지: 저수지는 <strong>관측 가능</strong>하다. 실시간 서치는 "왜 이번엔 안 나왔지"를 사후 추적하기 어렵지만, 저수지는 "이 세그먼트에 우수 인재가 N명 있고, 그중 이 JD에 top-K는 이들"이라고 항상 답할 수 있다. 디버깅 가능성 자체가 자산이다.</p>
+  </section>
+
+  <!-- 10. ACTIONS -->
+  <section id="actions">
+    <div class="sec-no">10 / 즉시 실행</div>
+    <h2 class="title">현 코드 기준 — 다음 커밋들</h2>
+    <p class="lead">추상론이 아니라 파일 단위 작업으로 떨어뜨린다. 모두 <code>tools/multi_position_sourcing/</code> 위에서 증분으로 가능하다.</p>
+
+    <div class="act">
+      <div class="ah"><span class="num">1</span><span class="at">세그먼트 taxonomy 고정</span></div>
+      <p>ClickUp active 포지션을 4~6 세그먼트로 매핑하는 표를 코드/설정으로 명문화. <code>grouping.py</code>의 규칙 키를 세그먼트 ID로 승격.</p>
+      <div class="files"><b>grouping.py</b> · <b>keywords.py</b> · <b>models.py</b>(industry_segment→segment_id 승격)</div>
+    </div>
+    <div class="act">
+      <div class="ah"><span class="num">2</span><span class="at">Harvest 큐 ↔ Match 큐 분리</span></div>
+      <p>포지션 트리거 없이 세그먼트만으로 도는 연속 Harvest 사이클 추가. 무인 머신은 이 큐만 소비.</p>
+      <div class="files"><b>queue_runner.py</b> · <b>portal_queue_executor.py</b> · <b>portal_worker.py</b></div>
+    </div>
+    <div class="act">
+      <div class="ah"><span class="num">3</span><span class="at">pgvector 스키마 + 임베딩 적재</span></div>
+      <p>Supabase에 프로필 임베딩 테이블/컬럼 + IVFFlat/HNSW 인덱스. 아카이버 저장 직후 임베딩 훅.</p>
+      <div class="files">신규 <b>embeddings.sql</b> · 신규 <b>embed.py</b> · 아카이버 연동</div>
+    </div>
+    <div class="act">
+      <div class="ah"><span class="num">4</span><span class="at">match() + 재랭킹 결합</span></div>
+      <p>JD 임베딩 → 세그먼트 내 top-K 코사인 → <code>scoring.py</code> 점수로 2차 정렬 → 알바용 정렬 줄 산출.</p>
+      <div class="files">신규 <b>match.py</b> · <b>scoring.py</b>(재사용)</div>
+    </div>
+    <div class="act">
+      <div class="ah"><span class="num">5</span><span class="at">A/B 측정 하니스</span></div>
+      <p>동일 포지션에 실시간 vs 저수지 후보를 나란히 산출해 블라인드 채점. 기존 <code>dry_run.py</code> 패턴 확장.</p>
+      <div class="files"><b>dry_run.py</b> · <b>tests/</b> · artifacts 증거 JSON</div>
+    </div>
+  </section>
+
+  <!-- closing -->
+  <section id="close">
+    <div class="sec-no">↺ / 요약</div>
+    <h2 class="title">한 줄로</h2>
+    <p class="lead" style="font-size:21px;color:var(--ink);font-weight:600;max-width:880px">
+      변동성을 실시간에서 떠안지 말고 시간에 분산하라. AI는 세그먼트 저수지를 24시간 채우고, 헤드헌터는 "우수"의 기준만 보정하고, 알바는 결정론적 벡터매칭이 뽑아낸 순수한 줄을 시간당 20건씩 발송한다. 그 부산물로 Valuehire 자체 인재 DB라는 해자가 쌓인다.
+    </p>
+    <p style="color:var(--ink2)">지금 막힌 곳은 "AI가 약해서"가 아니다. <strong>AI를 가장 변동성 큰 자리에 세워둔 배치</strong> 때문이다. 자리를 바꾸면 같은 AI가 안정적으로 생산한다. 빠진 것은 임베딩 한 겹과, Harvest를 Match에서 떼어내는 큐 분리뿐이다 — 토대는 이미 깔려 있다.</p>
+  </section>
+
+  <footer>
+    <p><b>Valuehire AI Search 재설계 — 세그먼트 저수지 + 벡터 매칭</b><br/>
+    작성 2026-06-12 · 근거 코드 <code>tools/multi_position_sourcing/</code>, <code>docs/ai-search/</code>, Supabase <code>session_state</code> 스키마<br/>
+    SOT 불변식: 3사 자동로그인 비차단 · Chrome 점유 시 무인 워커 양보(R4) · Send는 사람 게이트.</p>
+  </footer>
+
+</div>
+</body>
+</html>
