@@ -109,6 +109,18 @@ class ScoringCriteriaTests(unittest.TestCase):
             score_profile_for_position(noname, BACKEND_POS).score_breakdown["company_tier"],
         )
 
+    def test_company_tier_reasons_deterministically_ordered(self) -> None:
+        # 여러 고티어 신호 → 회사 신호 문구가 정렬(결정론, 프로세스/PYTHONHASHSEED 무관).
+        # 사장님 브리핑에 노출되므로 표시 텍스트도 재현 가능해야 한다.
+        p = _profile(current_or_past_companies=("Naver Kakao Toss Coupang Line",))
+        reasons = [
+            r
+            for r in score_profile_for_position(p, BACKEND_POS).why_fit
+            if r.startswith("company tier signal")
+        ]
+        self.assertTrue(reasons)
+        self.assertEqual(reasons, sorted(reasons))
+
     def test_breakdown_is_deterministic(self) -> None:
         p = _profile(employment_history=(EmploymentTenure("A", "2018-01", "2018-09"),))
         first = score_profile_for_position(p, BACKEND_POS).score_breakdown

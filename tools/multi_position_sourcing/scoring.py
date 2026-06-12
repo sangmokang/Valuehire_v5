@@ -106,7 +106,8 @@ def _contains_any(text: str, signals: tuple[str, ...] | list[str]) -> list[str]:
 
 def _company_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
     companies = " ".join(profile.current_or_past_companies).lower()
-    matched = tuple(signal for signal in HIGH_TIER_COMPANY_SIGNALS if signal in companies)
+    # sorted: set 반복 순서(PYTHONHASHSEED 의존)가 사장님 브리핑 문구를 흔들지 않게 결정론 고정.
+    matched = tuple(signal for signal in sorted(HIGH_TIER_COMPANY_SIGNALS) if signal in companies)
     if matched:
         return 10, tuple(f"company tier signal: {signal}" for signal in matched[:2])
     if profile.current_or_past_companies:
