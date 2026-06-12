@@ -44,14 +44,15 @@ EVIDENCE_PATHS = (
     "tools/multi_position_sourcing/dry_run.py",
     "tools/multi_position_sourcing/selectors.py",
     "docs/ai-search/session-state-supabase-schema-2026-06-09.sql",
-    # 저수지 단계 4에서 구현됨 — '신규(아직 없음)' → 실존 근거로 승격.
+    # 저수지 단계 4·5에서 구현됨 — '신규(아직 없음)' → 실존 근거로 승격.
     "tools/multi_position_sourcing/embed.py",
+    "tools/multi_position_sourcing/match.py",
     "docs/ai-search/embeddings.sql",
 )
 
 # 문서가 '신규(아직 없음)'로 명시한 제안 파일 — 실존 단언 대상이 아니다.
-# 단계 4에서 embed.py 구현 → FUTURE 에서 제외(EVIDENCE_PATHS 로 이동). match.py 는 단계 5까지 미래.
-FUTURE_FILES = frozenset({"match.py"})
+# 단계 4(embed.py)·단계 5(match.py) 구현으로 모두 EVIDENCE_PATHS 로 승격 → 남은 미래 파일 없음.
+FUTURE_FILES: frozenset[str] = frozenset()
 
 EXPECTED_SECTION_IDS = [
     "diagnosis", "pivot", "pipeline", "actors", "machines",
