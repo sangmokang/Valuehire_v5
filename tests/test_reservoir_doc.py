@@ -148,3 +148,19 @@ def test_a6_session_state_schema_encrypted_3sites() -> None:
     for site in ("saramin", "jobkorea", "linkedin_rps"):
         assert site in sql, f"3사 중 '{site}' 누락 — '3사 세션 지속' 주장 불성립"
     assert re.search(r"(?i)encrypt", sql), "암호화(encrypt) 흔적 부재 — '암호화 세션' 주장 불성립"
+
+
+# ── A7 · SOT 불변식 문구 보존 — 어떤 편집에서도 약화 금지 (4b 구조/red-team → 승격) ──
+def test_a7_sot_invariants_present(html: str) -> None:
+    c = re.sub(r"\s+", "", html)
+    assert "자동로그인" in c and ("막지않는다" in c or "비차단" in c), \
+        "SOT(i) 3사 자동로그인 비차단 — 약화/삭제됨"
+    assert "R4" in c and ("양보" in c or "정지" in c), \
+        "SOT(ii) Chrome 점유 시 무인 워커 즉시 정지(R4 양보) — 약화/삭제됨"
+    assert "사람게이트" in c, "SOT(iii) Send 사람 게이트 — 약화/삭제됨"
+
+
+# ── A8 · 3사 표기 일관성 — 마스트헤드 범위 축소가 SOT 3사와 어긋나지 않게 (4b → 승격) ──
+def test_a8_three_sites_named(html: str) -> None:
+    for site in ("사람인", "잡코리아", "링크드인"):
+        assert site in html, f"3사 중 '{site}' 미표기 — 마스트헤드/SOT 3사 일관성 회귀"
