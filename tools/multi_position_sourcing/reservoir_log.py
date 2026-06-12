@@ -81,6 +81,10 @@ def validate_reservoir_log_record(record: Mapping[str, object]) -> None:
     missing = [field for field in RESERVOIR_LOG_FIELDS if field not in record]
     if missing:
         raise ReservoirLogContractError(f"로그 필드 누락: {missing}")
+    # 스키마 자체가 계약 — 오타/잉여 필드는 로깅 버그를 가릴 수 있으므로 거부(엄격).
+    unexpected = [field for field in record if field not in RESERVOIR_LOG_FIELDS]
+    if unexpected:
+        raise ReservoirLogContractError(f"알 수 없는 로그 필드: {unexpected}")
     if record["line"] not in RESERVOIR_LINES:
         raise ReservoirLogContractError(f"알 수 없는 line: {record['line']!r}")
     if record["status"] not in RESERVOIR_STATUSES:

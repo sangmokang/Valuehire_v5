@@ -139,9 +139,30 @@ def run_harvest_cycle(
             )
             continue
 
+        # 발견 프로필을 무조건 저장(차감0). save_rail(아카이버 쓰기)이 터져도 fail-closed —
+        # 예외를 새지 않고 빠진 건수+이유를 로그로 남긴다(조용한 실패 금지).
+        saved_here = 0
+        save_error = ""
         for profile in found:
-            save_rail(profile)  # 무조건 저장(차감0). 점수와 무관 — 저수지 적재.
-        saved_profiles += len(found)
+            try:
+                save_rail(profile)
+            except Exception as exc:
+                save_error = f"{type(exc).__name__}: archiver save failed"
+                break
+            saved_here += 1
+
+        saved_profiles += saved_here
+        if save_error:
+            dropped_here = len(found) - saved_here
+            dropped += dropped_here
+            records.append(
+                make_reservoir_log_record(
+                    **base, in_count=len(found), out_count=saved_here,
+                    dropped_count=dropped_here, status="fail", fail_reason=save_error,
+                )
+            )
+            continue
+
         searched.append((item.segment_id, item.channel))
         records.append(
             make_reservoir_log_record(

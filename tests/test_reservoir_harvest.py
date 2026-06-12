@@ -96,6 +96,16 @@ class ReservoirLogContractTests(unittest.TestCase):
         with self.assertRaises(ReservoirLogContractError):
             validate_reservoir_log_record(rec)
 
+    def test_unknown_extra_field_rejected(self) -> None:
+        # 스키마 자체가 계약 — 오타/잉여 필드는 로깅 버그를 가릴 수 있으므로 거부.
+        rec = make_reservoir_log_record(
+            ts="t", run_id="r", machine="m", segment_id="s", site="saramin",
+            line="harvest", in_count=1, out_count=1, dropped_count=0, status="ok",
+        )
+        rec["linee"] = "typo"
+        with self.assertRaises(ReservoirLogContractError):
+            validate_reservoir_log_record(rec)
+
     def test_append_writes_dated_jsonl(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -237,6 +247,37 @@ class HarvestQueueTests(unittest.TestCase):
         for r in fail_recs:
             self.assertTrue(r["fail_reason"])  # 조용한 실패 금지
             validate_reservoir_log_record(r)
+
+    def test_harvest_cycle_fail_closed_when_save_rail_raises(self) -> None:
+        # 아카이버 저장(save_rail)이 터져도 예외가 새지 않고, 빠진 건수+이유를 fail 로그로 남긴다.
+        queue = build_harvest_queue(("it_ai_data",), machines=("macmini",))
+
+        async def execute_item(item):
+            return ("p1", "p2", "p3")
+
+        calls = {"n": 0}
+
+        def save_rail(profile):
+            calls["n"] += 1
+            if calls["n"] == 2:  # 첫 아이템의 두 번째 저장에서 실패
+                raise RuntimeError("archiver write failed")
+
+        summary = run_harvest_cycle(
+            queue,
+            execute_item=execute_item,
+            save_rail=save_rail,
+            run_id="run-4",
+            today="2026-06-12",
+        )
+        fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
+        self.assertTrue(fail_recs)
+        for r in fail_recs:
+            self.assertTrue(r["fail_reason"])
+            self.assertGreater(r["dropped_count"], 0)  # 빠진 건수를 반드시 남긴다
+            validate_reservoir_log_record(r)
+        self.assertGreater(summary.dropped, 0)
+        # 모든 경계에 로그 1줄(아이템 수만큼) — 저장 실패해도 로그 누락 없음.
+        self.assertEqual(len(summary.log_records), len(queue))
 
 
 if __name__ == "__main__":
