@@ -27,6 +27,9 @@ class BlindBatchTests(unittest.TestCase):
         batch = build_blind_ab_batch(REALTIME, RESERVOIR)
         for item in batch.blind_items:
             self.assertFalse(hasattr(item, "arm"))
+            # candidate_id 가 헤드헌터 화면(BlindItem)에 있으면 arm 흔적(rt-/rv-)으로 블라인드가 깨진다.
+            # candidate↔blind 매핑은 AbBatch.key(채점 후 언블라인드)에만 둔다.
+            self.assertFalse(hasattr(item, "candidate_id"))
             self.assertNotIn("realtime", item.blind_id)
             self.assertNotIn("reservoir", item.blind_id)
             self.assertNotIn("rt-", item.blind_id)

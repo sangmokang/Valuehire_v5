@@ -27,10 +27,13 @@ Arm = Literal["realtime", "reservoir"]
 
 @dataclass(frozen=True)
 class BlindItem:
-    """헤드헌터에게 보이는 블라인드 항목. arm 은 일부러 노출하지 않는다."""
+    """헤드헌터에게 보이는 블라인드 항목 — blind_id 만 노출한다.
+
+    candidate_id 는 일부러 담지 않는다(arm 흔적이 묻은 id 라면 블라인드가 깨지므로).
+    blind_id → (arm, rank, candidate_id) 매핑은 채점 후 언블라인드용으로 ``AbBatch.key`` 에만 둔다.
+    """
 
     blind_id: str
-    candidate_id: str
 
 
 @dataclass(frozen=True)
@@ -74,7 +77,7 @@ def build_blind_ab_batch(
     key: dict[str, tuple[str, int, str]] = {}
     for index, (arm, rank, cid) in enumerate(ordered):
         blind_id = f"blind-{index:04d}"
-        blind_items.append(BlindItem(blind_id=blind_id, candidate_id=cid))
+        blind_items.append(BlindItem(blind_id=blind_id))
         key[blind_id] = (arm, rank, cid)
     return AbBatch(blind_items=tuple(blind_items), key=key)
 
