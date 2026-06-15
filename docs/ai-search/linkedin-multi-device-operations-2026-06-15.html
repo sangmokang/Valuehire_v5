@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>링크드인 계정 3개 · 맥 2대 운영안 — 누가 어디서 돌릴까</title>
+<style>
+  :root{
+    --ink:#0c1116; --ink2:#39434f; --ink3:#6b7785;
+    --line:#e4e8ee; --line2:#eef1f5;
+    --paper:#ffffff; --paper2:#f7f9fb; --paper3:#fbfcfd;
+    --brand:#1746d4; --brand-soft:#eaf0ff;
+    --ok:#0a7d5a; --ok-soft:#e3f6ee;
+    --warn:#b4232a; --warn-soft:#fdecec;
+    --gold:#9a7510; --gold-soft:#fbf4df;
+    --air:#0a6d9a; --air-soft:#e2f1f8;
+    --mini:#7a3da0; --mini-soft:#f1e8f8;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0; background:var(--paper2); color:var(--ink);
+    font-family:var(--sans); line-height:1.7; font-size:16px;
+    -webkit-font-smoothing:antialiased; letter-spacing:-0.01em;}
+  .wrap{max-width:1000px; margin:0 auto; padding:0 28px}
+
+  header.top{
+    background:
+      radial-gradient(1200px 400px at 80% -120px, rgba(23,70,212,.16), transparent 60%),
+      linear-gradient(180deg,#0c1116,#10161e);
+    color:#fff; padding:60px 0 50px; border-bottom:3px solid var(--brand);}
+  .kicker{font-family:var(--mono); font-size:12.5px; letter-spacing:.22em;
+    text-transform:uppercase; color:#7fa0ff; margin:0 0 18px}
+  header.top h1{font-size:39px; line-height:1.14; margin:0 0 18px; letter-spacing:-0.03em; font-weight:800}
+  header.top h1 em{font-style:normal; color:#9fb8ff}
+  .sub{font-size:18px; color:#c4cdd9; max-width:740px; margin:0}
+  .meta-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:28px}
+  .chip{font-family:var(--mono); font-size:11.5px; letter-spacing:.04em;
+    border:1px solid rgba(255,255,255,.2); border-radius:999px;
+    padding:6px 13px; color:#cdd6e3; background:rgba(255,255,255,.04)}
+  .chip b{color:#fff; font-weight:600}
+
+  .tldr{background:#fff; border:1px solid var(--line); border-left:4px solid var(--brand);
+    border-radius:14px; padding:26px 30px; margin:-28px 0 0; position:relative; z-index:3;
+    box-shadow:0 18px 50px -28px rgba(12,17,22,.4)}
+  .tldr h2{margin:0 0 6px; font-size:13px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink3); font-family:var(--mono)}
+  .tldr .diag{font-size:19px; font-weight:700; line-height:1.5; margin:8px 0 4px; letter-spacing:-0.02em}
+  .tldr .rx{font-size:16.5px; color:var(--ink2); margin:14px 0 0; line-height:1.6}
+  .tldr .rx b{color:var(--brand)}
+
+  section{padding:50px 0 6px}
+  .sec-no{font-family:var(--mono); font-size:13px; color:var(--brand); letter-spacing:.1em}
+  h2.title{font-size:27px; letter-spacing:-0.025em; margin:6px 0 8px; line-height:1.2; font-weight:800}
+  .lead{font-size:17px; color:var(--ink2); max-width:800px; margin:0 0 24px}
+  h3{font-size:19px; margin:32px 0 12px; letter-spacing:-0.02em; font-weight:700}
+  p{margin:0 0 16px}
+  strong{font-weight:680}
+  a{color:var(--brand)}
+  code{font-family:var(--mono); font-size:13.5px; background:var(--paper);
+    border:1px solid var(--line); border-radius:5px; padding:1px 6px; color:#243; white-space:nowrap}
+
+  .grid{display:grid; gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+
+  /* device cards */
+  .dev{border-radius:16px; padding:24px 24px; border:1px solid var(--line); background:#fff}
+  .dev.air{border-top:4px solid var(--air); background:linear-gradient(180deg,var(--air-soft),#fff 55%)}
+  .dev.mini{border-top:4px solid var(--mini); background:linear-gradient(180deg,var(--mini-soft),#fff 55%)}
+  .dev h3{margin:0 0 4px; font-size:21px}
+  .dev .role{font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase}
+  .dev.air .role{color:var(--air)} .dev.mini .role{color:var(--mini)}
+  .dev ul{margin:14px 0 0; padding-left:18px} .dev li{margin:6px 0; font-size:14.5px; color:var(--ink2)}
+  .acct{display:inline-block; font-family:var(--mono); font-size:12px; font-weight:700;
+    padding:3px 10px; border-radius:999px; margin:2px 4px 2px 0}
+  .acct.main{background:#e7edff; color:#1746d4}
+  .acct.s1{background:#e6f3ea; color:#0a7d5a}
+  .acct.s2{background:#fdeede; color:#b3551d}
+
+  .rule{background:var(--gold-soft); border:1px solid #ecdca6; border-radius:13px;
+    padding:20px 24px; margin:18px 0} .rule b{color:var(--gold)}
+  .danger{background:var(--warn-soft); border:1px solid #f3c9c9; border-left:4px solid var(--warn);
+    border-radius:12px; padding:18px 22px; margin:18px 0} .danger b{color:var(--warn)}
+  .good{background:var(--ok-soft); border:1px solid #b9e3cf; border-left:4px solid var(--ok);
+    border-radius:12px; padding:18px 22px; margin:18px 0} .good b{color:var(--ok)}
+
+  table{border-collapse:collapse; width:100%; margin:18px 0; font-size:14.5px}
+  th,td{border:1px solid var(--line); padding:11px 14px; text-align:left; vertical-align:top}
+  th{background:var(--paper2); font-weight:700; font-size:13.5px; color:var(--ink2)}
+  td b{color:var(--ink)}
+  .num{font-family:var(--mono); white-space:nowrap}
+
+  .check{list-style:none; padding:0; margin:14px 0}
+  .check li{padding:9px 0 9px 30px; position:relative; border-bottom:1px solid var(--line2); font-size:15px}
+  .check li::before{content:"☐"; position:absolute; left:4px; top:8px; color:var(--brand); font-size:16px}
+  .check li b{color:var(--ink)}
+
+  .flow{background:#0c1116; border-radius:14px; padding:22px 24px; margin:20px 0; color:#cdd6e3;
+    font-family:var(--mono); font-size:13.5px; line-height:1.95; overflow-x:auto}
+  .flow b{color:#9fb8ff} .flow .y{color:#e3c96b} .flow .g{color:#6bd49a} .flow .p{color:#c79ae8}
+
+  footer{margin-top:50px; padding:34px 0; border-top:1px solid var(--line); color:var(--ink3); font-size:13.5px}
+  @media(max-width:760px){.g2,.g3{grid-template-columns:1fr} header.top h1{font-size:29px}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">VALUEHIRE · LINKEDIN MULTI-DEVICE OPS</p>
+    <h1>계정 3개 · 맥 2대, <em>누가 어디서</em> 돌릴까</h1>
+    <p class="sub">맥북에어 + 맥미니 두 대로 링크드인 계정 3개(본계정 + 부계정 2)를
+      안 막히게 나눠서 운영하는 방법입니다. 핵심은 "기기를 나누는 것"보다
+      <b style="color:#fff">"계정마다 브라우저를 완전히 분리하고, 동시에 켜지 않는 것"</b>입니다.</p>
+    <div class="meta-row">
+      <span class="chip">작성일 <b>2026-06-15</b></span>
+      <span class="chip">기기 <b>MacBook Air + Mac mini</b></span>
+      <span class="chip">계정 <b>3개</b></span>
+      <span class="chip">발송 <b>사람이(SOT 3번)</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tldr">
+    <h2>한 줄 요약</h2>
+    <p class="diag">"한 기기에 한 계정"은 계정 3개를 2대에 못 담아서 안 맞습니다.
+      대신 <b>본계정은 맥북에어에 독립, 부계정 2개는 맥미니에서 시간을 나눠</b> 돌립니다.</p>
+    <p class="rx"><b>왜 이렇게? →</b> 두 맥이 같은 와이파이면 링크드인엔 IP가 어차피 같습니다.
+      그래서 진짜 중요한 건 ① 계정마다 <b>크롬 프로필을 따로</b> 쓰고
+      ② <b>두 계정을 동시에 켜지 않고</b> ③ 가장 소중한 본계정은 <b>한 대에만</b> 두는 것입니다.</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- 0 -->
+<section>
+  <p class="sec-no">00 — 원리</p>
+  <h2 class="title">링크드인은 무엇을 보고 "같은 사람"이라 묶나</h2>
+  <p class="lead">부계정 운영이 위험한 건, 링크드인이 여러 신호로 "이 계정들 한 사람이네"라고 묶어서
+    <b>같이 제재</b>하기 때문입니다. 묶는 신호는 아래 4가지인데, 우리가 손댈 수 있는 건 정해져 있어요.</p>
+
+  <div class="grid g2">
+    <div class="dev"><h4 style="margin:0 0 6px">🌐 IP 주소 <span style="color:var(--warn);font-size:13px">— 못 바꿈</span></h4>
+      <p style="font-size:14.5px;color:var(--ink2);margin:0">같은 와이파이면 두 맥 다 같은 IP. <b>하지만 사무실 IP를 여러 사람이 쓰는 건 정상</b>이라 이것만으론 잘 안 막힙니다.</p></div>
+    <div class="dev"><h4 style="margin:0 0 6px">🍪 브라우저·쿠키 <span style="color:var(--ok);font-size:13px">— 우리가 분리 가능 ★</span></h4>
+      <p style="font-size:14.5px;color:var(--ink2);margin:0">계정마다 <b>크롬 프로필을 따로</b> 쓰면 쿠키·지문이 갈라집니다. <b>제일 효과 큰 방어.</b></p></div>
+    <div class="dev"><h4 style="margin:0 0 6px">⏰ 동시 접속 <span style="color:var(--ok);font-size:13px">— 우리가 조절 가능 ★</span></h4>
+      <p style="font-size:14.5px;color:var(--ink2);margin:0">두 계정이 <b>같은 시간에 같은 기기/IP에서</b> 활동하면 묶입니다. 시간을 나누면 됩니다.</p></div>
+    <div class="dev"><h4 style="margin:0 0 6px">👤 행동 패턴 <span style="color:var(--ok);font-size:13px">— 우리가 다르게 ★</span></h4>
+      <p style="font-size:14.5px;color:var(--ink2);margin:0">세 계정이 똑같은 시간·똑같은 메모·똑같은 대상에 신청하면 봇으로 보입니다. 다르게.</p></div>
+  </div>
+
+  <div class="good">
+    <p style="margin:0"><b>결론 —</b> IP는 못 바꾸지만(그리고 사무실 IP 공유는 정상이라 큰 문제 아님),
+    <b>브라우저 분리 + 시간 분리 + 행동 다르게</b> 이 3개만 지키면 같은 IP라도 충분히 안전합니다.</p>
+  </div>
+</section>
+
+<!-- 1 -->
+<section>
+  <p class="sec-no">01 — 배치</p>
+  <h2 class="title">기기별 역할 — 어떤 계정을 어디에</h2>
+  <p class="lead">가장 소중한 <b>본계정은 한 대에만</b> 두어 깨끗하게 지키고,
+    자동 준비작업이 많은 <b>부계정 2개는 항상 켜두는 맥미니</b>에 모읍니다.
+    단, 부계정 둘은 <b>크롬 프로필을 다르게, 시간도 다르게</b> 씁니다.</p>
+
+  <div class="grid g2">
+    <div class="dev air">
+      <p class="role">사장님 개인 기기 · 사람이 직접</p>
+      <h3>💻 MacBook Air</h3>
+      <div style="margin:8px 0"><span class="acct main">본계정</span></div>
+      <ul>
+        <li><b>사장님이 평소 쓰는 기기</b> → 본계정만 여기에. 다른 계정 로그인 금지.</li>
+        <li>후보 검토 + <b>"보내기"는 여기서 사람이 직접</b> 누름.</li>
+        <li><b>SOT R4 양보</b>: 사장님이 크롬을 쓰기 시작하면 자동 작업 즉시 멈춤 → 어차피 발송은 사람이라 충돌 없음.</li>
+        <li>가볍게: 좋아요·댓글 등 "사람다운 활동"의 주 무대.</li>
+      </ul>
+    </div>
+    <div class="dev mini">
+      <p class="role">상시 가동 운영기 · 준비작업 담당</p>
+      <h3>🖥️ Mac mini</h3>
+      <div style="margin:8px 0"><span class="acct s1">부계정 1</span><span class="acct s2">부계정 2</span></div>
+      <ul>
+        <li><b>항상 켜둠</b> → 후보 수집·정제·줄 세우기(자동)를 밤낮으로.</li>
+        <li>부계정 1 = <b>크롬 프로필 A</b>, 부계정 2 = <b>크롬 프로필 B</b> (또는 크롬/엣지로 아예 분리).</li>
+        <li><b>두 부계정 동시 로그인 절대 금지</b> — 시간대를 나눠서(아래 03번).</li>
+        <li>사장님이 거의 안 건드리는 기기라 R4 충돌이 적음 → 준비작업에 최적.</li>
+        <li>여기서도 <b>발송은 사람</b>: 미니에 만들어진 "오늘 후보"를 사람이 검토·클릭.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="rule">
+    <p style="margin:0"><b>왜 본계정을 미니에 안 두나? —</b> 미니는 부계정 2개가 같이 사는 기기라
+    "여러 계정이 묶인 기기"입니다. 가장 소중한 본계정은 그 묶음에서 빼서
+    <b>에어에 홀로</b> 두는 게 안전합니다.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section>
+  <p class="sec-no">02 — 분리</p>
+  <h2 class="title">계정마다 브라우저 완전 분리하기</h2>
+  <p class="lead">이게 가장 효과 큰 방어입니다. 핵심은 "한 크롬 프로필 = 한 계정"이고,
+    <b>쿠키·로그인 정보를 절대 섞지 않는 것</b>입니다.</p>
+
+  <ol class="check" style="list-style:none;padding:0">
+    <li><b>계정마다 크롬 프로필 따로</b> — 크롬 우측 상단 프로필 → "추가"로 부계정1용, 부계정2용을 따로 만듦. (각자 별도 쿠키·캐시)</li>
+    <li><b>더 강하게는 브라우저를 다르게</b> — 부계정1은 크롬, 부계정2는 엣지(또는 Chromium) 식으로. 지문이 더 갈라짐.</li>
+    <li><b>자동화 로그인 세션도 계정별로</b> — Playwright를 쓸 때 계정마다 <code>user-data-dir</code>(로그인 저장 폴더)를 따로. 한 폴더 공유 금지.</li>
+    <li><b>비밀번호·복구 이메일·전화도 계정마다 다르게</b> — 같은 복구 이메일을 세 계정에 쓰면 바로 묶임.</li>
+    <li><b>수상한 무료 VPN·프록시는 쓰지 말 것</b> — 오히려 더 의심받음. 깨끗한 집/사무실 IP가 더 신뢰도 높음.</li>
+  </ol>
+
+  <div class="danger">
+    <p style="margin:0"><b>가장 흔한 실수 —</b> 한 크롬 창에서 로그아웃하고 다른 계정으로 로그인,
+    또 로그아웃하고 다른 계정… 이러면 쿠키가 섞여 한 기기에 세 계정이 다 묶입니다.
+    <b>반드시 프로필(또는 브라우저)을 분리</b>해서, 계정을 바꿀 때 로그아웃이 아니라 <b>프로필을 바꾸는</b> 방식으로.</p>
+  </div>
+</section>
+
+<!-- 3 -->
+<section>
+  <p class="sec-no">03 — 시간표</p>
+  <h2 class="title">하루 시간 나누기 — 동시에 안 켜기</h2>
+  <p class="lead">특히 한 기기(미니)에 사는 부계정 2개는 <b>겹치는 시간에 동시에 활동하면</b> 묶입니다.
+    아래처럼 시간대를 갈라 둡니다. 본계정(에어)은 사장님 활동 시간에 맞춰 자유롭게.</p>
+
+  <table>
+    <thead><tr><th>시간대</th><th>활동 계정</th><th>기기</th><th>하는 일</th></tr></thead>
+    <tbody>
+      <tr><td class="num">오전 9–12시</td><td><b>부계정 1</b></td><td>Mac mini · 프로필 A</td><td>신청 검토·발송(사람), 활동</td></tr>
+      <tr><td class="num">수시</td><td><b>본계정</b></td><td>MacBook Air</td><td>사장님 직접 사용·발송 (R4 양보)</td></tr>
+      <tr><td class="num">오후 2–6시</td><td><b>부계정 2</b></td><td>Mac mini · 프로필 B</td><td>신청 검토·발송(사람), 활동</td></tr>
+      <tr><td class="num">밤·새벽</td><td>(로그인은 유지) 자동 <b>수집만</b></td><td>Mac mini</td><td>후보 모으기·줄 세우기 (신청 안 함)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="good">
+    <p style="margin:0"><b>핵심 두 가지 —</b>
+    ① 미니에서 부계정 1·2가 <b>같은 시간에 둘 다 신청 활동 하지 않게</b>(오전/오후로 갈라).
+    ② 밤에 자동으로 도는 건 <b>"후보 수집"까지만</b>이고, <b>신청 발송은 낮에 사람이</b>.
+    자동 로그인 자체는 SOT 1번대로 계속 유지합니다(끊지 않음).</p>
+  </div>
+</section>
+
+<!-- 4 -->
+<section>
+  <p class="sec-no">04 — 전체 그림</p>
+  <h2 class="title">하루가 어떻게 돌아가나</h2>
+  <div class="flow">
+<b>[Mac mini · 밤새 자동]</b>
+  부계정1/2 후보 수집 ──▶ 중복·기존1촌 제거 ──▶ 점수화 ──▶ <span class="y">계정별 "오늘 후보 큐"</span>
+
+<b>[오전 · Mac mini 프로필 A]</b>
+  <span class="p">부계정1</span> 큐 검토(사람) ──▶ 이상한 사람 빼기 ──▶ <span class="g">보내기 클릭(사람)</span> ──▶ 좋아요/댓글
+
+<b>[수시 · MacBook Air]</b>
+  <span class="p">본계정</span> 사장님이 직접 검토·발송  (크롬 쓰기 시작하면 자동작업 양보)
+
+<b>[오후 · Mac mini 프로필 B]</b>
+  <span class="p">부계정2</span> 큐 검토(사람) ──▶ <span class="g">보내기 클릭(사람)</span> ──▶ 활동
+
+<b>[저녁 · 자동 집계]</b>
+  수락/거절 기록 ──▶ 미응답 200+ 면 철회 알림 ──▶ 내일 한도 자동 조절
+  </div>
+  <div class="rule">
+    <p style="margin:0"><b>지켜지는 SOT —</b> ① 3사 자동 로그인 유지(끊지 않음) ② 사장님 크롬 보이면 에어 자동작업 양보
+    ③ "보내기"는 세 계정 모두 사람이 ④ 보고는 쉬운 한국어로.</p>
+  </div>
+</section>
+
+<!-- 5 -->
+<section>
+  <p class="sec-no">05 — 점검표</p>
+  <h2 class="title">설정 한 번 / 매일 확인</h2>
+  <h3>처음 한 번 설정</h3>
+  <ul class="check">
+    <li>에어 = <b>본계정만</b>, 미니 = <b>부계정 1·2</b>로 정함</li>
+    <li>미니에 <b>크롬 프로필 A(부계정1) / B(부계정2)</b> 따로 생성</li>
+    <li>계정마다 <b>복구 이메일·전화 다르게</b> 되어 있는지 확인</li>
+    <li>Playwright 로그인 폴더(<code>user-data-dir</code>)를 계정별로 분리</li>
+    <li>부계정 활동 시간대(오전/오후) 정해서 캘린더에 표시</li>
+  </ul>
+  <h3>매일</h3>
+  <ul class="check">
+    <li>부계정 1·2가 <b>같은 시간에 동시 신청</b>하지 않았는가</li>
+    <li>계정 바꿀 때 <b>로그아웃 말고 프로필 전환</b>으로 했는가</li>
+    <li><b>보내기는 사람이</b> 직접 눌렀는가 (자동 발송 0건)</li>
+    <li>사장님이 에어 크롬 쓰기 시작하면 <b>자동작업 멈췄</b>는가</li>
+  </ul>
+</section>
+
+<footer>
+  <div class="wrap" style="padding:0">
+    <p><b>밸류커넥트 — 링크드인 계정 3개 · 맥 2대 운영안 v1</b> · 2026-06-15</p>
+    <p>핵심: 본계정=에어 독립 / 부계정 2개=미니에서 프로필·시간 분리 / 발송은 항상 사람 /
+      같은 IP라도 브라우저·시간·행동만 나누면 안전.</p>
+    <p style="color:var(--ink3)">함께 보기: <code>linkedin-1chon-growth-automation-2026-06-15.html</code> (신청 한도·워밍업·메모 전략).</p>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
