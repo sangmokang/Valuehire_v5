@@ -46,7 +46,10 @@ from tools.multi_position_sourcing.portal_login import (
     _has_security_challenge,
     _wait_for_human_intervention,
 )
-from tools.multi_position_sourcing.portal_autologin import auto_relogin_portal
+from tools.multi_position_sourcing.portal_autologin import (
+    auto_relogin_portal,
+    login_selector_preflight,
+)
 from tools.multi_position_sourcing.portal_live_check import (
     LiveRestartSearchConfig,
     LiveSessionConfig,
@@ -10689,6 +10692,41 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event_store.events[0].site, "linkedin_rps")
         self.assertEqual(event_store.events[0].cause, "forced_logout")
         self.assertEqual(event_store.events[0].recovered_by, "human")
+
+    async def test_login_selector_preflight_reports_no_drift_when_all_present(self) -> None:
+        page = FakeAutoLoginPage(
+            available_selectors={'input[name="id"]', 'input[name="password"]', 'button[type="submit"]'},
+            submit_selectors={'button[type="submit"]'},
+            ready_url="https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+        )
+        preflight = await login_selector_preflight(page, "saramin")
+        self.assertFalse(preflight.drifted)
+        self.assertEqual(preflight.missing_roles, ())
+        self.assertTrue(preflight.username_found)
+        self.assertTrue(preflight.password_found)
+        self.assertTrue(preflight.submit_found)
+
+    async def test_login_selector_preflight_flags_missing_password_as_drift(self) -> None:
+        page = FakeAutoLoginPage(
+            available_selectors={'input[name="id"]', 'button[type="submit"]'},  # no password field
+            submit_selectors={'button[type="submit"]'},
+            ready_url="https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+        )
+        preflight = await login_selector_preflight(page, "saramin")
+        self.assertTrue(preflight.drifted)
+        self.assertEqual(preflight.missing_roles, ("password",))
+        self.assertTrue(preflight.username_found)
+        self.assertFalse(preflight.password_found)
+        self.assertTrue(preflight.submit_found)
+
+    async def test_login_selector_preflight_refuses_unconfigured_channel(self) -> None:
+        page = FakeAutoLoginPage(
+            available_selectors={"#username", "#password", 'button[type="submit"]'},
+            submit_selectors={'button[type="submit"]'},
+            ready_url="https://www.linkedin.com/talent/home",
+        )
+        with self.assertRaises(ValueError):
+            await login_selector_preflight(page, "linkedin_rps")
 
     async def test_saramin_auto_relogin_fills_keychain_credentials_and_revalidates(self) -> None:
         page = FakeAutoLoginPage(
