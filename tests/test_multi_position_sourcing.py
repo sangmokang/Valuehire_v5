@@ -10225,6 +10225,107 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(page.closed for page in target_context.pages))
         self.assertEqual(event_store.events[0].recovered_by, "auto_relogin")
 
+    async def test_auto_relogin_retries_transient_errors_with_exponential_backoff(self) -> None:
+        # A transient failure (network / timeout) during auto-relogin must be retried
+        # with exponential backoff (1s, 2s, ...) rather than abandoned after one attempt.
+        encryptor = OpenSslSessionEncryptor(StaticSessionKeyProvider(b"r" * 32))
+        store = InMemorySessionSnapshotStore()  # empty -> snapshot restore fails first
+        event_store = InMemoryReauthEventStore()
+        context = FakeSnapshotContext()
+        attempts: list[str] = []
+        slept: list[float] = []
+        case = self
+
+        class FakeCredentialProvider:
+            def load(self, site: str) -> PortalCredentials:
+                case.assertEqual(site, "saramin")
+                return PortalCredentials(username="user-secret", password="password-secret")
+
+        async def auto_relogin(_context: object, site: str, _credentials: PortalCredentials) -> bool:
+            attempts.append(site)
+            if len(attempts) < 3:
+                raise ConnectionError("transient network failure during relogin")
+            return True
+
+        async def ready_after_recovery(_page: FakeSnapshotPage) -> bool:
+            return True
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        decision = await recover_after_reauth(
+            context=context,
+            attempt=PortalSearchAttempt(
+                channel="saramin",
+                worker_id="worker-a",
+                keyword="backend",
+                status="not_ready",
+                reason="reauth required",
+                reauth_cause="forced_logout",
+            ),
+            encryptor=encryptor,
+            snapshot_store=store,
+            event_store=event_store,
+            credential_provider=FakeCredentialProvider(),
+            auto_relogin=auto_relogin,
+            post_recovery_ready_check=ready_after_recovery,
+            sleep=fake_sleep,
+        )
+
+        self.assertTrue(decision.recovered)
+        self.assertEqual(decision.recovered_by, "auto_relogin")
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(slept, [1.0, 2.0])
+        self.assertEqual(event_store.events[0].recovered_by, "auto_relogin")
+
+    async def test_auto_relogin_does_not_retry_on_security_challenge_false(self) -> None:
+        # A clean False from auto_relogin means a captcha / 2FA / checkpoint was detected.
+        # SOT invariant: NEVER hammer a security challenge — try exactly once, no backoff.
+        encryptor = OpenSslSessionEncryptor(StaticSessionKeyProvider(b"s" * 32))
+        store = InMemorySessionSnapshotStore()  # empty -> snapshot restore fails first
+        event_store = InMemoryReauthEventStore()
+        context = FakeSnapshotContext()
+        attempts: list[str] = []
+        slept: list[float] = []
+
+        class FakeCredentialProvider:
+            def load(self, _site: str) -> PortalCredentials:
+                return PortalCredentials(username="user-secret", password="password-secret")
+
+        async def auto_relogin(_context: object, site: str, _credentials: PortalCredentials) -> bool:
+            attempts.append(site)
+            return False  # security challenge detected
+
+        async def ready_after_recovery(_page: FakeSnapshotPage) -> bool:
+            return True
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        decision = await recover_after_reauth(
+            context=context,
+            attempt=PortalSearchAttempt(
+                channel="saramin",
+                worker_id="worker-a",
+                keyword="backend",
+                status="not_ready",
+                reason="reauth required",
+                reauth_cause="forced_logout",
+            ),
+            encryptor=encryptor,
+            snapshot_store=store,
+            event_store=event_store,
+            credential_provider=FakeCredentialProvider(),
+            auto_relogin=auto_relogin,
+            post_recovery_ready_check=ready_after_recovery,
+            sleep=fake_sleep,
+        )
+
+        self.assertFalse(decision.recovered)
+        self.assertEqual(decision.recovered_by, "unrecovered")
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(slept, [])
+
     async def test_recovery_does_not_count_auto_relogin_without_ready_check(self) -> None:
         encryptor = OpenSslSessionEncryptor(StaticSessionKeyProvider(b"a" * 32))
         event_store = InMemoryReauthEventStore()

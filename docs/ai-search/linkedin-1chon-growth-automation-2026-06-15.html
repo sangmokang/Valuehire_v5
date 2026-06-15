@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>링크드인 1촌 늘리기 — 신뢰 지키며 오래 가는 자동화 설계</title>
+<style>
+  :root{
+    --ink:#0c1116; --ink2:#39434f; --ink3:#6b7785;
+    --line:#e4e8ee; --line2:#eef1f5;
+    --paper:#ffffff; --paper2:#f7f9fb; --paper3:#fbfcfd;
+    --brand:#1746d4; --brand-soft:#eaf0ff;
+    --ok:#0a7d5a; --ok-soft:#e3f6ee;
+    --warn:#b4232a; --warn-soft:#fdecec;
+    --gold:#9a7510; --gold-soft:#fbf4df;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0; background:var(--paper2); color:var(--ink);
+    font-family:var(--sans); line-height:1.7; font-size:16px;
+    -webkit-font-smoothing:antialiased; letter-spacing:-0.01em;}
+  .wrap{max-width:1000px; margin:0 auto; padding:0 28px}
+
+  header.top{
+    background:
+      radial-gradient(1200px 400px at 80% -120px, rgba(23,70,212,.16), transparent 60%),
+      linear-gradient(180deg,#0c1116,#10161e);
+    color:#fff; padding:60px 0 50px; border-bottom:3px solid var(--brand);}
+  .kicker{font-family:var(--mono); font-size:12.5px; letter-spacing:.22em;
+    text-transform:uppercase; color:#7fa0ff; margin:0 0 18px}
+  header.top h1{font-size:40px; line-height:1.14; margin:0 0 18px; letter-spacing:-0.03em; font-weight:800}
+  header.top h1 em{font-style:normal; color:#9fb8ff}
+  .sub{font-size:18px; color:#c4cdd9; max-width:740px; margin:0}
+  .meta-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:28px}
+  .chip{font-family:var(--mono); font-size:11.5px; letter-spacing:.04em;
+    border:1px solid rgba(255,255,255,.2); border-radius:999px;
+    padding:6px 13px; color:#cdd6e3; background:rgba(255,255,255,.04)}
+  .chip b{color:#fff; font-weight:600}
+
+  .tldr{background:#fff; border:1px solid var(--line); border-left:4px solid var(--brand);
+    border-radius:14px; padding:26px 30px; margin:-28px 0 0; position:relative; z-index:3;
+    box-shadow:0 18px 50px -28px rgba(12,17,22,.4)}
+  .tldr h2{margin:0 0 6px; font-size:13px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--ink3); font-family:var(--mono)}
+  .tldr .diag{font-size:19px; font-weight:700; line-height:1.5; margin:8px 0 4px; letter-spacing:-0.02em}
+  .tldr .rx{font-size:16.5px; color:var(--ink2); margin:14px 0 0; line-height:1.6}
+  .tldr .rx b{color:var(--brand)}
+
+  section{padding:50px 0 6px}
+  .sec-no{font-family:var(--mono); font-size:13px; color:var(--brand); letter-spacing:.1em}
+  h2.title{font-size:27px; letter-spacing:-0.025em; margin:6px 0 8px; line-height:1.2; font-weight:800}
+  .lead{font-size:17px; color:var(--ink2); max-width:800px; margin:0 0 24px}
+  h3{font-size:19px; margin:32px 0 12px; letter-spacing:-0.02em; font-weight:700}
+  p{margin:0 0 16px}
+  strong{font-weight:680}
+  a{color:var(--brand)}
+  code{font-family:var(--mono); font-size:13.5px; background:var(--paper);
+    border:1px solid var(--line); border-radius:5px; padding:1px 6px; color:#243; white-space:nowrap}
+
+  .grid{display:grid; gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .card{background:#fff; border:1px solid var(--line); border-radius:13px; padding:20px 22px}
+  .card h4{margin:0 0 8px; font-size:16px; letter-spacing:-0.01em}
+  .card p{font-size:14.5px; color:var(--ink2); margin:0}
+  .card .ic{font-size:22px; margin-bottom:8px; display:block}
+
+  .rule{background:var(--gold-soft); border:1px solid #ecdca6; border-radius:13px;
+    padding:20px 24px; margin:18px 0}
+  .rule b{color:var(--gold)}
+  .danger{background:var(--warn-soft); border:1px solid #f3c9c9; border-left:4px solid var(--warn);
+    border-radius:12px; padding:18px 22px; margin:18px 0}
+  .danger b{color:var(--warn)}
+  .good{background:var(--ok-soft); border:1px solid #b9e3cf; border-left:4px solid var(--ok);
+    border-radius:12px; padding:18px 22px; margin:18px 0}
+  .good b{color:var(--ok)}
+
+  table{border-collapse:collapse; width:100%; margin:18px 0; font-size:14.5px}
+  th,td{border:1px solid var(--line); padding:11px 14px; text-align:left; vertical-align:top}
+  th{background:var(--paper2); font-weight:700; font-size:13.5px; color:var(--ink2)}
+  td b{color:var(--ink)}
+  .num{font-family:var(--mono); white-space:nowrap}
+
+  ol.steps{counter-reset:s; list-style:none; padding:0; margin:18px 0}
+  ol.steps li{position:relative; padding:14px 16px 14px 56px; margin:0 0 12px;
+    background:#fff; border:1px solid var(--line); border-radius:12px}
+  ol.steps li::before{counter-increment:s; content:counter(s);
+    position:absolute; left:16px; top:14px; width:28px; height:28px; border-radius:50%;
+    background:var(--brand); color:#fff; font-family:var(--mono); font-size:14px;
+    display:flex; align-items:center; justify-content:center; font-weight:700}
+  ol.steps li b{display:block; margin-bottom:3px}
+  ol.steps li span{font-size:14.5px; color:var(--ink2)}
+
+  .flow{background:#0c1116; border-radius:14px; padding:24px 26px; margin:20px 0; color:#cdd6e3;
+    font-family:var(--mono); font-size:14px; line-height:1.9; overflow-x:auto}
+  .flow b{color:#9fb8ff}
+  .flow .y{color:#e3c96b}
+  .flow .g{color:#6bd49a}
+
+  .check{list-style:none; padding:0; margin:14px 0}
+  .check li{padding:9px 0 9px 30px; position:relative; border-bottom:1px solid var(--line2); font-size:15px}
+  .check li::before{content:"☐"; position:absolute; left:4px; top:8px; color:var(--brand); font-size:16px}
+  .check li b{color:var(--ink)}
+
+  footer{margin-top:50px; padding:34px 0; border-top:1px solid var(--line);
+    color:var(--ink3); font-size:13.5px}
+  @media(max-width:760px){.g2,.g3{grid-template-columns:1fr} header.top h1{font-size:30px}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <p class="kicker">VALUEHIRE · LINKEDIN GROWTH RUNBOOK</p>
+    <h1>링크드인 1촌, <em>신뢰를 지키며</em> 오래 모으는 자동화 설계</h1>
+    <p class="sub">계정 3개(본계정 + 부계정 2개)로 1촌 신청을 꾸준히 하되,
+      링크드인이 "진짜 사람·믿을 만한 프로필"을 중요하게 본다는 점을 지키는 운영 방법입니다.
+      프로그램은 후보를 모으고 줄 세우는 일까지만 하고, <b style="color:#fff">"보내기"는 항상 사람이 마지막에 누릅니다.</b></p>
+    <div class="meta-row">
+      <span class="chip">작성일 <b>2026-06-15</b></span>
+      <span class="chip">대상 계정 <b>3개</b></span>
+      <span class="chip">SOT 3번 준수 <b>보내기=사람</b></span>
+      <span class="chip">상태 <b>운영안 v1</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tldr">
+    <h2>한 줄 요약</h2>
+    <p class="diag">링크드인은 "많이 보내는 계정"이 아니라 "믿을 만한 계정"을 살려둡니다.
+      그래서 속도를 욕심내면 오히려 계정이 막혀서 더 못 모읍니다.</p>
+    <p class="rx"><b>처방 →</b> ① 세 계정 모두 프로필을 먼저 "진짜처럼" 채우고
+      ② 새 계정은 2~3주 천천히 몸풀기(워밍업) 하고
+      ③ 하루·주 한도를 지키면서 ④ 프로그램은 <b>후보만 줄 세우고</b>
+      ⑤ 사람이 검토하고 보내기를 누르는 구조로 갑니다. 느려 보여도 이게 제일 빨리 많이 모읍니다.</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- 0 -->
+<section>
+  <p class="sec-no">00 — 먼저 알아야 할 것</p>
+  <h2 class="title">왜 "빨리·많이"가 오히려 손해인가</h2>
+  <p class="lead">링크드인의 자동 보내기 프로그램(봇)은 약관 위반입니다. 그리고 링크드인은
+    "이 계정이 진짜 사람인가, 신뢰할 만한가"를 끊임없이 점수로 봅니다.
+    이 점수가 낮아지면 신청 기능부터 막고, 더 심하면 계정을 잠급니다.</p>
+
+  <div class="grid g3">
+    <div class="card"><span class="ic">🚫</span><h4>막히는 1순위</h4>
+      <p>새 계정인데 갑자기 하루 수십 건씩 신청 → "봇 같다"고 판단해 신청 버튼을 잠급니다.</p></div>
+    <div class="card"><span class="ic">📉</span><h4>거절·무응답이 쌓이면</h4>
+      <p>"모르는데요(I don't know this person)" 신고가 누적되면 신청 자체가 정지됩니다.</p></div>
+    <div class="card"><span class="ic">🪪</span><h4>빈 프로필</h4>
+      <p>사진·경력·소개가 비면 상대가 안 받고, 링크드인도 가짜 계정으로 의심합니다.</p></div>
+  </div>
+
+  <div class="rule">
+    <p style="margin:0"><b>핵심 원칙 —</b> 우리 목표는 "오늘 100명 신청"이 아니라
+    "6개월간 계정 3개가 안 막히고 매주 꾸준히 받아주는 1촌을 쌓는 것"입니다.
+    한 번 막힌 계정을 푸는 데 드는 시간이, 천천히 가는 것보다 훨씬 비쌉니다.</p>
+  </div>
+</section>
+
+<!-- 1 -->
+<section>
+  <p class="sec-no">01 — 토대</p>
+  <h2 class="title">세 계정 "신뢰 프로필" 먼저 만들기</h2>
+  <p class="lead">신청을 시작하기 전에, 세 계정 모두 아래를 채웁니다.
+    이게 안 되어 있으면 무엇을 해도 수락률이 낮고 계정이 의심받습니다. (계정별 1회 작업)</p>
+
+  <ul class="check">
+    <li><b>실제 얼굴 프로필 사진</b> — 로고·풍경 말고 사람 얼굴. 세 계정이 같은 사진이면 안 됨.</li>
+    <li><b>배경 배너 이미지</b> — 회사/업무 관련 이미지 하나만 넣어도 신뢰도가 올라갑니다.</li>
+    <li><b>한 줄 소개(헤드라인)</b> — 예: "밸류커넥트 · 채용/인재 매칭 담당".</li>
+    <li><b>경력 1~2개 + 학력</b> — 비어 있지 않게. 회사명·기간만이라도.</li>
+    <li><b>소개(About) 3~4줄</b> — 어떤 사람들과 연결되고 싶은지 자연스럽게.</li>
+    <li><b>기존 1촌 최소 30~50명</b> — 진짜 아는 사람(동료·지인)부터. 0촌에서 갑자기 신청 폭주는 위험.</li>
+    <li><b>이메일·휴대폰 인증 완료</b> — 본인 확인이 된 계정은 신뢰 점수가 높습니다.</li>
+    <li><b>각 계정 다른 정보로</b> — 사진·소개·이메일이 세 계정 모두 달라야 함(같으면 한 사람의 다중계정으로 묶여 동반 제재 위험).</li>
+  </ul>
+
+  <div class="danger">
+    <p style="margin:0"><b>주의 —</b> 한 사람이 부계정 여러 개를 운영하는 것 자체를 링크드인은 좋아하지 않습니다.
+    각 계정이 <b>독립적으로 진짜처럼</b> 보일수록 안전합니다. 같은 와이파이·같은 브라우저에서
+    동시에 세 계정을 빠르게 돌리는 것도 묶여 보이는 신호가 되니, 계정마다 시간대·기기/브라우저 프로필을 나누는 게 좋습니다.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section>
+  <p class="sec-no">02 — 속도</p>
+  <h2 class="title">안전 한도 — 하루·주 단위로 정해두기</h2>
+  <p class="lead">링크드인은 2021년 무렵부터 <b>주간 신청 한도(대략 100건 안팎)</b>를 둡니다.
+    계정 나이와 신뢰도에 따라 이 숫자가 다릅니다. 아래는 "막히지 않는 보수적 기준"입니다.
+    숫자를 채우는 게 목표가 아니라, <b>받아주는 비율(수락률)을 높게 유지</b>하는 게 목표입니다.</p>
+
+  <table>
+    <thead><tr><th>계정 상태</th><th>하루 신규 신청</th><th>주간 상한</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td><b>본계정</b> (오래됨·신뢰 높음)</td><td class="num">15 ~ 20</td><td class="num">~80</td><td>그래도 80 넘기지 않기</td></tr>
+      <tr><td><b>부계정</b> 워밍업 1~2주차</td><td class="num">3 ~ 5</td><td class="num">~20</td><td>아주 천천히</td></tr>
+      <tr><td><b>부계정</b> 워밍업 3~4주차</td><td class="num">8 ~ 10</td><td class="num">~40</td><td>거절 없으면 조금씩 ↑</td></tr>
+      <tr><td><b>부계정</b> 안정기(1개월 후)</td><td class="num">12 ~ 15</td><td class="num">~60</td><td>본계정보다 낮게 유지</td></tr>
+    </tbody>
+  </table>
+
+  <div class="good">
+    <p style="margin:0"><b>같이 지키는 보조 규칙 —</b>
+    ① 신청 사이에 <b>몇 분씩 간격</b>을 둔다(연속 클릭 금지).
+    ② 하루 중 <b>한 번에 몰아 보내지 말고</b> 오전/오후로 나눈다.
+    ③ <b>응답 안 온 신청(pending)이 200건 넘게 쌓이면</b> 오래된 것부터 철회한다 — 쌓인 미응답이 많을수록 신뢰 점수가 깎입니다.
+    ④ 주말·심야 폭주 금지(사람의 활동 시간처럼 보이게).</p>
+  </div>
+</section>
+
+<!-- 3 -->
+<section>
+  <p class="sec-no">03 — 품질</p>
+  <h2 class="title">"아무에게나" 말고 — 받아줄 사람에게만</h2>
+  <p class="lead">수락률이 높으면 링크드인이 "이 계정은 좋은 연결을 만든다"고 보고 한도를 늘려줍니다.
+    반대로 거절·무시가 쌓이면 막습니다. 그래서 <b>누구에게 신청하느냐</b>가 속도보다 중요합니다.</p>
+
+  <div class="grid g2">
+    <div class="card"><span class="ic">🤝</span><h4>1순위: 공통 1촌이 많은 사람</h4>
+      <p>"함께 아는 사람 N명"이 뜨는 상대는 수락률이 훨씬 높습니다. 후보를 모을 때 이걸 우선순위로.</p></div>
+    <div class="card"><span class="ic">🎯</span><h4>2순위: 같은 업계·직무</h4>
+      <p>채용/인사/타깃 산업 등 우리 일과 맞닿은 사람. 받아줄 이유가 분명한 사람.</p></div>
+    <div class="card"><span class="ic">✍️</span><h4>가끔 한 줄 메모</h4>
+      <p>전부는 말고 핵심 후보엔 짧은 인사 한 줄. 단, 똑같은 문구 복붙은 스팸 신호 → 2~3가지로 바꿔서.</p></div>
+    <div class="card"><span class="ic">🔥</span><h4>먼저 흔적 남기기</h4>
+      <p>신청 전에 상대 글에 '좋아요'나 짧은 댓글을 남기면, 낯선 신청이 아니게 되어 수락률이 오릅니다.</p></div>
+  </div>
+
+  <div class="danger">
+    <p style="margin:0"><b>하지 말 것 —</b> 검색 결과를 위에서부터 기계적으로 전부 신청 / 똑같은 메모 대량 발송 /
+    공통점 없는 해외 무작위 계정 신청. 이런 패턴이 가장 빨리 계정을 막습니다.</p>
+  </div>
+</section>
+
+<!-- 4 -->
+<section>
+  <p class="sec-no">04 — 자동화 설계</p>
+  <h2 class="title">프로그램이 하는 일 vs 사람이 하는 일</h2>
+  <p class="lead">우리 회사 규칙(SOT 3번)대로, <b>"보내기"는 자동으로 누르지 않습니다.</b>
+    프로그램은 <b>후보를 모으고·중복 거르고·우선순위로 줄 세우고·오늘 몫만 보여주는</b> 데까지만 합니다.
+    실제 신청 버튼은 사람이 검토하고 누릅니다. 이게 약관 위반도 피하고, 가장 오래 가는 구조입니다.</p>
+
+  <div class="flow">
+<b>[프로그램이 자동으로]</b>
+  검색·수집 ──▶ 중복/이미 1촌 제거 ──▶ 점수화(공통1촌·직무·활동) ──▶ <span class="y">오늘 보낼 후보 큐</span>
+                                                          (계정별 한도만큼만)
+
+<b>[사람이 직접]</b>
+  큐 검토 ──▶ 이상한 사람 빼기 ──▶ <span class="g">"보내기" 클릭</span> ──▶ 다음 후보
+
+<b>[프로그램이 다시]</b>
+  보낸 기록·수락/거절 집계 ──▶ 미응답 200+ 면 철회 알림 ──▶ 한도/속도 자동 조절
+  </div>
+
+  <ol class="steps">
+    <li><b>수집 — 자동</b><span>검색·추천에서 타깃 후보를 모읍니다. (기존 <code>scripts/collect_linkedin.py</code> 활용)</span></li>
+    <li><b>정제 — 자동</b><span>이미 1촌이거나, 전에 보낸 사람, 거절한 사람을 제외합니다.</span></li>
+    <li><b>줄 세우기 — 자동</b><span>공통 1촌 수 · 직무 일치 · 최근 활동 여부로 점수를 매겨 위에서부터 정렬합니다.</span></li>
+    <li><b>오늘 몫 — 자동</b><span>계정별 그날 한도만큼만 후보를 꺼내 "오늘 보낼 목록"으로 보여줍니다.</span></li>
+    <li><b>검토 + 보내기 — 사람</b><span>사람이 한 명씩 보고 이상하면 빼고, 직접 신청 버튼을 누릅니다.</span></li>
+    <li><b>집계·조절 — 자동</b><span>수락률·미응답을 기록해 다음 날 속도를 자동으로 올리거나 줄입니다.</span></li>
+  </ol>
+
+  <div class="rule">
+    <p style="margin:0"><b>맥북 양보 규칙(SOT R4) —</b> 이 작업이 사장님 크롬과 같은 컴퓨터에서 돌고 있고
+    사장님이 크롬을 쓰기 시작하면, 그 즉시 자동 수집을 멈춥니다. 사람이 검토하는 화면만 남깁니다.</p>
+  </div>
+</section>
+
+<!-- 5 -->
+<section>
+  <p class="sec-no">05 — 4주 계획</p>
+  <h2 class="title">부계정 2개 몸풀기(워밍업) 일정표</h2>
+  <p class="lead">새/부계정을 첫날부터 세게 돌리면 100% 막힙니다. 아래처럼 4주에 걸쳐 천천히 올립니다.
+    본계정은 이미 안정적이라면 02번 표의 본계정 한도로 바로 운영해도 됩니다.</p>
+
+  <table>
+    <thead><tr><th>주차</th><th>그 주에 할 일</th><th>하루 신청(부계정 각각)</th></tr></thead>
+    <tbody>
+      <tr><td><b>1주차</b></td><td>프로필 완성 · 지인 1촌 30~50명 · 글 몇 개에 좋아요/댓글 · 본인 인증</td><td class="num">0 ~ 3</td></tr>
+      <tr><td><b>2주차</b></td><td>공통 1촌 많은 사람 위주로만 신청 · 매일 활동 흔적 남기기</td><td class="num">3 ~ 5</td></tr>
+      <tr><td><b>3주차</b></td><td>거절/무응답 비율 확인 · 괜찮으면 직무 타깃까지 확대</td><td class="num">6 ~ 10</td></tr>
+      <tr><td><b>4주차~</b></td><td>안정기 진입 · 미응답 철회 루틴 시작 · 한도 천천히 상향</td><td class="num">10 ~ 15</td></tr>
+    </tbody>
+  </table>
+
+  <div class="good">
+    <p style="margin:0"><b>신호 보고 멈추기 —</b> 한 주라도 <b>수락률이 30% 밑</b>으로 떨어지거나,
+    "모르는 사람" 신고 경고가 뜨면 <b>다음 주는 한도를 절반으로</b> 내리고 활동(좋아요/댓글)만 늘립니다.
+    숫자를 밀어붙이지 않습니다.</p>
+  </div>
+</section>
+
+<!-- 6 -->
+<section>
+  <p class="sec-no">06 — 위험 신호</p>
+  <h2 class="title">이게 보이면 즉시 멈춘다</h2>
+  <div class="grid g2">
+    <div class="card" style="border-left:3px solid var(--warn)"><h4>🛑 신청 버튼이 회색/제한 메시지</h4>
+      <p>"You've reached the weekly invitation limit" → 그 주는 신청 중단, 활동만.</p></div>
+    <div class="card" style="border-left:3px solid var(--warn)"><h4>🛑 본인 확인(체크포인트) 요구</h4>
+      <p>로그인 때 사진·전화 인증을 자꾸 요구하면 속도가 빨랐다는 신호 → 며칠 쉬기.</p></div>
+    <div class="card" style="border-left:3px solid var(--warn)"><h4>🛑 "모르는 사람" 신고 경고</h4>
+      <p>거절 누적 경고. 타깃 품질을 다시 점검(공통 1촌 위주로).</p></div>
+    <div class="card" style="border-left:3px solid var(--warn)"><h4>🛑 미응답(pending) 폭증</h4>
+      <p>오래된 미응답부터 철회. 받아줄 사람에게만 보내고 있는지 재점검.</p></div>
+  </div>
+
+  <div class="danger">
+    <p style="margin:0"><b>3사 자동 로그인은 절대 막지 않습니다(SOT 1번).</b>
+    위 신호는 "신청 속도"를 줄이라는 뜻이지, 로그인을 끊으라는 게 아닙니다. 로그인은 그대로 두고
+    <b>신청 페달만 살살</b> 밟습니다.</p>
+  </div>
+</section>
+
+<!-- 7 -->
+<section>
+  <p class="sec-no">07 — 요약 체크리스트</p>
+  <h2 class="title">매일·매주 점검표</h2>
+  <h3>매일</h3>
+  <ul class="check">
+    <li>계정별 <b>오늘 한도 안</b>에서만 신청했는가</li>
+    <li>신청 전에 <b>좋아요/댓글 등 활동</b>을 조금 했는가</li>
+    <li><b>보내기는 사람이</b> 직접 눌렀는가 (자동 발송 0건)</li>
+    <li>사장님이 크롬을 쓰기 시작하면 <b>자동 수집을 멈췄</b>는가</li>
+  </ul>
+  <h3>매주</h3>
+  <ul class="check">
+    <li>계정별 <b>수락률</b>을 확인했는가 (30% 밑이면 속도 ↓)</li>
+    <li><b>미응답 200+</b>면 오래된 것부터 철회했는가</li>
+    <li>제한·인증 경고가 떴던 계정은 <b>한도를 내렸</b>는가</li>
+    <li>세 계정의 활동 시간대·패턴이 <b>너무 똑같지 않은</b>가</li>
+  </ul>
+</section>
+
+<footer>
+  <div class="wrap" style="padding:0">
+    <p><b>밸류커넥트 — 링크드인 1촌 성장 운영안 v1</b> · 2026-06-15</p>
+    <p>이 문서의 원칙: ① 신뢰 프로필 먼저 ② 천천히 워밍업 ③ 받아줄 사람에게만 ④ 한도 준수
+      ⑤ <b>보내기는 항상 사람이</b>(SOT 3번) ⑥ 사장님 크롬 보이면 양보(SOT R4) ⑦ 3사 자동 로그인은 유지(SOT 1번).</p>
+    <p style="color:var(--ink3)">참고: 자동으로 신청 버튼을 누르는 봇은 링크드인 약관 위반이며 계정 정지 위험이 큽니다.
+      그래서 이 설계는 "프로그램=준비, 사람=발송"으로 나눠 위험을 없앴습니다.</p>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>
