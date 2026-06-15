@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import os
 import re
@@ -160,6 +161,7 @@ class PortalWorkerConfig:
     chrome_cdp_endpoint: str = field(default_factory=resolve_chrome_cdp_endpoint)
     viewport_width: int = 1440
     viewport_height: int = 1000
+    search_timeout_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "profile_root", validate_portal_profile_root(self.profile_root))
@@ -518,6 +520,31 @@ class PortalWorker:
         monitor: SearchLivenessMonitor | None = None,
     ) -> PortalSearchAttempt:
         await self.start()
+        timeout = self.config.search_timeout_seconds
+        body = self._run_one_search_body(keyword, ready_check=ready_check, monitor=monitor)
+        if not timeout or timeout <= 0:
+            return await body
+        # Bound the whole search so a hung page (goto / submit / card collection that never
+        # returns) cannot pin the worker forever and stall the queue. wait_for cancels the
+        # body on timeout; the body's finally still closes its page during cancellation.
+        try:
+            return await asyncio.wait_for(body, timeout=timeout)
+        except (asyncio.TimeoutError, TimeoutError):
+            return PortalSearchAttempt(
+                channel=self.config.channel,
+                worker_id=self.config.worker_id,
+                keyword=keyword,
+                status="error",
+                reason=f"portal search timed out after {timeout:g}s",
+            )
+
+    async def _run_one_search_body(
+        self,
+        keyword: str,
+        *,
+        ready_check: ReadyCheck | None = None,
+        monitor: SearchLivenessMonitor | None = None,
+    ) -> PortalSearchAttempt:
         page: Any | None = None
         try:
             page = await self.context.new_page()
