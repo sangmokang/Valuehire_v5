@@ -299,6 +299,34 @@ def _close_failed_lock_acquire_handle(handle: Any) -> None:
         pass
 
 
+_CHROMIUM_SINGLETON_ARTIFACTS = ("SingletonLock", "SingletonSocket", "SingletonCookie")
+
+
+def clear_stale_singleton_locks(profile_dir: Path) -> tuple[str, ...]:
+    """Remove Chromium single-instance lock artifacts left behind by a crashed run.
+
+    Only the well-known Singleton* lock files/symlinks are removed — never real profile
+    data (Cookies, Local State, Default/, ...), so the saved login session is preserved.
+    Safe to call only while holding the exclusive profile flock, which guarantees no live
+    worker owns this profile; a leftover Singleton* file is then necessarily stale and
+    would otherwise make launch_persistent_context fail with "profile already in use".
+    """
+    removed: list[str] = []
+    for name in _CHROMIUM_SINGLETON_ARTIFACTS:
+        artifact = profile_dir / name
+        try:
+            if not (artifact.is_symlink() or artifact.exists()):
+                continue
+            # Never delete a real directory — singleton artifacts are files/symlinks.
+            if artifact.is_dir() and not artifact.is_symlink():
+                continue
+            artifact.unlink()
+            removed.append(name)
+        except OSError:
+            continue
+    return tuple(removed)
+
+
 async def _maybe_await(value: Any) -> Any:
     if hasattr(value, "__await__"):
         return await value
@@ -464,6 +492,10 @@ class PortalWorker:
                 contexts = getattr(self._browser, "contexts", ())
                 self._context = contexts[0] if contexts else await self._browser.new_context()
             else:
+                # We hold the exclusive profile flock here, so any leftover Chromium
+                # singleton lock is stale (from a crashed run) — clear it so the relaunch
+                # does not fail with "profile already in use". Saved login data is kept.
+                clear_stale_singleton_locks(self.config.profile_dir)
                 self._context = await self._playwright.chromium.launch_persistent_context(
                     str(self.config.profile_dir),
                     headless=self.config.headless,
