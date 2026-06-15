@@ -149,6 +149,7 @@ from tools.multi_position_sourcing.portal_worker import (
     ProfileLock,
     ProfileLockError,
     SearchLivenessMonitor,
+    clear_stale_singleton_locks,
     collect_result_cards,
     run_search_with_recovery,
 )
@@ -11466,6 +11467,52 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.recovery_decision.recovered_by, "human")  # type: ignore[union-attr]
         self.assertEqual(event_store.events[0].recovered_by, "human")
         self.assertIn("linkedin_rps", sent[0])
+
+    def test_clear_stale_singleton_locks_removes_only_chromium_lock_artifacts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            profile = Path(tmp)
+            # Real saved-login data — MUST be preserved (the whole point of the profile).
+            (profile / "Cookies").write_text("login-secret")
+            (profile / "Default").mkdir()
+            (profile / "Default" / "Cookies").write_text("login-secret-2")
+            (profile / "Local State").write_text("{}")
+            # Stale Chromium singleton artifacts left by a crashed run.
+            (profile / "SingletonLock").symlink_to("somehost-12345")
+            (profile / "SingletonCookie").write_text("x")
+            (profile / "SingletonSocket").write_text("x")
+
+            removed = clear_stale_singleton_locks(profile)
+
+            self.assertEqual(set(removed), {"SingletonLock", "SingletonCookie", "SingletonSocket"})
+            self.assertFalse((profile / "SingletonLock").is_symlink())
+            self.assertFalse((profile / "SingletonCookie").exists())
+            self.assertFalse((profile / "SingletonSocket").exists())
+            # Saved login data untouched.
+            self.assertTrue((profile / "Cookies").exists())
+            self.assertEqual((profile / "Cookies").read_text(), "login-secret")
+            self.assertTrue((profile / "Default" / "Cookies").exists())
+            self.assertTrue((profile / "Local State").exists())
+
+    async def test_worker_start_clears_stale_singleton_locks_before_launch(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config = PortalWorkerConfig(
+                channel="saramin",
+                worker_id="worker-a",
+                profile_root=tmp,
+                mode="headless",
+            )
+            profile = config.profile_dir
+            profile.mkdir(parents=True, exist_ok=True)
+            (profile / "Cookies").write_text("login-secret")
+            (profile / "SingletonLock").symlink_to("somehost-999")
+
+            context = FakeContext(available_selectors={'input[name="searchword"]', 'button[name="search"]'})
+            worker = PortalWorker(config, playwright=FakePlaywright(context))
+            await worker.start()
+            await worker.stop()
+
+            self.assertFalse((profile / "SingletonLock").is_symlink())
+            self.assertTrue((profile / "Cookies").exists())
 
     async def test_run_one_search_times_out_when_page_hangs(self) -> None:
         # A page operation that never returns must not pin the worker forever: the
