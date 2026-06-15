@@ -11429,6 +11429,43 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event_store.events[0].recovered_by, "human")
         self.assertIn("linkedin_rps", sent[0])
 
+    async def test_run_one_search_times_out_when_page_hangs(self) -> None:
+        # A page operation that never returns must not pin the worker forever: the
+        # per-search timeout turns it into a clean error attempt so the queue moves on.
+        import asyncio as _asyncio
+
+        class HangingPage(FakePage):
+            async def goto(self, url: str, **_kwargs: object) -> None:
+                self.url = url
+                self.goto_calls.append(url)
+                await _asyncio.Event().wait()  # never resolves
+
+        class HangingContext(FakeContext):
+            async def new_page(self) -> FakePage:
+                page = HangingPage(self.available_selectors)
+                self.pages.append(page)
+                return page
+
+        context = HangingContext(available_selectors={'input[name="searchword"]', 'button[name="search"]'})
+        playwright = FakePlaywright(context)
+        with TemporaryDirectory() as tmp:
+            config = PortalWorkerConfig(
+                channel="saramin",
+                worker_id="worker-a",
+                profile_root=tmp,
+                mode="headless",
+                search_timeout_seconds=0.05,
+            )
+            worker = PortalWorker(config, playwright=playwright)
+            await worker.start()
+            result = await worker.run_one_search("backend")
+            await worker.stop()
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("timed out", result.reason.lower())
+        self.assertEqual(result.channel, "saramin")
+        self.assertEqual(result.keyword, "backend")
+
     async def test_saramin_worker_launches_persistent_context_without_storage_state(self) -> None:
         context = FakeContext(available_selectors={'input[name="searchword"]', 'button[name="search"]'})
         playwright = FakePlaywright(context)
