@@ -13,3 +13,4 @@ portal-relogin-backoff	GREEN	#18	recover_after_reauth 지수 백오프 재시도
 portal-search-timeout	GREEN	#20	run_one_search 시간제한(기본 60s, asyncio.wait_for)·_run_one_search_body 분리. 4b 6렌즈 refuted=false. verify 455 passed
 login-selector-drift	GREEN	#22	login_selector_preflight(드리프트/missing_roles)·auto_relogin_portal 통합. 4b 6렌즈 refuted=false. verify 458 passed
 profile-singleton-cleanup	GREEN	#24	clear_stale_singleton_locks(고정 허용목록)·start()에서 flock 후 호출. 데이터 보존. 4b 6렌즈 refuted=false. verify 460 passed
+search-skill-stability	GREEN	#26	search·multisearch 운영 안정성(자동 복구) 반영 + 계약 테스트. 4b: 추가 5주장 사실(refuted=false), line150 LinkedIn 불일치는 #27로 분리. verify 464 passed

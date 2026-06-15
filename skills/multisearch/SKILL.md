@@ -151,6 +151,17 @@ python3 -m unittest tests/test_multi_position_sourcing.py -v
 
 자격증명 존재 확인만으로 큐를 실행하면 안 됩니다. 사람인, 잡코리아, LinkedIn RPS는 보호 채널로 취급하고, 워커별 persistent profile 또는 LinkedIn CDP attach 세션에서 로그인 마커가 확인된 경우에만 큐 항목을 처리합니다. 세션이 확인되지 않으면 해당 항목은 pending으로 유지하고 resume 사유를 남깁니다.
 
+## 운영 안정성 (자동 복구 동작)
+
+로그인은 한 번 풀려도 대부분 자동으로 회복됩니다. 워커가 가진 안정 장치(코드에 구현됨):
+
+- **재로그인 지수 백오프**: 세션이 끊겨 자동 재로그인할 때 네트워크/타임아웃 같은 *일시적 오류*가 나면 곧바로 포기하지 않고 텀을 늘려가며(1초→2초…) 최대 3회 다시 시도합니다. 단, **보안 챌린지(캡차/2FA/checkpoint)로 막힌 경우(깨끗한 실패)는 절대 재시도하지 않고 한 번에 멈춥니다** — 계정 잠금을 막기 위함. (`recover_after_reauth`, `relogin_backoff_base_seconds`)
+- **검색 시간제한**: 검색 1건이 멈춘 페이지에 영원히 매달리지 않도록 기본 60초 시간제한을 둡니다. 초과하면 그 항목은 에러로 정리하고 큐는 계속 진행합니다. (`run_one_search`, `PortalWorkerConfig.search_timeout_seconds`)
+- **셀렉터 드리프트 감지**: 포털이 로그인 화면 HTML을 바꿔 입력칸 위치가 안 맞으면, 조용히 실패하지 않고 어떤 항목(아이디/비번/제출)이 사라졌는지 보고합니다 → 운영자가 셀렉터를 고칠 수 있습니다. (`login_selector_preflight`)
+- **크롬 잔재 잠금 정리**: 크롬이 비정상 종료되며 남긴 단일실행 잠금 파일(SingletonLock 등)을, 워커가 프로필 잠금을 확보한 상태에서만 정리해 재시작 실패를 막습니다. **저장된 로그인(쿠키 등)은 절대 건드리지 않습니다.** (`clear_stale_singleton_locks`)
+
+**SOT 불변식 재확인**: 위 어떤 동작도 **보안 챌린지를 자동 우회하거나 반복해서 두드리지 않습니다.** 보안 챌린지가 뜨면 멈추고 visible browser에서 사람이 해결한 뒤 같은 세션을 재검증합니다.
+
 Mac Keychain 자격증명 계정:
 - 사람인: `valuehire.portal_credentials` / `saramin:username`, `saramin:password`
 - 잡코리아: `valuehire.portal_credentials` / `jobkorea:username`, `jobkorea:password`
