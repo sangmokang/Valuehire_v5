@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import subprocess
 from collections.abc import Awaitable, Callable
@@ -92,6 +93,9 @@ async def recover_after_reauth(
     auto_relogin: AutoRelogin | None = None,
     discord_notifier: DiscordWebhookNotifier | None = None,
     post_recovery_ready_check: ReadyCheck | None = None,
+    max_relogin_attempts: int = 3,
+    relogin_backoff_base_seconds: float = 1.0,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> RecoveryDecision:
     cause = attempt.reauth_cause or "unknown"
     if await _restore_snapshot(context, attempt, encryptor, snapshot_store, post_recovery_ready_check):
@@ -113,27 +117,45 @@ async def recover_after_reauth(
     # bypasses a captcha / 2FA / checkpoint — it returns False on detection instead.
     if attempt.channel in {"saramin", "jobkorea", "linkedin_rps"}:
         if credential_provider is not None and auto_relogin is not None:
+            sleep_fn = sleep if sleep is not None else asyncio.sleep
+            attempts = max(1, max_relogin_attempts)
             try:
-                credentials = credential_provider.load(attempt.channel)
-                if await auto_relogin(context, attempt.channel, credentials) and await _context_ready_after_recovery(
-                    context,
-                    attempt,
-                    post_recovery_ready_check,
-                ):
-                    recorded, _event = _record_reauth_event(
-                        event_store,
-                        site=attempt.channel,
-                        worker_id=attempt.worker_id,
-                        cause=cause,
-                        recovered_by="auto_relogin",
-                    )
-                    return RecoveryDecision(
-                        recovered=True,
-                        recovered_by="auto_relogin",
-                        reauth_event_recorded=recorded,
-                    )
+                credentials: PortalCredentials | None = credential_provider.load(attempt.channel)
             except Exception:
-                pass
+                credentials = None
+            if credentials is not None:
+                for attempt_index in range(attempts):
+                    try:
+                        # A clean True/False return is a settled outcome. False means a
+                        # captcha / 2FA / checkpoint was detected (auto_relogin_portal never
+                        # bypasses one) — we MUST NOT retry it, hammering a security challenge
+                        # is the fastest way to get the account locked. Only a raised
+                        # exception (network / timeout) is treated as transient and retried.
+                        if await auto_relogin(
+                            context, attempt.channel, credentials
+                        ) and await _context_ready_after_recovery(
+                            context,
+                            attempt,
+                            post_recovery_ready_check,
+                        ):
+                            recorded, _event = _record_reauth_event(
+                                event_store,
+                                site=attempt.channel,
+                                worker_id=attempt.worker_id,
+                                cause=cause,
+                                recovered_by="auto_relogin",
+                            )
+                            return RecoveryDecision(
+                                recovered=True,
+                                recovered_by="auto_relogin",
+                                reauth_event_recorded=recorded,
+                            )
+                        break
+                    except Exception:
+                        if attempt_index + 1 < attempts:
+                            await sleep_fn(relogin_backoff_base_seconds * (2 ** attempt_index))
+                            continue
+                        break
 
     # saramin / jobkorea: when auto-relogin cannot recover, record a silent unrecovered
     # event — the persistent-profile queue simply retries later.
