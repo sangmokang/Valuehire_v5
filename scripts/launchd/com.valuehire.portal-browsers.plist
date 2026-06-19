@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.valuehire.portal-browsers</string>
+
+  <!--
+    사람인·잡코리아·링크드인 디버그 크롬을 로그인 시 자동으로 띄우고,
+    5분마다 다시 점검해 죽은 창만 되살린다(start 는 멱등 — 이미 떠 있으면 건너뜀).
+    KeepAlive 대신 StartInterval 을 쓰는 이유: start 스크립트는 창을 띄우고 바로 끝나므로
+    KeepAlive 면 launchd 가 끝없이 즉시 재실행한다. 주기 실행이 올바른 모델.
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kangsangmo/Valuehire_v5/scripts/portal_browsers.sh</string>
+    <string>start</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/kangsangmo/.valuehire/logs/portal-browsers.launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/kangsangmo/.valuehire/logs/portal-browsers.launchd.err.log</string>
+</dict>
+</plist>
