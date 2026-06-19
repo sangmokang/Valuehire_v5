@@ -29,19 +29,24 @@ render_plist() {
   local dest="$1"
   [[ -f "$SRC_PLIST" ]] || { echo "❌ plist 원본 없음: $SRC_PLIST"; return 1; }
   [[ -x "$LAUNCHER" ]] || { echo "❌ 런처가 없거나 실행 불가: $LAUNCHER"; return 1; }
-  PORTAL_SRC="$SRC_PLIST" PORTAL_DST="$dest" PORTAL_LAUNCHER="$LAUNCHER" python3 - <<'PY'
-import os, plistlib
+  # plistlib 로 정확히 기록하고, 같은 파이썬 안에서 되읽어 정확 비교한다.
+  # 쉘 변수치환($())을 거치지 않으므로 개행·특수문자에도 검증이 새지 않는다.
+  if ! PORTAL_SRC="$SRC_PLIST" PORTAL_DST="$dest" PORTAL_LAUNCHER="$LAUNCHER" python3 - <<'PY'
+import os, plistlib, sys
+launcher = os.environ["PORTAL_LAUNCHER"]
 with open(os.environ["PORTAL_SRC"], "rb") as f:
     data = plistlib.load(f)
-data["ProgramArguments"] = [os.environ["PORTAL_LAUNCHER"], "start"]
+data["ProgramArguments"] = [launcher, "start"]
 with open(os.environ["PORTAL_DST"], "wb") as f:
     plistlib.dump(data, f)
+# 되읽어 기록된 ProgramArguments 가 의도와 정확히 일치하는지 검증.
+with open(os.environ["PORTAL_DST"], "rb") as f:
+    back = plistlib.load(f)
+if back.get("ProgramArguments") != [launcher, "start"]:
+    sys.exit("ProgramArguments mismatch after write")
 PY
-  # 되읽어 실제 기록된 경로가 정확히 일치하고 실행가능한지 확인(치환/손상 방어).
-  local got
-  got="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$dest" 2>/dev/null || true)"
-  if [[ "$got" != "$LAUNCHER" || ! -x "$got" ]]; then
-    echo "❌ plist 경로 검증 실패: 기록='$got' (기대='$LAUNCHER')"; rm -f "$dest"; return 1
+  then
+    echo "❌ plist 생성/검증 실패"; rm -f "$dest"; return 1
   fi
 }
 

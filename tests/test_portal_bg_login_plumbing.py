@@ -99,7 +99,7 @@ class PortalInstallerTests(unittest.TestCase):
         self.assertIn("plistlib", text, "plistlib 기반 기록이 아님")
         self.assertIn("portal_browsers.sh", text, "런처 경로 산출 없음")
         self.assertIn('-x "$LAUNCHER"', text, "런처 실행가능 사전 확인 없음")
-        self.assertIn("PlistBuddy", text, "기록 후 경로 되읽기 검증 없음")
+        self.assertIn("mismatch", text, "기록 후 되읽기 정확 비교 검증 없음")
 
     def test_render_preserves_exact_launcher_path_with_special_chars(self) -> None:
         # 실제 설치 코드(render)를 공백·& 가 든 경로로 돌려, 기록된 plist가 그 경로를
