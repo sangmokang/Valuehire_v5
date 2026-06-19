@@ -13,19 +13,30 @@
 set -euo pipefail
 
 LABEL="com.valuehire.portal-browsers"
-SRC_PLIST="$(cd "$(dirname "$0")" && pwd)/$LABEL.plist"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SRC_PLIST="$HERE/$LABEL.plist"
+# 런처는 이 설치 스크립트와 같은 레포의 scripts/portal_browsers.sh 다(경로 하드코딩 금지).
+LAUNCHER="$(cd "$HERE/.." && pwd)/portal_browsers.sh"
 DEST_DIR="$HOME/Library/LaunchAgents"
 DEST_PLIST="$DEST_DIR/$LABEL.plist"
 
 cmd_install() {
   [[ -f "$SRC_PLIST" ]] || { echo "❌ plist 원본 없음: $SRC_PLIST"; exit 1; }
+  # 실제 실행될 런처가 존재하고 실행 가능한지 설치 전에 확인(엉뚱한/없는 경로 설치 방지).
+  [[ -x "$LAUNCHER" ]] || { echo "❌ 런처가 없거나 실행 불가: $LAUNCHER"; exit 1; }
   mkdir -p "$DEST_DIR" "$HOME/.valuehire/logs"
-  cp "$SRC_PLIST" "$DEST_PLIST"
+  # 자리표시자 __LAUNCHER_PATH__ 를 이 레포의 실제 절대경로로 치환해 복사.
+  sed "s|__LAUNCHER_PATH__|$LAUNCHER|g" "$SRC_PLIST" > "$DEST_PLIST"
+  # 치환 후에도 자리표시자가 남았으면(예: 템플릿 변경) 설치 중단.
+  if grep -q "__LAUNCHER_PATH__" "$DEST_PLIST"; then
+    echo "❌ plist 경로 치환 실패"; rm -f "$DEST_PLIST"; exit 1
+  fi
   # 이미 로드돼 있으면 먼저 내린 뒤 다시 올린다(멱등).
   launchctl unload "$DEST_PLIST" 2>/dev/null || true
   launchctl load "$DEST_PLIST"
   echo "✅ 설치 완료 → 로그인 시 자동 시작 + 5분마다 죽은 창 되살림."
-  echo "   상태 확인: scripts/portal_browsers.sh health"
+  echo "   실행 런처: $LAUNCHER"
+  echo "   상태 확인: $LAUNCHER health"
 }
 
 cmd_uninstall() {

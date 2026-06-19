@@ -65,15 +65,20 @@ class PortalLaunchAgentPlistTests(unittest.TestCase):
         self.assertIsInstance(interval, int)
         self.assertGreater(interval, 0)
 
-    def test_plist_runs_launcher_start(self) -> None:
+    def test_plist_uses_launcher_placeholder_and_start(self) -> None:
+        # plist는 템플릿이다: 설치 스크립트가 __LAUNCHER_PATH__ 를 실제 경로로 치환한다.
+        # 경로를 하드코딩하지 않아 레포 이동/worktree merge 후에도 깨지지 않는다.
         with PLIST.open("rb") as fh:
             data = plistlib.load(fh)
         args = data.get("ProgramArguments")
-        self.assertIsInstance(args, list)
-        self.assertTrue(args, "ProgramArguments 비어 있음")
-        joined = " ".join(args)
-        self.assertIn("portal_browsers.sh", joined, "런처를 가리키지 않음")
-        self.assertIn("start", args, "start 인자 없음")
+        self.assertEqual(args, ["__LAUNCHER_PATH__", "start"])
+
+    def test_resolved_launcher_exists_next_to_installer(self) -> None:
+        # 설치 스크립트가 의존하는 레포 레이아웃: scripts/portal_browsers.sh 가 실재해야 한다.
+        # (이전 결함: plist가 옛 버전 경로를 가리켜도 통과하던 사각지대를 막는다.)
+        resolved = INSTALLER.parent.parent / "portal_browsers.sh"
+        self.assertTrue(resolved.exists(), f"설치가 가리킬 런처 없음: {resolved}")
+        self.assertEqual(resolved.resolve(), LAUNCHER.resolve())
 
 
 class PortalInstallerTests(unittest.TestCase):
@@ -86,6 +91,14 @@ class PortalInstallerTests(unittest.TestCase):
         self.assertIn("launchctl", text)
         for verb in ("install", "uninstall"):
             self.assertIn(verb, text, f"동작 누락: {verb}")
+
+    def test_installer_substitutes_launcher_path_and_checks_existence(self) -> None:
+        # 설치 스크립트는 plist 자리표시자를 실제 경로로 치환하고, 그 런처가
+        # 실재·실행가능한지 설치 전에 확인해야 한다(엉뚱/없는 경로 설치 방지).
+        text = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("__LAUNCHER_PATH__", text, "자리표시자 치환 로직 없음")
+        self.assertIn("portal_browsers.sh", text, "런처 경로 산출 없음")
+        self.assertIn('-x "$LAUNCHER"', text, "런처 실행가능 여부 사전 확인 없음")
 
 
 if __name__ == "__main__":
