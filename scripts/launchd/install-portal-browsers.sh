@@ -34,6 +34,9 @@ render_plist() {
   if ! PORTAL_SRC="$SRC_PLIST" PORTAL_DST="$dest" PORTAL_LAUNCHER="$LAUNCHER" python3 - <<'PY'
 import os, plistlib, sys
 launcher = os.environ["PORTAL_LAUNCHER"]
+# 기록 직전에 다시 실행가능 여부 확인(검사와 사용을 인접시켜 시간차 창 최소화).
+if not (os.path.isfile(launcher) and os.access(launcher, os.X_OK)):
+    sys.exit("launcher missing or not executable at write time: %s" % launcher)
 with open(os.environ["PORTAL_SRC"], "rb") as f:
     data = plistlib.load(f)
 data["ProgramArguments"] = [launcher, "start"]
