@@ -92,13 +92,38 @@ class PortalInstallerTests(unittest.TestCase):
         for verb in ("install", "uninstall"):
             self.assertIn(verb, text, f"동작 누락: {verb}")
 
-    def test_installer_substitutes_launcher_path_and_checks_existence(self) -> None:
-        # 설치 스크립트는 plist 자리표시자를 실제 경로로 치환하고, 그 런처가
-        # 실재·실행가능한지 설치 전에 확인해야 한다(엉뚱/없는 경로 설치 방지).
+    def test_installer_renders_path_robustly_and_verifies(self) -> None:
+        # 설치 스크립트는 sed가 아니라 plistlib 로 경로를 기록(특수문자 안전)하고,
+        # 기록 후 되읽어 실제 경로가 실행가능·일치하는지 검증해야 한다.
         text = INSTALLER.read_text(encoding="utf-8")
-        self.assertIn("__LAUNCHER_PATH__", text, "자리표시자 치환 로직 없음")
+        self.assertIn("plistlib", text, "plistlib 기반 기록이 아님")
         self.assertIn("portal_browsers.sh", text, "런처 경로 산출 없음")
-        self.assertIn('-x "$LAUNCHER"', text, "런처 실행가능 여부 사전 확인 없음")
+        self.assertIn('-x "$LAUNCHER"', text, "런처 실행가능 사전 확인 없음")
+        self.assertIn("PlistBuddy", text, "기록 후 경로 되읽기 검증 없음")
+
+    def test_render_preserves_exact_launcher_path_with_special_chars(self) -> None:
+        # 실제 설치 코드(render)를 공백·& 가 든 경로로 돌려, 기록된 plist가 그 경로를
+        # 정확히 보존하는지 확인한다. (sed였다면 깨졌을 케이스 — 회귀 방지)
+        import os
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tricky = Path(td) / "a b & c"
+            tricky.mkdir()
+            fake = tricky / "portal_browsers.sh"
+            fake.write_text("#!/bin/sh\nexit 0\n")
+            fake.chmod(0o755)
+            dest = Path(td) / "out.plist"
+            env = {**os.environ, "PORTAL_LAUNCHER_OVERRIDE": str(fake)}
+            proc = subprocess.run(
+                ["bash", str(INSTALLER), "render", str(dest)],
+                env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            with dest.open("rb") as fh:
+                data = plistlib.load(fh)
+            self.assertEqual(data["ProgramArguments"], [str(fake), "start"])
 
 
 if __name__ == "__main__":
