@@ -1,0 +1,60 @@
+{
+  "claim_id": "reservoir-gmail-clickup-match-goal-prompt",
+  "mode": "noncode-planning",
+  "risk": "L3",
+  "artifact": "docs/ai-search/reservoir-gmail-clickup-match-goal-prompt-2026-06-19.md",
+  "repo_sot_read": ["CLAUDE.md", "docs/harness.md", "docs/ai-search/reservoir-model-implementation-goal-prompt.md"],
+  "generator": {
+    "author": "Claude (G)",
+    "claim": "기존 저수지 엔진 위에 커밋7~11(Gmail수집/운영임베딩/실매칭+claude -p/ClickUp기록/Extension)을 얹는 goal prompt. 비용 헌법: 백필 1회 $0.07 후 영구 $0.",
+    "self_adversarial_found": ["clickup_activity=comment", "segment≠status", "gmail dedup키 충돌", "백엔드 부재", "$0.07 토큰상한", "claude -p headless"]
+  },
+  "v1": {
+    "author": "Codex (codex-rescue, fresh)",
+    "agentId": "a9a640fee50afd68d",
+    "source_jsonl": ".../subagents/agent-a9a640fee50afd68d.jsonl",
+    "verdict": "fail",
+    "summary": "치명적 5 / 보통 2",
+    "items": {
+      "1_clickup_activity_comment": "partial",
+      "2_segment_vs_status": "critical",
+      "3_gmail_ingest_incompatible": "critical",
+      "4_no_backend_endpoint": "critical",
+      "5_cost_007_fragile": "moderate",
+      "6_claude_p_session_limit": "critical",
+      "7_dim_zip_truncate": "no_issue_residual",
+      "8_missing_modules_enum_listid": "critical"
+    }
+  },
+  "v2": {
+    "author": "Claude (general-purpose, reset context — read doc + V1 verdict only)",
+    "agentId": "a8b0fb02238f267f5",
+    "source_jsonl": ".../subagents/agent-a8b0fb02238f267f5.jsonl",
+    "verdict": "fail-with-corrections",
+    "summary": "V1 유지 4 / 하향(과장) 4 / 오류(false positive) 2, V2 신규결함 3",
+    "v1_false_positives": ["4_no_backend(구현지시이지 거짓주장 아님)", "8c_listid(별개 리스트 오비교)", "8a_미구현모듈명명(정상)"],
+    "v2_new_defects": ["J2_gmail_message_id_저장소_부재", "J3_profile_url_필수_충돌", "J1_Channel_Literal_확장_미명시"]
+  },
+  "orchestrator_adjudication": {
+    "self_reverified": {
+      "listid_901818680208_is_FY26AI_Search": "live ClickUp get_list 확정 + search-access.md:424에 없음 → V1 false positive",
+      "RESERVOIR_LINES": "reservoir_log.py:17 = (harvest,index,match,calibrate,send)",
+      "Channel_Literal": "models.py:7 = (saramin,jobkorea,linkedin_rps,public_web)",
+      "profile_url_required": "models.py:84,104 profile_url: str"
+    },
+    "confirmed_defects": {
+      "P1_gmail_idempotency_datamodel": "Gmail message_id 저장처/profile_url 필수 충돌 — Phase7 멱등 RED 구현불가",
+      "P1_enum_type_coextension": "Channel + RESERVOIR_LINES + embeddings.sql CHECK 3곳 동시확장",
+      "P2_claude_p_failclosed": "세션한도 fail-closed RED 미요구(2026-06-09 장애 이력)",
+      "P2_status_to_segment_mapping": "13 status→5 segment 매핑 규칙 미명세",
+      "P2_backend_scope_undercount": "신규파일표에 백엔드 서버 누락",
+      "P3_cosine_dim_guard": "embed.py:56 zip silent truncate",
+      "P3_token_cap_and_body_adapter": "임베딩 토큰상한 / subtask body 어댑터"
+    },
+    "rejected": ["V1#4 백엔드=거짓주장(기각, 범위표기만 보완)", "V1#8c list ID 불일치(기각, false positive)", "V1#8a 미구현 모듈=결함(기각)"],
+    "strategy_verdict": "비용 헌법·2단계 검색 아키텍처는 유효. 교정은 데이터모델·런타임계약·범위정직성 구멍 보완(전략 불변)."
+  },
+  "three_way_agree": false,
+  "status": "검증완료-교정지시반영(문서에 적대검증로그+교정지시 append)",
+  "remaining": "교정 P1~P3을 Phase 블록에 접어 넣는 것은 구현 착수 시. 문서는 현재 git untracked → 커밋은 worktree 규율."
+}
