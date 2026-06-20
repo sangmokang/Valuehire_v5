@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 from tools.multi_position_sourcing.access import resolve_portal_credentials
 from tools.multi_position_sourcing import portal_login
@@ -461,6 +462,30 @@ class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["snapshot_capture_required"])
         self.assertFalse(result["snapshot_captured"])
         self.assertEqual(result["snapshot_capture_status"], "not_required")
+
+
+class SaraminSearchUrlContractTests(unittest.TestCase):
+    """saramin 검색 진입은 talent-pool 검색 페이지로 직접 이동한다.
+
+    로그인 프로필을 재사용하므로 과거의 auth 래퍼(/zf_user/auth?...url=...)를
+    거치지 않는다. 래퍼로 회귀하면 이미 로그인된 세션에서도 불필요한 인증
+    리다이렉트를 타게 되므로 이 계약을 잠근다.
+    """
+
+    def test_saramin_search_url_is_direct_talent_pool_not_auth_wrapper(self) -> None:
+        url = portal_login.SARAMIN_SEARCH_URL
+        self.assertEqual(
+            url,
+            "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+        )
+        # 구조 기반 계약: talent-pool 검색 경로로 직접 가고, 쿼리 파라미터(=래퍼)는 없다.
+        parsed = urlparse(url)
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.netloc, "www.saramin.co.kr")
+        self.assertIn("/memcom/talent-pool/", parsed.path)
+        # 쿼리 파라미터 형태의 어떤 auth 래퍼(?...url=...)도 잡는다.
+        self.assertEqual(parsed.query, "")
+        self.assertNotIn("/zf_user/auth", parsed.path)
 
 
 if __name__ == "__main__":

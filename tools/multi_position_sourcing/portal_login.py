@@ -24,10 +24,7 @@ DEFAULT_PROFILE_ROOT_PATH = str(DEFAULT_PROFILE_ROOT)
 DEFAULT_STATUS_OUTPUT = "artifacts/portal_session_status_latest.json"
 DEFAULT_ENV_FILE = ".env.local"
 DEFAULT_CHANNEL_TIMEOUT_SECONDS = 180
-SARAMIN_SEARCH_URL = (
-    "https://www.saramin.co.kr/zf_user/auth?ut=c&url="
-    "https%3A%2F%2Fwww.saramin.co.kr%2Fzf_user%2Fmemcom%2Ftalent-pool%2Fmain%2Fsearch"
-)
+SARAMIN_SEARCH_URL = "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
 JOBKOREA_SEARCH_URL = "https://www.jobkorea.co.kr/Corp/Person/Find"
 LINKEDIN_RPS_HOME_URL = "https://www.linkedin.com/talent/home"
 ReadyCheck = Callable[[Any], Awaitable[bool]]
