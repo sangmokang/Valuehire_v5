@@ -21,9 +21,12 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .models import Channel
+from .models import Channel, KeywordSession
 
 LLMClient = Callable[[str], str]
+
+# 검색이 도는 기본 채널 순서.
+DEFAULT_CHANNELS: tuple[Channel, ...] = ("saramin", "jobkorea", "linkedin_rps", "public_web")
 
 # boolean(AND/OR) X-ray 쿼리를 실제로 받는 채널.
 _BOOLEAN_CHANNELS: frozenset[Channel] = frozenset({"linkedin_rps", "public_web"})
@@ -117,6 +120,35 @@ def generate_keyword_plan(position, channel: Channel, *, llm_client: LLMClient) 
         bq = parsed.get("boolean_query")
         boolean_query = bq.strip() if isinstance(bq, str) else ""
     return LLMKeywordPlan(channel=channel, keywords=keywords, boolean_query=boolean_query)
+
+
+def build_llm_keyword_sessions(
+    position,
+    *,
+    llm_client: LLMClient,
+    channels: tuple[Channel, ...] = DEFAULT_CHANNELS,
+) -> tuple[KeywordSession, ...]:
+    """LLM 키워드 계획을 검색 경로가 소비하는 ``KeywordSession`` 튜플로 변환한다.
+
+    채널마다 ``generate_keyword_plan`` 을 호출해 키워드 1개당 세션 1개를 만든다(순서 보존).
+    boolean 채널(링크드인/공개웹)은 AND/OR X-ray 쿼리를 세션 ``filters['boolean_query']`` 로
+    실어 나른다(평문 채널은 비움). 어느 채널이라도 키워드를 못 뽑으면 ``KeywordGenerationError``
+    가 그대로 전파된다 — 조용히 건너뛰어 0건 검색을 유발하지 않는다.
+    """
+    sessions: list[KeywordSession] = []
+    for channel in channels:
+        plan = generate_keyword_plan(position, channel, llm_client=llm_client)
+        base_filters = {"boolean_query": plan.boolean_query} if plan.boolean_query else {}
+        for keyword in plan.keywords:
+            sessions.append(
+                KeywordSession(
+                    channel=channel,
+                    standard_keyword=keyword,
+                    filters=dict(base_filters),
+                    reset_before_run=True,
+                )
+            )
+    return tuple(sessions)
 
 
 def claude_keyword_client(
