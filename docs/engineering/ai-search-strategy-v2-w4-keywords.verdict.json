@@ -1,0 +1,33 @@
+{
+  "claim_id": "ai-search-v2-w4-llm-keywords",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "generate_keyword_plan(position, channel, *, llm_client)가 JD를 주입형 LLM에 넘겨 채널별 키워드(국영문·dedup·순서보존)를 만든다. linkedin_rps/public_web은 AND/OR boolean_query 유지, saramin/jobkorea는 ''. 빈/깨진/빈키워드 응답은 KeywordGenerationError(0건 검색 방지). 운영=claude_keyword_client(claude -p).",
+    "changed_files": [
+      "tools/multi_position_sourcing/llm_keywords.py",
+      "tests/test_llm_keywords.py"
+    ],
+    "command": "/Users/kangsangmo/Valuehire_v5/.venv-playwright/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "result": "495 passed, 5 subtests passed",
+    "live_evidence": "claude -p haiku 라이브 스모크: saramin=국영문/띄어쓰기/축약어 평문 키워드, linkedin_rps=AND/OR X-ray 쿼리 생성 확인"
+  },
+  "machine_mutation": {
+    "author": "G(self)+T",
+    "mutants": [
+      {"id": "A", "mutation": "_clean_keywords dedup 제거", "killed_by": "test_keywords_deduped_preserving_order", "result": "1 failed"},
+      {"id": "B", "mutation": "모든 채널 boolean_query 유지", "killed_by": "test_saramin_channel_has_no_boolean_query", "result": "1 failed"},
+      {"id": "C", "mutation": "빈 키워드 에러 제거(return ())", "killed_by": "test_no_keywords_in_json_raises", "result": "1 failed"}
+    ],
+    "all_killed": true,
+    "tree_clean_after_revert": true
+  },
+  "v1": {
+    "verdict": "unavailable",
+    "note": "codex:rescue 에이전트가 본문 미반환(이 환경에서 SendMessage 미지원 → 이어말하기 불가). 2회 시도 모두 빈 본문. 독립 적대검증 컨텍스트 확보 실패 — 기계 mutation 증거(T)로 대체, 독립 V는 보류."
+  },
+  "v2": {"verdict": "pending"},
+  "three_way_agree": false,
+  "status": "진행중(독립 적대검증 보류 — 기계증거는 통과)"
+}
