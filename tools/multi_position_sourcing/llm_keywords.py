@@ -21,7 +21,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .models import Channel, KeywordSession
+from .models import Channel, KeywordSession, QueueItem
 
 LLMClient = Callable[[str], str]
 
@@ -149,6 +149,33 @@ def build_llm_keyword_sessions(
                 )
             )
     return tuple(sessions)
+
+
+def build_llm_queue_items(
+    position,
+    *,
+    llm_client: LLMClient,
+    channels: tuple[Channel, ...] = DEFAULT_CHANNELS,
+) -> tuple[QueueItem, ...]:
+    """포지션 1건을 LLM 키워드 기반 채널별 ``QueueItem`` 으로 만든다(검색 큐 투입 단위).
+
+    5분류/그룹핑을 거치지 않고 **포지션 원문→LLM 키워드**로 곧장 큐 아이템을 만든다.
+    채널마다 그 채널 세션만 담은 ``QueueItem``(status=pending, group_id는 포지션 추적)을 만든다.
+    키워드를 못 뽑는 채널은 ``KeywordGenerationError`` 가 전파된다(0건 검색 방지).
+    """
+    sessions = build_llm_keyword_sessions(position, llm_client=llm_client, channels=channels)
+    items: list[QueueItem] = []
+    for channel in channels:
+        channel_sessions = tuple(s for s in sessions if s.channel == channel)
+        items.append(
+            QueueItem(
+                group_id=f"llm-{position.position_id}",
+                channel=channel,
+                keyword_plan=channel_sessions,
+                status="pending",
+            )
+        )
+    return tuple(items)
 
 
 def claude_keyword_client(
