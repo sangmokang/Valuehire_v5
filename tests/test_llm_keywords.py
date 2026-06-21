@@ -6,9 +6,10 @@ from tools.multi_position_sourcing.llm_keywords import (
     KeywordGenerationError,
     LLMKeywordPlan,
     build_llm_keyword_sessions,
+    build_llm_queue_items,
     generate_keyword_plan,
 )
-from tools.multi_position_sourcing.models import KeywordSession, Position
+from tools.multi_position_sourcing.models import KeywordSession, Position, QueueItem
 
 _JD = (
     "우리는 LLM 기반 추천 시스템을 상용화할 AI 엔지니어를 찾습니다. "
@@ -136,6 +137,41 @@ class TestBuildLLMKeywordSessions(unittest.TestCase):
         # 한 채널이라도 키워드를 못 뽑으면 조용히 건너뛰지 않고 에러(0건 검색 방지).
         with self.assertRaises(KeywordGenerationError):
             build_llm_keyword_sessions(
+                _POSITION, channels=("saramin",), llm_client=_client_returning("   ")
+            )
+
+
+class TestBuildLLMQueueItems(unittest.TestCase):
+    def test_one_queue_item_per_channel(self) -> None:
+        items = build_llm_queue_items(
+            _POSITION, channels=("saramin", "jobkorea"), llm_client=_client_returning(_GOOD_JSON)
+        )
+        self.assertTrue(all(isinstance(it, QueueItem) for it in items))
+        self.assertEqual(tuple(it.channel for it in items), ("saramin", "jobkorea"))
+
+    def test_queue_item_keyword_plan_is_channel_scoped(self) -> None:
+        items = build_llm_queue_items(
+            _POSITION, channels=("saramin", "linkedin_rps"), llm_client=_client_returning(_GOOD_JSON)
+        )
+        for it in items:
+            self.assertTrue(it.keyword_plan)  # 비어있지 않음(0건 방지)
+            self.assertTrue(all(s.channel == it.channel for s in it.keyword_plan))
+
+    def test_queue_item_group_id_traces_position(self) -> None:
+        items = build_llm_queue_items(
+            _POSITION, channels=("saramin",), llm_client=_client_returning(_GOOD_JSON)
+        )
+        self.assertIn(_POSITION.position_id, items[0].group_id)
+
+    def test_queue_item_starts_pending(self) -> None:
+        items = build_llm_queue_items(
+            _POSITION, channels=("saramin",), llm_client=_client_returning(_GOOD_JSON)
+        )
+        self.assertEqual(items[0].status, "pending")
+
+    def test_generation_error_propagates(self) -> None:
+        with self.assertRaises(KeywordGenerationError):
+            build_llm_queue_items(
                 _POSITION, channels=("saramin",), llm_client=_client_returning("   ")
             )
 
