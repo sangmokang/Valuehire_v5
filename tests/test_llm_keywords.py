@@ -5,9 +5,10 @@ import unittest
 from tools.multi_position_sourcing.llm_keywords import (
     KeywordGenerationError,
     LLMKeywordPlan,
+    build_llm_keyword_sessions,
     generate_keyword_plan,
 )
-from tools.multi_position_sourcing.models import Position
+from tools.multi_position_sourcing.models import KeywordSession, Position
 
 _JD = (
     "우리는 LLM 기반 추천 시스템을 상용화할 AI 엔지니어를 찾습니다. "
@@ -93,6 +94,50 @@ class TestLLMKeywordGeneration(unittest.TestCase):
         # JSON은 맞지만 키워드가 비면 0건 검색의 원인 → 조용히 통과시키지 않는다.
         with self.assertRaises(KeywordGenerationError):
             generate_keyword_plan(_POSITION, "saramin", llm_client=_client_returning('{"keywords": [], "boolean_query": ""}'))
+
+
+class TestBuildLLMKeywordSessions(unittest.TestCase):
+    def test_one_session_per_keyword_for_single_channel(self) -> None:
+        sessions = build_llm_keyword_sessions(
+            _POSITION, channels=("saramin",), llm_client=_client_returning(_GOOD_JSON)
+        )
+        self.assertTrue(all(isinstance(s, KeywordSession) for s in sessions))
+        self.assertEqual(
+            tuple(s.standard_keyword for s in sessions),
+            ("AI 엔지니어", "Machine Learning Engineer", "LLM", "RAG"),
+        )
+        self.assertTrue(all(s.channel == "saramin" for s in sessions))
+
+    def test_covers_all_requested_channels(self) -> None:
+        sessions = build_llm_keyword_sessions(
+            _POSITION,
+            channels=("saramin", "linkedin_rps"),
+            llm_client=_client_returning(_GOOD_JSON),
+        )
+        self.assertEqual({s.channel for s in sessions}, {"saramin", "linkedin_rps"})
+
+    def test_boolean_query_carried_in_filters_for_linkedin(self) -> None:
+        sessions = build_llm_keyword_sessions(
+            _POSITION, channels=("linkedin_rps",), llm_client=_client_returning(_GOOD_JSON)
+        )
+        self.assertTrue(sessions)
+        for s in sessions:
+            self.assertIn("AND", s.filters.get("boolean_query", ""))
+
+    def test_saramin_sessions_have_no_boolean_query_filter(self) -> None:
+        sessions = build_llm_keyword_sessions(
+            _POSITION, channels=("saramin",), llm_client=_client_returning(_GOOD_JSON)
+        )
+        self.assertTrue(sessions)
+        for s in sessions:
+            self.assertEqual(s.filters.get("boolean_query", ""), "")
+
+    def test_generation_error_propagates(self) -> None:
+        # 한 채널이라도 키워드를 못 뽑으면 조용히 건너뛰지 않고 에러(0건 검색 방지).
+        with self.assertRaises(KeywordGenerationError):
+            build_llm_keyword_sessions(
+                _POSITION, channels=("saramin",), llm_client=_client_returning("   ")
+            )
 
 
 if __name__ == "__main__":
