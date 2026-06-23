@@ -20,7 +20,7 @@ from .discord_routing import (
 )
 from .fixtures import SAMPLE_POSITIONS, SAMPLE_PROFILE
 from .grouping import group_positions
-from .llm_keywords import LLMClient, claude_keyword_client, inject_boolean_queries
+from .llm_keywords import LLMClient, claude_keyword_client, inject_channel_search_filters
 from .models import QueueItem, utc_now_iso
 from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
 from .portal_worker import DEFAULT_PROFILE_ROOT
@@ -97,8 +97,9 @@ def _ordered_unique_channels(keyword_plan) -> tuple[str, ...]:
 
 def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, object]:
     groups = group_positions(SAMPLE_POSITIONS)
-    # 슬라이스 A — llm_client 가 주어지면 boolean 채널(링크드인/공개웹) 세션에 LLM X-ray
-    # boolean_query 를 주입한다(라이브 경로). 없으면 기존 고정표 그대로(회귀 없음).
+    # 슬라이스 A+B — llm_client 가 주어지면 각 채널 세션에 그 채널 칸 구조에 맞는 검색필터를
+    # 주입한다(링크드인/공개웹=boolean_query, 사람인=saramin_search, 잡코리아=jobkorea_chips).
+    # 없으면 기존 고정표 그대로(회귀 없음).
     positions_by_id = {position.position_id: position for position in SAMPLE_POSITIONS}
 
     def _plan_for(group) -> tuple:
@@ -106,7 +107,7 @@ def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, o
         if llm_client is not None and group.position_ids:
             representative = positions_by_id.get(group.position_ids[0])
             if representative is not None:
-                plan = inject_boolean_queries(plan, representative, llm_client=llm_client)
+                plan = inject_channel_search_filters(plan, representative, llm_client=llm_client)
         return plan
 
     plans_by_group = {group.group_id: _plan_for(group) for group in groups}
