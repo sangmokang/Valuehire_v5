@@ -33,10 +33,13 @@
     "source_jsonl": "tasks/a452abc2e798b7da2.output"
   },
   "v2": {
-    "verdict": "미수행",
-    "note": "G + T(mutation 3종, 빈틈 1개 발견·수정) + V1(Codex 독립, 자체 mutant 2개) 수렴. V2 리셋 Claude 생략 — 사장님 판단으로 추가 가능."
+    "author": "Claude reset (general-purpose, agentId a2b2a6cf5a3d761df)",
+    "verdict": "fail",
+    "what_v1_missed": "고아(R4): inject 가 심은 saramin_search/jobkorea_chips 를 읽는 소비측이 없다. boolean_query 는 _query_for_session→_goto_search_surface 로 검색어/URL 까지 소비되지만(슬라이스 A, 테스트 증명), saramin_search/jobkorea_chips 는 아무 프로덕션 코드도 안 읽는 대기 데이터. V1(Codex)은 '큐에 격리되어 실림'만 봤고 '꺼내 쓰는 곳'은 안 봄.",
+    "independent_repro": "grep -rn 'saramin_search\\|jobkorea_chips' tools/ → 소비처 0 (llm_keywords 정의·dry_run 주석·portal_login의 무관 _saramin_search_ready 뿐). _query_for_session 은 boolean_query/standard_keyword 만 읽음(portal_queue_executor.py:37-40).",
+    "note": "V2 에이전트는 본문 회신이 빈약했으나 verdict=fail. 생성자(G)가 동일 결함을 독립 grep 으로 fresh 재현 → fail 채택."
   },
-  "three_way_agree": "G+T+V1 일치(pass). V2 미수행.",
-  "scope_honesty": "생성층(큐에 검색필터 싣기)까지. 실 브라우저 입력은 봇탐지로 보류(슬라이스 A와 동일). 완화 루프(결과 적으면 AND칩 추가/3단 재검색)는 슬라이스 C.",
-  "status": "검증통과 — 배송(PR) 대기(사장님 확인 후)"
+  "three_way_agree": "불일치 — G+T(mutation)+V1 은 '큐 주입·격리' 측면 pass, 그러나 V2+생성자 직접재현이 '소비측 없음(고아)' 적발. 슬라이스 A 수준(end-to-end 소비 증명)에 미달.",
+  "scope_honesty": "사람인/잡코리아는 생성·큐주입까지만이고 소비측(필드 입력기/칩 입력기)이 없다 = 고아. 슬라이스 A(boolean)는 검색어 선택까지 소비 증명됨 — 비대칭. 사람인/잡코리아 라이브 입력은 URL이 아니라 폼필드(execCommand)·칩(Enter)이라 봇탐지 보류 라이브 렌더러 전까지 end-to-end 증명 불가.",
+  "status": "진행중 — 고아 미해소. merge 시 '사람인/잡코리아=생성층 토대(소비 대기)'로 정직 표기하거나, 소비측 계약함수 1조각 추가 후 재검증 필요."
 }
