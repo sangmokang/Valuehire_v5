@@ -130,5 +130,39 @@ class DryRunLiveWireTest(unittest.TestCase):
         self.assertEqual(bq, {}, msg="llm_client 없으면 boolean_query 가 전혀 없어야 한다")
 
 
+class BooleanQueryReachesLinkedInUrlTest(unittest.TestCase):
+    """라이브 1건 실증(L3) — boolean_query 가 LinkedIn searchKeyword URL 까지 인코딩.
+
+    브라우저 발송 없음: 가짜 page 가 goto(url) 의 url 만 포착한다(R3 발송금지 준수).
+    생성→executor 검색어 선택→URL 조립까지 런타임 추적.
+    """
+
+    def test_boolean_query_encoded_into_linkedin_searchkeyword(self) -> None:
+        import asyncio
+        from urllib.parse import quote
+
+        from tools.multi_position_sourcing.portal_worker import _goto_search_surface
+
+        group = group_positions(SAMPLE_POSITIONS)[0]
+        sessions = build_keyword_plan(group)
+        injected = inject_boolean_queries(sessions, SAMPLE_POSITIONS[0], llm_client=_fake_llm)
+        linkedin_session = next(s for s in injected if s.channel == "linkedin_rps")
+        keyword = _query_for_session(linkedin_session)
+        self.assertEqual(keyword, _XRAY, "executor 가 boolean_query 를 검색어로 골라야 한다")
+
+        captured: dict[str, str] = {}
+
+        class _FakePage:
+            async def goto(self, url, **kwargs):  # noqa: ANN001
+                captured["url"] = url
+            # wait_for_timeout 속성 없음 → 대기 스킵(발송/네트워크 없음)
+
+        asyncio.run(_goto_search_surface(_FakePage(), "linkedin_rps", keyword))
+        self.assertIn("searchKeyword=", captured["url"])
+        self.assertIn(quote(_XRAY), captured["url"], "X-ray 쿼리가 URL 인코딩돼 들어가야 한다")
+        # 평문 표준키워드가 아니라 boolean_query 가 들어갔음을 교차 확인
+        self.assertNotEqual(keyword, linkedin_session.standard_keyword)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,7 +19,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .models import BOOLEAN_CHANNELS, Channel, KeywordSession, QueueItem
 
@@ -124,6 +124,46 @@ def generate_keyword_plan(position, channel: Channel, *, llm_client: LLMClient) 
         bq = parsed.get("boolean_query")
         boolean_query = bq.strip() if isinstance(bq, str) else ""
     return LLMKeywordPlan(channel=channel, keywords=keywords, boolean_query=boolean_query)
+
+
+def inject_boolean_queries(
+    sessions: tuple[KeywordSession, ...],
+    position,
+    *,
+    llm_client: LLMClient,
+) -> tuple[KeywordSession, ...]:
+    """라이브 keyword_plan(고정표 산출)의 boolean 채널 세션에 LLM X-ray 쿼리를 주입한다.
+
+    슬라이스 A — PR#31 은 ``filters['boolean_query']`` 가 있으면 LinkedIn ``searchKeyword``
+    까지 흘려보내지만, 라이브 grouping 경로(``keywords.build_keyword_plan``)는 그 값을 비워
+    둔다. 이 함수가 그 상위 연결: boolean 채널(linkedin_rps/public_web) 세션의 ``filters`` 에
+    LLM 이 생성한 비어있지 않은 boolean_query 를 실어 준다.
+
+    - boolean 채널이 ``sessions`` 에 실제로 있을 때만 LLM 을 호출한다(채널당 1회).
+    - 평문 채널(saramin/jobkorea) 세션은 절대 건드리지 않는다 — boolean 이 새면 native
+      필터와 충돌해 0건이 난다.
+    - LLM 실패(빈 응답·파싱 실패·빈 키워드)는 ``KeywordGenerationError`` 로 **전파**한다.
+      조용히 삼켜 boolean_query 빈 채로 통과시키지 않는다(0건 검색 방지).
+    - 원본 세션과 공유 ``filters`` dict 를 변형하지 않는다(다른 그룹 오염 방지) — 새 dict.
+    """
+    boolean_channels_present = sorted(
+        {s.channel for s in sessions if s.channel in BOOLEAN_CHANNELS}
+    )
+    boolean_query_by_channel: dict[Channel, str] = {}
+    for channel in boolean_channels_present:
+        plan = generate_keyword_plan(position, channel, llm_client=llm_client)
+        boolean_query_by_channel[channel] = plan.boolean_query
+
+    updated: list[KeywordSession] = []
+    for session in sessions:
+        boolean_query = boolean_query_by_channel.get(session.channel, "")
+        if boolean_query:
+            updated.append(
+                replace(session, filters={**session.filters, "boolean_query": boolean_query})
+            )
+        else:
+            updated.append(session)
+    return tuple(updated)
 
 
 def build_llm_keyword_sessions(
