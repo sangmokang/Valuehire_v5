@@ -19,23 +19,38 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .models import Channel, ItemSearchResult, QueueItem
+from .models import BOOLEAN_CHANNELS, Channel, ItemSearchResult, QueueItem
 
 # Builds (or returns) a GuardedPortalSearchRunner already bound to the given channel.
 RunnerForChannel = Callable[[Channel], Any]
 
 
-def keywords_for_item(item: QueueItem) -> tuple[str, ...]:
-    """Return the ordered, de-duplicated standard keywords for an item's plan.
+def _query_for_session(session) -> str:
+    """Pick the term that actually goes into the portal search field.
 
-    Only ``standard_keyword`` is used here; ``variants``/``llm_screening_keywords`` are
-    LLM-screening hints for a later stage, not portal query terms. Blank entries are
-    dropped and order is preserved (first occurrence wins).
+    boolean 채널(linkedin_rps/public_web)이고 ``filters['boolean_query']`` 가 채워져 있으면
+    그 AND/OR X-ray 쿼리를 검색어로 쓴다 — 이것이 LinkedIn ``searchKeyword=`` 까지 도달해야 하는
+    값이다. boolean_query 가 비었거나 평문 채널(saramin/jobkorea)이면 ``standard_keyword`` 로
+    폴백한다(평문 채널은 AND/OR 미지원, 빈 boolean 은 0건 검색 방지를 위한 폴백).
+    """
+    if session.channel in BOOLEAN_CHANNELS:
+        boolean_query = (session.filters.get("boolean_query") or "").strip()
+        if boolean_query:
+            return boolean_query
+    return (session.standard_keyword or "").strip()
+
+
+def keywords_for_item(item: QueueItem) -> tuple[str, ...]:
+    """Return the ordered, de-duplicated portal query terms for an item's plan.
+
+    boolean 채널 세션은 ``filters['boolean_query']`` (있으면)를, 그 외에는 ``standard_keyword`` 를
+    검색어로 쓴다(``_query_for_session`` 참조). ``variants``/``llm_screening_keywords`` 는 후속
+    스크리닝 힌트라 포털 쿼리어가 아니다. 빈 항목은 버리고 순서는 보존(최초 등장 우선).
     """
     seen: set[str] = set()
     keywords: list[str] = []
     for session in item.keyword_plan:
-        keyword = (session.standard_keyword or "").strip()
+        keyword = _query_for_session(session)
         if not keyword or keyword in seen:
             continue
         seen.add(keyword)

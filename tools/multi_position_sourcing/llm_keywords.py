@@ -21,15 +21,16 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .models import Channel, KeywordSession, QueueItem
+from .models import BOOLEAN_CHANNELS, Channel, KeywordSession, QueueItem
 
 LLMClient = Callable[[str], str]
 
 # 검색이 도는 기본 채널 순서.
 DEFAULT_CHANNELS: tuple[Channel, ...] = ("saramin", "jobkorea", "linkedin_rps", "public_web")
 
-# boolean(AND/OR) X-ray 쿼리를 실제로 받는 채널.
-_BOOLEAN_CHANNELS: frozenset[Channel] = frozenset({"linkedin_rps", "public_web"})
+# boolean(AND/OR) X-ray 쿼리를 실제로 받는 채널. 단일 출처는 models.BOOLEAN_CHANNELS
+# (생성=여기, 주입=portal_queue_executor 가 같은 집합을 참조해 드리프트를 막는다).
+_BOOLEAN_CHANNELS: frozenset[Channel] = BOOLEAN_CHANNELS
 
 
 class KeywordGenerationError(RuntimeError):
@@ -46,7 +47,10 @@ class LLMKeywordPlan:
 def _build_prompt(position, channel: Channel) -> str:
     boolean_hint = (
         '이 채널은 boolean 검색을 지원한다. "boolean_query"에 ("A" OR "B") AND ("C" OR "D") '
-        "형식의 X-ray 쿼리를 한 줄로 채워라."
+        "형식의 X-ray 쿼리를 한 줄로 채워라. "
+        "boolean_query 는 Title(직무) + Skill(변별력 있는 기술스택 2~3개) + Domain(도메인/산업)"
+        "만으로 구성하라. 연차·경력년수·지역·근무지·OTW(연봉/처우)는 boolean_query 에 절대 넣지 마라"
+        " — 이 조건들은 검색의 native 필터/2패스가 따로 처리하므로 boolean 에 넣으면 충돌해 0건이 난다."
         if channel in _BOOLEAN_CHANNELS
         else '이 채널은 평문 키워드 검색이다. "boolean_query"는 빈 문자열("")로 두어라.'
     )
