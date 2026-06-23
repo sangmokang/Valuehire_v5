@@ -49,6 +49,11 @@ def _empty_llm(prompt: str) -> str:
     return ""
 
 
+def _blank_keywords_llm(prompt: str) -> str:
+    """JSON 은 멀쩡하지만 유효 키워드가 0개 — or 폴백도 비어 0건 검색 위험."""
+    return json.dumps({"keywords": [], "or": []})
+
+
 def _rep():
     return SAMPLE_POSITIONS[0]
 
@@ -79,6 +84,11 @@ class SaraminSearchTest(unittest.TestCase):
     def test_empty_llm_propagates(self) -> None:
         with self.assertRaises(KeywordGenerationError):
             generate_saramin_search(_rep(), llm_client=_empty_llm)
+
+    def test_blank_keywords_propagate(self) -> None:
+        """JSON 정상이어도 유효 키워드 0개면 에러 — or 폴백이 빈 통과 못 하게(MUTANT 방어)."""
+        with self.assertRaises(KeywordGenerationError):
+            generate_saramin_search(_rep(), llm_client=_blank_keywords_llm)
 
 
 class JobkoreaChipsTest(unittest.TestCase):
