@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 Channel = Literal["saramin", "jobkorea", "linkedin_rps", "public_web"]
+
+# AND/OR X-ray(boolean) 검색식을 실제로 받는 채널. 사람인/잡코리아는 인재검색 필드의
+# AND/OR 지원이 라이브 미검증이라 평문 키워드만 받는다(boolean_query 미주입). 단일 출처 —
+# llm_keywords(생성) 와 portal_queue_executor(주입) 가 같은 집합을 참조해 드리프트를 막는다.
+BOOLEAN_CHANNELS: frozenset[Channel] = frozenset({"linkedin_rps", "public_web"})
+
 RoleFamily = Literal[
     "backend",
     "frontend",
