@@ -18,3 +18,5 @@ artifacts/
 .venv*/
 .claude/
 logs/
+.playwright-mcp/
+captures/

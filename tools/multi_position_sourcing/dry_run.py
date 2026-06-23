@@ -85,6 +85,15 @@ def _sample_position_registration_outcome() -> object:
     )
 
 
+def _ordered_unique_channels(keyword_plan) -> tuple[str, ...]:
+    """keyword_plan 에 등장하는 채널을 처음 등장 순서대로 중복 제거해 반환한다."""
+    seen: list[str] = []
+    for session in keyword_plan:
+        if session.channel not in seen:
+            seen.append(session.channel)
+    return tuple(seen)
+
+
 def build_dry_run_payload() -> dict[str, object]:
     groups = group_positions(SAMPLE_POSITIONS)
     backend_group = next(group for group in groups if group.role_family == "backend")
@@ -99,13 +108,17 @@ def build_dry_run_payload() -> dict[str, object]:
         )
         for channel in PORTAL_SESSION_REQUIRED_CHANNELS
     )
+    # 한 번의 검색이 4채널(사람인·잡코리아·링크드인·공개웹) 모두로 펼쳐지도록,
+    # 각 그룹의 keyword_plan 에 존재하는 모든 채널마다 QueueItem 을 만든다.
+    # (실행 계층은 item.channel 대로 채널-바운드 러너로 검색한다.)
     queue = tuple(
         QueueItem(
             group_id=group.group_id,
-            channel="saramin",
-            keyword_plan=tuple(session for session in group.keyword_plan if session.channel == "saramin"),
+            channel=channel,
+            keyword_plan=tuple(session for session in group.keyword_plan if session.channel == channel),
         )
         for group in groups
+        for channel in _ordered_unique_channels(group.keyword_plan)
     )
     cycle = run_queue_cycle(
         queue,
