@@ -69,4 +69,31 @@ PR revert 또는 `git revert <merge>`. 단일 모듈(`portal_queue_executor.py`)
 데이터 안전: boolean_query 비었을 때 standard_keyword 폴백을 AC1 counter로 강제 → 0건 검색 방지.
 
 ## 적대 검증 로그
-(게이트 6에서 채움)
+
+### §5 codex 1차 적대검증 — VERDICT: PASS
+- 판정 본문: `docs/engineering/codex-verdict-linkedin-boolean.md` (agentId a0eddba2c527b6136).
+- 반증 시도 3종 + 런타임 probe 8종 모두 "깨뜨리기 실패": 체인 고아 없음 / 드리프트 없음 /
+  dedup·공백·빈값 폴백 정상. 재실행 `512 passed, 5 subtests`.
+
+### §6 Claude 2차 적대검증 — codex+나의 공유 사각지대 적발 (판정 정정)
+codex와 1차의 나는 둘 다 `keywords_for_item → execute_queue_item → _goto_search_surface`
+(executor→URL) 경로만 추적했다. **상위에서 `filters['boolean_query']`가 실제로 채워지는가**를
+누구도 보지 않았다 — 상관 블라인드스팟. 깨끗한 추적으로 재현:
+
+- `grouping.py:108` → `build_keyword_plan`(`keywords.py:94`) → `KeywordSession.filters =
+  group.filters_by_channel[channel]` = **native 필터만, `boolean_query` 키 없음.**
+- `boolean_query`를 채우는 유일한 곳 = `llm_keywords.build_llm_keyword_sessions:145`.
+- 그러나 `build_llm_keyword_sessions`/`build_llm_queue_items`는 **프로덕션 어디서도 호출되지 않음**
+  (grep: 정의부·테스트 외 0건). 라이브 `execute_queue_item` 호출 진입점도 아직 미연결.
+
+| 항목 | G(나) 주장 | V1(codex) | V2(나, 리셋) | 결론 |
+|---|---|---|---|---|
+| executor가 boolean_query 버리는 구멍 | 닫음 | PASS | **재현 OK — 닫힘** | ✅ |
+| boolean_query → LinkedIn URL 도달(있을 때) | 도달 | PASS | **재현 OK(런타임 URL 인코딩 확인)** | ✅ |
+| **라이브에서 boolean이 실제로 LinkedIn에 들어감** | (암묵 가정) | (미점검) | **거짓 — 상위가 boolean_query 안 채움** | ⚠️ 정정 |
+
+**정정된 완료 주장(과장 제거):** 이번 슬라이스는 **executor 레벨 구멍을 닫고**(boolean_query가
+있으면 LinkedIn까지 도달) + 프롬프트 제약 + 규칙 문서까지다. **라이브 end-to-end에서 Boolean이
+LinkedIn에 들어가려면** `build_llm_keyword_sessions`를 grouping/live 경로에 연결하는 **후속 작업방**이
+필요하다(이는 goal ⑦ 비범위에 명시된 "3단·완화"와 함께 다음 단계). 따라서 본 슬라이스는
+"부분 고아를 만든" 것이 아니라 "상위 연결 전 필수 선행 배선"이다 — 라이브 실증은 상위 연결 후 가능.
