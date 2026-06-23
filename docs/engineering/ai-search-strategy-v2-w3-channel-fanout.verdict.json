@@ -1,0 +1,33 @@
+{
+  "claim_id": "ai-search-v2-w3-channel-fanout-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "date": "2026-06-23",
+  "generator": {
+    "author": "Claude",
+    "claim": "build_dry_run_payload 의 검색 큐 빌더가 channel='saramin' 하드코딩 대신 group.keyword_plan 의 모든 채널로 펼쳐, 한 번의 검색이 4채널(saramin/jobkorea/linkedin_rps/public_web) 모두를 담는다. 실행계층(queue_runner/portal_queue_executor)은 item.channel 대로 검색하므로 진입점 배선만으로 성립.",
+    "changed_files": [
+      "tools/multi_position_sourcing/dry_run.py",
+      "tests/test_dry_run_channels.py"
+    ],
+    "command": "/Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "result": "507 passed, 5 subtests passed in 10.58s",
+    "red_evidence": "GREEN 전 tests/test_dry_run_channels.py 실패: '기대 4채널, 실제 [saramin]'",
+    "mutation_evidence": "_ordered_unique_channels -> seen[:1] 변종 적용시 test_single_search_queue_covers_all_channels 실패(실제 ['saramin']), 되돌림 후 2 passed, 트리 청결",
+    "not_claimed": "라이브 포털 실검색(run_live_queue_cycle)은 미수행. LinkedIn 봇탐지 차단(goal 라이브차단기록) + SOT 캡차우회금지로 보류. skills/search 문서의 4채널 선언도 별도 미반영."
+  },
+  "v1": {
+    "author": "Codex (codex-rescue)",
+    "verdict": "pass",
+    "agentId": "a1c0f984a47a5e63d",
+    "evidence_body": "독립 재현 완료(2차 응답): 1) git diff HEAD~2..HEAD --stat = '2 files changed, 67 insertions(+), 2 deletions(-)', 테스트 약화(assert제거/skip) 없음. 2) dry_run 되돌림시 RED 재현 '기대 4채널, 실제 [saramin]'. 3) mutant(첫채널만) 적용시 동일 테스트 실패, 복구후 통과. 4) 전체 '507 passed, 5 subtests passed in 10.32s'.",
+    "independent_repro_by_generator": "생성자(Claude)도 동일 mutant를 직접 재현해 테스트가 잡음을 확인. 두 컨텍스트 독립 재현 일치."
+  },
+  "v2": {
+    "verdict": "미수행",
+    "note": "리셋 컨텍스트 재검증(V2) 아직. 변경이 작은 순수함수 배선 + G·V1·생성자 자력재현 3중 일치라 리스크 낮음. 라이브 단계에서 함께 V2 예정."
+  },
+  "three_way_agree": true,
+  "status": "기계증거 통과 — RED/GREEN/507통과 + mutant kill을 G·V1 두 컨텍스트가 독립 재현 일치. 코드 슬라이스(드라이런 큐 4채널 배선)는 검증 완료. ⚠️ 라이브 포털 실검색은 미수행(LinkedIn 봇탐지+SOT 캡차우회금지로 별도) — '풀로 라이브 서치'는 아직 아님."
+}
