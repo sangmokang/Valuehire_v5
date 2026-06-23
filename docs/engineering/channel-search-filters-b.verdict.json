@@ -1,0 +1,42 @@
+{
+  "claim_id": "channel-search-filters-b",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "슬라이스 B — inject_channel_search_filters 가 라이브 keyword_plan 의 채널별 세션에 칸 구조 맞는 검색필터를 주입: 사람인 filters['saramin_search']={and,or,not(기본 신입/인턴/프리랜서 강제)}, 잡코리아 filters['jobkorea_chips']=[엄선키워드 OR], 링크드인 filters['boolean_query'](슬라이스 A 유지). 채널 격리, 빈/0개 생성은 KeywordGenerationError 전파, 원본 비변형. build_dry_run_payload 배선.",
+    "changed_files": [
+      "tools/multi_position_sourcing/llm_keywords.py",
+      "tools/multi_position_sourcing/dry_run.py",
+      "tests/test_channel_search_filters.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "artifact": "529 passed, 5 subtests, exit 0",
+    "live_evidence": "build_dry_run_payload(llm_client=) 가 inject_channel_search_filters 호출(dry_run.py). 계약 §5.5 키 구조를 fake LLM 결정론으로 단언. 실 사람인칸 입력·잡코리아 칩 Enter 라이브 실행은 보류(봇탐지) — 생성층까지."
+  },
+  "t_machine": {
+    "author": "Claude(기계검증, 같은세션 → V2 아님)",
+    "verify": "529 passed, exit 0",
+    "mutation": [
+      "MUTANT A(not 기본값→[]): test_not_defaults + test_saramin_session 2건 FAIL → not 강제 진짜.",
+      "MUTANT B(jobkorea_chips→saramin_search 키 오배치): 격리·dry_run 2건 FAIL → 채널격리 진짜.",
+      "MUTANT C(or 폴백 빈 허용): 처음엔 살아남음(빈틈) → test_blank_keywords_propagate 추가 후 잡힘. R2(c) 빈틈 메움.",
+      "원복 후 9 passed 재확인."
+    ]
+  },
+  "v1": {
+    "author": "codex:codex-rescue (agentId a452abc2e798b7da2)",
+    "verdict": "pass",
+    "counterexample": "없음",
+    "repro": "pytest 17 passed(A8+B9). mutant(a) saramin 조건반전 → 2 FAIL, mutant(b) not→[] → 2 FAIL, 각각 원복 후 17 green. 배선: inject_channel_search_filters 가 build_dry_run_payload 내부 호출(dormant 아님).",
+    "what_could_be_fake": "fake_llm 픽스처 사용 — 배선·계약(키구조·격리·not강제)은 실코드 검증, LLM 응답 품질은 범위 밖.",
+    "source_jsonl": "tasks/a452abc2e798b7da2.output"
+  },
+  "v2": {
+    "verdict": "미수행",
+    "note": "G + T(mutation 3종, 빈틈 1개 발견·수정) + V1(Codex 독립, 자체 mutant 2개) 수렴. V2 리셋 Claude 생략 — 사장님 판단으로 추가 가능."
+  },
+  "three_way_agree": "G+T+V1 일치(pass). V2 미수행.",
+  "scope_honesty": "생성층(큐에 검색필터 싣기)까지. 실 브라우저 입력은 봇탐지로 보류(슬라이스 A와 동일). 완화 루프(결과 적으면 AND칩 추가/3단 재검색)는 슬라이스 C.",
+  "status": "검증통과 — 배송(PR) 대기(사장님 확인 후)"
+}

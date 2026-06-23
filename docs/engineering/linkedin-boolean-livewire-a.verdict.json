@@ -1,0 +1,42 @@
+{
+  "claim_id": "linkedin-boolean-livewire-a",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "슬라이스 A — LLM X-ray boolean_query 를 라이브 keyword_plan 의 boolean 채널(linkedin_rps/public_web) 세션 filters['boolean_query'] 에 주입. 평문 채널(saramin/jobkorea) 비주입. build_dry_run_payload(llm_client=) 진입점 배선. boolean_query 가 _query_for_session→_goto_search_surface 거쳐 LinkedIn searchKeyword= URL 인코딩까지 도달. LLM 실패는 KeywordGenerationError 전파.",
+    "changed_files": [
+      "tools/multi_position_sourcing/llm_keywords.py",
+      "tools/multi_position_sourcing/dry_run.py",
+      "tests/test_boolean_livewire.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "artifact": "scratchpad/verify-livewire-a.log",
+    "live_evidence": "dry_run.py:234 build_dry_run_payload(llm_client=claude_keyword_client()) 운영 진입점에서 호출 + test_boolean_query_encoded_into_linkedin_searchkeyword 가 실제 portal_worker._goto_search_surface 로 searchKeyword=quote(X-ray) 인코딩 확인(브라우저 발송 없음)."
+  },
+  "v1": {
+    "author": "codex:codex-rescue (agentId a6402558398d9d782)",
+    "verdict": "pass",
+    "counterexample": "없음",
+    "repro": "mutant: 's.channel in BOOLEAN_CHANNELS'→'not in' → 4 failed; 원복 후 8 passed. dormant 아님: dry_run.py:109/:234.",
+    "what_could_be_fake": "실 브라우저 발송은 봇탐지로 보류 → URL 조립까지만. 사람인 AND/OR 필드분배·잡코리아 칩 렌더러는 슬라이스 A 범위 밖.",
+    "source_jsonl": "tasks/a6402558398d9d782.output"
+  },
+  "t_machine": {
+    "author": "Claude(기계검증, 같은세션이라 V2 아님)",
+    "verify": "520 passed, 5 subtests, exit 0",
+    "mutation": [
+      "MUTANT1(BOOLEAN_CHANNELS→all channels): 통과 유지 — 2차 방어막(generate_keyword_plan 평문 boolean_query 드롭)에 막혀 무효 mutant. 기록만.",
+      "MUTANT2(최종 루프 모든 세션 강제 비빈쿼리 'LEAK_XRAY'): test_plain_channels_never_get_boolean_query + dry_run 평문 테스트 2건 FAIL → 누수방지 테스트 진짜.",
+      "MUTANT3(KeywordGenerationError raise 무력화): test_llm_failure_propagates_not_swallowed FAIL → 실패전파 테스트 진짜.",
+      "원복 후 8 passed 재확인."
+    ]
+  },
+  "v2": {
+    "verdict": "미수행",
+    "note": "리셋 Claude 2차는 미실행. G(자기) + T(기계 mutation 2건 실패유발) + V1(Codex 독립, 자체 mutant) 2각도 독립 증거로 수렴. 사장님 판단으로 V2 생략 또는 추가 가능."
+  },
+  "three_way_agree": "G+T+V1 일치(pass). V2 미수행.",
+  "scope_honesty": "라이브 브라우저 실검색은 SOT(봇탐지·캡차우회금지)로 보류 — 본 슬라이스는 큐조립+URL인코딩까지. 사람인 필드분배/잡코리아 칩 렌더러는 후속 슬라이스.",
+  "status": "검증통과 — 배송(PR) 대기(사장님 확인 후)"
+}
