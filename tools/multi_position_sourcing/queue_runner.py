@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from .models import Channel, ItemSearchResult, QueueCycleSummary, QueueItem
 from .portal_session import portal_session_pending_reason, portal_session_ready
+from .rps_switch import rps_pause_reason
 
 # An injected async adapter that executes one eligible queue item against a live portal
 # and returns the real outcome. Production wires ``portal_queue_executor.execute_queue_item``
@@ -52,12 +53,17 @@ def plan_queue_cycle(
     portal_sessions: Mapping[Channel, bool] | None = None,
     owner_activity_detected: bool = False,
     stop_signal: str = "",
+    rps_in_use: bool = False,
     max_items_per_cycle: int = 2,
 ) -> QueueCyclePlan:
     """Decide which queue items are eligible this cycle without any side effects.
 
     This isolates the gating logic so the synchronous ``run_queue_cycle`` (dry-run) and
     the asynchronous ``run_live_queue_cycle`` (live search) make identical decisions.
+
+    ``rps_in_use`` is the owner's manual LinkedIn-RPS switch: when on, only ``linkedin_rps``
+    items are withheld (kept pending with a resume reason) so the owner can use the single
+    RPS session on another PC without a session-conflict; Saramin/Jobkorea are unaffected.
     """
     now = _parse_due(now_iso, datetime.now(timezone.utc))
     stopped: list[str] = []
@@ -74,6 +80,16 @@ def plan_queue_cycle(
     processed = 0
     for item in queue:
         if item.status not in {"pending", "failed"}:
+            decisions.append("keep")
+            continue
+        if rps_in_use and item.channel == "linkedin_rps":
+            # Owner is using the single RPS session elsewhere — yield only this channel.
+            # Checked BEFORE the per-cycle slot/global-stop gate so the yield reason is always
+            # recorded regardless of queue order or whether other channels filled the slots;
+            # keep does not consume a slot, so Saramin/Jobkorea items still get processed.
+            reason = rps_pause_reason()
+            if reason not in stopped:
+                stopped.append(reason)
             decisions.append("keep")
             continue
         if processed >= max_items_per_cycle or global_stop:
@@ -103,6 +119,7 @@ def run_queue_cycle(
     portal_sessions: Mapping[Channel, bool] | None = None,
     owner_activity_detected: bool = False,
     stop_signal: str = "",
+    rps_in_use: bool = False,
     max_items_per_cycle: int = 2,
 ) -> QueueCycleSummary:
     """Dry-run cycle: apply gates and mark eligible items done without searching.
@@ -117,6 +134,7 @@ def run_queue_cycle(
         portal_sessions=portal_sessions,
         owner_activity_detected=owner_activity_detected,
         stop_signal=stop_signal,
+        rps_in_use=rps_in_use,
         max_items_per_cycle=max_items_per_cycle,
     )
 
@@ -149,6 +167,7 @@ async def run_live_queue_cycle(
     portal_sessions: Mapping[Channel, bool] | None = None,
     owner_activity_detected: bool = False,
     stop_signal: str = "",
+    rps_in_use: bool = False,
     max_items_per_cycle: int = 2,
 ) -> QueueCycleSummary:
     """Live cycle: run each eligible item through ``execute_item`` and aggregate results.
@@ -169,6 +188,7 @@ async def run_live_queue_cycle(
         portal_sessions=portal_sessions,
         owner_activity_detected=owner_activity_detected,
         stop_signal=stop_signal,
+        rps_in_use=rps_in_use,
         max_items_per_cycle=max_items_per_cycle,
     )
 

@@ -27,6 +27,7 @@ from .portal_worker import DEFAULT_PROFILE_ROOT
 from .posting_models import ExistingPositionTask, FetchResult
 from .position_registration import run_position_registration
 from .queue_runner import run_queue_cycle
+from .rps_switch import rps_in_use
 from .request_parser import (
     parse_discord_position_registration_request,
     parse_discord_search_request,
@@ -142,6 +143,7 @@ def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, o
         now_iso=utc_now_iso(),
         chrome_connected=False,
         portal_sessions=portal_session_flags(portal_session_statuses),
+        rps_in_use=rps_in_use(),
         max_items_per_cycle=2,
     )
     slash_parse = parse_discord_command_text('/run-search source:saramin keyword:"backend"')
