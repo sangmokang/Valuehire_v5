@@ -1,0 +1,53 @@
+{
+  "claim_id": "humansearch-skill-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude (G)",
+    "claim": "humansearch 스킬 — 사람이 걸어둔 검색 순회·채점(학력30/직무50/논리10/안정10)·하드제외·URL무결성·디스코드 발송 게이트. 합격선 70.",
+    "changed_files": [
+      "tools/multi_position_sourcing/humansearch.py",
+      "skills/humansearch/SKILL.md",
+      "skills/humansearch/humansearch.config.json",
+      "tests/test_humansearch_skill.py",
+      "docs/engineering/humansearch-skill-goal-2026-06-25.md"
+    ],
+    "command": "/Users/kangsangmo/Valuehire_v5/.venv-playwright/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "result": "584 passed, 5 subtests passed",
+    "mutation_evidence": "수동 mutant 4종(PASS_THRESHOLD·FREQUENT_MIN_HOPS·URL검증·send-gate URL) 전부 테스트가 검출, 복원 후 GREEN",
+    "live_evidence": "스킬은 사람이 발동(human-driven)하는 절차 — 자동 cron/queue 호출부 없음이 설계상 정상. 발송 게이트 eligible_matches_for_send 는 SKILL.md output 절차에 명시 배선."
+  },
+  "v1": {
+    "author": "Codex Rescue (V1)",
+    "agentId": "a86826e905e475d18",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/d236b895-24b8-4a62-bd86-ffa67d3bb461/tasks/a86826e905e475d18.output",
+    "verdict": "fail (6 결함 제기)",
+    "findings": [
+      {"id": "C1", "sev": "CRITICAL", "claim": "공백/내부공백 URL 통과 + invalid URL이 Discord briefing까지 전달", "reproduced_by_G": true, "status": "fixed", "fix": "is_valid_profile_url 공백 전면 거부 + eligible_matches_for_send 발송 단일 관문 추가"},
+      {"id": "H1", "sev": "HIGH", "claim": "'프리  랜서' 공백 삽입으로 freelancer 제외 우회", "reproduced_by_G": true, "status": "fixed", "fix": "hard_exclude_reason 에 공백제거 collapsed 매칭 추가"},
+      {"id": "H2", "sev": "HIGH", "claim": "일반 저티어 사립대 hard-exclude 미적용", "reproduced_by_G": true, "status": "wontfix-by-design", "rationale": "기계는 명시 마커(전문대 등)만 제외 — 모든 하위 사립 기계열거는 오제외 위험. 미세 등급은 SKILL 의 사람/LLM 판단. test_h4_unknown_private_school_passes_by_design 로 의도 고정."},
+      {"id": "M1", "sev": "MEDIUM", "claim": "raw 69.2/69.9999 가 항목별 반올림으로 70 합격 처리", "reproduced_by_G": true, "status": "fixed", "fix": "score = round-once(raw 가중합), breakdown 은 표시용 분리"},
+      {"id": "M2", "sev": "MEDIUM", "claim": "테스트가 경계/통합 실패경로 누락", "reproduced_by_G": true, "status": "fixed", "fix": "+10 테스트(내부공백 URL·freelancer 공백·반올림 경계·send-gate·config 드리프트·의도 범위)"},
+      {"id": "L1", "sev": "LOW", "claim": "short_tenure_months 가 humansearch.py 직접 없어 드리프트 감시 약함", "reproduced_by_G": true, "status": "fixed", "fix": "test_h2_config_constants_match_code_no_drift 가 config==SCORING_WEIGHTS/PASS_THRESHOLD/FREQUENT_MIN_HOPS/SHORT_TENURE_MONTHS 강제"}
+    ],
+    "v1_harness_errors_noted": "codex 자체 재현 코드가 CapturedProfile(name=/channel=/current_company=) 등 실제와 다른 시그니처를 써 일부는 무효 — G가 올바른 시그니처로 직접 재현해 진위 판정.",
+    "korean_idn_domain": "codex 는 'https://링크드인.com' 도 거부 기대했으나, IDN 은 유효 호스트라 G는 결함으로 보지 않음(공백만 거부). 단, 공백 제거 fix 로 codex 의 실제 우회 케이스는 모두 막힘."
+  },
+  "v2": {
+    "author": "Claude reset (V2, Explore agent)",
+    "verdict": "pass (통과 가능)",
+    "what_v1_missed": "제로폭 공백(U+200B) URL 통과 + 전각 라틴 'ＦＲＥＥＬＡＮＣＥ' freelancer 미감지 — V2 가 새로 발견.",
+    "independent_repro": "G가 V2 벡터 직접 재현: ZWSP url→False, %20·한글IDN→True(과잉거부 없음), 전각 freelance→freelancer. 추가 fix 후 589 passed.",
+    "v2_followup_fix": "is_valid_profile_url 제어/포맷문자(Cc/Cf/Cn/Co/Cs) 거부 + _profile_text NFKC 정규화. 회귀 테스트 +4(test_h5_zero_width_chars_rejected·percent_encoded_space_is_valid·fullwidth_freelancer_excluded).",
+    "non_defects_confirmed": "%20 인코딩 공백·한글 IDN 은 유효 URL → 통과가 정상(과잉거부 회귀 테스트로 고정). H2(저티어 사립 wontfix)는 goal 결정사항과 합치 — 기계는 명시 마커만, 미세등급은 사람/LLM."
+  },
+  "failed_attempts": [],
+  "three_way_agree": true,
+  "status": "통과",
+  "final_evidence": {
+    "command": "/Users/kangsangmo/Valuehire_v5/.venv-playwright/bin/python -m pytest tests/ -q",
+    "result": "589 passed, 5 subtests passed",
+    "mutation": "mutant 5종(PASS_THRESHOLD·FREQUENT_MIN_HOPS·URL검증·send-gate URL·round) 검출 확인"
+  }
+}

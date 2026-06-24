@@ -1,0 +1,86 @@
+{
+  "$schema_version": "1.0.0",
+  "title": "humansearch — 사람이 걸어둔 검색 결과 순회·채점·디스코드 발송 설정 (SSOT)",
+  "owner_decisions_2026-06-25": "합격선 70 / 지방 국공립 허용 / 사람인·잡코리아도 링크드인과 동일 가중치 / 채널 병렬 / 10페이지 랜덤·천천히",
+  "code_single_source": "tools/multi_position_sourcing/humansearch.py — 상수(SCORING_WEIGHTS·PASS_THRESHOLD·마커)와 이 JSON은 테스트(H2/H3)가 일치 강제",
+
+  "invocation": {
+    "trigger_keywords": ["humansearch", "휴먼서치", "이 화면 순회", "후보 솎아서 디스코드", "리스팅 돌면서 채점"],
+    "mode": {
+      "by_position_name": "사장님이 포지션명 또는 ClickUp positionId 제공 → JD 로드",
+      "by_visible_screen": "현재 브라우저에 검색결과·포지션이 명확히 보임 → 그 화면을 SOT 삼음"
+    },
+    "required_one_of": ["position_name", "position_id", "visible_search_url"],
+    "search_already_set_by_human": true
+  },
+
+  "channels": {
+    "values": ["linkedin_rps", "saramin", "jobkorea"],
+    "execution": "parallel",
+    "execution_note": "세션 충돌·봇 가드 안전하면 3채널 동시. 위험 감지 시 순차 폴백.",
+    "infer_from": "활성 탭 talent pool URL 패턴 또는 사장님 지정",
+    "filter_dom_sot": "docs/sot/22-talent-search-filters.json + docs/sot/23-channel-dom-selectors.md (셀렉터·결과수 트리 재사용)"
+  },
+
+  "traversal": {
+    "max_pages": 10,
+    "page_order": "random",
+    "page_order_note": "start=0,25,50… 페이지를 무작위 순서로 오감 — 순차 PAGINATION 패턴 회피",
+    "human_like_pacing": true,
+    "pacing_note": "프로필·페이지 열 때 너무 빠른 속도 금지(사장님 2026-06-25). 사람처럼 천천히.",
+    "linkedin_delay_ms": {"min": 20000, "max": 60000, "source": "SOT22 linkedin.bot_protection"},
+    "portal_delay_ms": {"min": 3000, "max": 8000},
+    "linkedin_pool": "Open to work 위주, 랜덤값 부여 후 하나씩 클릭"
+  },
+
+  "per_profile": {
+    "actions": ["프로필 상세 진입", "화면 스크린샷 1장 저장", "레쥬메 텍스트 추출"],
+    "screenshot_dir": "~/.vh-search-results/{channel}/{date}/{keyword}/",
+    "save_unconditionally": "검토 가치 있는 카드는 점수 무관 저장(SOT22 R6, 차감 0)"
+  },
+
+  "scoring": {
+    "weights": {"education": 0.30, "role_fit": 0.50, "profile_logic": 0.10, "job_stability": 0.10},
+    "weights_note": "학력30%·직무적합50%·프로필 논리력10%·이직 안정성10% (사장님 지시 그대로). 3채널 공통.",
+    "pass_threshold": 70,
+    "score_range": "0~100 가중합",
+    "function": "tools/multi_position_sourcing/humansearch.py score_humansearch()"
+  },
+
+  "hard_exclude": {
+    "applies_before_scoring": true,
+    "channels_with_school_cut": ["saramin", "jobkorea"],
+    "linkedin_skips_school_cut": "open-to-work 가중 점수제 — 학교는 가중치로 반영, 하드 제외 안 함",
+    "freelancer_markers": ["freelance", "freelancer", "프리랜서", "개인사업자", "independent contractor", "외주", "contract worker"],
+    "frequent_job_change": {
+      "min_short_hops": 2,
+      "short_tenure_months": 12,
+      "rule": "재직 12개월 미만으로 끝난 이직이 2회 이상이면 프로필 통째 제외(아예제외)",
+      "current_job_excluded_from_count": true,
+      "function": "scoring.count_short_tenure_hops()"
+    },
+    "low_tier_school_markers": ["전문대", "전문학교", "직업전문학교", "사이버대", "방송통신대", "학점은행", "polytechnic", "vocational"],
+    "regional_national_allowed": ["부산대", "경북대", "전남대", "전북대", "충남대", "충북대", "경상국립대", "경상대", "강원대", "제주대", "단국대"],
+    "school_note": "지방 국공립대·단국대 이상 허용(memory/education-tier-screening). 전문대·비정규학위만 기계 제외. '하위권 지방 사립' 미세 판단은 SKILL 의 사람/LLM 판단 단언."
+  },
+
+  "output": {
+    "channel": "#ai_search",
+    "reuse": "tools/multi_position_sourcing/discord_briefing.py format_discord_candidate_briefing()",
+    "per_candidate_model": "PositionMatch",
+    "batch": "합격(>=70) 후보 여러 명을 한꺼번에 발송",
+    "url_integrity_gate": {
+      "rule": "발송 전 모든 candidate_url 검증 — 빈값·상대경로·javascript:void·비http 거부",
+      "function": "humansearch.is_valid_profile_url()",
+      "why": "사장님 0순위: 프로필 url 절대 오류 없어야 함"
+    }
+  },
+
+  "safety_invariants": {
+    "no_auto_send_offer": "제안·메일 '보내기' 자동 클릭 금지(SOT 3). humansearch 는 '후보 브리핑'만 발송.",
+    "yield_to_owner_chrome": "사장님 chrome 점유 시 즉시 양보 → 손 떼면 자동 재개(SOT 2 / R4). 봇 행동 금지.",
+    "stop_on_block": "캡차/봇차단/로그인 리다이렉트 감지 시 즉시 STOP, retry 금지(SOT22 R2).",
+    "no_channel_routing_by_job": "채널을 직무로 가르지 않음(SOT22 R5).",
+    "evidence_first_dom": "행동 전 DOM 덤프 — 셀렉터 추측이 fresh 덤프를 못 이김(SOT23)."
+  }
+}
