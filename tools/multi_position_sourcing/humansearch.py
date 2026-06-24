@@ -12,9 +12,12 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.parse
 from pathlib import Path
 from typing import Any
+
+from collections.abc import Iterable
 
 from .models import CapturedProfile, Channel, Position, PositionMatch
 from .scoring import (
@@ -90,15 +93,17 @@ def load_humansearch_config() -> dict[str, Any]:
 def is_valid_profile_url(url: Any) -> bool:
     """발송 가능한 프로필 URL인지 — 사장님 0순위 '프로필 url 절대 오류 없어야'.
 
-    http/https + 호스트가 있어야 통과. 빈값·공백·상대경로·스킴 없음·javascript:void·ftp 거부.
+    http/https + 호스트가 있어야 통과. 빈값·공백(선행·후행·내부)·상대경로·스킴 없음·
+    javascript:void·ftp 거부. 공백이 끼면 무조건 거부 — 복붙 깨진 URL 발송 차단(사장님 0순위).
     """
     if not isinstance(url, str):
         return False
-    raw = url.strip()
-    if not raw:
+    if not url.strip():
+        return False
+    if any(ch.isspace() for ch in url):  # 선행/후행/내부 공백 모두 거부
         return False
     try:
-        parsed = urllib.parse.urlsplit(raw)
+        parsed = urllib.parse.urlsplit(url)
     except ValueError:
         return False
     return parsed.scheme in _URL_SAFE_SCHEMES and bool(parsed.hostname)
@@ -113,8 +118,11 @@ def _profile_text(profile: CapturedProfile) -> str:
 def hard_exclude_reason(profile: CapturedProfile, channel: Channel) -> str | None:
     """채점 전 제외 사유. 없으면 None(=채점 대상). 사장님 확정 규칙."""
     text = _profile_text(profile)
+    collapsed = re.sub(r"\s+", "", text)  # '프리  랜서' 류 공백 삽입 우회 차단
 
-    if any(marker in text for marker in FREELANCER_MARKERS):
+    if any(marker in text for marker in FREELANCER_MARKERS) or any(
+        re.sub(r"\s+", "", marker) in collapsed for marker in FREELANCER_MARKERS
+    ):
         return "freelancer"
 
     if count_short_tenure_hops(profile.employment_history) >= FREQUENT_JOB_CHANGE_MIN_HOPS:
@@ -206,8 +214,11 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
         "profile_logic": logic_sub,
         "job_stability": stability_sub,
     }
+    # 합격선 경계 정확도: 항목별 round() 누적은 raw 69.2 를 70 으로 부풀린다(합격 오판).
+    # → raw 가중합을 *한 번만* 반올림해 총점을 낸다. breakdown 은 표시용(합 != score 일 수 있음).
+    raw = sum(SCORING_WEIGHTS[key] * subs[key] for key in SCORING_WEIGHTS)
+    score = max(0, min(100, round(100 * raw)))
     breakdown = {key: round(100 * SCORING_WEIGHTS[key] * subs[key]) for key in SCORING_WEIGHTS}
-    score = max(0, min(100, sum(breakdown.values())))
 
     why_fit: list[str] = []
     why_not: list[str] = []
@@ -233,4 +244,18 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
         why_not=tuple(why_not),
         evidence_paths=profile.evidence_paths,
         score_breakdown=breakdown,
+    )
+
+
+def eligible_matches_for_send(matches: Iterable[PositionMatch]) -> tuple[PositionMatch, ...]:
+    """Discord #ai_search 로 보낼 후보만 남긴다 — 발송 직전 강제 게이트(코드 배선).
+
+    조건: 점수 >= PASS_THRESHOLD **그리고** candidate_url 무결(is_valid_profile_url).
+    score_humansearch 는 URL 을 검사하지 않으므로, 깨진/공백/javascript URL 후보가
+    브리핑까지 새어나가지 않도록 *발송 경로의 단일 관문*으로 여기서 거른다(사장님 0순위).
+    """
+    return tuple(
+        m
+        for m in matches
+        if m.score >= PASS_THRESHOLD and is_valid_profile_url(m.candidate_url)
     )

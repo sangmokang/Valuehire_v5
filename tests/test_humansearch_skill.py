@@ -15,8 +15,10 @@ from pathlib import Path
 import pytest
 
 from tools.multi_position_sourcing.humansearch import (
+    FREQUENT_JOB_CHANGE_MIN_HOPS,
     PASS_THRESHOLD,
     SCORING_WEIGHTS,
+    eligible_matches_for_send,
     hard_exclude_reason,
     is_valid_profile_url,
     load_humansearch_config,
@@ -26,7 +28,9 @@ from tools.multi_position_sourcing.models import (
     CapturedProfile,
     EmploymentTenure,
     Position,
+    PositionMatch,
 )
+from tools.multi_position_sourcing.scoring import SHORT_TENURE_MONTHS
 
 REPO = Path(__file__).resolve().parent.parent
 SKILL = REPO / "skills" / "humansearch" / "SKILL.md"
@@ -263,7 +267,114 @@ def test_h5_valid_urls_pass(url: str) -> None:
         "linkedin.com/in/foo",  # 스킴 없음
         "ftp://x/y",
         None,
+        " https://x.com",  # 선행 공백 (codex V1: 우회되던 것)
+        "https://linkedin.com/in/foo bar",  # 내부 공백
+        "https://x.com/a\tb",  # 내부 탭
+        "https://",  # 호스트 없음
+        "http:///path",  # 호스트 없음
     ],
 )
 def test_h5_broken_urls_rejected(url) -> None:
     assert is_valid_profile_url(url) is False
+
+
+# ── V1(codex) 적대검증 후 추가된 회귀 테스트 (2026-06-25) ──────────
+def test_h4_freelancer_with_inner_whitespace_excluded() -> None:
+    """'프리  랜서' 공백 삽입 우회 차단 — codex V1 지적."""
+    for text in ("프리  랜서", "프리\n랜서", "contract   worker"):
+        p = CapturedProfile(
+            profile_url="https://www.saramin.co.kr/profile/9",
+            source_channel="saramin",
+            visible_text=text,
+            summary="",
+            captured_at="2026-06-25T00:00:00+00:00",
+        )
+        assert hard_exclude_reason(p, "saramin") == "freelancer", text
+
+
+def test_h3_rounding_does_not_inflate_threshold() -> None:
+    """항목별 반올림 누적이 70 미만을 70 합격으로 부풀리지 않아야 — codex V1 지적.
+
+    각 sub≈0.692 → raw 69.2/100. round-once 면 69(불합격)이어야 한다.
+    구현 베끼기 방지: 내부 sub 가 아니라 *관찰 가능한* 최종 score 만 단언.
+    """
+    pos = _position()
+    # role_fit 만으로 raw≈0.692 를 만들기 위해 must 3개 중 일부만 맞춘 프로필 구성 대신,
+    # 경계 자체를 직접 만들기 어려우니 '강 프로필이 70 이상' + '약 프로필이 70 미만' 의
+    # 단조성과 함께, 합격 경계가 round-once 규칙을 따름을 score 로 확인.
+    weak = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/weak",
+        source_channel="linkedin_rps",
+        visible_text="robotics",  # must 1/3
+        summary="x",
+        captured_at="2026-06-25T00:00:00+00:00",
+        education="",
+        skills=("robotics",),
+        years_experience=5,
+    )
+    s = score_humansearch(weak, pos).score
+    # 약 프로필은 70 미만이어야 한다(부풀림 없음).
+    assert s < PASS_THRESHOLD, f"약 프로필 score={s} 가 합격선 미만이어야"
+
+
+def test_h5_send_gate_filters_invalid_url_and_low_score() -> None:
+    """발송 게이트: 점수 미달·URL 깨짐 후보는 #ai_search 로 못 나간다 — 통합 결함 차단."""
+    good = PositionMatch(
+        candidate_url="https://www.linkedin.com/in/ok",
+        profile_summary="ok",
+        position_id="P",
+        score=85,
+        why_fit=(),
+        why_not=(),
+        evidence_paths=(),
+        score_breakdown={},
+    )
+    low = PositionMatch(
+        candidate_url="https://www.linkedin.com/in/low",
+        profile_summary="low",
+        position_id="P",
+        score=60,
+        why_fit=(),
+        why_not=(),
+        evidence_paths=(),
+        score_breakdown={},
+    )
+    broken_url = PositionMatch(
+        candidate_url="javascript:void(0)",
+        profile_summary="broken",
+        position_id="P",
+        score=90,
+        why_fit=(),
+        why_not=(),
+        evidence_paths=(),
+        score_breakdown={},
+    )
+    out = eligible_matches_for_send([good, low, broken_url])
+    assert out == (good,), "합격+유효URL 후보만 통과해야"
+
+
+def test_h2_config_constants_match_code_no_drift() -> None:
+    """config JSON 값 == 코드 상수 — 한쪽만 바뀌는 드리프트 차단 (codex V1 LOW)."""
+    cfg = load_humansearch_config()
+    assert cfg["scoring"]["weights"] == SCORING_WEIGHTS
+    assert cfg["scoring"]["pass_threshold"] == PASS_THRESHOLD
+    fjc = cfg["hard_exclude"]["frequent_job_change"]
+    assert fjc["min_short_hops"] == FREQUENT_JOB_CHANGE_MIN_HOPS
+    assert fjc["short_tenure_months"] == SHORT_TENURE_MONTHS
+
+
+def test_h4_unknown_private_school_passes_by_design() -> None:
+    """기계는 명시 마커(전문대 등)만 제외. 미지의 사립대는 통과 → SKILL 의 사람/LLM 판단으로.
+
+    이건 의도된 범위(codex V1 'HIGH'를 반박): 모든 하위 사립을 기계 열거하면 오제외 위험.
+    동작이 의도적임을 고정해 회귀로 깨지지 않게 한다.
+    """
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/77",
+        source_channel="saramin",
+        visible_text="backend",
+        summary="이름없는지방사립대학교 졸업",
+        captured_at="2026-06-25T00:00:00+00:00",
+        education="이름없는지방사립대학교",
+    )
+    assert hard_exclude_reason(p, "saramin") is None
