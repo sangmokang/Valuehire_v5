@@ -44,6 +44,7 @@ Don't use for:
 
 이 Skill은 다음 문서를 기준으로 합니다.
 
+- **`docs/sot/22-talent-search-filters.md` (+ `.json`) — 3채널 인재검색 필터·DOM SSOT. 사람인·잡코리아·LinkedIn RPS별 키워드/필터를 만들기 전에 반드시 먼저 읽는다.** URL·입력법·결과수 임계가 채널마다 다르므로 **절대 섞지 않는다**(R5: 채널을 직무로 가르지 않음). 셀렉터·결과수 판단 트리·완화 폴백 전체는 같은 폴더 `.json`.
 - `docs/ai-search/multi-position-sourcing-layer-2026-06-08.md`
 - `docs/search-access.md`
 - `skills/search/SKILL.md`
