@@ -679,7 +679,7 @@ def main() -> None:
     parser.add_argument(
         "--chrome-cdp-endpoint",
         default=None,
-        help="CDP endpoint of an already-running Chrome (default: $VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT or http://127.0.0.1:9222)",
+        help="CDP endpoint of an already-running Chrome (SOT: browser_policy.json / $VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT; 어긋난 값은 검문소가 거부 — 포트 변경은 SOT를 고친다)",
     )
     parser.add_argument("--env-file", default=DEFAULT_ENV_FILE)
     parser.add_argument("--output", default=DEFAULT_STATUS_OUTPUT)

@@ -133,10 +133,15 @@ def test_resolve_chrome_cdp_endpoint_wired_to_policy(
     assert resolve_chrome_cdp_endpoint() == "http://127.0.0.1:7000"
 
 
-def test_resolve_chrome_cdp_endpoint_warns_on_missing_policy(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_resolve_chrome_cdp_endpoint_logs_on_missing_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """규칙 파일이 없으면 조용히 넘어가지 않고 시끄럽게 경고한 뒤 폴백한다."""
+    """규칙 파일이 없으면 조용히 넘어가지 않고 로그로 경고한 뒤 폴백한다.
+
+    (warnings.warn 은 `-W error` 환경서 프로세스를 죽이므로 logging 을 쓴다 — 로그인 흐름 보호.)
+    """
+    import logging
+
     from tools.multi_position_sourcing import browser_policy as bp
     from tools.multi_position_sourcing.portal_worker import (
         CHROME_CDP_ENDPOINT_ENV,
@@ -146,8 +151,9 @@ def test_resolve_chrome_cdp_endpoint_warns_on_missing_policy(
 
     monkeypatch.setattr(bp, "DEFAULT_BROWSER_POLICY_PATH", tmp_path / "missing.json")
     monkeypatch.delenv(CHROME_CDP_ENDPOINT_ENV, raising=False)
-    with pytest.warns(RuntimeWarning):
+    with caplog.at_level(logging.WARNING):
         assert resolve_chrome_cdp_endpoint() == DEFAULT_CHROME_CDP_ENDPOINT
+    assert any("browser_policy" in r.getMessage() for r in caplog.records), "폴백 경고 로그 부재"
 
 
 def test_worker_attach_blocked_when_endpoint_mismatches_policy(tmp_path: Path) -> None:
@@ -174,5 +180,5 @@ def test_worker_attach_blocked_when_endpoint_mismatches_policy(tmp_path: Path) -
         chrome_cdp_endpoint="http://127.0.0.1:7777",
     )
     worker = PortalWorker(config, playwright=_FakePlaywright())
-    with pytest.raises(BrowserPolicyViolation):
+    with pytest.raises(BrowserPolicyViolation, match=r"규칙=.*9222.*실제=.*7777"):
         asyncio.run(worker.start())

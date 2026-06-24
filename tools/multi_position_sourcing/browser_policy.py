@@ -13,11 +13,15 @@ SKILL 자연어에 흩뿌리지 않는다(중복·충돌 차단). 이 모듈은 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 # SOT 규칙 파일은 이 모듈과 같은 디렉토리에 둔다(코드와 규칙을 함께 배포).
 DEFAULT_BROWSER_POLICY_PATH: Path = Path(__file__).with_name("browser_policy.json")
+
+# 포털 CDP 주소 env 오버라이드. 사장님이 포트를 바꾸면(.env.local) 검문소가 그걸 따라간다.
+CHROME_CDP_ENDPOINT_ENV = "VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT"
 
 BrowserPolicy = dict[str, Any]
 
@@ -73,6 +77,10 @@ def assert_browser_ready(
     if expected is None:
         # CDP 주소를 안 쓰는 작업(예: MCP 크롬)은 endpoint 검문 대상이 아니다.
         return
+    # env 오버라이드가 SOT 보다 우선(사장님이 포트를 바꾸면 검문소도 따라간다).
+    env_endpoint = os.environ.get(CHROME_CDP_ENDPOINT_ENV)
+    if env_endpoint:
+        expected = env_endpoint
     if connected_endpoint != expected:
         raise BrowserPolicyViolation(
             f"브라우저 불일치({action}): 규칙={expected} ↔ 실제={connected_endpoint}. "

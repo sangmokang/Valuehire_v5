@@ -47,12 +47,13 @@ def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
     endpoint = policy_cdp_endpoint()
     if endpoint:
         return endpoint
-    import warnings
+    # 조용히 넘어가지 않는다 — 로그로 시끄럽게 남기되, 로그인 흐름을 죽이지 않으려
+    # warnings.warn(=`-W error`서 프로세스 종료) 대신 logging 을 쓴다.
+    import logging
 
-    warnings.warn(
-        "browser_policy.json(SOT)을 읽지 못해 하드코딩 폴백을 쓴다 — 규칙 파일을 확인하라.",
-        RuntimeWarning,
-        stacklevel=2,
+    logging.getLogger(__name__).warning(
+        "browser_policy.json(SOT)을 읽지 못해 하드코딩 폴백(%s)을 쓴다 — 규칙 파일을 확인하라.",
+        DEFAULT_CHROME_CDP_ENDPOINT,
     )
     return DEFAULT_CHROME_CDP_ENDPOINT
 
