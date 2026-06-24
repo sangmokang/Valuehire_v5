@@ -137,7 +137,7 @@
         "left_filters": ["스페셜 태그", "경력(선택~선택 년)", "지역", "직무", "학력 체크박스(고등학교/대학 2,3년/대학 4년/석사/박사)", "연봉 범위(최저~최고)", "재직/구직(체크박스)", "기업 규모"],
         "result_card_fields": "이름OO·N세·경력 N년 N개월 / 회사·부서·직책 / 학교(졸업) / 스킬 태그 / [후보자 저장]·[이직 제안하기] 버튼"
       },
-      "dom_selectors_search": {
+      "dom_selectors": {
         "_source": "saramin SKILL §6(208-217) 라이브 검증 표 + saramin-search-engine.mjs + ai-search-saramin-runner.mjs",
         "or_keyword_input": { "primary": "div.search_default input.search_input", "automation_alt": "input.search_input.result", "note": "force click 필요 — AI 추천 dropdown overlay 회피. 좌표 폴백 page.mouse.click(210,210)" },
         "and_keyword_input": "div.search_word_include input.search_input",
@@ -326,12 +326,6 @@
         "visibility_evidence": "저장 전후 Only me=false / Anyone in my organization=true 로그·스크린샷",
         "evidence_store": ".omx/tmp/<task>/ (JSON 로그 + 스크린샷)"
       }
-    },
-
-    "chatgpt_claude_ai": {
-      "display_name": "ChatGPT / Claude.ai (AI 검색 채널)",
-      "chatgpt": { "url": "https://chatgpt.com/g/g-p-68c22af4c45081919e206acb134b71b0-hubojacuceon/project", "url_note": "사장님 본인 후보자추천 프로젝트 — 타 레포 이식 시 자사 프로젝트 URL로 교체", "method": "단일 탭만(멀티탭 금지 — Cloudflare/계정 리스크, 2026-05-17 정책)", "prompt_marker": "첫 줄 [AI-SEARCH] {회사}/{포지션}/{YYYY-MM-DD HH:MM}" },
-      "claude_ai": { "url": "https://claude.ai/new", "method": "단일 탭, 사장님 직접 붙여넣기", "reinforce": "'이 작업은 실시간 웹 검색입니다. 학습 데이터만으로는 안 됩니다' 강화 문구 필수" }
     }
   },
 

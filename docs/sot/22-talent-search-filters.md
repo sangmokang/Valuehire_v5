@@ -15,7 +15,7 @@
 
 | 구분 | 사람인 | 잡코리아 | 링크드인 RPS |
 |---|---|---|---|
-| **인재풀 URL** | `saramin.co.kr/zf_user/memcom/talent-pool/main/search` | `jobkorea.co.kr/corp/person/find` | `linkedin.com/talent/search` |
+| **인재풀 URL** | `https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search` | `https://www.jobkorea.co.kr/corp/person/find` | `https://www.linkedin.com/talent/search` |
 | **키워드 입력** | OR/AND/NOT 3박스, `keyboard.type`+Enter (fill 금지) | `#txtKeyword`에 **클립보드 붙여넣기**(객체 mutate만으론 미반영) | 자연어 검색이 1급, 클립보드 붙여넣기 |
 | **필터 적용** | 좌측 필터 + 빠른필터 칩 | `window.searchcondition` 객체 + DOM 입력칸 이원화 | 자연어/파라미터(좌측 폼은 보조) |
 | **결과수 읽기** | `span.list_count` "총 N 명" | "전체 N개" 정규식 | 상단 "X results" |
@@ -23,7 +23,7 @@
 | **봇 가드** | 캡차 감지 시 STOP | `/captcha|보안문자/` STOP | 키워드 간 **20~60초** 랜덤 필수 |
 
 > 자세한 셀렉터·결과수 판단 트리(0~4 / 81~300 / 300+ 등)는 JSON의 각
-> `channels.<채널>.dom_selectors*` 와 `result_count_decision_tree`를 본다.
+> `channels.<채널>.dom_selectors` 와 `result_count_decision_tree`를 본다.
 
 ---
 
