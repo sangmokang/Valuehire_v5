@@ -39,7 +39,16 @@
     "independent_repro": "grep -rn 'saramin_search\\|jobkorea_chips' tools/ → 소비처 0 (llm_keywords 정의·dry_run 주석·portal_login의 무관 _saramin_search_ready 뿐). _query_for_session 은 boolean_query/standard_keyword 만 읽음(portal_queue_executor.py:37-40).",
     "note": "V2 에이전트는 본문 회신이 빈약했으나 verdict=fail. 생성자(G)가 동일 결함을 독립 grep 으로 fresh 재현 → fail 채택."
   },
-  "three_way_agree": "불일치 — G+T(mutation)+V1 은 '큐 주입·격리' 측면 pass, 그러나 V2+생성자 직접재현이 '소비측 없음(고아)' 적발. 슬라이스 A 수준(end-to-end 소비 증명)에 미달.",
-  "scope_honesty": "사람인/잡코리아는 생성·큐주입까지만이고 소비측(필드 입력기/칩 입력기)이 없다 = 고아. 슬라이스 A(boolean)는 검색어 선택까지 소비 증명됨 — 비대칭. 사람인/잡코리아 라이브 입력은 URL이 아니라 폼필드(execCommand)·칩(Enter)이라 봇탐지 보류 라이브 렌더러 전까지 end-to-end 증명 불가.",
-  "status": "진행중 — 고아 미해소. merge 시 '사람인/잡코리아=생성층 토대(소비 대기)'로 정직 표기하거나, 소비측 계약함수 1조각 추가 후 재검증 필요."
+  "orphan_resolution": {
+    "fix": "channel_search_render.render_search_for_session 추가 — saramin_search→{kind:fields,include/default/exclude}, jobkorea_chips→{kind:chips}, boolean/평문→{kind:keyword}. 이 소비측이 주입된 키를 실제로 읽어 입력계획으로 변환 → 고아 해소.",
+    "tests": "tests/test_channel_search_render.py 4건(end-to-end: 생성→inject→render 객체 단언) + 회귀 533 passed.",
+    "mutation": [
+      "MUTANT D(saramin 분기 무력화): test_saramin_renders_field_inputs FAIL → 분기 진짜.",
+      "MUTANT E(include↔or 자리바꿈): FAIL → 칸 분배 진짜. 원복 후 4 passed."
+    ],
+    "remaining": "render 결과를 실제 브라우저 칸/칩에 치는 라이브 렌더러는 여전히 보류(봇탐지) — 슬라이스 A의 _goto_search_surface 와 동일 수준(소비 함수+테스트 존재, 라이브 실행만 보류)."
+  },
+  "three_way_agree": "V2 fail(고아) → 소비측 추가로 해소. 재검증 후 G+T(mutation D·E)+소비측 테스트 일치. 이제 슬라이스 A 와 동일 bar(소비 함수+테스트, 라이브만 보류).",
+  "scope_honesty": "사람인/잡코리아도 이제 소비측(render_search_for_session)이 주입 키를 읽어 입력계획 변환까지 증명됨. 실제 브라우저 폼필드(execCommand)·칩(Enter) 라이브 실행만 봇탐지로 보류 — 슬라이스 A(URL 조립 후 라이브 보류)와 대칭.",
+  "status": "검증통과(고아 해소) — 배송 대기(사장님 확인 + 실 AI end-to-end 데모 확인 후)"
 }
