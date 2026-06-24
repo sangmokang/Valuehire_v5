@@ -35,11 +35,19 @@
     "korean_idn_domain": "codex 는 'https://링크드인.com' 도 거부 기대했으나, IDN 은 유효 호스트라 G는 결함으로 보지 않음(공백만 거부). 단, 공백 제거 fix 로 codex 의 실제 우회 케이스는 모두 막힘."
   },
   "v2": {
-    "author": "Claude reset (V2)",
-    "verdict": "pending",
-    "note": "리셋 컨텍스트가 goal + 이 verdict 만 읽고 C1/H1/M1/M2/L1 fix 가 실제로 막혔는지, H2 wontfix 가 타당한지 재적대검증"
+    "author": "Claude reset (V2, Explore agent)",
+    "verdict": "pass (통과 가능)",
+    "what_v1_missed": "제로폭 공백(U+200B) URL 통과 + 전각 라틴 'ＦＲＥＥＬＡＮＣＥ' freelancer 미감지 — V2 가 새로 발견.",
+    "independent_repro": "G가 V2 벡터 직접 재현: ZWSP url→False, %20·한글IDN→True(과잉거부 없음), 전각 freelance→freelancer. 추가 fix 후 589 passed.",
+    "v2_followup_fix": "is_valid_profile_url 제어/포맷문자(Cc/Cf/Cn/Co/Cs) 거부 + _profile_text NFKC 정규화. 회귀 테스트 +4(test_h5_zero_width_chars_rejected·percent_encoded_space_is_valid·fullwidth_freelancer_excluded).",
+    "non_defects_confirmed": "%20 인코딩 공백·한글 IDN 은 유효 URL → 통과가 정상(과잉거부 회귀 테스트로 고정). H2(저티어 사립 wontfix)는 goal 결정사항과 합치 — 기계는 명시 마커만, 미세등급은 사람/LLM."
   },
   "failed_attempts": [],
-  "three_way_agree": false,
-  "status": "진행중"
+  "three_way_agree": true,
+  "status": "통과",
+  "final_evidence": {
+    "command": "/Users/kangsangmo/Valuehire_v5/.venv-playwright/bin/python -m pytest tests/ -q",
+    "result": "589 passed, 5 subtests passed",
+    "mutation": "mutant 5종(PASS_THRESHOLD·FREQUENT_MIN_HOPS·URL검증·send-gate URL·round) 검출 확인"
+  }
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,9 @@ def is_valid_profile_url(url: Any) -> bool:
         return False
     if any(ch.isspace() for ch in url):  # 선행/후행/내부 공백 모두 거부
         return False
+    # 제로폭/제어/포맷 문자(U+200B 류, BOM, C0/C1) 거부 — isspace 가 못 잡는 보이지 않는 깨짐.
+    if any(unicodedata.category(ch) in {"Cc", "Cf", "Cn", "Co", "Cs"} for ch in url):
+        return False
     try:
         parsed = urllib.parse.urlsplit(url)
     except ValueError:
@@ -110,9 +114,9 @@ def is_valid_profile_url(url: Any) -> bool:
 
 
 def _profile_text(profile: CapturedProfile) -> str:
-    return " ".join(
-        [profile.summary, profile.visible_text, profile.ocr_text]
-    ).lower()
+    # NFKC: 전각(ＦＲＥＥＬＡＮＣＥ)·호환문자를 표준형으로 접어 마커 매칭 우회를 막는다.
+    raw = " ".join([profile.summary, profile.visible_text, profile.ocr_text])
+    return unicodedata.normalize("NFKC", raw).lower()
 
 
 def hard_exclude_reason(profile: CapturedProfile, channel: Channel) -> str | None:

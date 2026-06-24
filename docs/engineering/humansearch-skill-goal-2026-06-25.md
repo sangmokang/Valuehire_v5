@@ -221,5 +221,22 @@
 - 제안/InMail/메일 발송(= R3, 사람 수동 게이트).
 - 새 DOM 셀렉터 표 작성(= SOT23 재사용, 바뀌면 런타임 덤프).
 
-## 10. 적대 검증 로그
-> (구현 단계에서 채움 — 자기 적대검증 결과 · Codex Rescue 판정 · URL 무결성 깨기 시도 · 트리거 오발동 시험)
+## 10. 적대 검증 로그 (G → V1 → V2, 3자 일치)
+
+장부 원본: `docs/engineering/humansearch.verdict.json`
+
+| 결함 | 심각도 | G(생성) | V1(codex) | V2(리셋) | 처리 |
+|---|---|---|---|---|---|
+| URL 공백·invalid 발송 | CRITICAL | 미검출 | 발견 | 확인 | fix: 공백 전면거부 + `eligible_matches_for_send` 발송 관문 |
+| 프리랜서 공백 우회 | HIGH | 미검출 | 발견 | 확인 | fix: collapsed 매칭 |
+| 저티어 사립 미감지 | HIGH | 의도 | 발견 | 타당 인정 | wontfix(의도) — 기계는 명시마커만, 미세등급은 사람/LLM. 테스트로 의도 고정 |
+| 반올림 합격선 부풀림 | MEDIUM | 미검출 | 발견 | 확인 | fix: round-once |
+| 제로폭 URL 통과 | (edge) | 미검출 | 미검출 | **V2 발견** | fix: 제어/포맷문자 거부 |
+| 전각 freelance | (edge) | 미검출 | 미검출 | **V2 발견** | fix: NFKC 정규화 |
+
+- 자기 적대검증(G): mutant 5종(임계값·제외컷·URL·send-gate·round) 일부러 깨 → 테스트 전부 검출 → 복원 GREEN.
+- V1 증거는 G가 올바른 시그니처로 직접 재현(codex 자체 하네스의 시그니처 오류는 무효 처리).
+- V2 증거도 G가 직접 재현(ZWSP→거부, %20·한글IDN→통과 유지=과잉거부 없음, 전각→제외).
+- 최종: `pytest tests/ -q` → **589 passed, 5 subtests passed**. three_way_agree=true.
+- 배선(R4): 스킬은 human-driven(자동 cron 호출부 없음이 정상). 발송 게이트는 SKILL.md output 절차에 명시.
+- 트리거(R6): description 에 트리거 문장 포함, search/multisearch 와 목적 구분 명시 → 오발동 충돌 없음(V1 (f) 확인). 실발동 자동측정 도구 없음 → 그 부분은 수동 판정.

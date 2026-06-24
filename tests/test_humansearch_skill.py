@@ -363,6 +363,36 @@ def test_h2_config_constants_match_code_no_drift() -> None:
     assert fjc["short_tenure_months"] == SHORT_TENURE_MONTHS
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://x​y",  # 제로폭 공백 (V2 발견)
+        "https://x﻿y",  # BOM
+        "https://x‍y",  # zero-width joiner
+    ],
+)
+def test_h5_zero_width_chars_rejected(url) -> None:
+    """보이지 않는 제로폭/포맷 문자 URL 거부 — V2 재적대검증 발견."""
+    assert is_valid_profile_url(url) is False
+
+
+def test_h5_percent_encoded_space_is_valid() -> None:
+    """%20(인코딩된 공백)은 유효 URL — 과잉 거부 안 함(IDN/인코딩 정상 통과 회귀)."""
+    assert is_valid_profile_url("https://www.linkedin.com/in/foo%20bar") is True
+
+
+def test_h4_fullwidth_freelancer_excluded() -> None:
+    """전각 라틴 'ＦＲＥＥＬＡＮＣＥ' 도 NFKC 접기로 제외 — V2 재적대검증 발견."""
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/8",
+        source_channel="saramin",
+        visible_text="ＦＲＥＥＬＡＮＣＥ developer",
+        summary="",
+        captured_at="2026-06-25T00:00:00+00:00",
+    )
+    assert hard_exclude_reason(p, "saramin") == "freelancer"
+
+
 def test_h4_unknown_private_school_passes_by_design() -> None:
     """기계는 명시 마커(전문대 등)만 제외. 미지의 사립대는 통과 → SKILL 의 사람/LLM 판단으로.
 
