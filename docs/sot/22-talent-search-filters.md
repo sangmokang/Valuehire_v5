@@ -24,6 +24,10 @@
 
 > 자세한 셀렉터·결과수 판단 트리(0~4 / 81~300 / 300+ 등)는 JSON의 각
 > `channels.<채널>.dom_selectors` 와 `result_count_decision_tree`를 본다.
+>
+> 위 표는 **DOM 혼동이 일어나는 포털 3채널**만 다룬다. JSON에는 `chatgpt_claude_ai`
+> (ChatGPT/Claude.ai 대화형 AI 검색 채널)도 들어 있다 — 포털이 아니라 셀렉터·결과수 트리가
+> 없는 게 정상이며, 사장님 원본 채널이므로 지우지 않는다.
 
 ---
 

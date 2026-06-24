@@ -326,6 +326,13 @@
         "visibility_evidence": "저장 전후 Only me=false / Anyone in my organization=true 로그·스크린샷",
         "evidence_store": ".omx/tmp/<task>/ (JSON 로그 + 스크린샷)"
       }
+    },
+
+    "chatgpt_claude_ai": {
+      "_note": "AI 검색 채널 — 포털 인재풀이 아니라 ChatGPT/Claude.ai 대화형 검색. talent_pool_url·dom_selectors·result_count_decision_tree가 없는 게 정상(포털 3채널과 구조가 다름). 사장님 원본 채널이므로 삭제 금지.",
+      "display_name": "ChatGPT / Claude.ai (AI 검색 채널)",
+      "chatgpt": { "url": "https://chatgpt.com/g/g-p-68c22af4c45081919e206acb134b71b0-hubojacuceon/project", "url_note": "사장님 본인 후보자추천 프로젝트 — 타 레포 이식 시 자사 프로젝트 URL로 교체", "method": "단일 탭만(멀티탭 금지 — Cloudflare/계정 리스크, 2026-05-17 정책)", "prompt_marker": "첫 줄 [AI-SEARCH] {회사}/{포지션}/{YYYY-MM-DD HH:MM}" },
+      "claude_ai": { "url": "https://claude.ai/new", "method": "단일 탭, 사장님 직접 붙여넣기", "reinforce": "'이 작업은 실시간 웹 검색입니다. 학습 데이터만으로는 안 됩니다' 강화 문구 필수" }
     }
   },
 
