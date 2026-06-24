@@ -1,0 +1,236 @@
+"""humansearch — 사람이 걸어둔 검색 결과를 순회·채점·디스코드 발송하는 스킬의 결정론 코어.
+
+사장님 확정(2026-06-25):
+  - 채점 가중치: 학력 0.30 / 직무적합 0.50 / 프로필 논리력 0.10 / 이직 안정성 0.10 (합 1.0)
+  - 합격선 70점 이상만 Discord #ai_search 발송
+  - 사람인·잡코리아는 채점 *전에* 하드 제외(프리랜서·잦은이직·하위학교). 지방 국공립대는 허용.
+  - 링크드인은 open-to-work 가중 점수제 → 학교 하드 제외 미적용(학력은 가중치로 반영).
+
+브라우저 순회·스크린샷·발송은 기존 인프라(MCP claude-in-chrome + multi_position_sourcing)를
+재사용한다. 이 모듈은 *판정 로직*만 담아 기계 검증(verify) 대상으로 고정한다.
+"""
+from __future__ import annotations
+
+import json
+import urllib.parse
+from pathlib import Path
+from typing import Any
+
+from .models import CapturedProfile, Channel, Position, PositionMatch
+from .scoring import (
+    HIGH_TIER_SCHOOL_SIGNALS,
+    count_short_tenure_hops,
+)
+
+# ── 사장님 확정 상수 (config JSON 과 단일 출처로 일치해야 함; H2/H3 가 교차검증) ──
+SCORING_WEIGHTS: dict[str, float] = {
+    "education": 0.30,
+    "role_fit": 0.50,
+    "profile_logic": 0.10,
+    "job_stability": 0.10,
+}
+PASS_THRESHOLD = 70
+
+# 채점 전 하드 제외 — 사람인·잡코리아에만 학교 컷 적용(링크드인 제외).
+PORTAL_SCHOOL_CUT_CHANNELS: frozenset[Channel] = frozenset({"saramin", "jobkorea"})
+
+FREELANCER_MARKERS = (
+    "freelance",
+    "freelancer",
+    "프리랜서",
+    "개인사업자",
+    "independent contractor",
+    "외주",
+    "contract worker",
+)
+
+# 전문대·하위권·비정규 학위 신호(소문자 비교). 4년제 정규대(지방 국공립 포함)는 여기 없음 → 통과.
+LOW_TIER_SCHOOL_MARKERS = (
+    "전문대",
+    "전문학교",
+    "직업전문학교",
+    "사이버대",
+    "방송통신대",
+    "학점은행",
+    "polytechnic",
+    "vocational",
+)
+
+# 지방 국공립대 — 사장님 확정상 허용(명시 allowlist; 하위 사립과 구분해 안전하게 통과).
+REGIONAL_NATIONAL_UNIVERSITIES = (
+    "부산대",
+    "경북대",
+    "전남대",
+    "전북대",
+    "충남대",
+    "충북대",
+    "경상국립대",
+    "경상대",
+    "강원대",
+    "제주대",
+    "단국대",  # memory: 단국대 이상 허용
+    "pusan national",
+    "kyungpook national",
+)
+
+FREQUENT_JOB_CHANGE_MIN_HOPS = 2
+
+_CONFIG_PATH = (
+    Path(__file__).resolve().parents[2] / "skills" / "humansearch" / "humansearch.config.json"
+)
+
+_URL_SAFE_SCHEMES = {"http", "https"}
+
+
+def load_humansearch_config() -> dict[str, Any]:
+    """스킬 설정 JSON 로드(단일 출처). 코드 상수와의 일치는 테스트가 강제한다."""
+    return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+
+
+def is_valid_profile_url(url: Any) -> bool:
+    """발송 가능한 프로필 URL인지 — 사장님 0순위 '프로필 url 절대 오류 없어야'.
+
+    http/https + 호스트가 있어야 통과. 빈값·공백·상대경로·스킴 없음·javascript:void·ftp 거부.
+    """
+    if not isinstance(url, str):
+        return False
+    raw = url.strip()
+    if not raw:
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except ValueError:
+        return False
+    return parsed.scheme in _URL_SAFE_SCHEMES and bool(parsed.hostname)
+
+
+def _profile_text(profile: CapturedProfile) -> str:
+    return " ".join(
+        [profile.summary, profile.visible_text, profile.ocr_text]
+    ).lower()
+
+
+def hard_exclude_reason(profile: CapturedProfile, channel: Channel) -> str | None:
+    """채점 전 제외 사유. 없으면 None(=채점 대상). 사장님 확정 규칙."""
+    text = _profile_text(profile)
+
+    if any(marker in text for marker in FREELANCER_MARKERS):
+        return "freelancer"
+
+    if count_short_tenure_hops(profile.employment_history) >= FREQUENT_JOB_CHANGE_MIN_HOPS:
+        return "frequent_job_change"
+
+    if channel in PORTAL_SCHOOL_CUT_CHANNELS and _is_low_tier_school(profile.education):
+        return "low_tier_school"
+
+    return None
+
+
+def _is_low_tier_school(education: str) -> bool:
+    edu = (education or "").lower()
+    if not edu:
+        return False
+    # 지방 국공립·명문대 신호가 있으면 절대 하위로 보지 않는다(allowlist 우선).
+    if any(name.lower() in edu for name in REGIONAL_NATIONAL_UNIVERSITIES):
+        return False
+    if any(sig.lower() in edu for sig in HIGH_TIER_SCHOOL_SIGNALS):
+        return False
+    return any(marker in edu for marker in LOW_TIER_SCHOOL_MARKERS)
+
+
+# ── 하위 점수 (각 0.0~1.0) ─────────────────────────────────────────
+def _education_subscore(profile: CapturedProfile) -> float:
+    edu = (profile.education or "").lower()
+    if not edu:
+        return 0.0
+    if any(sig.lower() in edu for sig in HIGH_TIER_SCHOOL_SIGNALS):
+        return 1.0
+    if any(name.lower() in edu for name in REGIONAL_NATIONAL_UNIVERSITIES):
+        return 0.8
+    if any(token in edu for token in ("phd", "doctor", "박사")):
+        return 0.8
+    if any(token in edu for token in ("master", "ms ", "석사")):
+        return 0.7
+    if any(token in edu for token in ("bachelor", "bs", "ba", "학사", "대학교", "university")):
+        return 0.55
+    return 0.3
+
+
+def _role_fit_subscore(profile: CapturedProfile, position: Position) -> tuple[float, list[str]]:
+    text = " ".join([profile.visible_text, profile.ocr_text, " ".join(profile.skills)]).lower()
+    must = [kw for kw in position.must_haves if kw and kw.lower() in text]
+    nice = [kw for kw in position.nice_to_haves if kw and kw.lower() in text]
+    must_ratio = len(must) / max(1, len(position.must_haves))
+    nice_ratio = (len(nice) / len(position.nice_to_haves)) if position.nice_to_haves else 0.0
+    sub = min(1.0, 0.8 * must_ratio + 0.2 * nice_ratio)
+    reasons = []
+    if must:
+        reasons.append(f"must-have 직결: {', '.join(must[:3])}")
+    if nice:
+        reasons.append(f"nice-to-have: {', '.join(nice[:3])}")
+    return sub, reasons
+
+
+def _profile_logic_subscore(profile: CapturedProfile) -> float:
+    """프로필 텍스트 정리·논리력 프록시 — 요약과 본문이 충분히 정돈됐는지."""
+    summary = profile.summary.strip()
+    body = (profile.visible_text or profile.ocr_text).strip()
+    if summary and len(summary) >= 20 and body:
+        return 1.0
+    if summary and body:
+        return 0.6
+    if summary or body:
+        return 0.3
+    return 0.0
+
+
+def _job_stability_subscore(profile: CapturedProfile) -> tuple[float, list[str]]:
+    hops = count_short_tenure_hops(profile.employment_history)
+    sub = max(0.0, 1.0 - 0.34 * hops)
+    reasons = []
+    if hops >= FREQUENT_JOB_CHANGE_MIN_HOPS:
+        reasons.append(f"단기 이직 {hops}회 — 안정성 하위")
+    return sub, reasons
+
+
+def score_humansearch(profile: CapturedProfile, position: Position) -> PositionMatch:
+    """가중 점수(0~100)로 PositionMatch 환원. 가중치는 SCORING_WEIGHTS 단일 출처."""
+    edu_sub = _education_subscore(profile)
+    role_sub, role_reasons = _role_fit_subscore(profile, position)
+    logic_sub = _profile_logic_subscore(profile)
+    stability_sub, stability_reasons = _job_stability_subscore(profile)
+
+    subs = {
+        "education": edu_sub,
+        "role_fit": role_sub,
+        "profile_logic": logic_sub,
+        "job_stability": stability_sub,
+    }
+    breakdown = {key: round(100 * SCORING_WEIGHTS[key] * subs[key]) for key in SCORING_WEIGHTS}
+    score = max(0, min(100, sum(breakdown.values())))
+
+    why_fit: list[str] = []
+    why_not: list[str] = []
+    if edu_sub >= 0.55:
+        why_fit.append(f"학력 신호 양호({profile.education})")
+    elif profile.education:
+        why_not.append(f"학력 적합성 재검토 필요({profile.education})")
+    else:
+        why_not.append("학력 미수집")
+    why_fit.extend(role_reasons)
+    if not role_reasons:
+        why_not.append("JD 핵심 키워드 직결 근거 부족")
+    if logic_sub < 0.6:
+        why_not.append("프로필 텍스트 정리·논리 근거 부족")
+    why_not.extend(stability_reasons)
+
+    return PositionMatch(
+        candidate_url=profile.profile_url,
+        profile_summary=profile.summary,
+        position_id=position.position_id,
+        score=score,
+        why_fit=tuple(why_fit),
+        why_not=tuple(why_not),
+        evidence_paths=profile.evidence_paths,
+        score_breakdown=breakdown,
+    )
