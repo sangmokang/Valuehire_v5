@@ -38,7 +38,24 @@ def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
     """
     if value:
         return value
-    return os.environ.get(CHROME_CDP_ENDPOINT_ENV, DEFAULT_CHROME_CDP_ENDPOINT)
+    env_value = os.environ.get(CHROME_CDP_ENDPOINT_ENV)
+    if env_value:
+        return env_value
+    # 규칙 파일(SOT)을 기본값 소스로 읽는다. 부재/깨짐이면 폴백하되 조용히 넘어가지 않는다.
+    from .browser_policy import policy_cdp_endpoint
+
+    endpoint = policy_cdp_endpoint()
+    if endpoint:
+        return endpoint
+    # 조용히 넘어가지 않는다 — 로그로 시끄럽게 남기되, 로그인 흐름을 죽이지 않으려
+    # warnings.warn(=`-W error`서 프로세스 종료) 대신 logging 을 쓴다.
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "browser_policy.json(SOT)을 읽지 못해 하드코딩 폴백(%s)을 쓴다 — 규칙 파일을 확인하라.",
+        DEFAULT_CHROME_CDP_ENDPOINT,
+    )
+    return DEFAULT_CHROME_CDP_ENDPOINT
 
 SEARCH_SURFACE_URLS: dict[Channel, str] = {
     "saramin": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
@@ -486,6 +503,13 @@ class PortalWorker:
                 self._playwright = await self._playwright_manager.__aenter__()
 
             if self.config.channel == "linkedin_rps":
+                # 검문소(fail-closed): 붙으려는 CDP 주소가 규칙(SOT)과 다르면 멈춘다.
+                from .browser_policy import assert_browser_ready
+
+                assert_browser_ready(
+                    "portal_automation",
+                    connected_endpoint=self.config.chrome_cdp_endpoint,
+                )
                 self._browser = await self._playwright.chromium.connect_over_cdp(
                     self.config.chrome_cdp_endpoint
                 )

@@ -11603,9 +11603,11 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
     async def test_linkedin_worker_attaches_over_cdp_and_does_not_close_chrome(self) -> None:
         context = FakeContext()
         playwright = FakePlaywright(context)
+        # SOT(browser_policy.json) 포트로 attach 해야 검문소를 통과한다. 포트를 바꾸려면
+        # 코드에 임의로 박지 말고 규칙 파일 한 곳을 고친다(= 이 SOT 잠금의 핵심).
         config = PortalWorkerConfig(
             channel="linkedin_rps",
-            chrome_cdp_endpoint="http://127.0.0.1:9223",
+            chrome_cdp_endpoint="http://127.0.0.1:9222",
         )
         worker = PortalWorker(config, playwright=playwright)
 
@@ -11614,7 +11616,7 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         await worker.stop()
 
         self.assertEqual(result.status, "searched")
-        self.assertEqual(playwright.chromium.cdp_calls, ["http://127.0.0.1:9223"])
+        self.assertEqual(playwright.chromium.cdp_calls, ["http://127.0.0.1:9222"])
         self.assertEqual(playwright.chromium.persistent_calls, [])
         self.assertIn("linkedin.com/talent/search", context.pages[-1].goto_calls[-1])
         self.assertFalse(context.closed)

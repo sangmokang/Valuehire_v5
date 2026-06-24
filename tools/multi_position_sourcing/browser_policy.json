@@ -1,0 +1,15 @@
+{
+  "_comment": "브라우저 선택 SOT(유일한 정답). 어떤 일에 어떤 브라우저를 쓰는지 여기 한 곳에서만 정한다. SKILL 자연어로 흩뿌리지 않는다. (CLAUDE.md SOT 불변식 1·2·5)",
+  "portal_automation": {
+    "tool": "playwright_cdp",
+    "cdp_endpoint": "http://127.0.0.1:9222",
+    "attach_mode": "raw_single_tab",
+    "never_kill": true,
+    "yield_on_owner_activity": true,
+    "_comment": "포털 자동작업(검색·등록). 9222 크롬에 raw 단일탭으로 붙는다(연결 hang 회피). 로그인된 크롬 절대 안 끈다. 사장님 점유 감지 시 즉시 양보(R4)."
+  },
+  "interactive_browsing": {
+    "tool": "mcp_claude_in_chrome",
+    "_comment": "사장님이 보는 화면을 직접 조작하는 일은 MCP 크롬으로."
+  }
+}
