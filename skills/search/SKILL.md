@@ -92,6 +92,8 @@ Don't use for:
 
 목표: 공개적으로 확인 가능한 후보를 찾는다.
 
+> **사람인·잡코리아·LinkedIn RPS 인재풀로 검색할 때는 `docs/sot/22-talent-search-filters.md`(+`.json`)를 먼저 본다.** 채널마다 URL·입력법·결과수 임계가 다르므로 섞지 않는다(R5). 포털 세션·자동 복구는 `multisearch` Skill이 담당.
+
 채널 예시:
 - ChatGPT Search 또는 검색 가능한 LLM UI(브라우저/사람 검토용 handoff prompt를 붙여 넣어 실행)
 - LinkedIn 공개 프로필

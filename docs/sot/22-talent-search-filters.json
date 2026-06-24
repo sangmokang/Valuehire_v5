@@ -1,0 +1,388 @@
+{
+  "$schema_version": "2.0.0",
+  "title": "인재검색 필터·DOM 세팅 — 사람인·잡코리아·링크드인 이식용 SSOT",
+  "purpose": "AI Search(후보 발굴)가 3개 채용 포털에서 후보를 검색할 때 따르는 단일 기준. 타 레포지토리 이식용. 사장님이 화면 캡처·라이브 검증으로 직접 박은 입력 구조·DOM 셀렉터·결과수 판단 트리·입력법·완화 폴백·봇 가드·제안 모달 셀렉터를 빠짐없이 명세한다.",
+  "revision_note": "v2.0.0 — v1이 코드(러너)+SOT22만 보고 누락했던 사장님 직접 지침 5종 반영: (1) talent-search/SKILL.md 3사 좌측 필터 전체 구조, (2) SOT23 evidence-first 원칙, (3) 사람인 §6 DOM 표·§10.1·V4 제안모달, (4) 채널별 결과수 판단 트리(§S-2), (5) R10 클립보드 입력법.",
+
+  "source_of_truth": {
+    "owner_authored_primary": {
+      "file": "skills/talent-search/SKILL.md",
+      "note": "★ 최우선 원본 — 사장님이 화면 캡처로 확인한 3사 인재검색 URL + 좌측 필터 전체 구조 + 입력 순서 7단계 (2026-05-21 명시)"
+    },
+    "channel_dom_selector_sot": {
+      "file": "docs/sot/23-channel-dom-selectors.md",
+      "principle": "evidence-first. 'selector guesses never outrank fresh DOM inventory' — 행동 전 DOM 덤프가 셀렉터 추측을 항상 이긴다."
+    },
+    "filter_ssot": "docs/sot/22-talent-search-filters.md",
+    "skill_selector_tables": [
+      "skills/saramin-talent-sourcing/SKILL.md §6(204) DOM Selector 표 / §10.1(390) 제안모달 / V4(1349) / §S-2(1478) 결과수 트리 / §S-5(1540) 실행루프",
+      "skills/jobkorea-talent-sourcing/SKILL.md §S-2(1608) 결과수 트리 / §S-5(1677) 실행루프",
+      "skills/linkedin-rps-jd-set-builder/SKILL.md §3.3(132) data-test 6종 / §S-1(813) 결과수 트리 / §S-3(850) 실행흐름"
+    ],
+    "code_files": [
+      "tools/lib/ai-search-saramin-runner.mjs",
+      "tools/lib/saramin-search-engine.mjs",
+      "tools/jobkorea-search/build-search.mjs",
+      "tools/jobkorea-search/run-search.mjs",
+      "tools/lib/linkedin-search-engine.mjs"
+    ],
+    "verified_dates": ["2026-05-21 owner workflow", "2026-05-22 saramin live", "2026-06-16 jobkorea live", "2026-06-20 saramin DOM", "2026-06-22 jobkorea/linkedin live", "2026-06-23 SOT23"]
+  },
+
+  "global_rules": {
+    "R0_talent_pool_not_job_search": { "rule": "인재 검색 ≠ 채용공고 검색. `search?searchword=` 같은 일반 검색 URL은 공고 풀이라 후보 0명. 반드시 talent pool URL만 사용.", "severity": "critical", "source": "talent-search/SKILL.md:절대규칙1" },
+    "R1_step_by_step_input": { "rule": "필터를 차분히 하나하나 입력. 순서: 키워드→직무→경력→지역→학력. 단계 사이 1~2초 wait. URL에 한꺼번에 박지 않는다(봇 검출).", "severity": "high", "source": "talent-search/SKILL.md:절대규칙2 + 필터 입력 순서" },
+    "R2_stop_on_block": { "rule": "캡차·봇차단·로그인 리다이렉트('Please verify you're a human') 감지 → 즉시 STOP. retry 금지(계정 잠금).", "severity": "critical", "source": "talent-search/SKILL.md:절대규칙3" },
+    "R3_no_action_during_owner_chrome": { "rule": "사장님이 직접 chrome 개입(로그인·캡차·필터 입력) 중에는 자동화 액션 0. 세션 충돌·세션 깨짐 방지.", "severity": "critical", "source": "talent-search/SKILL.md:절대규칙4" },
+    "R4_license_required": { "rule": "인재DB 라이선스 필요 — 계정이 헤드헌터/기업 회원이어야 인재검색 진입 가능. 라이선스 차감 버튼(검색/제안 발송)은 사람 컨펌 후. 상세 진입·저장은 차감 0.", "severity": "high", "source": "talent-search/SKILL.md:절대규칙5" },
+    "R5_no_channel_routing_by_job": { "rule": "채널을 직무로 가르지 않는다. '잡코리아=IT, 사람인=마케팅' 식 매핑 금지. 모든 직무를 전 채널 전방위 검색.", "severity": "critical", "source": "SOT22:15, 2026-06-23 categoryToChannel 삭제" },
+    "R6_save_profile_unconditionally": { "rule": "검토 가치 있는 카드는 점수와 무관하게 즉시 저장(차감 0). 사람인=[후보자 저장] 버튼 + 크롬 익스텐션 아카이버 + Supabase upsert.", "severity": "high", "source": "saramin SKILL R6" },
+    "R_evidence_first_dom": { "rule": "행동 전 DOM inventory 덤프 필수. 셀렉터 추측이 fresh DOM 덤프를 이기지 못한다. 아래 셀렉터는 '라이브 검증된 기본값'이며, 페이지가 바뀌면 덤프로 재확인 후 행동.", "severity": "high", "source": "SOT23:4" }
+  },
+
+  "keyword_strategy": {
+    "five_axis_decomposition": {
+      "description": "JD를 5축으로 분해해 각각 OR/AND/NOT 어디로 보낼지 결정. 핵심: AND 키워드 1개로 보통 90% 좁아진다. specific AND 여러 개 = 결과 0명.",
+      "source": "talent-search/SKILL.md AI Search 프로세스 정례화 + SOT22:17-25",
+      "axes": [
+        { "axis": "industry", "label": "산업", "example": "F&B / SaaS / 핀테크 / 게임", "logic": "AND", "note": "필수 도메인 1개만" },
+        { "axis": "role", "label": "직무", "example": "Brand Manager / 그로스 / 백엔드", "logic": "OR", "note": "직무 동의어 묶음" },
+        { "axis": "skill_tool", "label": "스킬·툴", "example": "Tableau / SQL / Django", "logic": "OR", "note": "많으면 1~2개만" },
+        { "axis": "experience", "label": "경력", "example": "8~12년", "logic": "filter", "note": "좌측 경력 필터, ±1~2년 버퍼" },
+        { "axis": "exclude", "label": "제외", "example": "신입 / 인턴", "logic": "NOT" }
+      ]
+    },
+    "keyword_variant_generation": {
+      "description": "직무명+JD 키워드에서 파생 검색어 자동 생성. 출처: ai-search-saramin-runner.mjs:22-56 generateKeywordVariants().",
+      "rules": [
+        { "trigger_regex": "support|지원|서포트", "add": ["기술지원", "Field Engineer", "FA엔지니어"] },
+        { "trigger_regex": "engineer|엔지니어", "add": ["엔지니어", "기술영업"] },
+        { "trigger_regex": "plc|자동화|automation|motion|servo|drive (또는 JD에 TwinCAT|EtherCAT|MELSOFT|WMX|CC-Link|servo|PLC)", "add": ["PLC", "자동화", "모션제어", "FA", "서보드라이브"] },
+        { "trigger_regex": "software|developer|개발", "add": ["소프트웨어", "개발"] }
+      ],
+      "always_include_job_title": true,
+      "dedup": "Set 기반 중복 제거. jdKeywords는 length>=2만 채택."
+    },
+    "priority_order_saramin": [
+      { "priority": 1, "type": "JD 기술 키워드 (ClickUp 추출)", "example": "TwinCAT, EtherCAT" },
+      { "priority": 2, "type": "직무명 한국어 파생", "example": "기술지원, 기술영업, 필드엔지니어" },
+      { "priority": 3, "type": "연관 기술스택", "example": "PLC, SCADA, 모션컨트롤, 서보" },
+      { "priority": 4, "type": "직무명 영문 약어", "example": "TS, FA, Automation" }
+    ]
+  },
+
+  "candidate_quality_filters": {
+    "description": "수집 후 풀에 넣기 전 제외 기준. 출처: linkedin SKILL §S-3 hasFrequentJobChange/isFreelancer + 사람인/잡코리아 §S-4.",
+    "frequent_job_change": {
+      "rule": "최근 5년 이내 종료 + 재직 12개월 미만인 단기 근무가 2회 이상이면 이직잦음 → 제외",
+      "logic": "careerPath.filter(j => parseMonths(j.period) < 12 && isWithin5Years(j.endDate)).length >= 2"
+    },
+    "freelancer": {
+      "rule": "headline+currentTitle 텍스트에 마커 포함 시 제외",
+      "markers": ["freelance", "freelancer", "프리랜서", "개인사업자", "independent", "외주", "Contract Worker"]
+    }
+  },
+
+  "input_order_common": {
+    "source": "talent-search/SKILL.md 필터 입력 순서 (사람인·잡코리아 공통)",
+    "steps": [
+      "1. 키워드 1~3개 ('5년 이상' 같은 부가 텍스트 제외)",
+      "2. 직무 카테고리 (드롭다운 선택, 자유 입력 X)",
+      "3. 경력 년차 범위 (예: 3~10년, JD에 ±1~2년 버퍼)",
+      "4. 지역 (예: 서울 전체, 원격 많으면 패스)",
+      "5. 학력 (체크박스 다중 선택)",
+      "6. (선택) 연봉·재직/구직·기업 규모",
+      "7. 검색 버튼 클릭 (사장님 컨펌 후)"
+    ],
+    "between_steps": "각 단계 사이 1~2초 wait — 너무 빠른 입력은 봇 검출"
+  },
+
+  "worker_do_and_dont": {
+    "source": "talent-search/SKILL.md 자동화 워커 행동표",
+    "ok": [
+      "정확한 talent pool URL로 진입",
+      "JD 본문에서 필터 값 추출 후 단계별 입력",
+      "Cloudflare/로그인 리다이렉트 감지 시 즉시 stop",
+      "사람이 인증 진행 중에는 chrome 조작 0"
+    ],
+    "forbidden": [
+      "일반 검색 URL(search?searchword=) 사용",
+      "포지션 제목 그대로 검색 박스에 박기",
+      "봇 검출 후 retry (계정 잠금 위험)",
+      "사람 작업 중 자동화 액션 끼어들기"
+    ]
+  },
+
+  "channels": {
+    "saramin": {
+      "display_name": "사람인 (인재풀)",
+      "talent_pool_url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+      "auth_url": "https://www.saramin.co.kr/zf_user/auth",
+      "session": {
+        "profile_dir": "~/.vh-profiles/saramin",
+        "keep_open_default": true,
+        "singleton_lock_cleanup": "rm -f ~/.vh-profiles/saramin/SingletonLock (종료 후 수동)"
+      },
+      "session_expiry_detection": {
+        "certification_gate": "url includes '/certification' → 기업 인증 게이트, 수동 처리(브라우저 유지)",
+        "auth_or_tutorial": "url includes '/auth' 또는 '/tutorial' → 세션 만료, 자동 재로그인 1회 시도 후 인재검색 URL 복귀",
+        "retry_policy": "재로그인 1회만",
+        "source": "ai-search-saramin-runner.mjs:85-109"
+      },
+      "input_structure_owner_spec": {
+        "source": "talent-search/SKILL.md (사장님 화면 캡처 확인)",
+        "top_keyword_boxes": "OR(하나 이상 포함) / AND(모두 포함) / NOT(제외)",
+        "ai_recommend": "AI 추천 검색어(사이트 자동 제안)",
+        "quick_filter_chips": ["대기업", "코스닥", "코스피", "국내 유명대학", "인서울 대학", "평균 근속 3년", "최근 제안 많이 받음", "요즘 뜨는 인재", "적극 구직 중"],
+        "left_filters": ["스페셜 태그", "경력(선택~선택 년)", "지역", "직무", "학력 체크박스(고등학교/대학 2,3년/대학 4년/석사/박사)", "연봉 범위(최저~최고)", "재직/구직(체크박스)", "기업 규모"],
+        "result_card_fields": "이름OO·N세·경력 N년 N개월 / 회사·부서·직책 / 학교(졸업) / 스킬 태그 / [후보자 저장]·[이직 제안하기] 버튼"
+      },
+      "dom_selectors_search": {
+        "_source": "saramin SKILL §6(208-217) 라이브 검증 표 + saramin-search-engine.mjs + ai-search-saramin-runner.mjs",
+        "or_keyword_input": { "primary": "div.search_default input.search_input", "automation_alt": "input.search_input.result", "note": "force click 필요 — AI 추천 dropdown overlay 회피. 좌표 폴백 page.mouse.click(210,210)" },
+        "and_keyword_input": "div.search_word_include input.search_input",
+        "not_keyword_input": "div.search_word_except input.search_input",
+        "delete_all_chips": "button.btn_delete_all, button:has-text(\"전체삭제\"), button:has-text(\"초기화\")",
+        "quick_filter_chip": { "selector": "button.tag_item:has-text(\"국내 유명 대학\")", "match": "텍스트 매칭" },
+        "search_button": "button.search_submit (또는 button filter hasText /^검색$/, getByRole('button',{name:'검색'}))",
+        "result_count": { "selector": "span.list_count", "text_pattern": "총 N 명", "fallbacks": ["body.innerText /총\\s+(\\d+)/", "em 태그 100+ 또는 0 (페이지번호 1~99 + page/navi 클래스 제외)"], "source": "saramin-search-engine.mjs:15-51" },
+        "result_card": { "selector": "div.talent_list_item", "per_page": 20 },
+        "candidate_id": "div.check_area[residx]",
+        "card_detail_link": { "selector": "div.talent_list_item div.summary_info a (또는 a[href=\"javascript:void(0)\"] 텍스트>80자)", "behavior": "click 시 새 탭 hiring.saramin.co.kr/applicant-view/position/resume/{rNo}" },
+        "save_button": "button:has-text(\"후보자 저장\")"
+      },
+      "input_method": {
+        "forbidden": ["fill() 금지 — React 포커스 탈취로 칩 미생성", "form_input value=\"한국어\" 금지 — 빈값", "여러 단어 한 번에 금지 — 한 칩에 붙음", "Enter 없이 검색 금지"],
+        "required_sequence": ["input.click()", "waitForTimeout(300)", "keyboard.type(키워드, {delay:80})", "waitForTimeout(400)", "keyboard.press('Enter')", "waitForTimeout(800)"],
+        "korean_jamo_fix": "자모 깨짐 시 clipboard writeText + cmd+v + Enter (R10)",
+        "dropdown_close": "각 키워드 입력 후 Escape로 AI 추천 dropdown 닫기"
+      },
+      "filters": {
+        "quick_filter_chips_required_on": { "chips": ["국내 유명 대학", "인서울 대학"], "reason": "좋은 학교 35점 가중치(A축). R7", "optional": ["평균 근속 3년(이직 안정성 30점)", "적극 구직 중", "요즘 뜨는 인재"] },
+        "education_checkbox": { "on": ["대학(4년)", "석사"], "off": ["대학(2,3년)", "박사", "고졸"], "available_items": ["고등학교", "대학 2,3년", "대학 4년", "석사", "박사"], "note": "R8. 항목은 사장님 명시. 정확한 CSS id는 라이브 DOM 덤프로 확정(SOT23 evidence-first)" },
+        "experience": { "rule": "JD '경력 N~N년'에 ±1~2년 버퍼", "examples": [{ "jd": "5~10년", "apply": "4~12년" }, { "jd": "경력 무관", "apply": "1~15년" }] },
+        "salary": "연봉 범위(최저~최고) 좌측 필터",
+        "job_category": "IT개발·데이터 > 백엔드/웹/프론트 (풀스택은 3개 토글 OR)",
+        "region": "기본 수도권(서울/경기/인천), 원격 많으면 패스"
+      },
+      "result_count_decision_tree": {
+        "_source": "saramin SKILL §S-2(1478)",
+        "read_via": "span.list_count 즉시 읽기",
+        "0_to_4": "즉시 포기 → 다음 시나리오 (대기 0초)",
+        "5_to_80": "GOLD 전수 처리 — ①프로필 무조건 저장(R6) ②이직잦음·프리랜서 제외 ③dedup 후 통합 pool",
+        "81_to_300": "부분 처리 — 상위 40명(추천순 2페이지)만",
+        "300_plus": "AND 키워드 1개 추가 후 재검색·재판단. AND 추가 후에도 300+ → 즉시 포기"
+      }
+    },
+
+    "jobkorea": {
+      "display_name": "잡코리아 (인재검색)",
+      "talent_pool_url": "https://www.jobkorea.co.kr/corp/person/find",
+      "session": { "profile_dir": "~/.vh-profiles/jobkorea", "keep_open_default": true },
+      "critical_insight": "window.searchcondition 객체 mutate '만'으로는 키워드 검색 미반영(실측 2026-06-22). #txtKeyword에 실제 DOM 타이핑/클립보드 붙여넣기 필수. 필터는 searchcondition 객체 적용, 키워드는 DOM 입력 — 이원화.",
+      "input_structure_owner_spec": {
+        "source": "talent-search/SKILL.md (사장님 화면 캡처 확인)",
+        "top_bar": "통합검색▼ / 키워드 자유 입력 / 직무·스킬▼ / 지역▼ / 상세검색▼ / 검색조건 불러오기▼",
+        "left_filters": ["경력(☐신입 + N~N년 입력 + 해외 근무 경험 포함 체크박스)", "나이/성별", "구직 상태", "이력서 업데이트일", "입사 지원일", "최근 활동일", "제안상품 적용 여부", "평균 근속년수", "기업 규모", "선호 조건"],
+        "result_card_fields": "이름OO·(남/여, 만N세)·NN년N개월 / 회사·직군 / 스킬 태그 / #요즘 뜨는 인재 #다른 기업이 많이 찾음 #최근 구직 활동"
+      },
+      "dom_selectors": {
+        "_source": "build-search.mjs CAREER_DOM_SELECTORS + run-search.mjs RESULT_SELECTORS + ai-search-saramin-runner.mjs:351-396",
+        "keyword_input": "#txtKeyword",
+        "keyword_clear": ".btnKeywordClear",
+        "career_start_input": "#txtCareerStart",
+        "career_end_input": "#txtCareerEnd",
+        "career_newcomer": "#career_0",
+        "career_overseas": "#careeroverseas",
+        "career_search_btn": "#btnCareerSearch (전체 재검색 트리거, 1급 경로)",
+        "keyword_search_btn": "#btnKeywordSearch",
+        "age_search_btn": "#btnAgeSearch",
+        "result_row": ".dvResumeTr",
+        "result_card_name": ".name a, .tit a, a.name",
+        "result_card_title": ".career_area .txt, .exp_area .txt, .txt_career",
+        "result_card_link": "a[href*=\"/resume/\"], a[href*=\"/person/\"]",
+        "headhunter_select": "input[type=radio][name=\"choose-headhunter\"][data-info]"
+      },
+      "input_method": {
+        "r10_clipboard_paste": { "_source": "jobkorea SKILL §S-5(1677)", "sequence": ["clearJobkoreaSearch(page) — .btnKeywordClear click", "navigator.clipboard.writeText(keyword)", "keyboard.press('Control+a')", "keyboard.press('Control+v')", "keyboard.press('Enter')"], "note": "R10 클립보드 붙여넣기 = 한글 자모 깨짐 방지 정식 입력법" },
+        "alt_typing": { "_source": "ai-search-saramin-runner.mjs:357-362", "sequence": ["#txtKeyword.click()", "keyboard.type(키워드,{delay:80})", "keyboard.press('Enter')", "waitForTimeout(4000)"] },
+        "filter_apply_method": "window.searchcondition 객체 mutate + DOM 입력칸(domInputs) 양쪽. run-search.mjs:24-47 defaultApply()"
+      },
+      "search_condition_object": {
+        "description": "잡코리아 검색버튼이 읽는 전역 객체. 빌더(buildJobkoreaSearchPatch)가 사람이 읽는 필터→정규화 패치로 변환, applySearchCondition()으로 mutate. 출처: build-search.mjs.",
+        "filter_to_patch_map": {
+          "career": "{start,end} → career:{s,e} + domInputs[#txtCareerStart,#txtCareerEnd]",
+          "careerCodes": "['3_5','5_10'] → careerCodeUse (career.code 배열 use=1)",
+          "salary": "{start,end} → salary:{s,e}",
+          "salaryCodes": "배열 → salaryCodeUse",
+          "education": "배열 → educationUse (use=1)",
+          "rank": "배열 → rankUse",
+          "cotype": "배열 → cotypeUse",
+          "hire": "배열 → hireUse",
+          "avgwork": "배열 → avgworkUse",
+          "jobtype": "배열 → jobtypeUse (jobtype.ctgr use=1)",
+          "biztype": "배열 → biztypeUse (biztype.ctgr use=1)",
+          "workarea": "배열 → workareaUse (ctgr 시도→구 children 양 레벨 v 매칭)",
+          "age": "{start,end} → age:{s,e}",
+          "gender": "'man'|'woman' → genderUse",
+          "keywords": "{k1,k2,k3} → keywords:{k1,k2,k3} (sc[k].t=text, sc[k].use=1)"
+        },
+        "apply_logic": "use 배열 항목 중 지정 v값만 use=1, 나머지 미변경(setUseByV). 빈 입력 키는 패치 미포함(빈 패치 보장).",
+        "code_value_note": "education/jobtype 등의 구체 v(코드)값은 searchcondition 객체 구조에 의존 → 라이브 DOM 덤프로 추출(SOT23 evidence-first). 필터 항목·구조는 위 input_structure_owner_spec에 명시됨."
+      },
+      "result_parse": { "pattern": "/전체\\s*([\\d,]+)\\s*개/ (콤마 제거 후 정수)", "examples": ["전체 36개", "전체6,090개"], "captcha_guard": "/captcha|자동입력 방지|보안문자/i 매치 시 throw → 즉시 stop", "source": "run-search.mjs:18-21" },
+      "result_count_decision_tree": {
+        "_source": "jobkorea SKILL §S-2(1608)",
+        "read_via": "'총 N명' 즉시 읽기",
+        "0_to_4": "즉시 포기 → 다음 시나리오",
+        "5_to_80": "GOLD 전수 처리 — ①프로필 저장(R6) ②이직잦음·프리랜서 제외 ③dedup 후 통합 pool",
+        "81_to_300": "부분 처리 — 상위 40명(추천순 2페이지)만",
+        "300_plus": "AND 키워드 1개 추가 후 재판단. AND 후에도 300+ → 즉시 포기"
+      },
+      "relax_fallback": {
+        "description": "결과 0명이면 우선순위 낮은 필터부터 1개씩 완화. 최대 maxRelax(기본 3)회. 무한루프 방지.",
+        "relax_order": ["keywords", "biztype", "workarea", "gender", "age", "avgwork", "hire", "cotype", "rank", "salary", "salaryCodes", "education", "careerCodes", "career", "jobtype"],
+        "keep_until_last": ["career", "jobtype"],
+        "source": "build-search.mjs:21-25 RELAX_ORDER + run-search.mjs:66-82"
+      },
+      "candidate_collection": {
+        "method": "[...querySelectorAll('.dvResumeTr')].slice(0,max)",
+        "url_normalize": "href가 http로 시작 안 하면 'https://www.jobkorea.co.kr' + getAttribute('href')",
+        "screenshot": "~/.vh-search-results/jobkorea/{date}/{keyword}/search-result.png (키워드 적용 증거)"
+      },
+      "job_tree": "React state popup. JS .click()만으론 미갱신 → 3레이어 폴백",
+      "keyword_limit_per_run": 5
+    },
+
+    "linkedin": {
+      "display_name": "링크드인 RPS (Recruiter / Talent Solutions)",
+      "talent_pool_url": "https://www.linkedin.com/talent/search",
+      "home_url": "https://www.linkedin.com/talent/home",
+      "general_fallback_url": "https://www.linkedin.com/search/results/people/",
+      "license_required": "Value Connect Recruiter(RPS) 계정 필수 (일반 LinkedIn 계정 X)",
+      "input_structure_owner_spec": {
+        "source": "talent-search/SKILL.md (사장님 화면 캡처 확인)",
+        "entry": "홈에서 'Get started by typing anything here' 자연어 검색 박스 / 또는 Projects 탭 → 기존 프로젝트 진입 → 검색·InMail",
+        "ai_examples": ["Show me Global Business Managers who know International Expansion", "Find me Cloud Infrastructure Engineers with Kubernetes expertise"],
+        "result": "candidates / InMails sent / InMails accepted 통계 + 후보자 카드"
+      },
+      "session": {
+        "profile_dir": "~/.vh-profiles/linkedin",
+        "cdp_port": 9224,
+        "owner_chrome_cdp": "localhost:9222 (사장님 인증 Chrome — SOT23 RPS 저장 작업 시 raw CDP page-target 직접 attach. 탭 많으면 connectOverCDP 전체 enumerate가 hang)",
+        "connect_strategy": "CDP 재연결 우선(connectOverCDP localhost:9224, timeout 3000) → 실패 시 launchPersistentContext 새 시작",
+        "keep_open_default": true,
+        "never_close": "keepOpen=true(기본)이면 ctx.close() 절대 금지. cdpConnected면 더더욱",
+        "launch_args": ["--remote-debugging-port=9224", "--disable-blink-features=AutomationControlled", "--disable-infobars", "--no-first-run", "--no-default-browser-check"],
+        "locale": "ko-KR"
+      },
+      "bot_protection": {
+        "random_delay_between_keywords_ms": { "min": 20000, "max": 60000, "note": "RPS는 일반보다 민감. 키워드 간 20~60초 랜덤 필수" },
+        "short_delay_ms": { "min": 2000, "max": 5000 },
+        "blocked_page_regex": "/checkpoint|authwall|login|captcha|challenge|uas\\/login/i",
+        "on_block": "즉시 break + 수동 로그인 안내. 자동 우회 금지(S4 경계)",
+        "max_candidates_default": 10,
+        "keyword_limit_per_run": 3
+      },
+      "search_url_template": "https://www.linkedin.com/talent/search?keywords={encodeURIComponent(keyword)}",
+      "input_method": {
+        "natural_language_search": "자연어 검색 지원. clipboard paste 적용(R10)",
+        "id_selector_forbidden": "React useId → element id가 매 세션 변경. id selector 금지. [name=]/placeholder/textContent/data-test 매칭만",
+        "keyword_source": "[...new Set([...jdKeywords, jobTitle])].slice(0,3)"
+      },
+      "dom_selectors": {
+        "_source": "linkedin SKILL §3.3(132-141) data-test 6종 + linkedin-search-engine.mjs:124-160",
+        "profile_card_container": "section[data-test-profile-card]",
+        "full_name": "[data-test-row-lockup-full-name], h1",
+        "headline": "[data-test-row-lockup-headline]",
+        "current_company": "[data-test-current-company]",
+        "current_position": "[data-test-current-position]",
+        "education_school": { "selector": "[data-test-education-school]", "note": "학교로 거를 땐 이 텍스트를 후처리 필터로 사용" },
+        "location": "[data-test-location]",
+        "result_profile_links": { "primary": "a[href*=\"/profile/\"], a[href*=\"/talent/hire/\"]", "fallback": "a[href*=\"/in/\"] (혼합 화면, /linkedin\\.com\\/in\\/[^/]+\\/?$/ 필터)", "card_container": "a.closest('[data-entity-urn], li, [class*=\"result\"], [class*=\"card\"]')", "name_in_card": "[class*=\"name\"], [class*=\"title\"], h3, h4", "title_in_card": "[class*=\"subtitle\"], [class*=\"position\"], [class*=\"headline\"]" }
+      },
+      "filters": {
+        "primary_method": "자연어 검색이 RPS의 1급 방식(좌측 패널 폼 필터 아님). location 필터를 자연어/파라미터로 부여",
+        "education": "data-test-education-school 텍스트 수집 후 후처리(클라이언트 측) 필터로 학교 거름",
+        "left_panel_note": "RPS 좌측 필터 패널(years of experience 등) 정밀 CSS 셀렉터는 라이브 DOM 덤프로 확정(SOT23 evidence-first)"
+      },
+      "result_count_decision_tree": {
+        "_source": "linkedin SKILL §S-1(813)",
+        "read_via": "상단 'X results' 읽기 (또는 profileLinks.length)",
+        "0_to_4": "즉시 포기 → 30초 대기 후 다음 시나리오",
+        "5_to_60": "GOLD 전수 처리 — ①프로필 URL 수집 ②이직잦음·프리랜서 제외 ③dedup ④InMail 템플릿 저장 대상 등록",
+        "61_to_200": "부분 처리 — 상위 20명(추천순 1페이지)만 → 20~40초 대기 → 다음",
+        "200_plus": "조건 추가 후 재검색. 후에도 200+ → 즉시 포기",
+        "note": "RPS는 사람인·잡코리아보다 GOLD 임계 낮음(5~60). 60 초과 시 정렬 신뢰도 하락"
+      },
+      "rps_template_save_flow": {
+        "_source": "SOT23 LinkedIn/RPS Golden Sample",
+        "principle": "검색·발굴 외에, AI Search 처리 포지션마다 'LinkedIn/RPS JD template' 레인 추적. 발송(Send)은 절대 자동 금지.",
+        "valid_states": ["saved", "updated", "local-package-only", "blocked", "not-requested-by-scope"],
+        "local_package_only_is_not_save": "local-package-only는 저장 아님. RPS 완료로 보고 금지",
+        "fill_path": ["로컬 아티팩트 검증(subject·body<=1899자·raw {{...}} 없음·금지 filler 없음)", "긴 한국어 본문은 document.execCommand('insertText', false, body) — CDP Input.insertText는 renderer hang", "한 단락만 들어가면 line-by-line: String.fromCharCode(10) split + insertLineBreak + insertText, 마지막에 input/change dispatch", "스크랩 주석 <!-- integrity:{...} --> 제거(LinkedIn이 중괄호를 변수로 오인)", "raw CDP Runtime.evaluate에서 regex 리터럴·optional chaining·템플릿 리터럴 ${...} 금지(syntax error 유발)"],
+        "existing_template_correction": "정확한 '[포지션]회사명, 포지션명' subject/template명 먼저 검색. option/listbox 행만 선택(본문 텍스트 스캔 금지 — Replace content 모달 유발). 동일명 중복은 전부 Update current",
+        "new_template_creation": "선택 해제 후 Save template → Save as new template. 템플릿명=RPS subject. 'Anyone in my organization' 선택(label[for=radio id], 없으면 형제 label 텍스트 매칭). Send 절대 금지",
+        "visibility_evidence": "저장 전후 Only me=false / Anyone in my organization=true 로그·스크린샷",
+        "evidence_store": ".omx/tmp/<task>/ (JSON 로그 + 스크린샷)"
+      }
+    },
+
+    "chatgpt_claude_ai": {
+      "display_name": "ChatGPT / Claude.ai (AI 검색 채널)",
+      "chatgpt": { "url": "https://chatgpt.com/g/g-p-68c22af4c45081919e206acb134b71b0-hubojacuceon/project", "url_note": "사장님 본인 후보자추천 프로젝트 — 타 레포 이식 시 자사 프로젝트 URL로 교체", "method": "단일 탭만(멀티탭 금지 — Cloudflare/계정 리스크, 2026-05-17 정책)", "prompt_marker": "첫 줄 [AI-SEARCH] {회사}/{포지션}/{YYYY-MM-DD HH:MM}" },
+      "claude_ai": { "url": "https://claude.ai/new", "method": "단일 탭, 사장님 직접 붙여넣기", "reinforce": "'이 작업은 실시간 웹 검색입니다. 학습 데이터만으로는 안 됩니다' 강화 문구 필수" }
+    }
+  },
+
+  "saramin_offer_modal_selectors": {
+    "_note": "검색 필터 외 — 후보자 발견 후 [이직 제안] 발송 모달 셀렉터. 발송 버튼은 R12 사장님 수동.",
+    "_source": "saramin SKILL §10.1(390) 라이브 검증 V2 + V4(1349)",
+    "react_safe_fill_helper": "fillByExec(sel, content): el.focus(); el.select(); execCommand('delete'); execCommand('insertText', false, content); dispatch blur — R10 React Hook Form state sync 보장",
+    "modal_offer_trigger": "Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim()==='이직 제안')",
+    "modal": "document.querySelector('[role=\"dialog\"]')",
+    "position_combobox": "[role=\"dialog\"] [role=\"combobox\"] (첫 번째)",
+    "position_options": "[role=\"option\"]",
+    "add_position_btn": "Array.from(buttons).find(b => /^\\+?\\s*포지션 추가$/.test(b.textContent.trim()))",
+    "company_name_input": "[name=\"offerCompanyNm\"]",
+    "position_name_input": "input[placeholder=\"포지션명 입력\"]",
+    "offer_title_input": "[name=\"jobOffer.offerTitle\"]",
+    "job_category_input": "input[placeholder*=\"직무 입력\"] (필수 아님)",
+    "offer_comment_textarea": "[name=\"jobOffer.offerComment\"] (한도 2,000자)",
+    "charge_work_textarea": "[name=\"jobOffer.chargeWork\"] (한도 2,000자)",
+    "save_template_checkbox": "[name=\"saveTemplate\"]",
+    "reserve_toggle": "[name=\"reserve\"]",
+    "deadline_input": "input[placeholder=\"YYYY. MM. DD\"]",
+    "add_btn_subform": "Array.from(buttons).find(b => b.offsetWidth>0 && b.textContent.trim()==='추가' && !b.disabled)",
+    "preview_btn": "Array.from(buttons).find(b => b.textContent.trim()==='미리보기' && !b.disabled) — T4 자동 click 불가, 사장님 수동",
+    "send_btn": "Array.from(buttons).find(b => b.textContent.trim()==='제안 발송' && !b.disabled) — R12 사장님 수동",
+    "traps": {
+      "R9": "JS 코드 안 한국어 unicode escape 금지 — 직접 문자 사용",
+      "R11": "sub-form [추가] click이 textarea form을 reset(offerComment/chargeWork 비워짐) → 본문은 반드시 [추가] click 후 채움",
+      "R13": "React useId 매 세션 다른 id 생성(_r_38_ 등) → id 절대 금지, name/placeholder/textContent 매칭만"
+    },
+    "v4_position_edit_selectors": {
+      "_note": "/kanban 포지션 수정 패널(별도 경로)",
+      "search_input": "input[placeholder*=\"포지션\"] 또는 [placeholder*=\"생성자\"]",
+      "card": ".position_card",
+      "three_dot_btn": "button:has(svg) (카드 안 ~28x28, aria-label '포지션 옵션 레이어 열림') — R52",
+      "position_title_assertion": "input[name=\"hiringTitle\"] 또는 input[id=\"position_title\"] — R55 value===EXPECTED 검증 필수",
+      "offer_comment": "textarea[name=\"offerComment\"] 또는 textarea[id=\"position_content\"]",
+      "charge_work": "textarea[name=\"chargeWork\"] 또는 textarea[id=\"work_content\"]"
+    }
+  },
+
+  "data_persistence": {
+    "sqlite_db": "~/.vh-data/ai-search-candidates.db (테이블 ai_search_candidates, channel 컬럼 구분)",
+    "keyword_lessons": "~/.vh-data/keyword-lessons.json (배열 직접 [{...}], 래퍼 없음). 필드: keyword,resultCount,savedCount,quality,channel,date,durationMs,timings,filtersApplied",
+    "screenshots": "~/.vh-search-results/{channel}/{date}/{keyword}/",
+    "supabase": "pipeline_candidates 테이블 동기화"
+  },
+
+  "known_limitations": [
+    "사람인 학력 체크박스·연봉 범위의 정확한 CSS id: 항목/구조는 talent-search/SKILL.md에 사장님이 명시(고등학교/대학2,3년/대학4년/석사/박사). 개별 id는 SOT23 evidence-first 원칙대로 라이브 DOM 덤프로 확정.",
+    "잡코리아 education/jobtype 등 구체 v(코드)값: 필터 항목은 명시됨, 코드값은 searchcondition 라이브 덤프로 추출.",
+    "링크드인 RPS 좌측 필터 패널 정밀 셀렉터: 자연어 검색이 1급 방식이라 폼 셀렉터는 미구현. 라이브 덤프로 확정.",
+    "전체 3채널 한 바퀴 동시 라이브 실증은 미완(keyword-optimize-goal-2026-06-21.md:293). 채널별 개별 라이브 검증은 됨."
+  ]
+}
