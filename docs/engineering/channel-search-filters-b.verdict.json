@@ -1,0 +1,54 @@
+{
+  "claim_id": "channel-search-filters-b",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "슬라이스 B — inject_channel_search_filters 가 라이브 keyword_plan 의 채널별 세션에 칸 구조 맞는 검색필터를 주입: 사람인 filters['saramin_search']={and,or,not(기본 신입/인턴/프리랜서 강제)}, 잡코리아 filters['jobkorea_chips']=[엄선키워드 OR], 링크드인 filters['boolean_query'](슬라이스 A 유지). 채널 격리, 빈/0개 생성은 KeywordGenerationError 전파, 원본 비변형. build_dry_run_payload 배선.",
+    "changed_files": [
+      "tools/multi_position_sourcing/llm_keywords.py",
+      "tools/multi_position_sourcing/dry_run.py",
+      "tests/test_channel_search_filters.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "artifact": "529 passed, 5 subtests, exit 0",
+    "live_evidence": "build_dry_run_payload(llm_client=) 가 inject_channel_search_filters 호출(dry_run.py). 계약 §5.5 키 구조를 fake LLM 결정론으로 단언. 실 사람인칸 입력·잡코리아 칩 Enter 라이브 실행은 보류(봇탐지) — 생성층까지."
+  },
+  "t_machine": {
+    "author": "Claude(기계검증, 같은세션 → V2 아님)",
+    "verify": "529 passed, exit 0",
+    "mutation": [
+      "MUTANT A(not 기본값→[]): test_not_defaults + test_saramin_session 2건 FAIL → not 강제 진짜.",
+      "MUTANT B(jobkorea_chips→saramin_search 키 오배치): 격리·dry_run 2건 FAIL → 채널격리 진짜.",
+      "MUTANT C(or 폴백 빈 허용): 처음엔 살아남음(빈틈) → test_blank_keywords_propagate 추가 후 잡힘. R2(c) 빈틈 메움.",
+      "원복 후 9 passed 재확인."
+    ]
+  },
+  "v1": {
+    "author": "codex:codex-rescue (agentId a452abc2e798b7da2)",
+    "verdict": "pass",
+    "counterexample": "없음",
+    "repro": "pytest 17 passed(A8+B9). mutant(a) saramin 조건반전 → 2 FAIL, mutant(b) not→[] → 2 FAIL, 각각 원복 후 17 green. 배선: inject_channel_search_filters 가 build_dry_run_payload 내부 호출(dormant 아님).",
+    "what_could_be_fake": "fake_llm 픽스처 사용 — 배선·계약(키구조·격리·not강제)은 실코드 검증, LLM 응답 품질은 범위 밖.",
+    "source_jsonl": "tasks/a452abc2e798b7da2.output"
+  },
+  "v2": {
+    "author": "Claude reset (general-purpose, agentId a2b2a6cf5a3d761df)",
+    "verdict": "fail",
+    "what_v1_missed": "고아(R4): inject 가 심은 saramin_search/jobkorea_chips 를 읽는 소비측이 없다. boolean_query 는 _query_for_session→_goto_search_surface 로 검색어/URL 까지 소비되지만(슬라이스 A, 테스트 증명), saramin_search/jobkorea_chips 는 아무 프로덕션 코드도 안 읽는 대기 데이터. V1(Codex)은 '큐에 격리되어 실림'만 봤고 '꺼내 쓰는 곳'은 안 봄.",
+    "independent_repro": "grep -rn 'saramin_search\\|jobkorea_chips' tools/ → 소비처 0 (llm_keywords 정의·dry_run 주석·portal_login의 무관 _saramin_search_ready 뿐). _query_for_session 은 boolean_query/standard_keyword 만 읽음(portal_queue_executor.py:37-40).",
+    "note": "V2 에이전트는 본문 회신이 빈약했으나 verdict=fail. 생성자(G)가 동일 결함을 독립 grep 으로 fresh 재현 → fail 채택."
+  },
+  "orphan_resolution": {
+    "fix": "channel_search_render.render_search_for_session 추가 — saramin_search→{kind:fields,include/default/exclude}, jobkorea_chips→{kind:chips}, boolean/평문→{kind:keyword}. 이 소비측이 주입된 키를 실제로 읽어 입력계획으로 변환 → 고아 해소.",
+    "tests": "tests/test_channel_search_render.py 4건(end-to-end: 생성→inject→render 객체 단언) + 회귀 533 passed.",
+    "mutation": [
+      "MUTANT D(saramin 분기 무력화): test_saramin_renders_field_inputs FAIL → 분기 진짜.",
+      "MUTANT E(include↔or 자리바꿈): FAIL → 칸 분배 진짜. 원복 후 4 passed."
+    ],
+    "remaining": "render 결과를 실제 브라우저 칸/칩에 치는 라이브 렌더러는 여전히 보류(봇탐지) — 슬라이스 A의 _goto_search_surface 와 동일 수준(소비 함수+테스트 존재, 라이브 실행만 보류)."
+  },
+  "three_way_agree": "V2 fail(고아) → 소비측 추가로 해소. 재검증 후 G+T(mutation D·E)+소비측 테스트 일치. 이제 슬라이스 A 와 동일 bar(소비 함수+테스트, 라이브만 보류).",
+  "scope_honesty": "사람인/잡코리아도 이제 소비측(render_search_for_session)이 주입 키를 읽어 입력계획 변환까지 증명됨. 실제 브라우저 폼필드(execCommand)·칩(Enter) 라이브 실행만 봇탐지로 보류 — 슬라이스 A(URL 조립 후 라이브 보류)와 대칭.",
+  "status": "검증통과(고아 해소) — 배송 대기(사장님 확인 + 실 AI end-to-end 데모 확인 후)"
+}

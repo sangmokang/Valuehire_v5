@@ -19,7 +19,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .models import BOOLEAN_CHANNELS, Channel, KeywordSession, QueueItem
 
@@ -124,6 +124,128 @@ def generate_keyword_plan(position, channel: Channel, *, llm_client: LLMClient) 
         bq = parsed.get("boolean_query")
         boolean_query = bq.strip() if isinstance(bq, str) else ""
     return LLMKeywordPlan(channel=channel, keywords=keywords, boolean_query=boolean_query)
+
+
+def inject_boolean_queries(
+    sessions: tuple[KeywordSession, ...],
+    position,
+    *,
+    llm_client: LLMClient,
+) -> tuple[KeywordSession, ...]:
+    """라이브 keyword_plan(고정표 산출)의 boolean 채널 세션에 LLM X-ray 쿼리를 주입한다.
+
+    슬라이스 A — PR#31 은 ``filters['boolean_query']`` 가 있으면 LinkedIn ``searchKeyword``
+    까지 흘려보내지만, 라이브 grouping 경로(``keywords.build_keyword_plan``)는 그 값을 비워
+    둔다. 이 함수가 그 상위 연결: boolean 채널(linkedin_rps/public_web) 세션의 ``filters`` 에
+    LLM 이 생성한 비어있지 않은 boolean_query 를 실어 준다.
+
+    - boolean 채널이 ``sessions`` 에 실제로 있을 때만 LLM 을 호출한다(채널당 1회).
+    - 평문 채널(saramin/jobkorea) 세션은 절대 건드리지 않는다 — boolean 이 새면 native
+      필터와 충돌해 0건이 난다.
+    - LLM 실패(빈 응답·파싱 실패·빈 키워드)는 ``KeywordGenerationError`` 로 **전파**한다.
+      조용히 삼켜 boolean_query 빈 채로 통과시키지 않는다(0건 검색 방지).
+    - 원본 세션과 공유 ``filters`` dict 를 변형하지 않는다(다른 그룹 오염 방지) — 새 dict.
+    """
+    boolean_channels_present = sorted(
+        {s.channel for s in sessions if s.channel in BOOLEAN_CHANNELS}
+    )
+    boolean_query_by_channel: dict[Channel, str] = {}
+    for channel in boolean_channels_present:
+        plan = generate_keyword_plan(position, channel, llm_client=llm_client)
+        boolean_query_by_channel[channel] = plan.boolean_query
+
+    updated: list[KeywordSession] = []
+    for session in sessions:
+        boolean_query = boolean_query_by_channel.get(session.channel, "")
+        if boolean_query:
+            updated.append(
+                replace(session, filters={**session.filters, "boolean_query": boolean_query})
+            )
+        else:
+            updated.append(session)
+    return tuple(updated)
+
+
+# 사람인 인재검색 NOT(제외) 칸 기본값 — 신입·인턴·프리랜서는 이직제안 대상이 아니라
+# 항상 제외한다(skill SOT: saramin-talent-sourcing §6 NOT 칸). LLM 판단에 맡기지 않고 코드가 강제.
+DEFAULT_SARAMIN_EXCLUDE: tuple[str, ...] = ("신입", "인턴", "프리랜서")
+
+
+def _build_saramin_prompt(position) -> str:
+    must = ", ".join(position.must_haves) or "(명시 없음)"
+    nice = ", ".join(position.nice_to_haves) or "(명시 없음)"
+    return (
+        "너는 한국 IT 채용 시니어 헤드헌터다. 아래 JD 로 사람인 인재검색의 AND/OR 칸을 채워라.\n"
+        f"직무: {position.role_title}\n회사: {position.company_name}\n"
+        f"필수조건: {must}\n우대조건: {nice}\nJD 원문:\n{position.jd_text}\n\n"
+        "규칙:\n"
+        '1. "and" = 반드시 보유해야 할 변별력 있는 핵심기술 1~2개(AND 칸: 모두 만족).\n'
+        '2. "or" = 직무명 + 동의어 + 유사직무(국문/영문 표기 포함, OR 칸: 하나라도 만족). 2개 이상.\n'
+        "3. and/or 에 연차·경력년수·지역·근무지·연봉을 절대 넣지 마라 — native 필터가 따로 처리하며 "
+        "검색식에 넣으면 충돌해 0건이 난다.\n"
+        '4. 오직 JSON 한 개만 출력: {"and": ["..."], "or": ["..."]} (not 칸은 시스템이 채운다).\n'
+    )
+
+
+def generate_saramin_search(position, *, llm_client: LLMClient) -> dict[str, list[str]]:
+    """사람인 인재검색 AND/OR/NOT 칸 분배 값을 생성한다(계약 §5.5).
+
+    - ``or`` = 직무명·동의어(없으면 ``keywords`` 로 폴백 — 비어서 0건 검색 나지 않게).
+    - ``and`` = 변별 핵심기술(LLM 미제공 시 빈 리스트, 검색을 과하게 좁히지 않음).
+    - ``not`` = ``DEFAULT_SARAMIN_EXCLUDE`` 를 코드가 강제(LLM 판단에 안 맡김).
+    빈 응답·파싱 실패·유효 키워드 0개는 ``KeywordGenerationError`` 로 전파(0건 검색 방지).
+    """
+    parsed = _extract_json_object(llm_client(_build_saramin_prompt(position)))
+    or_raw = parsed.get("or")
+    or_source = or_raw if isinstance(or_raw, list) and or_raw else parsed.get("keywords")
+    or_terms = list(_clean_keywords(or_source))
+    and_raw = parsed.get("and")
+    and_terms = list(_clean_keywords(and_raw)) if isinstance(and_raw, list) and and_raw else []
+    return {"and": and_terms, "or": or_terms, "not": list(DEFAULT_SARAMIN_EXCLUDE)}
+
+
+def inject_channel_search_filters(
+    sessions: tuple[KeywordSession, ...],
+    position,
+    *,
+    llm_client: LLMClient,
+) -> tuple[KeywordSession, ...]:
+    """라이브 keyword_plan 의 각 채널 세션에 그 채널 칸 구조에 맞는 검색필터를 주입한다.
+
+    슬라이스 B — ``inject_boolean_queries``(boolean 채널만) 의 일반화. 채널별 칸 구조(계약 §5.5):
+      - linkedin_rps/public_web → ``filters['boolean_query']`` (X-ray, 슬라이스 A 와 동일)
+      - saramin → ``filters['saramin_search'] = {"and","or","not"}`` (AND/OR/NOT 칸 분배)
+      - jobkorea → ``filters['jobkorea_chips'] = [...]`` (칩 누적용 엄선 키워드, OR)
+
+    불변식: ①채널 격리 — 각 세션엔 자기 채널 키만 (검색식이 다른 채널로 안 샌다). ②LLM 실패는
+    ``KeywordGenerationError`` 전파(조용히 빈 채로 통과 금지). ③원본 세션 공유 filters dict 비변형
+    (새 dict). 채널이 sessions 에 실제로 있을 때만 그 채널 LLM 을 호출한다.
+    """
+    channels_present = {s.channel for s in sessions}
+    extra_by_channel: dict[Channel, dict] = {}
+
+    for channel in sorted(c for c in channels_present if c in BOOLEAN_CHANNELS):
+        boolean_query = generate_keyword_plan(position, channel, llm_client=llm_client).boolean_query
+        if boolean_query:
+            extra_by_channel[channel] = {"boolean_query": boolean_query}
+
+    if "saramin" in channels_present:
+        extra_by_channel["saramin"] = {
+            "saramin_search": generate_saramin_search(position, llm_client=llm_client)
+        }
+
+    if "jobkorea" in channels_present:
+        chips = list(generate_keyword_plan(position, "jobkorea", llm_client=llm_client).keywords)
+        extra_by_channel["jobkorea"] = {"jobkorea_chips": chips}
+
+    updated: list[KeywordSession] = []
+    for session in sessions:
+        extra = extra_by_channel.get(session.channel)
+        if extra:
+            updated.append(replace(session, filters={**session.filters, **extra}))
+        else:
+            updated.append(session)
+    return tuple(updated)
 
 
 def build_llm_keyword_sessions(

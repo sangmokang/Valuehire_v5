@@ -20,6 +20,7 @@ from .discord_routing import (
 )
 from .fixtures import SAMPLE_POSITIONS, SAMPLE_PROFILE
 from .grouping import group_positions
+from .llm_keywords import LLMClient, claude_keyword_client, inject_channel_search_filters
 from .models import QueueItem, utc_now_iso
 from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
 from .portal_worker import DEFAULT_PROFILE_ROOT
@@ -94,8 +95,22 @@ def _ordered_unique_channels(keyword_plan) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def build_dry_run_payload() -> dict[str, object]:
+def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, object]:
     groups = group_positions(SAMPLE_POSITIONS)
+    # 슬라이스 A+B — llm_client 가 주어지면 각 채널 세션에 그 채널 칸 구조에 맞는 검색필터를
+    # 주입한다(링크드인/공개웹=boolean_query, 사람인=saramin_search, 잡코리아=jobkorea_chips).
+    # 없으면 기존 고정표 그대로(회귀 없음).
+    positions_by_id = {position.position_id: position for position in SAMPLE_POSITIONS}
+
+    def _plan_for(group) -> tuple:
+        plan = group.keyword_plan
+        if llm_client is not None and group.position_ids:
+            representative = positions_by_id.get(group.position_ids[0])
+            if representative is not None:
+                plan = inject_channel_search_filters(plan, representative, llm_client=llm_client)
+        return plan
+
+    plans_by_group = {group.group_id: _plan_for(group) for group in groups}
     backend_group = next(group for group in groups if group.role_family == "backend")
     po_group = next(group for group in groups if group.role_family == "product_po")
     matches = top_matches_for_profile(SAMPLE_PROFILE, SAMPLE_POSITIONS, top_n=5)
@@ -115,10 +130,12 @@ def build_dry_run_payload() -> dict[str, object]:
         QueueItem(
             group_id=group.group_id,
             channel=channel,
-            keyword_plan=tuple(session for session in group.keyword_plan if session.channel == channel),
+            keyword_plan=tuple(
+                session for session in plans_by_group[group.group_id] if session.channel == channel
+            ),
         )
         for group in groups
-        for channel in _ordered_unique_channels(group.keyword_plan)
+        for channel in _ordered_unique_channels(plans_by_group[group.group_id])
     )
     cycle = run_queue_cycle(
         queue,
@@ -207,8 +224,15 @@ def main() -> None:
         default="artifacts/multi_position_sourcing/dry-run-latest.json",
         help="Path for dry-run JSON artifact.",
     )
+    parser.add_argument(
+        "--no-llm-boolean",
+        action="store_true",
+        help="boolean 채널 X-ray 쿼리 LLM 주입을 끈다(기본은 켬: claude -p 라이브 경로).",
+    )
     args = parser.parse_args()
-    payload = build_dry_run_payload()
+    # 라이브 배선: 기본적으로 boolean 채널에 LLM X-ray 쿼리를 주입한다(claude -p, 비용 0원).
+    llm_client = None if args.no_llm_boolean else claude_keyword_client()
+    payload = build_dry_run_payload(llm_client=llm_client)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
