@@ -38,7 +38,13 @@ def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
     """
     if value:
         return value
-    return os.environ.get(CHROME_CDP_ENDPOINT_ENV, DEFAULT_CHROME_CDP_ENDPOINT)
+    env_value = os.environ.get(CHROME_CDP_ENDPOINT_ENV)
+    if env_value:
+        return env_value
+    # 규칙 파일(SOT)을 기본값 소스로 읽는다. 부재/깨짐이면 폴백.
+    from .browser_policy import policy_cdp_endpoint
+
+    return policy_cdp_endpoint() or DEFAULT_CHROME_CDP_ENDPOINT
 
 SEARCH_SURFACE_URLS: dict[Channel, str] = {
     "saramin": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
