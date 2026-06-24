@@ -71,6 +71,31 @@ class RpsManualSwitchTest(unittest.TestCase):
         )
         self.assertEqual(plan.decisions, ("process", "process"))
 
+    def test_switch_on_yields_linkedin_even_when_slots_filled(self) -> None:
+        """순서/슬롯 무관 보장: 비-linkedin 항목이 max 슬롯을 먼저 소진해도
+        linkedin_rps 는 keep 되고 양보 사유가 반드시 기록된다(Codex V1 적발 회귀)."""
+        queue = [
+            _item("g1", "saramin"),
+            _item("g2", "jobkorea"),
+            _item("g3", "linkedin_rps"),
+        ]
+        plan = plan_queue_cycle(
+            queue,
+            now_iso=NOW,
+            chrome_connected=True,
+            portal_sessions=_sessions(),
+            rps_in_use=True,
+            max_items_per_cycle=2,
+        )
+        self.assertEqual(plan.decisions, ("process", "process", "keep"))
+        self.assertTrue(
+            any(
+                "linkedin" in reason.lower() or "rps" in reason.lower()
+                for reason in plan.stopped_reasons
+            ),
+            f"슬롯 소진 시에도 RPS 양보 사유가 기록돼야 한다: {plan.stopped_reasons}",
+        )
+
     def test_switch_off_processes_linkedin(self) -> None:
         """스위치 OFF: linkedin_rps 도 정상 process."""
         queue = [_item("g1", "linkedin_rps"), _item("g2", "saramin")]

@@ -82,18 +82,20 @@ def plan_queue_cycle(
         if item.status not in {"pending", "failed"}:
             decisions.append("keep")
             continue
+        if rps_in_use and item.channel == "linkedin_rps":
+            # Owner is using the single RPS session elsewhere — yield only this channel.
+            # Checked BEFORE the per-cycle slot/global-stop gate so the yield reason is always
+            # recorded regardless of queue order or whether other channels filled the slots;
+            # keep does not consume a slot, so Saramin/Jobkorea items still get processed.
+            reason = rps_pause_reason()
+            if reason not in stopped:
+                stopped.append(reason)
+            decisions.append("keep")
+            continue
         if processed >= max_items_per_cycle or global_stop:
             decisions.append("keep")
             continue
         if _parse_due(item.next_run_at, now) > now:
-            decisions.append("keep")
-            continue
-        if rps_in_use and item.channel == "linkedin_rps":
-            # Owner is using the single RPS session elsewhere — yield only this channel.
-            # Do not burn the per-cycle slot; Saramin/Jobkorea items still get processed.
-            reason = rps_pause_reason()
-            if reason not in stopped:
-                stopped.append(reason)
             decisions.append("keep")
             continue
         if not portal_session_ready(item.channel, portal_sessions):
