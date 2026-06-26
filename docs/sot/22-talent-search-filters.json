@@ -2,12 +2,12 @@
   "$schema_version": "2.0.0",
   "title": "인재검색 필터·DOM 세팅 — 사람인·잡코리아·링크드인 이식용 SSOT",
   "purpose": "AI Search(후보 발굴)가 3개 채용 포털에서 후보를 검색할 때 따르는 단일 기준. 타 레포지토리 이식용. 사장님이 화면 캡처·라이브 검증으로 직접 박은 입력 구조·DOM 셀렉터·결과수 판단 트리·입력법·완화 폴백·봇 가드·제안 모달 셀렉터를 빠짐없이 명세한다.",
-  "revision_note": "v2.0.0 — v1이 코드(러너)+SOT22만 보고 누락했던 사장님 직접 지침 5종 반영: (1) talent-search/SKILL.md 3사 좌측 필터 전체 구조, (2) SOT23 evidence-first 원칙, (3) 사람인 §6 DOM 표·§10.1·V4 제안모달, (4) 채널별 결과수 판단 트리(§S-2), (5) R10 클립보드 입력법.",
+  "revision_note": "v2.0.1 — 현재 실행 기준은 v5 SOT + tools/multi_position_sourcing/ + ~/.codex/skills/ai-search 이고, 사장님 화면 캡처 원본 스킬은 ~/.claude/skills/* 역사적 출처로 분리한다. v2.0.0이 코드(러너)+SOT22만 보고 누락했던 직접 지침 5종도 유지한다: (1) talent-search 3사 좌측 필터 전체 구조, (2) SOT23 evidence-first 원칙, (3) 사람인 §6 DOM 표·§10.1·V4 제안모달, (4) 채널별 결과수 판단 트리(§S-2), (5) R10 클립보드 입력법.",
 
   "source_of_truth": {
     "owner_authored_primary": {
-      "file": "skills/talent-search/SKILL.md",
-      "note": "★ 최우선 원본 — 사장님이 화면 캡처로 확인한 3사 인재검색 URL + 좌측 필터 전체 구조 + 입력 순서 7단계 (2026-05-21 명시)"
+      "file": "~/.claude/skills/talent-search/SKILL.md",
+      "note": "★ 역사적 원본 — 사장님이 화면 캡처로 확인한 3사 인재검색 URL + 좌측 필터 전체 구조 + 입력 순서 7단계 (2026-05-21 명시). 현재 Codex 실행 스킬은 ~/.codex/skills/ai-search/SKILL.md."
     },
     "channel_dom_selector_sot": {
       "file": "docs/sot/23-channel-dom-selectors.md",
@@ -15,26 +15,34 @@
     },
     "filter_ssot": "docs/sot/22-talent-search-filters.md",
     "skill_selector_tables": [
-      "skills/saramin-talent-sourcing/SKILL.md §6(204) DOM Selector 표 / §10.1(390) 제안모달 / V4(1349) / §S-2(1478) 결과수 트리 / §S-5(1540) 실행루프",
-      "skills/jobkorea-talent-sourcing/SKILL.md §S-2(1608) 결과수 트리 / §S-5(1677) 실행루프",
-      "skills/linkedin-rps-jd-set-builder/SKILL.md §3.3(132) data-test 6종 / §S-1(813) 결과수 트리 / §S-3(850) 실행흐름"
+      "~/.claude/skills/saramin-talent-sourcing/SKILL.md §6(204) DOM Selector 표 / §10.1(390) 제안모달 / V4(1349) / §S-2(1478) 결과수 트리 / §S-5(1540) 실행루프",
+      "~/.claude/skills/jobkorea-talent-sourcing/SKILL.md §S-2(1608) 결과수 트리 / §S-5(1677) 실행루프",
+      "~/.claude/skills/linkedin-rps-jd-set-builder/SKILL.md §3.3(132) data-test 6종 / §S-1(813) 결과수 트리 / §S-3(850) 실행흐름"
     ],
-    "code_files": [
-      "tools/lib/ai-search-saramin-runner.mjs",
-      "tools/lib/saramin-search-engine.mjs",
-      "tools/jobkorea-search/build-search.mjs",
-      "tools/jobkorea-search/run-search.mjs",
-      "tools/lib/linkedin-search-engine.mjs"
+    "historical_skill_sources": [
+      "~/.claude/skills/saramin-talent-sourcing/SKILL.md",
+      "~/.claude/skills/jobkorea-talent-sourcing/SKILL.md",
+      "~/.claude/skills/linkedin-rps-jd-set-builder/SKILL.md"
+    ],
+    "current_execution_skill": "/Users/kangsangmo/.codex/skills/ai-search/SKILL.md",
+    "code_files_status": "⚠️ 2026-06-26 확인: 아래 code_files_MISSING의 5개 경로는 부재(낡은 참조, 셀렉터 근거 인용용). 단 ★실제 실행 엔진은 `tools/multi_position_sourcing/`에 살아있다(40+ 모듈: channel_search_render·harvest_runner·queue_runner·portal_queue_executor·scoring·match·keywords·dedup·selectors·portal_autologin·discord_briefing·clickup_activity, 진입점 `python3 -m tools.multi_position_sourcing.dry_run`, 기본 dry-run/read-only·라이브 쓰기는 게이트). AI Search 자동 실행은 이 엔진으로 한다 — raw CDP 손수 입력으로 때우지 말 것(INV10/INV11). 엔진이 못 미치는 채널 상호작용만 dom_selectors+raw CDP(docs/sot/26)로 보조.",
+    "real_engine": "tools/multi_position_sourcing/ (entry: python3 -m tools.multi_position_sourcing.dry_run)",
+    "code_files_MISSING": [
+      "tools/lib/ai-search-saramin-runner.mjs (부재)",
+      "tools/lib/saramin-search-engine.mjs (부재)",
+      "tools/jobkorea-search/build-search.mjs (부재)",
+      "tools/jobkorea-search/run-search.mjs (부재)",
+      "tools/lib/linkedin-search-engine.mjs (부재)"
     ],
     "verified_dates": ["2026-05-21 owner workflow", "2026-05-22 saramin live", "2026-06-16 jobkorea live", "2026-06-20 saramin DOM", "2026-06-22 jobkorea/linkedin live", "2026-06-23 SOT23"]
   },
 
   "global_rules": {
-    "R0_talent_pool_not_job_search": { "rule": "인재 검색 ≠ 채용공고 검색. `search?searchword=` 같은 일반 검색 URL은 공고 풀이라 후보 0명. 반드시 talent pool URL만 사용.", "severity": "critical", "source": "talent-search/SKILL.md:절대규칙1" },
-    "R1_step_by_step_input": { "rule": "필터를 차분히 하나하나 입력. 순서: 키워드→직무→경력→지역→학력. 단계 사이 1~2초 wait. URL에 한꺼번에 박지 않는다(봇 검출).", "severity": "high", "source": "talent-search/SKILL.md:절대규칙2 + 필터 입력 순서" },
-    "R2_stop_on_block": { "rule": "캡차·봇차단·로그인 리다이렉트('Please verify you're a human') 감지 → 즉시 STOP. retry 금지(계정 잠금).", "severity": "critical", "source": "talent-search/SKILL.md:절대규칙3" },
-    "R3_no_action_during_owner_chrome": { "rule": "사장님이 직접 chrome 개입(로그인·캡차·필터 입력) 중에는 자동화 액션 0. 세션 충돌·세션 깨짐 방지.", "severity": "critical", "source": "talent-search/SKILL.md:절대규칙4" },
-    "R4_license_required": { "rule": "인재DB 라이선스 필요 — 계정이 헤드헌터/기업 회원이어야 인재검색 진입 가능. 라이선스 차감 버튼(검색/제안 발송)은 사람 컨펌 후. 상세 진입·저장은 차감 0.", "severity": "high", "source": "talent-search/SKILL.md:절대규칙5" },
+    "R0_talent_pool_not_job_search": { "rule": "인재 검색 ≠ 채용공고 검색. `search?searchword=` 같은 일반 검색 URL은 공고 풀이라 후보 0명. 반드시 talent pool URL만 사용.", "severity": "critical", "source": "~/.claude/skills/talent-search/SKILL.md:절대규칙1" },
+    "R1_step_by_step_input": { "rule": "필터를 차분히 하나하나 입력. 순서: 키워드→직무→경력→지역→학력. 단계 사이 1~2초 wait. URL에 한꺼번에 박지 않는다(봇 검출).", "severity": "high", "source": "~/.claude/skills/talent-search/SKILL.md:절대규칙2 + 필터 입력 순서" },
+    "R2_stop_on_block": { "rule": "캡차·봇차단·로그인 리다이렉트('Please verify you're a human') 감지 → 즉시 STOP. retry 금지(계정 잠금).", "severity": "critical", "source": "~/.claude/skills/talent-search/SKILL.md:절대규칙3" },
+    "R3_no_action_during_owner_chrome": { "rule": "사장님이 직접 chrome 개입(로그인·캡차·필터 입력) 중에는 자동화 액션 0. 세션 충돌·세션 깨짐 방지.", "severity": "critical", "source": "~/.claude/skills/talent-search/SKILL.md:절대규칙4" },
+    "R4_license_required": { "rule": "인재DB 라이선스 필요 — 계정이 헤드헌터/기업 회원이어야 인재검색 진입 가능. 라이선스 차감 버튼(검색/제안 발송)은 사람 컨펌 후. 상세 진입·저장은 차감 0.", "severity": "high", "source": "~/.claude/skills/talent-search/SKILL.md:절대규칙5" },
     "R5_no_channel_routing_by_job": { "rule": "채널을 직무로 가르지 않는다. '잡코리아=IT, 사람인=마케팅' 식 매핑 금지. 모든 직무를 전 채널 전방위 검색.", "severity": "critical", "source": "SOT22:15, 2026-06-23 categoryToChannel 삭제" },
     "R6_save_profile_unconditionally": { "rule": "검토 가치 있는 카드는 점수와 무관하게 즉시 저장(차감 0). 사람인=[후보자 저장] 버튼 + 크롬 익스텐션 아카이버 + Supabase upsert.", "severity": "high", "source": "saramin SKILL R6" },
     "R_evidence_first_dom": { "rule": "행동 전 DOM inventory 덤프 필수. 셀렉터 추측이 fresh DOM 덤프를 이기지 못한다. 아래 셀렉터는 '라이브 검증된 기본값'이며, 페이지가 바뀌면 덤프로 재확인 후 행동.", "severity": "high", "source": "SOT23:4" }
@@ -43,7 +51,7 @@
   "keyword_strategy": {
     "five_axis_decomposition": {
       "description": "JD를 5축으로 분해해 각각 OR/AND/NOT 어디로 보낼지 결정. 핵심: AND 키워드 1개로 보통 90% 좁아진다. specific AND 여러 개 = 결과 0명.",
-      "source": "talent-search/SKILL.md AI Search 프로세스 정례화 + SOT22:17-25",
+      "source": "~/.claude/skills/talent-search/SKILL.md AI Search 프로세스 정례화 + SOT22:17-25",
       "axes": [
         { "axis": "industry", "label": "산업", "example": "F&B / SaaS / 핀테크 / 게임", "logic": "AND", "note": "필수 도메인 1개만" },
         { "axis": "role", "label": "직무", "example": "Brand Manager / 그로스 / 백엔드", "logic": "OR", "note": "직무 동의어 묶음" },
@@ -84,7 +92,7 @@
   },
 
   "input_order_common": {
-    "source": "talent-search/SKILL.md 필터 입력 순서 (사람인·잡코리아 공통)",
+    "source": "~/.claude/skills/talent-search/SKILL.md 필터 입력 순서 (사람인·잡코리아 공통)",
     "steps": [
       "1. 키워드 1~3개 ('5년 이상' 같은 부가 텍스트 제외)",
       "2. 직무 카테고리 (드롭다운 선택, 자유 입력 X)",
@@ -98,7 +106,7 @@
   },
 
   "worker_do_and_dont": {
-    "source": "talent-search/SKILL.md 자동화 워커 행동표",
+    "source": "~/.claude/skills/talent-search/SKILL.md 자동화 워커 행동표",
     "ok": [
       "정확한 talent pool URL로 진입",
       "JD 본문에서 필터 값 추출 후 단계별 입력",
@@ -118,6 +126,13 @@
       "display_name": "사람인 (인재풀)",
       "talent_pool_url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
       "auth_url": "https://www.saramin.co.kr/zf_user/auth",
+      "access_credit_model": {
+        "_verified": "2026-06-26 라이브: 검색결과 이름 전부 마스킹(김○○), 상세링크 href=javascript:void(0), '제안가능한 상품이 없습니다'(이용권 0)",
+        "free_tier": "로그인만으로 검색·결과수·카드(이력서 본문 일부 포함) 열람 가능. 단 이름은 마스킹(김○○). 차감 0.",
+        "credit_gated": "① 이력서 상세 풀뷰(hiring.saramin.co.kr/applicant-view/position/resume/{rNo}) 열람 ② [이직 제안하기] 발송 = 이용권(유료 상품) 필요. 현재 보유 0('제안가능한 상품이 없습니다').",
+        "profile_url_rule": "풀URL(applicant-view/.../resume/{rNo})은 이용권 보유+상세 열람 시에만 획득. 미보유면 output contract에 url_pending='credit-gated(이용권 미보유)'로 표기. ⛔ residx 내부 id를 profile_url로 쓰지 말 것.",
+        "actionability": "이용권 없으면 마스킹 미리보기까지만 — 사장님께 '연락 가능 후보'로 보고 금지. 발송은 항상 사람 게이트(INV3)."
+      },
       "session": {
         "profile_dir": "~/.vh-profiles/saramin",
         "keep_open_default": true,
@@ -130,7 +145,7 @@
         "source": "ai-search-saramin-runner.mjs:85-109"
       },
       "input_structure_owner_spec": {
-        "source": "talent-search/SKILL.md (사장님 화면 캡처 확인)",
+        "source": "~/.claude/skills/talent-search/SKILL.md (사장님 화면 캡처 확인)",
         "top_keyword_boxes": "OR(하나 이상 포함) / AND(모두 포함) / NOT(제외)",
         "ai_recommend": "AI 추천 검색어(사이트 자동 제안)",
         "quick_filter_chips": ["대기업", "코스닥", "코스피", "국내 유명대학", "인서울 대학", "평균 근속 3년", "최근 제안 많이 받음", "요즘 뜨는 인재", "적극 구직 중"],
@@ -178,10 +193,15 @@
     "jobkorea": {
       "display_name": "잡코리아 (인재검색)",
       "talent_pool_url": "https://www.jobkorea.co.kr/corp/person/find",
+      "access_credit_model": {
+        "free_tier": "검색·결과수·카드 열람 + 이력서 상세(resume/view?rNo=) 진입 = 차감 0. profile_url(resume/view?rNo=)이 잡코리아는 무료로 잡힘(사람인보다 유리).",
+        "credit_gated": "[포지션 제안] 발송 = 제안 건수 1건 차감(잔여 N/300). 발송은 사람 게이트(INV3).",
+        "profile_url_rule": "profile_url = https://www.jobkorea.co.kr/corp/person/find/resume/view?rNo={rNo} (무료 획득 가능). output contract에 그대로 사용."
+      },
       "session": { "profile_dir": "~/.vh-profiles/jobkorea", "keep_open_default": true },
       "critical_insight": "window.searchcondition 객체 mutate '만'으로는 키워드 검색 미반영(실측 2026-06-22). #txtKeyword에 실제 DOM 타이핑/클립보드 붙여넣기 필수. 필터는 searchcondition 객체 적용, 키워드는 DOM 입력 — 이원화.",
       "input_structure_owner_spec": {
-        "source": "talent-search/SKILL.md (사장님 화면 캡처 확인)",
+        "source": "~/.claude/skills/talent-search/SKILL.md (사장님 화면 캡처 확인)",
         "top_bar": "통합검색▼ / 키워드 자유 입력 / 직무·스킬▼ / 지역▼ / 상세검색▼ / 검색조건 불러오기▼",
         "left_filters": ["경력(☐신입 + N~N년 입력 + 해외 근무 경험 포함 체크박스)", "나이/성별", "구직 상태", "이력서 업데이트일", "입사 지원일", "최근 활동일", "제안상품 적용 여부", "평균 근속년수", "기업 규모", "선호 조건"],
         "result_card_fields": "이름OO·(남/여, 만N세)·NN년N개월 / 회사·직군 / 스킬 태그 / #요즘 뜨는 인재 #다른 기업이 많이 찾음 #최근 구직 활동"
@@ -258,10 +278,15 @@
       "display_name": "링크드인 RPS (Recruiter / Talent Solutions)",
       "talent_pool_url": "https://www.linkedin.com/talent/search",
       "home_url": "https://www.linkedin.com/talent/home",
+      "access_credit_model": {
+        "free_tier": "RPS 라이선스 보유 시 검색·후보 카드·프로필 열람 = 차감 0. 이름 비마스킹. profile_url(/talent/profile/<id>)도 바로 획득.",
+        "credit_gated": "InMail 발송 = InMail 크레딧 차감(잔여 N/월). 발송은 사람 게이트(INV3).",
+        "profile_url_rule": "profile_url = https://www.linkedin.com/talent/profile/{id} (무료 획득). 시니어 B2B/G 세일즈 리드는 링크드인이 마스킹 없이 가장 풍부 → 시니어 포지션 1순위 채널."
+      },
       "general_fallback_url": "https://www.linkedin.com/search/results/people/",
       "license_required": "Value Connect Recruiter(RPS) 계정 필수 (일반 LinkedIn 계정 X)",
       "input_structure_owner_spec": {
-        "source": "talent-search/SKILL.md (사장님 화면 캡처 확인)",
+        "source": "~/.claude/skills/talent-search/SKILL.md (사장님 화면 캡처 확인)",
         "entry": "홈에서 'Get started by typing anything here' 자연어 검색 박스 / 또는 Projects 탭 → 기존 프로젝트 진입 → 검색·InMail",
         "ai_examples": ["Show me Global Business Managers who know International Expansion", "Find me Cloud Infrastructure Engineers with Kubernetes expertise"],
         "result": "candidates / InMails sent / InMails accepted 통계 + 후보자 카드"
@@ -381,7 +406,7 @@
   },
 
   "known_limitations": [
-    "사람인 학력 체크박스·연봉 범위의 정확한 CSS id: 항목/구조는 talent-search/SKILL.md에 사장님이 명시(고등학교/대학2,3년/대학4년/석사/박사). 개별 id는 SOT23 evidence-first 원칙대로 라이브 DOM 덤프로 확정.",
+    "사람인 학력 체크박스·연봉 범위의 정확한 CSS id: 항목/구조는 ~/.claude/skills/talent-search/SKILL.md에 사장님이 명시(고등학교/대학2,3년/대학4년/석사/박사). 개별 id는 SOT23 evidence-first 원칙대로 라이브 DOM 덤프로 확정.",
     "잡코리아 education/jobtype 등 구체 v(코드)값: 필터 항목은 명시됨, 코드값은 searchcondition 라이브 덤프로 추출.",
     "링크드인 RPS 좌측 필터 패널 정밀 셀렉터: 자연어 검색이 1급 방식이라 폼 셀렉터는 미구현. 라이브 덤프로 확정.",
     "전체 3채널 한 바퀴 동시 라이브 실증은 미완(keyword-optimize-goal-2026-06-21.md:293). 채널별 개별 라이브 검증은 됨."

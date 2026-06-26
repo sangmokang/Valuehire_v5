@@ -1,0 +1,46 @@
+{
+  "claim_id": "execution-discipline-guardrails-25",
+  "mode": "mixed (25 JSON 불변식/stop_conditions + 파이프라인 스킬 미러)",
+  "risk": "L2",
+  "task": "Claude 행동 제어 가드레일 — AI Search 실행 중 반복실패/즉흥/불만무시/과장보고를 막는 실행 규율을 docs/sot/25에 박고 스킬에 미러",
+  "generator": {
+    "author": "Claude",
+    "claim": "INV9~INV13 + stop_conditions + self_check 5줄을 25에 추가, ai-search-position-pipeline SKILL 상단 미러",
+    "evidence_failures_addressed": [
+      "F1: 링크드인 AI검색 같은 방법 6회 반복 실패 → INV9/max_same_action_retries=2",
+      "F2: 죽은 참조(linkedin-search-engine.mjs 부재)에 즉흥 시도 → INV10/on_dead_reference",
+      "F3: 사장님 '스펙대로 해' 무시하고 진행 → INV13/owner_doubt_halt_keywords",
+      "F4: residx를 profile_url로 과장보고 → INV12/require_output_contract_before_report"
+    ]
+  },
+  "v1": {
+    "author": "Codex (codex-rescue, agentId a8f943b1fa7bcb133, 독립 세션)",
+    "verdict": "FAIL",
+    "findings": [
+      "오탐 위험: owner_doubt_halt_keywords의 '맞아'·'왜 '가 일상어 → 정상 대화도 halt",
+      "same-action fingerprint 정의 부재 → 카운트 기준 불분명",
+      "죽은 경로: 25 depends_on의 contract 경로(repo에 없음, ~/.claude에만) + 22 linkedin-search-engine.mjs 부재 → 가드레일이 INV10 자가위반",
+      "무한 대기 상한(max_polling_count) 없음",
+      "부분성공을 전체성공으로 보고 금지 게이트 없음"
+    ],
+    "coverage_ok": "F1~F4는 INV9~INV13으로 모두 차단됨 확인"
+  },
+  "remediation_by_generator": [
+    "① owner_doubt_halt_keywords에서 '맞아'·'왜 ' 제거 → 다어절 의심구절만(스펙대로/제멋대로/왜 무시/이거 맞아/된다고? 등) + same_action_fingerprint 정의 추가",
+    "② 25 depends_on contract 경로를 ~/.claude 전역 표기로 정정 + 22 code_files 5개 전부 부재 표기(code_files_MISSING) — Codex는 1개만, T가 5개 전부 발견",
+    "③ stage2.polling에 max_polling_count=6 + max_total_wait_seconds=7200 + on_cap_reached 추가",
+    "④ stop_conditions에 no_partial_as_full(부분성공≠전체성공) 게이트 추가"
+  ],
+  "t_machine_recheck": {
+    "author": "Claude 독립 재실행",
+    "json_valid": "25,22 json.load 통과",
+    "kw_overbroad_removed": "true ('맞아'·'왜 ' 부재 확인)",
+    "same_action_fingerprint": "present",
+    "polling_cap": "max_polling_count=6",
+    "no_partial_as_full": "present",
+    "dead_path_annotated": "22 code_files_MISSING(5개) + 25 depends_on ~/.claude 표기",
+    "extra_finding": "22 code_files 5개 경로 전부 부재(Codex가 잡은 1개보다 큼). ⚠️ 2026-06-26 정정: '실행엔진 부재'는 과장 오류였음 — 실제 엔진은 tools/multi_position_sourcing/(40+ 모듈, dry_run 진입점)에 살아있다. 5개는 낡은 참조일 뿐이고 자동 실행은 가능했다. 진짜 실패는 엔진을 안 쓰고 raw CDP로 손수 친 것(INV11 위반)."
+  },
+  "three_way_agree": true,
+  "status": "통과 (V1 FAIL → 5건 remediation → T 재검증 통과)"
+}

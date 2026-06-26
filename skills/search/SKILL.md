@@ -1,13 +1,6 @@
 ---
 name: search
 description: "Use when executing the Valuehire AI Search process from a ClickUp position: intake the role, derive a fresh sourcing strategy, create search queries, score candidates, normalize evidence, and prepare next-step handoff without relying on Valuehire_v4 repository code or legacy automation."
-version: 2.0.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [valuehire, ai-search, recruiting, clickup, sourcing, korean]
-    related_skills: [recruitment-3-channel-pipeline]
 ---
 
 # Valuehire AI Search — Fresh Core Logic

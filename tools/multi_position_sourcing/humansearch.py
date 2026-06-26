@@ -6,8 +6,9 @@
   - 사람인·잡코리아는 채점 *전에* 하드 제외(프리랜서·잦은이직·하위학교). 지방 국공립대는 허용.
   - 링크드인은 open-to-work 가중 점수제 → 학교 하드 제외 미적용(학력은 가중치로 반영).
 
-브라우저 순회·스크린샷·발송은 기존 인프라(MCP claude-in-chrome + multi_position_sourcing)를
-재사용한다. 이 모듈은 *판정 로직*만 담아 기계 검증(verify) 대상으로 고정한다.
+브라우저 순회·스크린샷은 raw CDP 단일탭(raw_cdp.py)이 주력 — 사장님 9222 디버그 크롬에 한 타깃만
+붙는다(탭 과다 시 connectOverCDP hang 회피, 2026-06-26). MCP claude-in-chrome 은 폴백.
+발송은 multi_position_sourcing 인프라 재사용. 이 모듈은 *판정 로직*만 담아 기계 검증(verify) 대상으로 고정한다.
 """
 from __future__ import annotations
 

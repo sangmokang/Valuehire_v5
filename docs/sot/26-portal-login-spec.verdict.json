@@ -1,0 +1,39 @@
+{
+  "claim_id": "portal-login-spec-26",
+  "mode": "noncode (SOT 스펙 + 스킬 문서)",
+  "risk": "L2",
+  "task": "AI Search 로그인/로직 붕괴 원인 적대 분석 → docs/sot/26 스펙 신설 + 스킬 죽은참조·모순 교정 + 25 stage1 통합",
+  "generator": {
+    "author": "Claude",
+    "claim": "로그인 지연·로직 붕괴 원인 8건(RC1~RC8) 박제, 26 스펙 신설, position/position-register/25의 죽은참조·모순 제거",
+    "changed_files": [
+      "docs/sot/26-portal-login-spec.json (신설)",
+      "docs/sot/25-ai-search-execution-process.json (stage1 로그인 선제점검·멀티세션 탐지·depends_on 추가)",
+      "~/.claude/skills/position/SKILL.md (P1·§1·§1-R·§4 raw CDP 단일탭으로 통일, 10-auto-login 참조 제거)",
+      "~/.claude/skills/position-register/SKILL.md (P0·P1·[1]·§2 line59·표 죽은참조 제거, raw CDP value setter)"
+    ],
+    "evidence": {
+      "dead_ref_RC1_RC2": "grep: tools/saramin-bulk-register-from-jobkorea/auto-login.mjs·tools/jobkorea-bulk-register/auto-login.mjs·docs/sot/10-auto-login.md 모두 부재 확인",
+      "contradiction_RC3": "position P1='전체 attach' vs §3-R='connectOverCDP hang→raw CDP' 모순 → raw CDP 단일탭으로 통일",
+      "multisession_RC6": "grep 결과 멀티세션 정규식 부재 → block_detection.unified_regex 추가, 라이브 재현(enterprise-authentication/sessions)",
+      "live_verified": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차0), 링크드인 멀티세션·login-cap 사람게이트 실측"
+    }
+  },
+  "v1": {
+    "author": "Codex (codex-rescue, agentId aaef9cd8d924afd2e, 독립 세션)",
+    "verdict": "검증 수행 — 차단 정규식 보강(authwall·challenge·인증번호·protechts 추가), 설명문 모순 추가 교정. 크리스프 PASS/FAIL 본문 후속 수신 중",
+    "actions_taken": "block_detection.unified_regex 확장, position-register description 'connectOverCDP'→'raw CDP 단일탭' 정정",
+    "source": "subagent transcript aaef9cd8d924afd2e"
+  },
+  "t_machine_recheck": {
+    "author": "Claude 독립 재실행(V1 산출물 재현)",
+    "json_valid": "python json.load 25,26 통과",
+    "block_regex_covers": "enterprise-authentication/sessions·multiple sign-ins·Only one session·/uas/login-cap·login-cap 전부 매치 ✅",
+    "dead_refs_remaining": "0 (경고문 제외)",
+    "residual_contradiction_found_and_fixed": "position-register §2 line59 'Playwright locator.fill()' → raw CDP value setter로 교정(Claude T 단계에서 발견·수정)"
+  },
+  "v1_final_verdict": "OVERALL PASS (Codex). 추가 발견·수정: RC9(Keychain vs .env.local 자격증명 소스 불일치 — portal_login.py:321-330 Keychain 읽음, silent 로그인 실패 위험), RC7 확장(잡코리아 직무선택 popup 1.5s·고용형태 selectBox CDP 마우스), block_detection 정규식 4패턴 추가, position-register description·~/.secrets/jobkorea.env 죽은참조 제거",
+  "final_machine_recheck": "26 JSON 유효(RC 9개), 25 JSON 유효, L59 raw CDP value setter 단일·깨짐 없음, locator.fill 실사용 0, 죽은 참조 0",
+  "status": "통과",
+  "three_way_agree": true
+}

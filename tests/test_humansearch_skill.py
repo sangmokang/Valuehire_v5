@@ -408,3 +408,42 @@ def test_h4_unknown_private_school_passes_by_design() -> None:
         education="이름없는지방사립대학교",
     )
     assert hard_exclude_reason(p, "saramin") is None
+
+
+# ── 세계 명문대 학력 만점 (UCLA·미국 Ivy·세계 top — 2026-06-26 사장님 지시) ──
+WORLD_ELITE_SCHOOLS = [
+    "UCLA",
+    "University of California, Los Angeles",
+    "Yale University",
+    "Princeton University",
+    "Columbia University",
+    "Cornell University",
+    "University of Pennsylvania",
+    "Dartmouth College",
+    "California Institute of Technology",
+    "University of Chicago",
+    "New York University",
+    "Imperial College London",
+    "ETH Zurich",
+    "National University of Singapore",
+    "University of Tokyo",
+    "University of Toronto",
+]
+
+
+@pytest.mark.parametrize("school", WORLD_ELITE_SCHOOLS)
+def test_world_elite_school_gets_full_education_score(school: str) -> None:
+    """세계 명문대는 학력 만점(가중 30/30) — HIGH_TIER_SCHOOL_SIGNALS 에 들어가야 한다."""
+    p = CapturedProfile(
+        profile_url="https://www.linkedin.com/talent/profile/elite1",
+        source_channel="linkedin_rps",
+        visible_text="sales b2b account executive revenue",
+        summary="세계 명문대 출신, 정돈된 프로필 본문.",
+        captured_at="2026-06-26T00:00:00+00:00",
+        education=f"{school} Bachelor",
+        skills=("sales", "b2b"),
+    )
+    match = score_humansearch(p, _position())
+    assert match.score_breakdown["education"] == 30, (
+        f"{school} 학력 만점 기대(30) 실제 {match.score_breakdown['education']}"
+    )

@@ -1,0 +1,51 @@
+{
+  "claim_id": "wrtn-position-registration-dry-run-2026-06-26",
+  "generator": {
+    "author": "Codex",
+    "claim": "Wrtn public career list was extracted, SOT24/local evidence was used to skip already registered openings, 29 unregistered public openings received local-only Saramin/Jobkorea/LinkedIn/Gmail draft packages, and no external portal/Gmail/ClickUp write or send was executed.",
+    "artifacts": [
+      "docs/engineering/wrtn-position-registration-dry-run-goal-2026-06-26.md",
+      "artifacts/position_registration/wrtn-registration-dry-run-2026-06-26.json",
+      "artifacts/position_registration/wrtn-registration-dry-run-2026-06-26.md"
+    ]
+  },
+  "v1": {
+    "author": "claude -p",
+    "command": "env -u ANTHROPIC_API_KEY claude -p <adversarial review prompt>",
+    "exit_code": 0,
+    "verdict": "NO_OUTPUT",
+    "notes": "Command stayed silent for over two minutes and was interrupted; no usable PASS/FAIL verdict was returned."
+  },
+  "v2": {
+    "author": "Codex self-adversarial recheck",
+    "checks": [
+      {
+        "command": "node JSON invariant check over artifacts/position_registration/wrtn-registration-dry-run-2026-06-26.json",
+        "exit_code": 0,
+        "result": "31 unique IDs, 0 non-200 detail fetches, 29 package rows, SOT24 skipped IDs [218112,199492], external_writes_executed=false, external_send_executed=false"
+      },
+      {
+        "command": "node portal package constraint check",
+        "exit_code": 0,
+        "result": "bad_count=0 for Saramin <=2000, LinkedIn <=1899/no raw vars, Jobkorea required category/employment"
+      },
+      {
+        "command": "make verify",
+        "exit_code": 0,
+        "result": "608 passed, 5 subtests passed"
+      }
+    ],
+    "verdict": "PASS_WITH_LIMITATION"
+  },
+  "failed_attempts": [
+    "python3 -m pytest tests/test_skill_sot_preflight_gate.py -q failed because system python3 has no pytest",
+    "claude -p adversarial review returned no content"
+  ],
+  "three_way_agree": false,
+  "status": "PASS_WITH_LIMITATION",
+  "limitations": [
+    "No live Saramin/Jobkorea/LinkedIn/Gmail/ClickUp write/send was executed because task is L3 under $st.",
+    "Gmail has no dedicated DOM/length SOT in the inspected files; only a local email body package was produced.",
+    "Registered-vs-unregistered was based on SOT24/local repo evidence, not live portal state."
+  ]
+}

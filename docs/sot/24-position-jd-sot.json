@@ -1,0 +1,141 @@
+{
+  "$schema_note": "포지션 JD 평가기준 SOT. AI Search 적합도 평가의 단일 기준. 사장님 지시(2026-06-25): 클릭업에서 JD를 찾아 SOT로 박고, 평가 시 클릭업 JD + 공식 홈페이지(career.wrtn.io 등) 상세를 함께 참고한다.",
+  "version": "1.0.0",
+  "updated_at": "2026-06-25",
+  "source_of_truth": {
+    "primary": "ClickUp FY26ClientsPosition 태스크의 JD(description)",
+    "secondary": "각 포지션 공식 채용 홈페이지 원본 URL(career.wrtn.io 등) — 클릭업 JD가 비거나 오래되면 공식홈/구글링으로 상세 확인",
+    "rule": "positionId 또는 ClickUp 태스크가 있으면 그 JD를 SOT로 쓴다. JD 링크가 없다고 임의 추론하지 말고, 먼저 ClickUp에서 찾고, 없으면 공식 채용 홈페이지를 구글링해 상세를 참고한다."
+  },
+  "evaluation_contract": {
+    "must_pass_before_send": "후보 JSON 필수 4필드(profile_url, score, why_fit, profile_summary)",
+    "score_bands": {"strong": "85+", "candidate": "70-84", "drop": "<70"},
+    "scoring_axes": ["직무직결성(JD 필수요건 매칭)", "좋은 학교(학력 컷)", "이직 안정성/재직기간", "도메인 적합(산업·툴)"],
+    "send_policy": "발송(제안·메일·InMail)은 절대 자동 금지 — 사람이 마지막에 누른다(SOT 불변식 3)"
+  },
+  "positions": [
+    {
+      "clickup_task_id": "86exxxqe8",
+      "clickup_url": "https://app.clickup.com/t/86exxxqe8",
+      "company": "뤼튼테크놀로지스",
+      "title": "Finance Data Analyst (FP&A)",
+      "official_url": "https://career.wrtn.io/ko/o/199492",
+      "official_list": "https://career.wrtn.io/ko/career",
+      "opening_id": "199492",
+      "linkedin_recruiter_url": "https://www.linkedin.com/talent/hire/1645154444/discover/recruiterSearch?searchContextId=317b8a79-fa2e-4ae6-8e1f-f80167f24ae2&searchHistoryId=21185879196&searchRequestId=18576854-5bcb-4246-8c5d-75dbf6d829e0&start=0",
+      "team": "Finance팀",
+      "employment": "정규직",
+      "experience": "경력 5년 이상",
+      "location": "서울 서초구 서초대로77길 17",
+      "summary": "단순 회계/결산이 아니라 FP&A·IR 의사결정용 핵심 지표(KPI/Metric)의 정의–수집–정합성–변경관리 전 과정 + BI 시각화를 맡는 재무 데이터 분석 포지션.",
+      "responsibilities": [
+        "핵심 지표(KPI/Metric) 설정 및 관련 데이터 Metric 설정",
+        "지표 수집용 데이터 파이프라인 설정 및 정합성 검증",
+        "FP&A Manager와 협력해 지표 변동 분석 및 보고",
+        "BI툴 활용 지표 visualization 구축"
+      ],
+      "must_have": [
+        "FP&A·IR 등 Finance 유관 영역에서 Data 관리·리포팅 5년 이상(또는 준하는 경험)",
+        "Query를 활용한 데이터 추출/검증 가능",
+        "Finance domain 이해 기반 지표 해석 가능"
+      ],
+      "nice_to_have": [
+        "데이터 웨어하우스/BI 환경 지표 운영 경험(dbt, Airflow 등 협업 포함)",
+        "SaaS / LLM Model cost 관련 FinOps 프로젝트 경험",
+        "IR 자료(Deck/Factbook) 또는 투자자/이사회 보고용 수치 관리 경험",
+        "재무/성과 데이터 내부통제 관점(근거자료·재현성·감사대응) 지표 운영 경험"
+      ],
+      "search_signals": {
+        "must": ["FP&A", "재무기획", "경영관리", "관리회계", "IR", "investor reporting", "board reporting", "Finance Data Analyst", "Financial Data Analyst", "Finance Analytics", "FP&A Analyst", "KPI", "Metric", "SQL", "Query", "BI", "Tableau", "Power BI", "Looker", "BigQuery", "Snowflake", "data warehouse"],
+        "preferred": ["dbt", "Airflow", "데이터 파이프라인", "지표 거버넌스", "factbook", "IR deck", "ARR", "MRR", "churn", "CAC", "LTV", "FinOps", "LLM cost", "model cost", "내부통제", "감사 대응"],
+        "priority_pool": ["테크/스타트업/빅테크/플랫폼/SaaS/AI/핀테크의 FP&A·Finance Analytics·BizOps·Data/BI·IR 경험자"],
+        "education_signal": ["서울대", "연세대", "고려대", "KAIST", "POSTECH", "MBA", "석사", "박사"],
+        "exclude": ["결산/세무/AP/AR만 한 후보", "은행 지점 영업", "순수 AI Engineer/Data Scientist", "재무 맥락 없는 Product Analyst"]
+      },
+      "linkedin_boolean": "(\"Finance Data Analyst\" OR \"Financial Data Analyst\" OR \"FP&A\" OR \"FP&A Analyst\" OR \"Finance Analytics\" OR \"IR Analyst\" OR \"FinOps\" OR \"재무 데이터\" OR \"재무기획\" OR \"경영관리\" OR \"IR\") AND (SQL OR Query OR BI OR Tableau OR \"Power BI\" OR Looker OR BigQuery OR Snowflake OR dbt OR Airflow OR \"data warehouse\" OR KPI OR Metric) AND (SaaS OR startup OR fintech OR platform OR AI OR \"big tech\" OR 테크 OR 스타트업 OR 플랫폼)"
+    },
+    {
+      "clickup_task_id": "86exxxqdx",
+      "clickup_url": "https://app.clickup.com/t/86exxxqdx",
+      "company": "뤼튼테크놀로지스",
+      "title": "AX Product Manager (Ontology)",
+      "official_url": "https://career.wrtn.io/ko/o/218112",
+      "official_list": "https://career.wrtn.io/ko/career",
+      "opening_id": "218112",
+      "linkedin_recruiter_url": "https://www.linkedin.com/talent/hire/881426004/discover/recruiterSearch?searchContextId=d7a6a918-b508-4994-950c-c1a1d6895ab7&searchHistoryId=20957851652&searchRequestId=86c4fcf3-670b-4b22-a15f-17772150a104&start=0&uiOrigin=FACET_SEARCH",
+      "team": "AX CIC (메인 B2C 조직과 별개 운영) — Finance Ontology 제품",
+      "employment": "정규직",
+      "experience": "경력 5년 이상",
+      "product_context": "Finance Ontology = 엑셀·SAP 오가는 반복 재무·회계 업무를 ontology 기반으로 AI가 처리하고 사람은 검토만 하는 엔터프라이즈 자동화 플랫폼(법인카드 검토, 세금계산서 3-Way Matching, 마감 체크리스트, 전표 자동분개, 부가세·법인세 신고자료, 연결재무제표·감사자료 자동작성 등 LLM·RAG·워크플로우 엔진 조합).",
+      "responsibilities": [
+        "사업 전략 수립 및 제품 로드맵 설계(재무자동화 시장 특장점 제안)",
+        "Ontology 기반 재무 자동화 워크플로우 설계(업무 단위별 As-Is/To-Be, 권한·워크플로우, 검토 UX 설계·고도화)",
+        "고객사 커뮤니케이션 및 요구사항 구조화(회계팀·SAP BASIS팀·보안팀과 직접 소통, 환경변수 파악)",
+        "제품 개발 테스크 매니징(WBS 작성 등 개발 전반 관리)"
+      ],
+      "must_have": [
+        "5년 이상 B2B SaaS 또는 엔터프라이즈 소프트웨어 제품 기획 경험",
+        "엔지니어·디자이너와 협업해 제품을 단독 리드, 출시·운영까지 끌고 가본 경험",
+        "PRD·기능명세·화면설계·워크플로우 정의 깊이 있게 작성하는 문서화 역량",
+        "데이터와 도메인 맥락을 함께 고려한 우선순위 판단·의사결정",
+        "AI 기술(LLM, RAG, Agentic AI) 실무적 이해",
+        "재무·회계 또는 ERP(SAP) 도메인 깊은 이해(전표·결산·세무·감사, K-IFRS, 내부회계관리제도)",
+        "대기업/공공기관 등 엔터프라이즈 고객 대상 프로젝트 경험"
+      ],
+      "nice_to_have": [
+        "SAP(FI/CO/MM/SD/AA) 모듈 또는 ERP 연동 프로젝트 경험",
+        "AI Agent / LLM 기반 제품 기획·개발 경험",
+        "워크플로우 자동화/내부도구 제품 기획 경험(LangGraph, n8n, Airflow, Retool, Zapier)",
+        "회계법인·재무 컨설팅·세무·감사 실무 또는 재무 시스템 도입 PM 경험",
+        "높은 업무 강도에서 빠른 실행·회복 탄력성",
+        "새 도메인·기술 빠른 온보딩 학습 역량"
+      ],
+      "search_signals": {
+        "must": ["Product Manager", "PM", "Product Owner", "PO", "B2B SaaS", "엔터프라이즈 SW 기획", "PRD", "워크플로우 설계", "LLM", "RAG", "Agentic AI", "재무 자동화", "ERP", "SAP"],
+        "preferred": ["SAP FI/CO/MM/SD/AA", "Ontology", "회계 자동화", "전표·결산·세무·감사", "K-IFRS", "내부회계관리제도", "LangGraph", "n8n", "Airflow", "Retool", "Zapier", "Internal Tooling", "회계법인", "재무 컨설팅"],
+        "priority_pool": ["B2B SaaS·엔터프라이즈 SW PM/PO 경험자 중 재무·회계·ERP(SAP) 도메인 또는 AI/LLM 제품 경험 보유"],
+        "education_signal": ["서울대", "연세대", "고려대", "KAIST", "POSTECH", "MBA", "석사", "박사"],
+        "exclude": ["B2C 앱 그로스만 한 PM", "도메인(재무·ERP·AI) 전무한 일반 PM", "기획 경험 없는 순수 엔지니어/디자이너"]
+      }
+    },
+    {
+      "clickup_task_id": "86ey2cdfj",
+      "clickup_url": "https://app.clickup.com/t/86ey2cdfj",
+      "company": "뤼튼테크놀로지스",
+      "title": "AX Sales Team Lead (AI Account Executive 리드)",
+      "official_url": "https://career.wrtn.io/ko/career",
+      "team": "AX CIC (메인 B2C 조직과 별개 운영) — AI Account Executive(세일즈 매니저) + AX B2B Marketer 조직 리드",
+      "employment": "정규직",
+      "experience": "시니어/리드 (B2B/G 대형 딜 직접 클로징 실적 보유)",
+      "requester": "김민경",
+      "is_confidential": true,
+      "summary": "본인이 직접 핵심 딜을 클로징하면서 세일즈 팀의 성과·성장을 책임지는 플레잉 리드. 기업/정부 대형 딜 발굴·클로징 + 세일즈 플레이북·GTM 전략 수립·팀 이식.",
+      "responsibilities": [
+        "주요 기업/정부 고객의 대형 딜 직접 발굴·클로징, 매출 목표 최전선 견인",
+        "신규 솔루션·가격정책·경쟁사 기반 고객사 공략 전략·세일즈 플레이북 수립·팀 이식",
+        "신규 세그먼트·산업군 기회 발굴, GTM 전략·우선순위 설정",
+        "기존 고객사 파트너십 강화·사업 규모 확대"
+      ],
+      "must_have": [
+        "어떤 분야에서든 상위 1% 역량 증명",
+        "B2B/G 영업에서 본인이 직접 큰 매출·딜을 만들어본 검증된 실적",
+        "우수한 커뮤니케이션·프레젠테이션·협상·계약 체결 역량",
+        "세일즈 팀을 이끌거나 동료를 성장시켜본 경험(공식 리드 직책 아니어도 무방)"
+      ],
+      "nice_to_have": [
+        "AI 기술·시장 이해도 높은 분(없어도 빠른 온보딩 가능하면 OK)",
+        "0→1, 1→10 초기 조직에서 세일즈 프로세스·팀을 직접 세워본 경험",
+        "일이 삶에서 가장 중요한 분",
+        "불확실성·높은 업무 강도에 대한 회복 탄력성"
+      ],
+      "search_signals": {
+        "must": ["Account Executive", "Enterprise Sales", "B2B Sales", "기업영업", "법인영업", "B2G", "공공영업", "정부영업", "Sales Lead", "Sales Manager", "Sales Director", "영업리드", "영업팀장", "세일즈 매니저", "Business Development", "BD", "사업개발", "딜 클로징", "GTM"],
+        "preferred": ["SaaS 영업", "엔터프라이즈 영업", "솔루션 영업", "Key Account", "대형 딜", "세일즈 플레이북", "GTM 전략", "0 to 1", "팀 빌딩", "세일즈 조직 셋업", "AI", "ARR", "Quota", "Closing", "협상"],
+        "priority_pool": ["테크/스타트업/SaaS/AI/엔터프라이즈 SW의 B2B·B2G 영업 리드/AE 중 본인 직접 대형 딜 클로징 실적 + 팀 리딩 경험 보유"],
+        "education_signal": ["서울대", "연세대", "고려대", "KAIST", "POSTECH", "MBA", "석사"],
+        "exclude": ["B2C 리테일/매장 영업만", "텔레마케팅/콜센터", "영업지원·영업관리(정산/SCM)만", "딜 클로징 실적 없는 단순 CS", "보험·카드 개인영업만"]
+      },
+      "linkedin_boolean": "(\"Account Executive\" OR \"Enterprise Sales\" OR \"B2B Sales\" OR \"Sales Lead\" OR \"Sales Manager\" OR \"Sales Director\" OR \"Business Development\" OR \"기업영업\" OR \"법인영업\" OR \"공공영업\" OR \"영업리드\" OR \"세일즈 매니저\") AND (SaaS OR enterprise OR AI OR solution OR \"솔루션\" OR \"엔터프라이즈\" OR B2B OR B2G OR \"공공\" OR \"정부\") AND (\"closing\" OR \"quota\" OR \"GTM\" OR \"key account\" OR \"대형 딜\" OR \"매출\" OR \"playbook\")"
+    }
+  ]
+}
