@@ -58,10 +58,12 @@ JD를 5축으로 분해 → 축마다 OR/AND/NOT 배정.
 
 ## 이 SSOT의 출처 (source_of_truth)
 
-- ★ 최우선 원본: `skills/talent-search/SKILL.md` (사장님 화면 캡처 확인, 2026-05-21)
+- 현재 실행 스킬: `~/.codex/skills/ai-search/SKILL.md`, `skills/search/SKILL.md`, `skills/multisearch/SKILL.md`
+- ★ 역사적 원본: `~/.claude/skills/talent-search/SKILL.md` (사장님 화면 캡처 확인, 2026-05-21)
 - DOM 셀렉터 원칙: `docs/sot/23-channel-dom-selectors.md` (evidence-first)
-- 채널 스킬: `saramin-talent-sourcing` / `jobkorea-talent-sourcing` / `linkedin-rps-jd-set-builder` SKILL.md
-- 코드: `tools/lib/*-search-engine.mjs`, `tools/jobkorea-search/*.mjs`, `tools/lib/ai-search-saramin-runner.mjs`
+- 채널별 역사적 스킬: `~/.claude/skills/saramin-talent-sourcing/SKILL.md` / `~/.claude/skills/jobkorea-talent-sourcing/SKILL.md` / `~/.claude/skills/linkedin-rps-jd-set-builder/SKILL.md`
+- 현재 실행 엔진: `tools/multi_position_sourcing/` (`dry_run`, `queue_runner`, `channel_search_render`, `portal_queue_executor`, `portal_autologin`)
+- 옛 코드 경로: `22-talent-search-filters.json`의 `code_files_MISSING`에만 보존(현재 실행 경로로 쓰지 않음)
 - 라이브 검증일: 2026-05-22(사람인) · 06-16/06-22(잡코리아) · 06-22(링크드인) · 06-23(SOT23)
 
 ---

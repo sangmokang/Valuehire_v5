@@ -1,0 +1,36 @@
+{
+  "claim_id": "aisearch-selfcontained-2026-06-27",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "aisearch 스킬의 레포 밖·git 미추적 HOME 의존 3건(codex sot-check 스크립트·codex 미러·linkedin-rps 문서)을 .claude/skills/aisearch/vendor/ 로 들여오고, SKILL.md를 vendor 경로로 갱신해 HOME 외부 런타임 의존을 0으로 만들었다. 레포 공유 자산(엔진·SOT·형제 스킬)은 옮기지 않았다. 의존성 전수 조사 + 이사 지도를 docs/engineering/aisearch-dependency-audit-2026-06-27.md 로 남겼다.",
+    "changed_files": [
+      ".claude/skills/aisearch/SKILL.md (gitignored live)",
+      ".claude/skills/aisearch/vendor/ai_search_sot_check.py (vendored)",
+      ".claude/skills/aisearch/vendor/linkedin-rps-jd-set-builder.md (vendored)",
+      ".claude/skills/aisearch/vendor/SOURCES.json (new)",
+      ".claude/skills/aisearch/vendor/check_self_contained.py (new gate)",
+      "docs/engineering/aisearch-dependency-audit-2026-06-27.md (new)",
+      "docs/engineering/aisearch-selfcontained-goal-2026-06-27.md (new)"
+    ],
+    "live_evidence": "RED: check_self_contained.py status=FAIL exit=1 (SKILL.md 5건 외부참조) → GREEN: status=OK exit=0. vendored ai_search_sot_check.py --repo … status=OK 10단계 출력. 잔여 HOME 참조 grep 0건."
+  },
+  "acceptance_checks": [
+    { "id": 1, "desc": "SKILL.md 에 ~/.codex 및 ~/.claude/skills 0건", "command": "grep -nE '~/.codex|~/.claude/skills' .claude/skills/aisearch/SKILL.md", "result": "잔여 0건", "pass": true },
+    { "id": 2, "desc": "vendor 파일 존재+비어있지 않음", "command": "ls -la .claude/skills/aisearch/vendor/", "result": "ai_search_sot_check.py, linkedin-rps-jd-set-builder.md, SOURCES.json, check_self_contained.py", "pass": true },
+    { "id": 3, "desc": "자립 게이트 exit 0", "command": "python3 .claude/skills/aisearch/vendor/check_self_contained.py", "result": "status=OK exit=0", "pass": true },
+    { "id": 4, "desc": "레포 공유 자산 무삭제", "command": "test -e docs/sot/22… tools/multi_position_sourcing skills/{search,multisearch,humansearch,position-registration}", "result": "전부 OK", "pass": true },
+    { "id": 5, "desc": "무결성 테스트 회귀 0", "command": "python3 -m pytest tests/test_skill_reference_integrity.py -q", "result": "6 passed", "pass": true }
+  ],
+  "v1": {
+    "tool": "workflow-agent (claude opus, fresh context)",
+    "agentId": "a4c3b4105b680e5c5",
+    "source": "workflow wf_407368e6-dff verify:adversarial",
+    "verdict": "PASS (자립 확인)",
+    "finding": "감사자가 본 'HOME 런타임 의존 3건'은 이미 vendor 경로로 대체됨(REFUTE). 살아있는 HOME 런타임 참조 0건. 독립 재현: check_self_contained.py status=OK, ai_search_sot_check.py exit=0.",
+    "note_gitignore": "aisearch 6파일은 .gitignore:19 .claude/ 로 미추적 — 결함 아니라 .claude 설계 특성(장기 이사 대상)."
+  },
+  "failed_attempts": [],
+  "scope_note": "레포 skills/ -> .claude 전체 이사는 본 작업 범위 밖(L3 대공사). 이사 지도/체크리스트는 audit 문서 §4-5에 설계도로 남김. .gitignore:19 + tools/multi_position_sourcing 25개 테스트 결합이 최대 함정.",
+  "status": "완료(옵션 A 자립화) · 전체 이사는 승인 후 별도"
+}

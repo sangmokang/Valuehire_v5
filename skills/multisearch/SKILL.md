@@ -1,13 +1,6 @@
 ---
 name: multisearch
 description: "Use when running Valuehire multi-position candidate sourcing from Discord/Hermes: group active positions, search Saramin/Jobkorea/LinkedIn RPS/public web fail-closed, deduplicate profiles, score candidates across positions, and write Profile URL, score, fit reason, and profile summary into ClickUp Activity."
-version: 1.0.0
-author: Hermes Agent
-license: MIT
-metadata:
-  hermes:
-    tags: [valuehire, ai-search, multisearch, discord, clickup, sourcing, recruiting]
-    related_skills: [search]
 ---
 
 # Valuehire Multisearch — Multi-Position Portal Sourcing Layer
