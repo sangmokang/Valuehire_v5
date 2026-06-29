@@ -16,7 +16,11 @@ artifacts/multi_position_sourcing/*.md
 artifacts/
 .venv-playwright/
 .venv*/
-.claude/
+# .claude/ 는 통째로 무시하되, 레포 정본 스킬(.claude/skills/)만 추적한다.
+# 단, OMC 런타임 상태(.omc/)는 머신 전용 쓰레기라 계속 무시한다.
+.claude/*
+!.claude/skills/
+.claude/skills/**/.omc/
 logs/
 .playwright-mcp/
 captures/

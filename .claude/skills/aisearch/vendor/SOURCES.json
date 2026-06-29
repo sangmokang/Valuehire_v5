@@ -1,0 +1,8 @@
+{
+  "_doc": "vendor/ 안 파일들의 원본 출처와 복사 시점·해시. 드리프트(원본이 바뀌었는지) 감지용. aisearch가 ~/.codex·다른 ~/.claude 스킬에 런타임 의존하지 않도록 들여온 사본이다.",
+  "copied_at": "2026-06-26T15:41:59Z",
+  "files": [
+    { "vendored": "vendor/ai_search_sot_check.py", "origin": "~/.codex/skills/ai-search/scripts/ai_search_sot_check.py", "sha256_at_copy": "c826cffe67ae79321c6e15bb11d7e2c467ae85e63e34e1a5ea5d71a5fdf478d3" },
+    { "vendored": "vendor/linkedin-rps-jd-set-builder.md", "origin": "~/.claude/skills/linkedin-rps-jd-set-builder/SKILL.md", "sha256_at_copy": "c1375c2dd66fce3f7106f7ff5cc41e84974161ad75cea5f4210911eb988b59f9" }
+  ]
+}

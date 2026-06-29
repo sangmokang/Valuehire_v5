@@ -1,0 +1,60 @@
+{
+  "_doc": "AI Search 후보 리스트 표준 출력 계약 (SOT). 사장님 지시(2026-06-24): 후보를 #ai_search 디스코드로 보낼 때와 ClickUp Activity 기록 시 항상 이 JSON 형태로 만든다. 필수 4필드 = profile_url, why_fit, score, profile_summary. 하나라도 없으면 전송/기록 보류.",
+  "discord_channel": {
+    "name": "ai_search",
+    "channel_id": "1470955309089554554",
+    "guild_id": "834329924486823947",
+    "env_key": "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL"
+  },
+  "schema": {
+    "position_id": "string (예: clickup-86exu1gap)",
+    "position_title": "string",
+    "generated_at": "ISO-8601",
+    "channels_done": ["linkedin", "saramin", "jobkorea"],
+    "candidates": [
+      {
+        "channel": "linkedin|saramin|jobkorea",
+        "name": "string (잡코리아/사람인은 마스킹된 표시명 가능: 김OO)",
+        "profile_url": "string (필수). 채널별 풀URL만 — 링크드인=https://www.linkedin.com/talent/profile/<id>(무료), 잡코리아=https://www.jobkorea.co.kr/corp/person/find/resume/view?rNo=<rNo>(무료), 사람인=https://hiring.saramin.co.kr/applicant-view/position/resume/<rNo>(이용권 필요). ⛔ 내부 id(사람인 residx 등)를 URL로 쓰지 말 것. 풀URL 미획득 시 'url_pending'=credit-gated(이용권 미보유) 등 사유 명시 (docs/sot/22 access_credit_model)",
+        "score": "number 0~100 (필수)",
+        "why_fit": ["string", "string (필수, 1~3개)"],
+        "profile_summary": "string (필수, 2~4줄: 현직/이력·연차·핵심스택·학력)",
+        "risk": "string (선택: 연차부족·해외거주·과시니어 등 확인필요)",
+        "evidence": "string (선택: 근거 경로/원문)"
+      }
+    ]
+  },
+  "required_fields": ["profile_url", "score", "why_fit", "profile_summary"],
+  "rules": [
+    "필수 4필드 누락 시 해당 후보는 전송 보류(점수만 있는 후보 금지).",
+    "발송(제안/메일/InMail)은 절대 자동 금지 — 이 계약은 '후보 리스트 전송'만.",
+    "디스코드 전송 채널 기본값 = #ai_search (위 channel 정보).",
+    "점수 85+ = 강력추천 표기, 70~84 = 후보, 70 미만은 리스트 제외 권장."
+  ],
+  "discord_message_format": "포지션 제목 + 채널별 후보 카드. 각 카드: 이름/채널 · 점수 · profile_url · why_fit(불릿) · profile_summary. 길면 채널별로 분할 전송.",
+  "discord_send_spec": {
+    "_doc": "디스코드 webhook 전송 표준 절차 (2026-06-24 확정). 이대로만 보내면 Cloudflare 403 안 막힌다.",
+    "method": "POST",
+    "endpoint_env_key": "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL",
+    "headers": {
+      "Content-Type": "application/json",
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Valuehire-AISearch/1.0"
+    },
+    "body": {
+      "content": "헤더 텍스트 (string, <=2000자)",
+      "embeds": "후보 카드 배열 (메시지당 최대 10개). 각 embed: {title, description(<=4096자), color}"
+    },
+    "embed_color_by_channel": {
+      "linkedin": "0x0A66C2",
+      "jobkorea": "0xF57F17",
+      "saramin": "0x1E88E5"
+    },
+    "success_status": [200, 204],
+    "splitting": "embed가 10개 초과면 여러 메시지로 분할 (예: 헤더+6개 / 이어서 4개).",
+    "gotchas": [
+      "User-Agent 헤더 누락 시 Cloudflare가 403 + 'error code: 1010'으로 차단한다. 반드시 UA를 붙인다.",
+      "Python urllib 기본 UA(Python-urllib/x.y)도 차단됨 — 위 UA 문자열을 명시.",
+      "webhook URL은 비밀값 — 로그/커밋에 절대 출력 금지(끝 몇 글자만 디버그)."
+    ]
+  }
+}
