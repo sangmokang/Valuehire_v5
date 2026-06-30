@@ -149,6 +149,22 @@ def test_runner_wires_the_gate_no_orphan():
     assert "assert_live_or_abort(tab)" in src
 
 
+def test_build_probe_js_regex_matches_evaluate_formats_incl_korean():
+    # V2 발견 회귀 방지: build_probe_js 의 결과수 정규식이 evaluate 가 받는 포맷(특히 한국어
+    # '결과 N개')을 모두 잡아야 한다. 안 그러면 살아있는 검색을 거부(false-negative).
+    import re as _re
+
+    js = build_probe_js()
+    pattern = r"\d[\d,.]*\s*(?:K\+?|results|명|개)"
+    assert pattern in js, "build_probe_js 가 evaluate 와 동일한 결과수 정규식을 써야 한다"
+    pat = _re.compile(pattern, _re.I)
+    for rt in ("3.9K+ results", "1 – 25 of 3,912 results", "결과 3,912개", "3,912 명"):
+        m = pat.search(rt)
+        assert m, f"JS 정규식이 못 잡음: {rt}"
+        # 추출된 토큰이 evaluate 의 positive-count 도 통과해야 한다(end-to-end 일관성)
+        assert evaluate_search_preflight(_live_probe(results_text=m.group(0)))["ok"] is True, rt
+
+
 def test_build_probe_js_is_nonempty_str_with_markers():
     js = build_probe_js()
     assert isinstance(js, str) and len(js) > 50

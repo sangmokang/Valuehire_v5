@@ -121,7 +121,9 @@ def build_probe_js() -> str:
       for (const a of document.querySelectorAll('a[href*="/talent/profile/"]')) {
         cardSet.add((a.href || '').split('?')[0]);
       }
-      const rm = txt.match(/([\d,.]+\s*K?\+?)\s*(results|개의 결과|명)/i);
+      // 결과수 정규식은 evaluate 의 _RESULTS_COUNT_RE 와 동일해야 한다(불일치 시 살아있는
+      // 한국어 검색 '결과 N개'를 못 잡아 false-negative 발생). 숫자 + 단위(K+/results/명/개).
+      const rm = txt.match(/\d[\d,.]*\s*(?:K\+?|results|명|개)/i);
       const am = txt.match(/Expand the user menu\n([^\n]+)/);
       return {
         url: location.href,
