@@ -60,6 +60,26 @@ def test_results_text_present_but_zero_cards_still_fails():
     assert d["checks"]["results_rendered"] is False
 
 
+def test_zero_results_with_stray_card_fails():
+    # 적대검증 발견 버그: '0 results'(검색 0건)인데 카드가 1개라도 잡히면 통과해선 안 된다.
+    d = evaluate_search_preflight(_live_probe(card_count=1, results_text="0 results"))
+    assert d["ok"] is False
+    assert d["checks"]["results_rendered"] is False
+
+
+def test_zero_count_korean_fails():
+    d = evaluate_search_preflight(_live_probe(card_count=1, results_text="결과 0개"))
+    assert d["ok"] is False
+    assert d["checks"]["results_rendered"] is False
+
+
+def test_real_count_formats_pass():
+    # 링크드인 실제 결과수 포맷들은 통과해야 한다(false-negative 방지).
+    for rt in ("3.9K+ results", "1 – 25 of 3,912 results", "결과 3,912개", "3,912 명"):
+        d = evaluate_search_preflight(_live_probe(results_text=rt))
+        assert d["ok"] is True, rt
+
+
 # ── 세션 충돌(다른 기기 동시 로그인) ──
 def test_multiple_signins_fails():
     d = evaluate_search_preflight(_live_probe(multiple_signins=True))

@@ -44,6 +44,22 @@ class PreflightError(RuntimeError):
         super().__init__(f"humansearch 프리플라이트 실패 — {reasons}")
 
 
+def _positive_results_count(text: str) -> bool:
+    """결과 수 텍스트가 '0보다 큰 실제 결과'를 가리키면 True.
+
+    '0 results'/'결과 0개' 같은 0건(죽은/빈 검색)은 False 로 거른다.
+    'K'(천 단위)가 있으면 무조건 양수로 본다. 그 외에는 숫자를 추출해 > 0 인지 본다.
+    """
+    m = _RESULTS_COUNT_RE.search(text)
+    if not m:
+        return False
+    token = m.group(0).lower()
+    if "k" in token:
+        return True
+    digits = re.sub(r"[^\d]", "", token)
+    return bool(digits) and int(digits) > 0
+
+
 def _coerce_int(value: Any) -> int:
     try:
         return int(value)
@@ -71,7 +87,7 @@ def evaluate_search_preflight(probe: dict[str, Any]) -> dict[str, Any]:
     logged_in = bool(account) and no_login_redirect
     no_session_conflict = (not multiple_signins) and (_SESSION_CONFLICT_URL not in url)
     no_captcha = not captcha
-    results_rendered = card_count >= MIN_CARD_COUNT and bool(_RESULTS_COUNT_RE.search(results_text))
+    results_rendered = card_count >= MIN_CARD_COUNT and _positive_results_count(results_text)
 
     checks = {
         "logged_in": logged_in,
