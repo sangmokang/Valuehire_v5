@@ -20,3 +20,7 @@ artifacts/
 logs/
 .playwright-mcp/
 captures/
+node_modules/
+nohup.out
+scratchpad/
+_codex_mutant_run_rps_manual_switch/

@@ -1,0 +1,64 @@
+{
+  "claim_id": "skill-reference-integrity-2026-06-26",
+  "mode": "noncode",
+  "risk": "L2",
+  "generator": {
+    "summary": "Normalized current skill/SOT references, removed repo-local dead ai-search-position-pipeline references, split current Codex execution paths from historical ~/.claude skill sources, and added a focused reference integrity contract test.",
+    "changed_files": [
+      "docs/engineering/skill-reference-integrity-goal-2026-06-26.md",
+      "tests/test_skill_reference_integrity.py",
+      "skills/search/SKILL.md",
+      "skills/multisearch/SKILL.md",
+      "docs/sot/22-talent-search-filters.json",
+      "docs/sot/22-talent-search-filters.md",
+      "docs/sot/25-ai-search-execution-process.json",
+      "docs/sot/25-ai-search-execution-process.md",
+      "/Users/kangsangmo/.codex/skills/ai-search/references/spec-procedure.md"
+    ]
+  },
+  "v1": {
+    "tool": "claude",
+    "command": "env -u ANTHROPIC_API_KEY claude -p <adversarial review prompt>",
+    "exit_code": 0,
+    "status": "no_verdict",
+    "note": "CLI produced no output for more than 2 minutes and was interrupted; no PASS/FAIL verdict was available to trust."
+  },
+  "v2": {
+    "tool": "codex_self_adversarial",
+    "checks": [
+      {
+        "command": ".venv-playwright/bin/python -m pytest tests/test_skill_reference_integrity.py -q",
+        "exit_code": 0,
+        "artifact": "6 passed"
+      },
+      {
+        "command": "rg -n -P '(?<!~/.claude/)skills/(ai-search-position-pipeline|talent-search|saramin-talent-sourcing|jobkorea-talent-sourcing|linkedin-rps-jd-set-builder)' <current target docs/skills>",
+        "exit_code": 0,
+        "artifact": "no matches"
+      },
+      {
+        "command": "empty skill file scan for /Users/kangsangmo/Valuehire_v5/skills and /Users/kangsangmo/.codex/skills/ai-search",
+        "exit_code": 0,
+        "artifact": "empty_files=none"
+      },
+      {
+        "command": "SOT25 depends_on existence and output_contract field check",
+        "exit_code": 0,
+        "artifact": "all depends_on entries OK; required_fields=profile_url,score,why_fit,profile_summary"
+      },
+      {
+        "command": "./verify.sh",
+        "exit_code": 0,
+        "artifact": "614 passed, 5 subtests passed"
+      }
+    ],
+    "verdict": "PASS"
+  },
+  "failed_attempts": [
+    "quick_validate.py initially failed because PyYAML was not installed in the selected Python environment; PyYAML was installed into .venv-playwright and all five skill folders then validated.",
+    "claude adversarial review produced no usable verdict."
+  ],
+  "three_way_agree": false,
+  "status": "pass_with_claude_unavailable",
+  "completed_at": "2026-06-26"
+}

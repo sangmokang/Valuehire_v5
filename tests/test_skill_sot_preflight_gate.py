@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -47,6 +49,10 @@ def test_all_repo_skills_have_hard_sot_preflight_gate() -> None:
     assert not failures, "\n".join(failures)
 
 
+@pytest.mark.skipif(
+    not all(p.exists() for p in CUSTOM_SKILLS),
+    reason="~/.codex/skills/ai-search 미설치 환경(CI) — HOME 픽스처 없음, 설치된 곳에서만 게이트 검사",
+)
 def test_custom_ai_search_skill_has_hard_sot_preflight_gate() -> None:
     missing = [path for path in CUSTOM_SKILLS if not path.exists()]
     assert not missing, f"missing custom skill files: {missing}"
