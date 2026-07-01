@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from tools.multi_position_sourcing.humansearch import hard_exclude_reason
-from tools.multi_position_sourcing.humansearch_register import reconstruct_captured_profile
+from tools.multi_position_sourcing.humansearch_register import eligible, reconstruct_captured_profile
 from tools.multi_position_sourcing.models import CapturedProfile, EmploymentTenure
 
 
@@ -175,3 +175,92 @@ def test_reconstruct_positional_employment_history_detects_frequent() -> None:
         "jobkorea",
     )
     assert hard_exclude_reason(p, "jobkorea") == "frequent_job_change"
+
+
+# ── PC-C1a: 등록 경계 eligible() 에 하드제외 게이트 배선 (RED 먼저) ──────────────
+# 현행 eligible() 은 score>=70 · 유효URL 만 보고 hard_exclude_reason 을 미호출 → 프리랜서·잦은이직·
+# 전문대가 등록 브리핑으로 샌다. PC-C1a1 재구성 + PC-C0 매처로 채점 전 하드제외를 등록 경계에 강제한다.
+_FREQ_HIST = [
+    {"company": "A", "start_month": "2021-01", "end_month": "2021-06"},
+    {"company": "B", "start_month": "2021-07", "end_month": "2022-01"},
+]
+
+
+def test_eligible_excludes_freelancer() -> None:
+    r = _runner_dict(score=85, visible_text="프리랜서 개발자", summary="")
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_excludes_frequent_job_change() -> None:
+    r = _runner_dict(score=85, visible_text="backend", summary="", education="", employment_history=_FREQ_HIST)
+    assert eligible([r], "jobkorea") == []
+
+
+def test_eligible_excludes_low_tier_school_on_portal() -> None:
+    r = _runner_dict(score=85, education="OO전문대학 졸업", visible_text="backend", summary="")
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_keeps_clean_passer() -> None:
+    r = _runner_dict(score=85, visible_text="backend engineer", summary="부산대 8년 안정적")
+    assert eligible([r], "saramin") == [r]
+
+
+def test_eligible_low_tier_school_kept_on_linkedin() -> None:
+    """링크드인은 학교 하드제외 미적용(portal 채널만) — 회귀 보호."""
+    r = _runner_dict(
+        score=85, education="OO전문대학", visible_text="robotics", summary="x",
+        url="https://www.linkedin.com/in/x",
+    )
+    assert eligible([r], "linkedin_rps") == [r]
+
+
+def test_eligible_fail_closed_on_unreconstructable_dict() -> None:
+    """재구성 불가(본문 전무) 후보는 등록 경계에서 fail-closed(제외)."""
+    r = _runner_dict(score=85)
+    del r["visible_text"]
+    del r["summary"]
+    r.pop("headline", None)
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_still_filters_low_score_and_bad_url() -> None:
+    """기존 계약 유지(회귀): 점수 미달·URL 무효는 여전히 제외."""
+    low = _runner_dict(score=60, visible_text="backend", summary="ok")
+    bad = _runner_dict(score=90, url="javascript:void(0)", visible_text="backend", summary="ok")
+    assert eligible([low, bad], "saramin") == []
+
+
+def test_eligible_sorts_passers_by_score_desc() -> None:
+    """정상 후보 다건은 점수 내림차순 정렬 유지(기존 계약)."""
+    lo = _runner_dict(score=75, visible_text="backend", summary="부산대", url="https://x.co/a")
+    hi = _runner_dict(score=95, visible_text="backend", summary="부산대", url="https://x.co/b")
+    assert eligible([lo, hi], "saramin") == [hi, lo]
+
+
+# ── 게이트4b step2(Codex 2차 적대검증) 발견 회귀 ──────────────────
+def test_eligible_excludes_nan_score() -> None:
+    """score=NaN 은 어떤 비교도 False → '<threshold' 를 통과하던 fail-open 차단(Codex)."""
+    r = _runner_dict(score=float("nan"), visible_text="backend", summary="부산대")
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_excludes_profile_url_only_schema_drift() -> None:
+    """register 스키마 URL 키는 'url' — url 없이 profile_url 만 있는 dict 는 제외(fail-closed).
+    하류 build_message/clickup 이 r['url'] 을 읽으므로 통과시키면 KeyError — Codex 재검증 재현 차단."""
+    r = _runner_dict(visible_text="backend", summary="부산대 8년")
+    r["profile_url"] = r.pop("url")
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_excludes_non_finite_score() -> None:
+    """score=inf/-inf/nan 비유한 값은 제외 — inf>=threshold 로 통과하던 fail-open 차단(Codex 재검증)."""
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        r = _runner_dict(score=bad, visible_text="backend", summary="부산대")
+        assert eligible([r], "saramin") == []
+
+
+def test_eligible_skips_non_dict_items_without_crash() -> None:
+    """results 에 비dict 항목이 섞여도 예외 없이 skip(fail-closed) — Codex exception."""
+    clean = _runner_dict(visible_text="backend", summary="부산대", url="https://x.co/ok")
+    assert eligible([clean, None, "bad-item", 123], "saramin") == [clean]

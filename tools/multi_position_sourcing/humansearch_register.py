@@ -7,13 +7,19 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.multi_position_sourcing.humansearch import PASS_THRESHOLD, _normalize, is_valid_profile_url
+from tools.multi_position_sourcing.humansearch import (
+    PASS_THRESHOLD,
+    _normalize,
+    hard_exclude_reason,
+    is_valid_profile_url,
+)
 from tools.multi_position_sourcing.models import CapturedProfile, Channel, EmploymentTenure
 
 POSITION_ID = "86ey2cdfj"
@@ -91,8 +97,31 @@ def reconstruct_captured_profile(result: object, channel: Channel) -> CapturedPr
     )
 
 
-def eligible(results: list[dict]) -> list[dict]:
-    ok = [r for r in results if r["score"] >= PASS_THRESHOLD and is_valid_profile_url(r["url"])]
+def eligible(results: list[dict], channel: Channel) -> list[dict]:
+    """등록 브리핑에 내보낼 후보만 — 점수·URL 게이트 + 채점 전 하드제외(프리랜서·잦은이직·전문대).
+
+    현행 계약(score>=PASS_THRESHOLD · 유효 URL) 유지 + PC-C1a1 재구성으로 CapturedProfile 복원 후
+    PC-C0 매처(hard_exclude_reason)를 적용해 프리랜서·단기이직2회+·전문대(portal 채널)를 등록 전에 차단한다.
+    재구성 불가(결손 dict)는 fail-closed(제외). 학교컷은 PORTAL_SCHOOL_CUT_CHANNELS 채널만(매처가 판단). SOT5·SOT3.
+    channel 은 필수 — 기본값을 두면 잘못된 채널로 school-cut 이 조용히 우회되므로 호출자가 명시한다.
+    """
+    ok: list[dict] = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue  # 비dict 항목 → fail-closed skip(크래시 방지)
+        score = r.get("score", 0)
+        # NaN/inf 는 '<threshold' 를 통과(NaN 비교 False, inf>=t True) → 유한 수치 + 양수형(>=)으로 판정.
+        if not (isinstance(score, (int, float)) and math.isfinite(score) and score >= PASS_THRESHOLD):
+            continue  # 점수 미달·비수치·NaN·inf → 제외 (fail-closed)
+        # register 스키마 URL 키는 'url'. 하류(build_message·clickup) 도 r['url'] 을 읽으므로 여기서 'url' 로 통일한다.
+        if not is_valid_profile_url(r.get("url")):
+            continue  # URL 무효/결손 → 제외
+        profile = reconstruct_captured_profile(r, channel)
+        if profile is None:
+            continue  # 재구성 불가(결손) → fail-closed 제외
+        if hard_exclude_reason(profile, channel) is not None:
+            continue  # 프리랜서·잦은이직·전문대(portal) → 채점 전 하드제외
+        ok.append(r)
     return sorted(ok, key=lambda r: -r["score"])
 
 
@@ -156,7 +185,7 @@ if __name__ == "__main__":
     results_path = Path(sys.argv[1]) if len(sys.argv) > 1 else (
         Path.home() / ".vh-search-results" / "linkedin_rps")
     results = json.loads(Path(results_path).read_text())
-    passers = eligible(results)
+    passers = eligible(results, "linkedin_rps")  # 이 러너 경로는 LinkedIn RPS 포지션(학교컷 미적용 채널)
     print(f"eligible passers: {len(passers)}")
     for r in passers:
         print(" ", r["score"], r["name"], r["url"])

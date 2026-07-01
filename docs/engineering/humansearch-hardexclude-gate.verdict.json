@@ -1,0 +1,40 @@
+{
+  "slice": "PC-C1a",
+  "title": "하드제외 게이트를 등록 경계 eligible() 에 배선",
+  "worktree": "task/humansearch-hardexclude-gate",
+  "base": "4e9f37a (PC-C0 + PC-C1a1 포함)",
+  "acceptance_criterion": "eligible() 이 score>=70·유효URL이어도 프리랜서·잦은이직2회·전문대(portal 채널) 후보 0건 포함, 정상 후보 통과; verify.sh exit 0.",
+  "sot": ["하드제외 등록 전 필수", "SOT5(기존 hard_exclude_reason 재사용, 제2 제외로직 금지)", "SOT3", "학교컷은 PORTAL_SCHOOL_CUT_CHANNELS 채널만", "fail-open 금지"],
+  "business_impact": "실제 leak 차단 — 현행 eligible 은 hard_exclude_reason 0-호출이라 프리랜서·전문대가 등록 브리핑(Discord/ClickUp)으로 샜음. PC-C1a1 재구성 + PC-C0 매처를 등록 경계에 강제.",
+  "generate": {
+    "by": "Claude Opus 4.8 (1M)",
+    "change": "eligible(results, channel): isinstance(dict) skip → score(유한·수치·>=) → is_valid_profile_url(r['url']) → reconstruct(fail-closed) → hard_exclude_reason 제외 → score 내림차순. channel 필수. __main__ linkedin_rps 명시.",
+    "red_commit": "43c4c09 (TypeError=RED)",
+    "green_commits": ["4d33a27 최초 GREEN", "a1e855b Codex step2 4건", "4089d3e Codex step3 2건"]
+  },
+  "verify_pass1_self": "하위호환·혼합배치·비수치score·링크드인 학교컷 미적용 확인 + 비dict AttributeError 자체발견.",
+  "verify_pass2_codex": {
+    "by": "agentId a37d3e05a12e6c77f", "verdict": "FAIL",
+    "findings": [
+      {"id": "FO-NANSCORE", "sev": "med", "resolution": "양수형 판정(a1e855b)"},
+      {"id": "OE-PROFILEURL", "sev": "med", "resolution": "pass2 에서 profile_url 폴백 추가했으나 pass3 서 drift 유발 → 되돌림(4089d3e)"},
+      {"id": "EXC-NONDICT", "sev": "med", "resolution": "isinstance(dict) skip(a1e855b)"},
+      {"id": "COMPAT-CHANDEFAULT", "sev": "low", "resolution": "channel 필수 인자화(a1e855b)"},
+      {"id": "NONDEF-CURRENTTITLE", "sev": "high(Codex)", "resolution": "비수정 — 러너 스키마에 없는 가상 필드. 실제 신호는 visible_text(=full)·headline·education·employment_history 로 스캔됨."}
+    ]
+  },
+  "verify_pass3_codex_reverify": {
+    "by": "agentId acef6bb33f5ac9a3d", "verdict": "FAIL(수정전) — 4건 CLOSED 확인 + 내 pass2 수정이 만든 2 신규",
+    "new_from_fix": [
+      {"id": "FO-INF", "vector": "score=inf → inf>=threshold True 통과", "sev": "high", "resolution": "math.isfinite 추가(4089d3e)"},
+      {"id": "DRIFT-PROFILEURL", "vector": "profile_url-only 가 eligible 통과 후 build_message r['url'] KeyError", "sev": "high", "resolution": "profile_url 폴백 되돌림, 'url' 키로 통일(4089d3e)"}
+    ]
+  },
+  "verify_pass4_codex_final": {
+    "by": "agentId ac1dc0c94852eaa08", "verdict": "PASS",
+    "closed": "inf·profile_url-drift 둘 다 closed. 정상후보 통과·score경계(70/70.0/95 pass, 69 fail)·하드제외(프리랜서·잦은이직·전문대 portal 전부 0) 정확. register 테스트 30 passed.",
+    "residual_preexisting": {"id": "EXC-MISSING-NAME", "vector": "name 없는 dict 가 eligible 통과 후 build_message/clickup r['name'] KeyError", "sev": "med", "status": "pre-existing(Codex 확인 — 4089d3e^ 도 name 게이트 없고 하류 r['name'] 사용), 내 변경 무관, 러너는 name 항상 제공. 별도 슬라이스(register 하류 필수키 fail-closed 가드)로 이관."}
+  },
+  "final_verify": "682 passed, 3 xfailed, 5 subtests passed (verify.sh exit 0)",
+  "conclusion": "등록 경계 하드제외 배선 GREEN·Codex 최종 PASS — 현행 leak(프리랜서·전문대 등록누출) 차단. 4라운드 적대검증서 실결함 8건 전부 회귀테스트로 봉인. 하드제외 3 유출면 중 등록면 닫힘(러너면 results.json=PC-C3a·발송면 eligible_matches_for_send=PC-C1b 는 별도). 후속: PC-C0b/c·register 필수키 가드."
+}
