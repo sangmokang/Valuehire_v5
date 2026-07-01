@@ -1,0 +1,711 @@
+{
+  "spec": "docs/engineering/valuehire-pipeline-consolidation-spec-2026-07-01.md",
+  "generated": "2026-07-01",
+  "revised": "2026-07-01 (2차 독립 적대검증 G→V1(Codex)→V2(리셋 Claude) 반영: 중복지도 완성·C1b 재작성·원자성 6분할·하드제외 매처 우회 2건 신규조각)",
+  "principle": "한 조각 = 한 worktree = 인수기준 1개. 신규 러너/스크립트 금지, 기존 계약 확장/주입. 착수 전 게이트0.5 과거지시 회수.",
+  "pipeline_flow": "ClickUp 보드 → 포털별 검색식/URL 생성(사람 검수) → 검색 URL ClickUp 저장 → Humansearch 전수 채점·하드제외·레쥬메/연봉 저장 → Reservoir 최적합 대기열 축적 → 포털별 맞춤 JD 드래프트 → 사람이 마지막 발송 클릭(SOT3)",
+  "branch_facts": {
+    "verified_on": "2026-07-01 (git rev-list --left-right --count main...<branch>)",
+    "fully_merged_zero_unique_commits": {
+      "task/ai-search-strategy-v2": "ahead=0/behind=20 (PR#30 병합) — 재사용/재개 대상 아님, main에서 분기",
+      "task/saramin-search-url": "ahead=0/behind=44 — main 대비 무편집, 재사용 대상 아님",
+      "task/portal-bg-login": "ahead=0/behind=39 — _has_security_challenge·connect_over_cdp 이미 main에"
+    },
+    "unmerged_live_wiring": {
+      "task/ai-search-pipeline-wip": "고유커밋 1개(behind 35) ~971 insertions. portal_worker.py(+209 insertions/6 deletions, 유일 미병합 편집)·portal_queue_executor.py(+30)·match.py(+8)·dry_run.py(+5)·queue_runner.py(+11)·scoring.py·portal_login.py + owner_activity.py·test_owner_activity.py·test_live_queue_cycle·test_portal_preflight_autologin·test_reservoir_match·test_reservoir_scoring 재구현. compute_yield_decision 심볼 자체는 미존재(모듈/테스트 파일만 선존)."
+    },
+    "unmerged_partial": {
+      "task/linkedin-boolean-inject": "고유커밋 3개(behind 18). llm_keywords.py·models.py·portal_queue_executor.py 편집(portal_worker.py 미편집)",
+      "task/humansearch-multipos": "고유커밋 5개(behind 0). humansearch_cdp_run.py 편집",
+      "task/intake-posting-url": "고유커밋 1개(behind 83). request_parser.py 편집(position_registration.py 미편집)",
+      "task/discord-position-briefing": "고유커밋 1개(behind 83). discord_briefing.py 편집(request_parser.py/discord_routing.py 미편집)"
+    },
+    "unmerged_partial_additional_2nd_pass": {
+      "note": "2차검증 V2 지적: 1차 지도는 완결이 아니었다. git for-each-ref 전수 재점검으로 아래 미병합(고유커밋>0) 브랜치를 추가.",
+      "task/ai-search-tdd-goal-prompt": "고유커밋 8개 — 미병합 최대. 1차 지도 완전 누락. 게이트0.5에서 내용 회수/폐기 결정 필요.",
+      "task/docs-drop-v4-refs": "고유커밋 2개. docs/ai-search/multi-position-sourcing-layer-2026-06-08.md 편집 — PC-C4b 대상 파일과 충돌(신규 식별).",
+      "home-wip-20260617": "고유커밋 2개 (stale WIP 후보).",
+      "task/salvage-home-wip": "고유커밋 2개 (stale WIP 후보).",
+      "task/vision-fallback-recovery": "고유커밋 1개.",
+      "origin/task/humansearch-preflight": "고유커밋 5개 — humansearch_cdp_run.py 편집(multipos와 동시, C3a/C3b/F2 회수 대상).",
+      "origin/task/track-claude-skills": "고유커밋 3개 (PC-G/H 회수 대상)."
+    }
+  },
+  "duplication_map": {
+    "same_file_simultaneous_edit_collision": [
+      "humansearch_cdp_run.py (task/humansearch-multipos +290 / origin/task/humansearch-preflight +5)",
+      "portal_queue_executor.py (task/ai-search-pipeline-wip +30 / task/linkedin-boolean-inject)",
+      "docs/ai-search/multi-position-sourcing-layer-2026-06-08.md (task/docs-drop-v4-refs ↔ PC-C4b 대상) — 2차검증 신규 식별"
+    ],
+    "corrected_phantom_collisions": [
+      "종전 'portal_worker.py(saramin-search-url / linkedin-boolean-inject)' — 사실오류: saramin-search-url 병합·무편집, linkedin-boolean-inject portal_worker 미편집. 유일 미병합 portal_worker 편집은 ai-search-pipeline-wip.",
+      "종전 'request_parser.py·discord_routing.py 동시수정' — 사실오류: request_parser.py는 intake-posting-url만, discord-position-briefing은 discord_briefing.py. PC-A3·A4는 공유파일 없음."
+    ],
+    "gate6_delete_branches": [
+      "task/ai-search-strategy-v2",
+      "task/saramin-search-url",
+      "task/portal-bg-login",
+      "origin/task/reservoir-* (병합됨 6종)",
+      "task/humansearch-skill"
+    ]
+  },
+  "backlog": [
+    {
+      "id": "PC-A0",
+      "title": "ClickUpCreateTask 시그니처에 목적지 list_id 추가(순수 리팩터·회귀)",
+      "reuse_branch": "신규 (position_registration.py — 다른 미병합 브랜치 미편집)",
+      "worktree": "task/clickup-createtask-listid",
+      "requirement_ids": [
+        "R1"
+      ],
+      "priority": "P0",
+      "depends_on": [],
+      "acceptance_criterion": "ClickUpCreateTask 계약이 목적지 list_id 인자를 받도록 확장되고, 기존 run_position_registration 호출자·tests/test_position_registration.py 전부가 회귀 없이 GREEN(동작 불변, 시그니처만 확장); verify.sh exit 0.",
+      "sot_guard": "SOT5(기존 계약 확장, 신규 writer 금지) · SOT3(발송 아님). PC-A1의 목적지 단언을 위한 선행 primitive(원자성 분할)."
+    },
+    {
+      "id": "PC-A1",
+      "title": "ClickUp 실 쓰기 배선 + 목적지 리스트(FY26ClientsPosition)",
+      "reuse_branch": "신규 (position_registration.py 확장 — position_registration.py는 다른 미병합 브랜치가 편집 안 함, 충돌 낮음)",
+      "worktree": "task/clickup-position-live-write",
+      "requirement_ids": [
+        "R1"
+      ],
+      "priority": "P0",
+      "depends_on": [
+        "PC-A0"
+      ],
+      "acceptance_criterion": "tests/test_position_registration.py를 확장한 통합테스트가, 계약형 페이크 ClickUp 어댑터를 주입한 라이브 경로(dry_run=False)에서 비중복·confidence>=0.55 샘플 JD 1건에 대해 clickup_create_task가 설정된 FY26ClientsPosition list_id를 목적지로 정확히 1회 호출됨을 단언; verify.sh exit 0. (시그니처 확장·기존 호출자 회귀는 선행 PC-A0에서 처리)",
+      "sot_guard": "SOT5(run_position_registration/find_duplicate_position 확장, 신규 clickup_writer.py 금지) · SOT3(external_posting_sent=False·secret_emitted=False 유지, ClickUp 인입은 발송 아님) · 하드제외는 이 단계 밖"
+    },
+    {
+      "id": "PC-A2a",
+      "title": "등록 본문 커스텀필드 매퍼(회사·직무·status·원본URL·고용형태·근무지)",
+      "reuse_branch": "신규 (build_registration_body 확장)",
+      "worktree": "task/clickup-position-customfields",
+      "requirement_ids": [
+        "R1"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-A1"
+      ],
+      "acceptance_criterion": "신규 테스트가 필드매퍼가 회사·직무·status(segment)·원본URL·고용형태·근무지 커스텀필드를 정확히 산출함을 단언(연봉·부모-자식 링크는 이 조각 밖); verify.sh exit 0.",
+      "sot_guard": "SOT5(FY26AI_Search 스키마 재사용, 중복 스키마 금지) · SOT3. 연봉(salary_raw)은 후보 자산이므로 후보측 PC-C5에서만 다룸 — 포지션 등록 본문에 salary_raw 명명 금지(명명 충돌 제거)."
+    },
+    {
+      "id": "PC-A2b",
+      "title": "포지션(부모)-후보(자식) 링크 payload — 후보 스테이지 뒤 조립",
+      "reuse_branch": "신규",
+      "worktree": "task/clickup-parent-child-link",
+      "requirement_ids": [
+        "R1"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-A1"
+      ],
+      "acceptance_criterion": "신규 테스트가 기존 포지션(부모) task_id와 후보 결과 픽스처로부터 자식 링크 payload를 정확히 1건 생성함을 단언; 이 조립은 build_registration_body(JD만 받음) 내부가 아니라 후보 스테이지(④/⑤) 소비 지점에서 수행됨을 명시; verify.sh exit 0.",
+      "sot_guard": "SOT5(부모+자식 구조 재사용, 등록 시점 조기 조립 금지 — 후보는 스테이지 4/5에 등장) · SOT3"
+    },
+    {
+      "id": "PC-A3",
+      "title": "register-position Discord 디스패치 핸들러(end-to-end)",
+      "reuse_branch": "task/discord-position-briefing (고유커밋 1개, discord_briefing.py)",
+      "worktree": "task/register-position-dispatch",
+      "requirement_ids": [
+        "R1"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-A1"
+      ],
+      "acceptance_criterion": "신규 테스트가 register-position 슬래시커맨드 인가 통과 payload에서 run_position_registration이 계약형 페이크 어댑터로 정확히 1회 디스패치되고 external_posting_sent=False임을 단언; verify.sh exit 0.",
+      "sot_guard": "SOT3(발송 자동금지, DM 인가 게이트 유지) · SOT5. PC-A4와 공유파일 없음(A3=discord_briefing.py, A4=request_parser.py) — 종전 '공유 request_parser/discord_routing 충돌' 프레이밍 철회. depends_on PC-A1은 순서 편의(페이크 어댑터라 A1 실쓰기 미행사) — 병렬 착수 가능."
+    },
+    {
+      "id": "PC-A4",
+      "title": "임의 포털 URL 등록 파서 확장 + intake-posting-url 회수·병합",
+      "reuse_branch": "task/intake-posting-url (재개/병합; request_parser.py 고유커밋 1개)",
+      "worktree": "task/intake-posting-url",
+      "requirement_ids": [
+        "R1"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-A1"
+      ],
+      "acceptance_criterion": "request_parser 등록 경로가 사람인·잡코리아·greetinghr·programmers 포함 임의 채용 URL을 등록 인입으로 라우팅하고 SEARCH 억제 분기가 회귀 없이 통과; verify.sh exit 0.",
+      "sot_guard": "SOT5(request_parser.py는 intake-posting-url만 편집 — 착수 전 게이트0.5로 그 브랜치 회수/병합, A3와는 공유파일 없음)"
+    },
+    {
+      "id": "PC-B1",
+      "title": "JD→검색 생성기 단일화 결정(라이브 진실 확정) + 문서 회수",
+      "reuse_branch": "main (task/ai-search-strategy-v2 병합됨 PR#30 — 브랜치 재사용 아님, main에서 분기)",
+      "worktree": "task/search-generator-canon",
+      "requirement_ids": [
+        "R6"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "docs/sot 또는 harness goal에 keywords.py(고정표)·llm_keywords.py(LLM)·humansearch_cdp_run(하드코딩) 3중 병존 중 라이브 단일 진실 경로를 확정 기록하고, test_skill_reference_integrity류 테스트가 그 결정 문구를 기계 단언; verify.sh exit 0.",
+      "sot_guard": "SOT5(중복 생성기 회수·단일화; task/linkedin-boolean-inject의 이미 머지된 PR#31 중복 재구현 금지)"
+    },
+    {
+      "id": "PC-B2a",
+      "title": "generate_boolean_tiers 순수함수(정밀⊆표준⊆확장 3단)",
+      "reuse_branch": "main (task/ai-search-strategy-v2 병합됨)",
+      "worktree": "task/linkedin-boolean-tiers",
+      "requirement_ids": [
+        "R6"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-B1"
+      ],
+      "acceptance_criterion": "generate_boolean_tiers(position)가 정밀⊆표준⊆확장 단조확장 3tier를 반환하고, 3단 모두 연차·지역·Open-to-Work 토큰 미포함, Skill 비면 KeywordGenerationError를 단언; verify.sh exit 0.",
+      "sot_guard": "SOT5(llm_keywords 확장, 순수 생성기) · v4금지(파생 로직 v4 .mjs 이식 금지) · SOT2(순수 생성, 브라우저 타이핑 없음)"
+    },
+    {
+      "id": "PC-B2b",
+      "title": "기존 boolean_query 주입 경로 = 정밀 tier 바이트 동일(회귀)",
+      "reuse_branch": "main (PR#31 inject_boolean_queries 병합; task/linkedin-boolean-inject 고유커밋 3개 미병합 — 게이트0.5 회수)",
+      "worktree": "task/linkedin-boolean-inject-parity",
+      "requirement_ids": [
+        "R6"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-B2a"
+      ],
+      "acceptance_criterion": "회귀 테스트가 main의 기존 boolean_query 주입 경로(llm_keywords.inject_boolean_queries)가 generate_boolean_tiers '정밀' tier와 바이트 동일함을 단언; verify.sh exit 0.",
+      "sot_guard": "SOT5(boolean 주입 배선 재수정 금지·PR#31 중복 재구현 금지, linkedin-boolean-inject는 portal_queue_executor.py를 ai-search-pipeline-wip와 동시편집 — 충돌 주의) · v4금지"
+    },
+    {
+      "id": "PC-B3",
+      "title": "확보 검색 URL을 ClickUp 포지션에 저장(사람 검수 게이트 뒤)",
+      "reuse_branch": "신규 (PC-A1 ClickUp writer 재사용)",
+      "worktree": "task/clickup-search-url-store",
+      "requirement_ids": [
+        "R6",
+        "R1"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-A1"
+      ],
+      "acceptance_criterion": "신규 테스트가 사람 검수 승인 플래그가 있는 채널별 검색 URL 묶음을 계약형 페이크 어댑터로 해당 포지션 태스크 커스텀필드/댓글에 정확히 1회 저장하고, 승인 없으면 저장 0회임을 단언; verify.sh exit 0.",
+      "sot_guard": "SOT3(사람 검수 게이트=승인 후에만 저장, 자동 발송 아님) · SOT5. depends_on PC-A1은 실제 ClickUp writer가 필요하므로 정당."
+    },
+    {
+      "id": "PC-B4",
+      "title": "사람인 AND/OR/NOT·잡코리아 칩 라이브 타이핑 소비 배선",
+      "reuse_branch": "main(render_search_for_session 이미 존재) + task/ai-search-pipeline-wip 살베지 (유일 미병합 portal_worker 라이브배선; saramin-search-url은 병합·무편집이라 재사용 대상 아님)",
+      "worktree": "task/portal-search-live-render",
+      "requirement_ids": [
+        "R6"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-B1"
+      ],
+      "acceptance_criterion": "render_search_for_session 산출 입력계획을 portal_worker가 사람인 3박스/잡코리아 칩에 실제 입력하는 라이브 큐 경로에 프로덕션 호출자 1개가 배선되고, 결정론 소비 테스트가 필드/칩 분배 일치를 단언; verify.sh exit 0.",
+      "sot_guard": "SOT2(사람같은 입력, 봇 금지·claude-in-chrome 실입력) · SOT5(게이트0.5에서 ai-search-pipeline-wip portal_worker 회수/살베지, portal_queue_executor.py는 linkedin-boolean-inject와 동시편집 충돌 주의) · SOT3"
+    },
+    {
+      "id": "PC-B5",
+      "title": "STEP E 완화 재검색 루프(통과후보<목표수)",
+      "reuse_branch": "신규",
+      "worktree": "task/boolean-relaxation-loop",
+      "requirement_ids": [
+        "R6"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-B2a",
+        "PC-E1"
+      ],
+      "acceptance_criterion": "순수 함수가 통과후보수·목표수 입력에 정밀→표준→확장 단계 완화 결정을 결정론 반환하고, 무한 반복 방지(최대 단계 캡)·봇 페이싱 경계(PC-E1 페이싱 primitive 재사용)를 테스트로 단언; verify.sh exit 0.",
+      "sot_guard": "SOT2(완화 재검색이 URL 연타·무한재시도로 봇처럼 굴지 않게 캡·페이싱) · SOT5(페이싱은 PC-E1 재사용, 제각각 구현 금지)"
+    },
+    {
+      "id": "PC-C0",
+      "title": "하드제외 매처 정규화 통일 — 공백·제로폭·NFKC 단일 normalize()(2차검증 재현 우회 차단)",
+      "reuse_branch": "신규 (humansearch.hard_exclude_reason/_is_low_tier_school 강화)",
+      "worktree": "task/hardexclude-matcher-normalize",
+      "requirement_ids": [
+        "R5"
+      ],
+      "priority": "P0",
+      "depends_on": [],
+      "acceptance_criterion": "tests/test_humansearch_skill.py 확장이 단일 normalize()(공백 collapse + 제로폭/포맷문자 U+200B..U+200D·U+FEFF strip + NFKC)를 프리랜서·전문대·전각 매칭 전에 적용함을 파라미터라이즈로 단언: education='OO전 문 대학 졸업'→low_tier_school(현행 None=RED), visible_text='프리\\u200b랜서'→freelancer(현행 None=RED), 'ＦＲＥＥＬＡＮＣＥ'→freelancer(NFKC 회귀 유지); verify.sh exit 0.",
+      "sot_guard": "하드제외 매처 정확성(2차검증 V1·재현: 띄어쓰기·제로폭 우회) · SOT5(freelancer/school 매칭을 단일 normalize로 통일, 제각각 collapse 금지). 하드제외 3면 배선(C1a/C3a)의 선행 정확성 primitive — 안 부르는 것(배선)뿐 아니라 불러도 새는 것(매처)까지 닫는다."
+    },
+    {
+      "id": "PC-C1a1",
+      "title": "러너 dict→CapturedProfile 재구성 어댑터(fail-closed, 무손실 요구 아님)",
+      "reuse_branch": "신규 (models.CapturedProfile 재구성 헬퍼)",
+      "worktree": "task/captured-profile-reconstruct",
+      "requirement_ids": [
+        "R5"
+      ],
+      "priority": "P0",
+      "depends_on": [],
+      "acceptance_criterion": "신규 테스트가 register dict→CapturedProfile 재구성 헬퍼가 가용 필드(education·employment_history[EmploymentTenure 튜플]·visible_text 등)를 복원하고, 하드제외 판정에 필요한 필수 필드가 결손된 dict에는 fail-closed(제외 판정)로 처리함을 단언; verify.sh exit 0. (2차검증 V2: 원본 dict에 ocr_text가 없을 수 있어 \"무손실 재구성\"은 불가능 — 무손실 요구를 삭제하고 가용필드 복원+결손 fail-closed로 재정의)",
+      "sot_guard": "하드제외 fail-open 금지(형상 결손 시 제외) · SOT5(models 재사용, 제2 프로필 타입 금지). PC-C1a 등록 게이트의 선행 primitive."
+    },
+    {
+      "id": "PC-C1a",
+      "title": "하드제외 게이트를 등록 경계(register.eligible())에 배선",
+      "reuse_branch": "신규 (humansearch.hard_exclude_reason 재사용; task/humansearch-multipos 회피)",
+      "worktree": "task/humansearch-hardexclude-gate",
+      "requirement_ids": [
+        "R5"
+      ],
+      "priority": "P0",
+      "depends_on": [
+        "PC-C1a1",
+        "PC-C0"
+      ],
+      "acceptance_criterion": "tests/test_humansearch_register.py에서 score>=70·유효URL이나 (a)프리랜서 마커, (b)단기이직2회 신호, (c)전문대(PORTAL_SCHOOL_CUT_CHANNELS 채널) 후보가 humansearch_register.eligible() 반환에 각각 0건 포함되고 정상 후보는 통과함을 단언(현행 eligible()은 score+URL만 보고 hard_exclude_reason 미호출=RED); PC-C1a1 재구성 헬퍼로 dict→CapturedProfile 후 PC-C0 강화 매처로 hard_exclude_reason 적용; verify.sh exit 0.",
+      "sot_guard": "하드제외(프리랜서·단기이직2회+·전문대) 등록 전 필수 · SOT5(기존 hard_exclude_reason 재사용, 제2 제외로직 금지) · SOT3 · 학교컷은 PORTAL_SCHOOL_CUT_CHANNELS 채널만 · fail-open 금지(재구성=C1a1, 매처=C0)"
+    },
+    {
+      "id": "PC-C1b",
+      "title": "발송 승격 게이트 하드제외(미래 자동발송용, 범위 한정 — 라이브 누출차단 primitive 아님)",
+      "reuse_branch": "신규 (humansearch 점수→PositionMatch 승격 경계 확장)",
+      "worktree": "task/humansearch-sendgate-hardexclude",
+      "requirement_ids": [
+        "R5"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-C1a1",
+        "PC-C3a"
+      ],
+      "acceptance_criterion": "자동 발송이 활성화될 때 CapturedProfile→PositionMatch 승격 지점(현행 유일 라이브 승격은 러너 humansearch_cdp_run.py:162)에 hard_exclude 통과 후보만 승격되도록 필터를 두어 eligible_matches_for_send로 흘러가는 후보에 프리랜서·단기이직2회·전문대 0건임을 단언; verify.sh exit 0.",
+      "sot_guard": "하드제외 send면(미래 자동발송) · SOT5(승격 경계 단일 필터, 러너 승격=C3a와 이중 로직 아님) · SOT3. ⚠️2차검증 V2·T확인: eligible_matches_for_send는 현재 프로덕션 호출자 0개(사람 발동 스킬)이고 오늘의 라이브 누출은 등록면(C1a)+러너면(C3a)에서 이미 닫힌다 → C1b는 미래 자동발송 방어일 뿐 독립 P0 누출차단이 아님(종전 P0 오지정 철회)."
+    },
+    {
+      "id": "PC-C2",
+      "title": "포지션당 전수조사 결과수 판단 트리(순수함수, 채널별 밴드)",
+      "reuse_branch": "신규 (humansearch.py 확장)",
+      "worktree": "task/humansearch-result-count-tree",
+      "requirement_ids": [
+        "R7"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "plan_result_count_traversal(channel,result_count)가 docs/sot/22 result_count_decision_tree를 채널별로 읽어 사람인/잡코리아(5~80 전수·81~300 상위40·300+ AND추가/포기)와 RPS(4→포기,5·60 전수·61~200 상위20·200+ 조건추가)의 밴드 경계에서 각각 SOT22와 일치 결정 반환함을 파라미터라이즈 테스트로 단언(RPS 60 상한을 전 채널에 복사하면 사람인/잡코리아 61~80 GOLD가 잘려 RED); verify.sh exit 0.",
+      "sot_guard": "SOT5(SOT22에서 채널별 밴드 읽어 이중정의 방지, RPS 밴드 전채널 복사 금지, 신규 러너/스크립트 금지) · SOT2(라이브 전수 순회는 후속, 페이싱 필수)"
+    },
+    {
+      "id": "PC-C3a",
+      "title": "러너면 하드제외 — humansearch_cdp_run 캡처 직후 results.json 하드제외 0건",
+      "reuse_branch": "task/humansearch-multipos (재개; humansearch_cdp_run.py)",
+      "worktree": "task/humansearch-runner-hardexclude",
+      "requirement_ids": [
+        "R5",
+        "R7"
+      ],
+      "priority": "P0",
+      "depends_on": [
+        "PC-C0"
+      ],
+      "acceptance_criterion": "humansearch_cdp_run이 프로필 캡처(CapturedProfile prof 보유, :162 승격 직전) 직후 hard_exclude_reason(prof,channel)을 적용해 results.json 산출에 프리랜서·단기이직2회·전문대 대상 0건임을 러너 레벨 테스트로 단언(하드제외 3면 중 러너/results.json면); verify.sh exit 0.",
+      "sot_guard": "하드제외 러너면 차단(3면 중 마지막) · SOT5(multipos·preflight 두 미병합 브랜치 humansearch_cdp_run 충돌 회수, hard_exclude_reason 재사용) · 매처 정확성은 PC-C0 재사용. 2차검증 V2: 러너면을 3-dep P1 뒤에 두면 하드제외 불변식이 P0에서 2/3만 닫힘 → P0로 승격."
+    },
+    {
+      "id": "PC-C3b",
+      "title": "전수조사 — cards[:max_profiles] 하드캡 제거 + collect_cards &start 다중페이지 순회",
+      "reuse_branch": "task/humansearch-multipos (재개/병합)",
+      "worktree": "task/humansearch-multipos",
+      "requirement_ids": [
+        "R7"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-C2",
+        "PC-E1"
+      ],
+      "acceptance_criterion": "humansearch_cdp_run이 plan_result_count_traversal(PC-C2) 결정으로 GOLD 밴드 전건을 순회하고 collect_cards가 &start=N 오프셋 다중페이지를 순회하여 26~60건 GOLD가 페이지당 25로 잘리지 않음을 러너 레벨 테스트로 단언(다중페이지 순회는 PC-E1 페이싱 재사용); verify.sh exit 0.",
+      "sot_guard": "전수조사(GOLD 전건, 하드캡 금지) · SOT2(다중페이지 사람같은 딜레이 — PC-E1 재사용) · SOT5(multipos 회수). 러너면 하드제외는 PC-C3a에서 별도 차단(원자성 분할)."
+    },
+    {
+      "id": "PC-C4a",
+      "title": "리스팅 페이지 무조건 저장 save_rail 어댑터(코드+테스트)",
+      "reuse_branch": "신규 (harvest_runner.SaveRail 계약 재사용 — origin/task/reservoir-harvest-queue 병합됨)",
+      "worktree": "task/listing-save-rail",
+      "requirement_ids": [
+        "R8"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "tests/test_listing_save_rail.py에서 M개 CandidateResultCard를 카운팅 페이크 save_rail에 흘리면 상세진입·점수게이트 없이 정확히 M회 저장, harvest 로그 in=out=M·dropped=0, 예외 시 fail-closed dropped+이유; verify.sh exit 0.",
+      "sot_guard": "리스팅-저장(무조건 전건, 점수/하드제외 게이트 넣지 말 것=R8 위반) · SOT5(harvest_runner save_rail 계약은 이미 병합돼 있어 SQLite 영속(PC-D1) 불요 — 카운팅 페이크로 독립 착수) · R4 양보 유지"
+    },
+    {
+      "id": "PC-C4b",
+      "title": "리스팅-저장 SOT 드리프트 정합(§5:178·SOT25 INV6 → R8)",
+      "reuse_branch": "신규 (문서 정합)",
+      "worktree": "task/listing-save-sot-drift",
+      "requirement_ids": [
+        "R8"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "multi-position-sourcing-layer §5:178('Do not save list pages')·SOT25 INV6('상세=저장') 문구를 CLAUDE.md R8('리스팅에서도 저장') 방향으로 정합하고, 문서 참조 무결성 테스트가 정합 문구를 기계 단언; verify.sh exit 0.",
+      "sot_guard": "SOT5(운영 SOT 단일화, 저장 vs 금지 3중 드리프트 제거) · R8"
+    },
+    {
+      "id": "PC-C5",
+      "title": "CapturedProfile·CandidateResultCard에 salary_raw/salary_source 필드 추가",
+      "reuse_branch": "신규 (models.py 확장; humansearch_cdp_run 브랜치 회피)",
+      "worktree": "task/captured-profile-salary",
+      "requirement_ids": [
+        "R9"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "tests/test_captured_profile_salary.py가 (1)salary_raw(str|None, 미확인 None=fail-closed)·salary_source 필드 존재, (2)harvest_runner.run_harvest_cycle의 save_rail 저장 시 salary_raw 손실없음 보존을 단언; verify.sh exit 0. (make red-ledger GREEN은 게이트0 시작자격 전제조건이며 이 조각의 인수기준이 아님)",
+      "sot_guard": "연봉=자산(사람인·잡코리아 처우 캡처 1차 필드, 후보측) · SOT5(models/harvest_runner 확장, 3번째 러너 금지) · v4금지(profile-archiver v4-only, v5 자체 레일) · SOT3"
+    },
+    {
+      "id": "PC-C6",
+      "title": "사람인/잡코리아 프로필 캡처·저장 러너(연봉 자산 실수집)",
+      "reuse_branch": "main (task/saramin-search-url 병합·무편집) + PC-B4 라이브 포털 배선",
+      "worktree": "task/portal-capture-runner",
+      "requirement_ids": [
+        "R9",
+        "R8"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-C5",
+        "PC-B4",
+        "PC-C4a"
+      ],
+      "acceptance_criterion": "사람인/잡코리아 라이브 프로필에서 salary_raw 포함 CapturedProfile을 save_rail로 레포내 저장소에 무조건 저장하는 프로덕션 경로가 배선되고(리스팅-저장 레일은 PC-C4a 단일 계약 재사용), 결정론 파서 테스트가 연봉 원문 추출을 단언; verify.sh exit 0.",
+      "sot_guard": "연봉=자산 · 리스팅-저장(PC-C4a 계약 단일화, 레일 갈래 금지) · SOT2(봇 금지·양보) · SOT1(3사 자동로그인 비차단) · v4금지"
+    },
+    {
+      "id": "PC-D1",
+      "title": "save_rail → 레포내 SQLite 영속 저수지 store 바인딩(런간 누적)",
+      "reuse_branch": "origin/task/reservoir-harvest-queue (병합됨, harvest_runner 재사용)",
+      "worktree": "task/reservoir-sqlite-store",
+      "requirement_ids": [
+        "R3",
+        "R8"
+      ],
+      "priority": "P0",
+      "depends_on": [],
+      "acceptance_criterion": "run_harvest_cycle을 2회(런1:3건 발견, 런2:2건 중 1건은 런1과 canonical_url 중복) 구동하면 임시 SQLite store에 정확히 4행이 canonical_url로 중복제거 영속됨을 단언; harvest 로그는 현행 계약대로 아이템당 1건(in=out=N, dropped=0)이며(프로필당 로그 아님 — SaveRail=Callable[[object],None] 반환 None이라 records 주입 불가), 프로필 단위 감사 라인은 store 계층 책임으로 둔다; verify.sh exit 0.",
+      "sot_guard": "자립화(store 레포내, HOME/Desktop 밖) · INV6 무조건저장(하드제외는 이 단계 아님) · SOT5(harvest_runner save_rail 재사용, 새 저장루프 금지) · SOT3"
+    },
+    {
+      "id": "PC-D2a",
+      "title": "Harvest 드라이버 순수 결정함수(주기·yield·anti-bot 간격·REPO_DIR 해석)",
+      "reuse_branch": "신규",
+      "worktree": "task/harvest-driver-decisions",
+      "requirement_ids": [
+        "R3"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-D1",
+        "PC-F1",
+        "PC-E1"
+      ],
+      "acceptance_criterion": "결정론 pytest가 (1)주기 산출, (2)owner_activity yield 시 skip 결정, (3)anti-bot 간격(PC-E1 페이싱 재사용)을 순수함수로 단언; verify.sh exit 0. (REPO_DIR 해석은 PC-D2a2로 분리)",
+      "sot_guard": "SOT2(창 반복개폐·URL연타·알람후 무한재시도 금지 결정 인코딩, R4 양보) · 자립화(경로 드리프트 제거) · SOT5(페이싱 PC-E1 재사용)"
+    },
+    {
+      "id": "PC-D2a2",
+      "title": "Harvest/데몬 REPO_DIR 해석 순수함수(자립화 경로)",
+      "reuse_branch": "신규",
+      "worktree": "task/repo-dir-resolution",
+      "requirement_ids": [
+        "R3"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "순수함수가 REPO_DIR을 현재 체크아웃으로 결정론 해석하고 HOME/Desktop 등 외부 경로를 배제함을 단언(PC-D2a·F4a2가 재사용); verify.sh exit 0.",
+      "sot_guard": "자립화(경로 드리프트 제거, 레포내 고정) · SOT5(경로 해석 단일 출처, 제각각 금지)"
+    },
+    {
+      "id": "PC-D2b",
+      "title": "상시 Harvest 드라이버 실운영(라이브 경로) — 페이크 실행자 호출횟수로 검증",
+      "reuse_branch": "신규 (dry_run-only launchd loop 교체)",
+      "worktree": "task/reservoir-harvest-driver",
+      "requirement_ids": [
+        "R3"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-D2a",
+        "PC-D5",
+        "PC-F3"
+      ],
+      "acceptance_criterion": "주입된 페이크 실행자(ExecuteHarvestItem)의 호출횟수/인자로 드라이버가 dry_run이 아닌 라이브 사이클 경로를 호출함을 결정론 단언(로그 문구 아님); 실제 상주 운영은 수동 확인 + verdict 증거로 축적; REPO_DIR 이 체크아웃 고정; verify.sh exit 0(기계검증 부분).",
+      "sot_guard": "SOT2(양보·자동재개, 봇 금지) · 자립화 · SOT5. 라이브 검색 실행은 PC-D5(ExecuteHarvestItem 어댑터) 경유 — 스텁 위 '라이브인 척' 금지, 세번째 포털 스택 급조 금지."
+    },
+    {
+      "id": "PC-D3",
+      "title": "임베딩 영속층(Supabase pgvector) 연결 + match 라이브 소비",
+      "reuse_branch": "origin/task/reservoir-embeddings (병합됨) + task/ai-search-pipeline-wip match.py(+8) 살베지 확인",
+      "worktree": "task/reservoir-embed-persist",
+      "requirement_ids": [
+        "R3"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-D1"
+      ],
+      "acceptance_criterion": "ingest_profile_embedding이 pgvector store에 upsert하고 match_jd_to_reservoir가 런간 누적된 영속 저수지에서 top-K를 읽어 결정론 재랭킹함을 계약형 store 테스트로 단언; verify.sh exit 0.",
+      "sot_guard": "자립화 · SOT5(embed.py/match.py 확장; ai-search-pipeline-wip의 match.py 미병합 편집 게이트0.5 회수) · 하드제외는 등록/발송 단에서"
+    },
+    {
+      "id": "PC-D4",
+      "title": "SOT25 + aisearch SKILL에 reservoir/harvest 경로 배선",
+      "reuse_branch": "신규",
+      "worktree": "task/aisearch-reservoir-wiring",
+      "requirement_ids": [
+        "R3"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-D1"
+      ],
+      "acceptance_criterion": "docs/sot/25 실행 스테이지와 .claude/skills/aisearch/SKILL.md가 harvest/reservoir/segment 경로를 명시 호출하도록 갱신되고, test_skill_reference_integrity가 reservoir 경로 참조 존재를 단언; verify.sh exit 0.",
+      "sot_guard": "SOT5(운영 SOT/스킬 단일화) · v4금지 · 출력계약(profile_url·score·why_fit·summary)"
+    },
+    {
+      "id": "PC-D5",
+      "title": "라이브 ExecuteHarvestItem 어댑터(GuardedPortalSearchRunner→harvest 계약, 챌린지 STOP)",
+      "reuse_branch": "task/ai-search-pipeline-wip 살베지 (portal_worker 라이브배선) + GuardedPortalSearchRunner(portal_runtime.py) 재사용",
+      "worktree": "task/harvest-live-executor",
+      "requirement_ids": [
+        "R3",
+        "R4"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-F3"
+      ],
+      "acceptance_criterion": "GuardedPortalSearchRunner를 harvest 계약(HarvestItem→Iterable[profile], 챌린지 감지 시 STOP)으로 감싸는 어댑터가, 결정론 소비 테스트에서 프로필 Iterable 반환 및 챌린지 감지 시 STOP(빈 반환+사유)을 단언; verify.sh exit 0. (현행 run_harvest_cycle의 ExecuteHarvestItem 계약에는 비-테스트 구현자·호출자가 0개 — 이 어댑터가 그 이음매를 채운다)",
+      "sot_guard": "SOT2(챌린지 STOP·봇 금지·페이싱) · SOT5(3번째 포털 스택 금지, 기존 GuardedPortalSearchRunner 래핑; queue_runner ExecuteItem 계약과 시그니처 다르므로 어댑터로 정합) · SOT1(자동로그인 비차단)"
+    },
+    {
+      "id": "PC-E1",
+      "title": "봇방지 페이싱 primitive(harvest_policy 결정론 간격·지터·최대단계 캡, SOT22 단일 출처)",
+      "reuse_branch": "신규 (harvest_policy.py 확장 — SOT22 delay 상수 읽기)",
+      "worktree": "task/anti-bot-pacing",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "harvest_policy 순수함수가 docs/sot/22의 delay 상수(random_delay_between_keywords_ms 20000~60000·short_delay_ms 2000~5000·keyboard delay)를 읽어 결정론 간격/지터/최대단계 캡을 반환하고, 무한재시도 방지·채널별 간격 경계를 테스트로 단언; verify.sh exit 0.",
+      "sot_guard": "SOT2(봇 금지·URL 연타·알람 후 무한재시도 구조적 차단) · SOT5(단일 페이싱 출처 — PC-B5·C3·D2a·F4a가 재사용, 제각각 재구현 금지; SOT22에서 상수 읽어 이중정의 방지). 현행 harvest_policy는 worker_should_yield(R4 양보)만 있고 페이싱 전무 — 이 primitive가 blocking primitive."
+    },
+    {
+      "id": "PC-F1",
+      "title": "owner-activity detector 순수모듈(compute_yield_decision)",
+      "reuse_branch": "task/ai-search-pipeline-wip (owner_activity.py·test_owner_activity.py 미병합 선존 — 게이트0.5 회수 후 detect_owner_activity_snapshot을 순수 compute_yield_decision 계약으로 추출/개명; 신규 파일 재작성 금지)",
+      "worktree": "task/owner-activity-detector",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P0",
+      "depends_on": [],
+      "acceptance_criterion": "tests/test_owner_activity.py에서 compute_yield_decision가 (a)frontmost_is_chrome=True→yield=True, (b)frontmost_is_chrome=False & os_idle_seconds>=180→yield=False(재개), (c)False & idle<180→yield=True를 결정론 반환하고, 이 커밋은 owner_activity.py(회수분)와 테스트 외 소스 미변경; verify.sh exit 0. (compute_yield_decision 심볼 자체는 신규 — 회수한 detector를 순수 계약으로 리팩터해 도입, 병합 시 owner_activity.py 재생성 충돌 방지)",
+      "sot_guard": "SOT2(R4 양보·자동재개 첫 코드강제) · SOT5(ai-search-pipeline-wip owner_activity.py 회수·개명, Playwright/raw CDP 두 스택 결합 금지, worker_should_yield 계약만) · SOT1(읽기 신호만, 로그인 클릭 없음) · SOT3"
+    },
+    {
+      "id": "PC-F2",
+      "title": "detector→라이브 러너(humansearch_cdp_run) 배선 + multipos/preflight 회수",
+      "reuse_branch": "task/humansearch-multipos (+ origin/task/humansearch-preflight 병합) + ai-search-pipeline-wip portal_worker 살베지 확인",
+      "worktree": "task/humansearch-r4-wiring",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-F1",
+        "PC-C3b"
+      ],
+      "acceptance_criterion": "humansearch_cdp_run 순회 루프가 각 프로필 전 compute_yield_decision→worker_should_yield로 양보/재개하고 캡차 감지 시 STOP함을 러너 테스트로 단언; verify.sh exit 0.",
+      "sot_guard": "SOT2(라이브 경로 R4 첫 강제·봇 금지·캡차 STOP) · SOT5(두 미병합 브랜치 humansearch_cdp_run 충돌 회수; ai-search-pipeline-wip도 동일 러너군 편집 — 게이트0.5) · SOT1"
+    },
+    {
+      "id": "PC-F3",
+      "title": "_has_security_challenge를 SOT26 unified_regex로 통일(완전 파리티)",
+      "reuse_branch": "main (task/portal-bg-login 병합됨 — _has_security_challenge in main:portal_login.py)",
+      "worktree": "task/portal-challenge-regex",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "신규 테스트가 portal_login._has_security_challenge가 SOT26 block_detection.unified_regex 전체 토큰 집합(recaptcha·자동입력 방지·/uas/login·login-cap·unusual activity·verify you·multiple sign-ins·Only one session·enterprise-authentication·authwall·protechts·2단계·인증번호 등)과 완전 파리티(부분집합 아님)임을 단언하고, SOT26을 단일 출처로 읽어 파생함; verify.sh exit 0.",
+      "sot_guard": "SOT1(자동로그인 비차단) · SOT2(봇 금지·챌린지 재시도 안 함, RPS 멀티세션 락 신호 포함) · SOT5(SOT26 단일 출처, 부분집합 열거 금지)"
+    },
+    {
+      "id": "PC-F4a",
+      "title": "자동재개 데몬 순수 결정함수(idle→resume·REPO_DIR·페이크 실행자 호출횟수 경계)",
+      "reuse_branch": "신규",
+      "worktree": "task/portal-resume-decisions",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-D2a",
+        "PC-F1",
+        "PC-F2",
+        "PC-E1"
+      ],
+      "acceptance_criterion": "결정론 pytest가 (1)idle→라이브 재개 결정, (2)크롬 점유→양보(PC-F1 재사용), (3)anti-bot 간격(PC-E1 재사용)을 순수함수로 단언; verify.sh exit 0. (REPO_DIR·라이브 경로 선택은 PC-F4a2)",
+      "sot_guard": "SOT2(양보→자동재개 결정, 봇 금지) · 자립화(Desktop 경로 금지) · SOT3 · SOT5(페이싱 PC-E1 재사용)"
+    },
+    {
+      "id": "PC-F4a2",
+      "title": "자동재개 라이브 경로 선택 결정함수(페이크 실행자 호출횟수 + REPO_DIR)",
+      "reuse_branch": "신규",
+      "worktree": "task/resume-live-path-decision",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-F4a",
+        "PC-D2a2"
+      ],
+      "acceptance_criterion": "주입 페이크 실행자의 호출횟수/인자로 데몬이 dry_run 아닌 라이브 경로를 선택함을 결정론 단언하고 REPO_DIR(PC-D2a2)이 이 체크아웃으로 고정됨을 단언; verify.sh exit 0.",
+      "sot_guard": "SOT2(라이브 재개, 봇 금지) · 자립화(PC-D2a2 재사용) · SOT3"
+    },
+    {
+      "id": "PC-F4b",
+      "title": "상주 자동재개 데몬 실운영(라이브) + 경로 드리프트 제거",
+      "reuse_branch": "신규 (search-loop.sh/launchd 교체)",
+      "worktree": "task/portal-resume-daemon",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-F4a",
+        "PC-D2b",
+        "PC-D5"
+      ],
+      "acceptance_criterion": "실제 상주 데몬이 손 떼면(idle) 라이브 사이클을 자동 재개하고 사장님 크롬 점유 시 양보함을 수동 확인 + verdict 증거로 축적(순수 결정은 PC-F4a에서 기계검증), REPO_DIR 이 체크아웃 고정; verify.sh exit 0(기계검증 부분).",
+      "sot_guard": "SOT2(양보→자동재개, 봇 금지) · 자립화(Desktop 경로 금지) · SOT3. 상주 데몬은 단일 pytest로 완결 판정 불가 — 결정 함수(F4a)로 기계검증 + 상주 운영은 수동 verdict."
+    },
+    {
+      "id": "PC-F5",
+      "title": "INV5 위반 제거 — portal_worker linkedin_rps 전체 attach → raw CDP 단일탭",
+      "reuse_branch": "main (task/portal-bg-login 병합됨 — connect_over_cdp in main:portal_worker.py:513)",
+      "worktree": "task/portal-inv5-rawcdp",
+      "requirement_ids": [
+        "R4"
+      ],
+      "priority": "P2",
+      "depends_on": [],
+      "acceptance_criterion": "portal_worker linkedin_rps 분기가 connect_over_cdp 전체 attach를 쓰지 않고 raw 단일탭 경로를 쓰며 browser_policy assert가 통과함을 테스트로 단언; verify.sh exit 0.",
+      "sot_guard": "SOT26 INV5(전체 attach 금지) · SOT5(raw CDP 스택 단일화, 세번째 스택 금지; portal_worker.py는 ai-search-pipeline-wip 미병합 편집과 충돌 — 게이트0.5) · SOT1"
+    },
+    {
+      "id": "PC-G1",
+      "title": "아웃리치 JD 1,899자 캡 가드(assert_outreach_jd_within_cap)",
+      "reuse_branch": "task/track-claude-skills (스킬 벤더링 회수 뒤에 착지)",
+      "worktree": "task/outreach-jd-cap",
+      "requirement_ids": [
+        "R2",
+        "R10",
+        "RE2"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "assert_outreach_jd_within_cap('가'*1900)은 OutreachJdCapError를 raise하고 assert_outreach_jd_within_cap('가'*1899)는 예외 없이 반환한다(가드 부재 RED→구현 GREEN); verify.sh exit 0.",
+      "sot_guard": "SOT3(길이 검증만, Send/insert 자동 금지·초과 시 STOP) · SOT5(벤더/전역스킬 1899·R20 재정의 금지·재사용, 3채널 신설 금지) · v4금지(§1A v4 desktop 경로 미의존)"
+    },
+    {
+      "id": "PC-G2",
+      "title": "LinkedIn InMail 본문 컴포저(build_linkedin_inmail_jd, 순수함수)",
+      "reuse_branch": "task/track-claude-skills",
+      "worktree": "task/linkedin-jd-composer",
+      "requirement_ids": [
+        "R2",
+        "R10"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-G1"
+      ],
+      "acceptance_criterion": "tests/test_linkedin_inmail_jd.py에서 ax-sales-lead 골든 픽스처 입력에 반환 문자열이 (1)R20 회사브리핑 7요소 전부 (2)R21 P.S. CTA(valuehire.cc/resume) (3)Send/브라우저 부수효과 0(문자열만 반환)을 단언; verify.sh exit 0. (1,899자 캡 통과는 PC-G2b)",
+      "sot_guard": "SOT3(문자열만 반환, 자동 Send 없음) · SOT5(벤더 스펙 확장, 신규 러너 금지·게이트0.5 회수) · v4금지 · 하드제외 상류 게이트(eligible 후보에만)"
+    },
+    {
+      "id": "PC-G2b",
+      "title": "InMail 컴포저 산출이 1,899자 캡가드 통과(길이 불변식)",
+      "reuse_branch": "task/track-claude-skills",
+      "worktree": "task/linkedin-jd-cap-integration",
+      "requirement_ids": [
+        "R2",
+        "R10",
+        "RE2"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-G2",
+        "PC-G1"
+      ],
+      "acceptance_criterion": "긴 회사브리핑/JD 픽스처에 build_linkedin_inmail_jd 산출이 assert_outreach_jd_within_cap(PC-G1)을 통과(<=1899)하고, 초과 유발 픽스처에서는 OutreachJdCapError로 STOP함을 단언; verify.sh exit 0.",
+      "sot_guard": "SOT3(초과 시 STOP, 자동 Send 없음) · SOT5(PC-G1 가드 재사용, 길이 로직 재구현 금지)"
+    },
+    {
+      "id": "PC-G3",
+      "title": "사람인/잡코리아/Gmail 채널 JD 커스터마이저(전역 스킬 회수·성문화)",
+      "reuse_branch": "task/track-claude-skills",
+      "worktree": "task/portal-jd-composers",
+      "requirement_ids": [
+        "R2",
+        "R10"
+      ],
+      "priority": "P2",
+      "depends_on": [
+        "PC-G2"
+      ],
+      "acceptance_criterion": "각 채널 순수 컴포저가 전역 ~/.claude/skills 자산을 회수해 구현되고, Gmail은 create_draft 초안까지만(자동 send 없음) 생성하는 테스트가 통과; verify.sh exit 0.",
+      "sot_guard": "SOT3(초안까지만, 마지막 클릭 사람) · SOT5(전역 스킬 회수 후 성문화, 중복 재구현 금지) · v4금지"
+    },
+    {
+      "id": "PC-H1",
+      "title": "거버넌스 CI 자립화 — HOME 외부파일 hard-assert 제거/skip 가드",
+      "reuse_branch": "task/track-claude-skills",
+      "worktree": "task/governance-ci-selfcontained",
+      "requirement_ids": [
+        "R5"
+      ],
+      "priority": "P1",
+      "depends_on": [],
+      "acceptance_criterion": "test_skill_sot_preflight_gate·test_skill_reference_integrity가 클린 러너(HOME=/home/runner)에서도 GREEN이 되도록 레포내 참조로 전환되고 verify.yml이 ubuntu에서 exit 0; verify.sh exit 0.",
+      "sot_guard": "SOT5(게이트 기계 재현성=harness 목적, HOME 결합 제거) · 자립화 · 거버넌스 문구 약화 금지"
+    },
+    {
+      "id": "PC-H2",
+      "title": ".claude/skills git 추적 + 자립화 게이트를 verify.sh/CI에 배선",
+      "reuse_branch": "task/track-claude-skills (재개/병합)",
+      "worktree": "task/track-claude-skills",
+      "requirement_ids": [
+        "R5"
+      ],
+      "priority": "P1",
+      "depends_on": [
+        "PC-H1"
+      ],
+      "acceptance_criterion": ".gitignore가 .claude/skills를 추적하고 check_self_contained.py가 verify.sh(pytest)에 배선되어 HOME 외부의존 회귀를 RED로 잡음; verify.sh exit 0.",
+      "sot_guard": "SOT5(자립화 게이트 강제, 스킬 유실/드리프트 방지) · v4금지"
+    }
+  ]
+}

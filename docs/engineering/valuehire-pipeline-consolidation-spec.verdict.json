@@ -1,0 +1,91 @@
+{
+  "claim_id": "valuehire-pipeline-consolidation-spec-adversarial-verify-2026-07-01",
+  "target": "docs/engineering/valuehire-pipeline-consolidation-spec-2026-07-01.md",
+  "mode": "noncode-planning",
+  "risk": "L3",
+  "method": "G(workflow doc, 4 internal critics) -> T(machine git/grep/pytest by main session) + V1(Codex, different tool, fresh) + V2(reset-context Claude, no conversation memory). All three independently re-ran commands; V1 evidence reproduced by T.",
+
+  "generator": {
+    "author": "workflow wf_78561c0e-020 (Claude) + 4 internal critics",
+    "claim": "37-slice consolidation spec is factually grounded, duplication map complete after self-correcting the ai-search-pipeline-wip miss, slices atomic (one acceptance criterion each), safe to start P0 (PC-A1/C1a/C1b/D1/F1).",
+    "artifacts": [
+      "docs/engineering/valuehire-pipeline-consolidation-spec-2026-07-01.md",
+      "docs/engineering/valuehire-pipeline-consolidation-backlog-2026-07-01.json"
+    ]
+  },
+
+  "t_machine": {
+    "author": "main session (Claude) — objective git/grep/pytest only",
+    "verify_sh": {"command": "./verify.sh", "result": "614 passed, 5 subtests passed in 5.82s", "exit_code": 0},
+    "facts_confirmed": {
+      "branches_delete_safe (ai-search-strategy-v2/saramin-search-url/portal-bg-login)": "0 unique commits vs main (20/44/39 behind) — CONFIRMED",
+      "ai-search-pipeline-wip unmerged": "1 unique commit, 19 files, 971 insertions/16 deletions; owner_activity.py present here, absent in main — CONFIRMED",
+      "compute_yield_decision symbol": "absent in main AND wip — CONFIRMED",
+      "hard_exclude_reason production callers": "ZERO (defined humansearch.py:123, referenced only in tests) — CONFIRMED live orphan",
+      "eligible_matches_for_send production callers": "ZERO (only tests + doc/SKILL comments); sole live PositionMatch promotion is humansearch_cdp_run.py:162 — CONFIRMED",
+      "run_harvest_cycle/ExecuteHarvestItem": "only test callers, no live driver — CONFIRMED",
+      "salary/salary_raw in models.py & posting_models.py": "absent repo-wide — CONFIRMED",
+      "1899 outreach guard in code": "absent (only doc/spec strings) — CONFIRMED",
+      "humansearch_cdp_run single-page cap cards[:max_profiles]": "CONFIRMED",
+      "test_skill_reference_integrity.py hard-asserts absolute HOME path": "CONFIRMED (line 72)"
+    },
+    "doc_imprecision": {
+      "portal_worker_edit_size": "doc says '+215'; actual numstat = 209 insertions/6 deletions. LOW, non-material."
+    }
+  },
+
+  "v1_codex": {
+    "author": "Codex (codex-rescue), fresh session, tool=codex exec",
+    "verdict": "not_safe_as_is",
+    "facts_1_to_10": "all CONFIRMED (independent rg/git/nl/sed evidence)",
+    "false_alarm": {"verify_sh": "reported FileNotFoundError: No usable temporary directory found, pytest exit=1 — CODEX SANDBOX artifact, NOT a repo defect. Refuted by T (614 passed, exit 0)."},
+    "live_code_bugs_found": [
+      {"id": "BUG-HX-SCHOOL", "file": "tools/multi_position_sourcing/humansearch.py:142", "problem": "_is_low_tier_school uses raw education (no whitespace collapse) so spaced 전문대 bypasses.", "repro": "education='OO전 문 대학 졸업' -> hard_exclude_reason == None (control 'OO전문대학' -> low_tier_school)", "reproduced_by_T": true, "sev": "high"},
+      {"id": "BUG-HX-FREELANCE-ZWSP", "file": "tools/multi_position_sourcing/humansearch.py:117-131", "problem": "freelancer check collapses \\s+ and NFKC-folds but neither strips zero-width U+200B, so 프리\\u200b랜서 bypasses.", "repro": "visible_text='프리\\u200b랜서 개발자' -> hard_exclude_reason == None (control '프리랜서' -> freelancer; 전각 ＦＲＥＥＬＡＮＣＥ -> freelancer, so NFKC fix works only for 전각)", "reproduced_by_T": true, "sev": "high"},
+      {"id": "BUG-BOOL-FAILOPEN", "file": "tools/multi_position_sourcing/llm_keywords.py:123", "problem": "inject_boolean_queries fails open when LLM returns valid keywords but blank boolean_query ('   ') -> filters {}.", "repro": "codex: inject_boolean_queries(... boolean_query='   ') -> out[0].filters == {}", "reproduced_by_T": false, "sev": "med"},
+      {"id": "BUG-HARVEST-ASYNC", "file": "tools/multi_position_sourcing/harvest_runner.py:76", "problem": "async ExecuteHarvestItem fails inside an already-running event loop (coroutine never awaited).", "repro": "codex: async wrapper around run_harvest_cycle -> RuntimeWarning + saved 0, RuntimeError harvest search failed", "reproduced_by_T": false, "sev": "med", "note": "harvest driver not yet wired (PC-D5 territory)"}
+    ],
+    "plan_defects": [
+      {"id": "ATOMICITY", "problem": "acceptance criteria bundle >1 outcome for PC-A1, PC-C1a, PC-C3, PC-D2a, PC-F4a, PC-G2 — contradicts spec's own '한 조각=인수기준 1개' (spec:13 vs backlog:47).", "sev": "high"},
+      {"id": "GRAPH-CLEAN", "note": "backlog graph OK: missing_deps [], p0_depends_on_non_p0 [], cycles [] — this part HOLDS."}
+    ]
+  },
+
+  "v2_reset_claude": {
+    "author": "Claude general-purpose, reset context (no conversation memory)",
+    "verdict": "partial_yes",
+    "facts_confirmed": "A1(hard_exclude orphan) / A2(wip+owner_activity) / A3(delete-safe branches) / A4(harvest test-only) — all CONFIRMED independently",
+    "plan_defects": [
+      {"id": "C1B-MISFRAME", "problem": "PC-C1b (a P0) targets eligible_matches_for_send, which has 0 production callers, and its 'filter upstream of promotion without touching the runner' mechanism is unrealizable — the sole live promotion is inside the runner (humansearch_cdp_run.py:162). Live send face is actually covered by C1a+C3; one of the 5 P0s does not independently close a live leak.", "reproduced_by_T": true, "sev": "high"},
+      {"id": "DUP-MAP-INCOMPLETE", "problem": "Duplication map claimed complete after self-correction is still missing >=5 unmerged branches with unique commits: ai-search-tdd-goal-prompt(8!), docs-drop-v4-refs(2), home-wip-20260617(2), salvage-home-wip(2), vision-fallback-recovery(1). Worse: task/docs-drop-v4-refs edits docs/ai-search/multi-position-sourcing-layer-2026-06-08.md, the exact file PC-C4b targets -> collision.", "reproduced_by_T": true, "sev": "high"},
+      {"id": "C1A-LOSSLESS-IMPOSSIBLE", "problem": "PC-C1a acceptance demands lossless dict->CapturedProfile reconstruction incl. ocr_text, but the runner dict lacks ocr_text -> 'lossless' is internally impossible (doc already hedges with fail-closed; criterion wording self-contradictory).", "sev": "med"},
+      {"id": "RUNNER-LEAK-P1", "problem": "runner hard-exclude face (PC-C3) sits behind a 3-dep P1, so the '0순위' hard-exclude invariant is only 2/3-closed at P0.", "sev": "med"},
+      {"id": "ATOMICITY", "problem": "A1/C1a/C3 bundle 2-3 tests each (agrees with V1).", "sev": "high"}
+    ]
+  },
+
+  "three_way_agree": {
+    "facts_claims_1_to_10": true,
+    "existing_code_tests_green": true,
+    "spec_is_factually_accurate": true,
+    "spec_safe_to_act_on_as_is": false,
+    "note": "All three (T, V1, V2) agree the spec's FACTS are correct and existing tests pass (614). All three (V1 explicit, V2 explicit, T-confirmed specifics) agree the spec is NOT safe to act on as-is due to plan-level defects + uncaptured live-code bugs."
+  },
+
+  "consolidated_findings_ranked": [
+    {"sev": "high", "type": "live-code-bug", "id": "BUG-HX-SCHOOL", "status": "confirmed_by_T", "fix": "collapse whitespace + strip zero-width in _is_low_tier_school like the freelancer path; add as a hard-exclude-matcher hardening slice (compounds the already-broken hard-exclude invariant)."},
+    {"sev": "high", "type": "live-code-bug", "id": "BUG-HX-FREELANCE-ZWSP", "status": "confirmed_by_T", "fix": "strip zero-width/format chars (U+200B..200D, U+FEFF) before marker match in hard_exclude_reason; RED test with 프리\\u200b랜서."},
+    {"sev": "high", "type": "plan-defect", "id": "DUP-MAP-INCOMPLETE", "status": "confirmed_by_T", "fix": "complete §2 duplication map over ALL unmerged branches (esp. ai-search-tdd-goal-prompt=8 commits, docs-drop-v4-refs collides with PC-C4b target file) before any gate-0.5 salvage/delete."},
+    {"sev": "high", "type": "plan-defect", "id": "C1B-MISFRAME", "status": "confirmed_by_T", "fix": "re-specify PC-C1b: the live send-face hard-exclude belongs at the runner promotion (humansearch_cdp_run.py:162) = merge into PC-C3, or explicitly scope C1b to the FUTURE automated send gate; do not count it as an independent live-leak-closing P0."},
+    {"sev": "high", "type": "plan-defect", "id": "ATOMICITY", "status": "confirmed", "fix": "split PC-A1, PC-C1a, PC-C3, PC-D2a, PC-F4a, PC-G2 so each has exactly one testable acceptance criterion (harness gate 1)."},
+    {"sev": "med", "type": "live-code-bug", "id": "BUG-BOOL-FAILOPEN", "status": "plausible_v1_only", "fix": "reject blank/whitespace boolean_query for boolean channels (fail-closed); reproduce before scheduling."},
+    {"sev": "med", "type": "plan-defect", "id": "C1A-LOSSLESS-IMPOSSIBLE", "status": "confirmed", "fix": "reword PC-C1a acceptance: reconstruct available fields + fail-closed on missing, drop 'lossless incl. ocr_text'."},
+    {"sev": "med", "type": "plan-defect", "id": "RUNNER-LEAK-P1", "status": "confirmed", "fix": "promote the runner hard-exclude face to P0 or fold into C1a so all live leak faces close at P0."},
+    {"sev": "med", "type": "live-code-bug", "id": "BUG-HARVEST-ASYNC", "status": "plausible_v1_only", "fix": "handle already-running event loop in run_harvest_cycle; relevant to PC-D5 when the live driver is wired."},
+    {"sev": "low", "type": "doc-imprecision", "id": "PORTAL-WORKER-215", "status": "confirmed_by_T", "fix": "correct '+215' to '+209' in §2 (non-material)."},
+    {"sev": "info", "type": "false-alarm", "id": "V1-VERIFY-FAIL", "status": "refuted_by_T", "fix": "ignore — codex sandbox temp-dir artifact; real suite is 614 passed exit 0."}
+  ],
+
+  "final_verdict": "The Spec's factual backbone is CONFIRMED accurate by all three independent verifiers, and existing code passes 614 tests. However the Spec is NOT safe to act on as-is: fix 3 plan defects (complete the duplication map incl. docs-drop-v4-refs collision + the 8-commit ai-search-tdd-goal-prompt branch; re-specify the misframed P0 PC-C1b; split 6 non-atomic slices) and add 2 confirmed hard-exclude matcher bypasses (전문대 whitespace, 프리랜서 zero-width) as slices — these compound the already-confirmed unwired hard-exclude invariant. Existing tests green does NOT mean the hard-exclude invariant holds: it is both unwired (0 callers) and leaky (2 reproduced bypasses).",
+  "status": "진행중"
+}
