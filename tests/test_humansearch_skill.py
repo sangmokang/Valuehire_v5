@@ -426,6 +426,12 @@ _WJ, _SHY, _MVS, _VS = (chr(c) for c in (0x2060, 0x00AD, 0x180E, 0xFE0F))
         ("", f"프리{_MVS}랜서", "saramin", "freelancer"),                       # mongolian vowel sep U+180E
         ("", f"프리{_VS}랜서", "saramin", "freelancer"),                        # variation selector U+FE0F
         ("전문" + _WJ + "대학", "backend", "saramin", "low_tier_school"),       # 학교 경로 word joiner
+        # ── 과잉제외 방지: 전문대학원(로스쿨·의전원·MBA)은 하위 아님. normalize 공백접힘이
+        #    '경영 전문 대학원'까지 '전문대학원'으로 접어 과잉제외 widen 하던 것을 차단(자기 적대검증 발견) ──
+        ("법학전문대학원", "backend", "saramin", None),                           # 로스쿨 — 제외 금지
+        ("의학전문대학원 졸업", "backend", "jobkorea", None),                      # 의전원 — 제외 금지
+        ("경영 전문 대학원", "backend", "saramin", None),                          # 공백 MBA — widen 차단
+        ("OO전문대학 졸업", "backend", "saramin", "low_tier_school"),             # 전문대학(원 없음)은 제외 유지
     ],
 )
 def test_h4_hard_exclude_normalizes_before_match(education, visible_text, channel, expected) -> None:

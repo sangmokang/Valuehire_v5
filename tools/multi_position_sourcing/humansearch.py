@@ -169,6 +169,10 @@ def _is_low_tier_school(education: str) -> bool:
     edu = _normalize(education)  # 프리랜서 경로와 동일 정규화 — '전 문 대학'·제로폭 우회 차단
     if not edu:
         return False
+    # 전문대학원(법학·의학·경영 등)은 하위 아님 — '전문대' 부분일치로 인한 과잉제외 방지.
+    # normalize 의 공백 제거가 '경영 전문 대학원'까지 '전문대학원'으로 접으므로 low_tier 마커보다 먼저 건다.
+    if "전문대학원" in edu:
+        return False
     # 지방 국공립·명문대 신호가 있으면 절대 하위로 보지 않는다(allowlist 우선).
     if any(_normalize(name) in edu for name in REGIONAL_NATIONAL_UNIVERSITIES):
         return False
