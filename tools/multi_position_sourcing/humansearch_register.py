@@ -13,7 +13,12 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.multi_position_sourcing.humansearch import PASS_THRESHOLD, _normalize, is_valid_profile_url
+from tools.multi_position_sourcing.humansearch import (
+    PASS_THRESHOLD,
+    _normalize,
+    hard_exclude_reason,
+    is_valid_profile_url,
+)
 from tools.multi_position_sourcing.models import CapturedProfile, Channel, EmploymentTenure
 
 POSITION_ID = "86ey2cdfj"
@@ -91,8 +96,26 @@ def reconstruct_captured_profile(result: object, channel: Channel) -> CapturedPr
     )
 
 
-def eligible(results: list[dict]) -> list[dict]:
-    ok = [r for r in results if r["score"] >= PASS_THRESHOLD and is_valid_profile_url(r["url"])]
+def eligible(results: list[dict], channel: Channel = "linkedin_rps") -> list[dict]:
+    """등록 브리핑에 내보낼 후보만 — 점수·URL 게이트 + 채점 전 하드제외(프리랜서·잦은이직·전문대).
+
+    현행 계약(score>=PASS_THRESHOLD · 유효 URL) 유지 + PC-C1a1 재구성으로 CapturedProfile 복원 후
+    PC-C0 매처(hard_exclude_reason)를 적용해 프리랜서·단기이직2회+·전문대(portal 채널)를 등록 전에 차단한다.
+    재구성 불가(결손 dict)는 fail-closed(제외). 학교컷은 PORTAL_SCHOOL_CUT_CHANNELS 채널만(매처가 판단). SOT5·SOT3.
+    """
+    ok: list[dict] = []
+    for r in results:
+        score = r.get("score", 0)
+        if not isinstance(score, (int, float)) or score < PASS_THRESHOLD:
+            continue  # 점수 미달(또는 비수치) → 제외 (fail-closed)
+        if not is_valid_profile_url(r.get("url")):
+            continue  # URL 무효/결손 → 제외
+        profile = reconstruct_captured_profile(r, channel)
+        if profile is None:
+            continue  # 재구성 불가(결손) → fail-closed 제외
+        if hard_exclude_reason(profile, channel) is not None:
+            continue  # 프리랜서·잦은이직·전문대(portal) → 채점 전 하드제외
+        ok.append(r)
     return sorted(ok, key=lambda r: -r["score"])
 
 
