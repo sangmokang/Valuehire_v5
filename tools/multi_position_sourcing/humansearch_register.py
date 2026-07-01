@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import urllib.request
@@ -109,11 +110,11 @@ def eligible(results: list[dict], channel: Channel) -> list[dict]:
         if not isinstance(r, dict):
             continue  # 비dict 항목 → fail-closed skip(크래시 방지)
         score = r.get("score", 0)
-        # NaN 은 어떤 비교도 False 라 'score<threshold' 를 통과한다 → 양수형(>=)으로 판정해 NaN·비수치 제외.
-        if not (isinstance(score, (int, float)) and score >= PASS_THRESHOLD):
-            continue  # 점수 미달·비수치·NaN → 제외 (fail-closed)
-        url = r.get("url") or r.get("profile_url")  # reconstruct 와 동일 url 해석(profile_url 폴백)
-        if not is_valid_profile_url(url):
+        # NaN/inf 는 '<threshold' 를 통과(NaN 비교 False, inf>=t True) → 유한 수치 + 양수형(>=)으로 판정.
+        if not (isinstance(score, (int, float)) and math.isfinite(score) and score >= PASS_THRESHOLD):
+            continue  # 점수 미달·비수치·NaN·inf → 제외 (fail-closed)
+        # register 스키마 URL 키는 'url'. 하류(build_message·clickup) 도 r['url'] 을 읽으므로 여기서 'url' 로 통일한다.
+        if not is_valid_profile_url(r.get("url")):
             continue  # URL 무효/결손 → 제외
         profile = reconstruct_captured_profile(r, channel)
         if profile is None:

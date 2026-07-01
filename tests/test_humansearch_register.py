@@ -245,11 +245,19 @@ def test_eligible_excludes_nan_score() -> None:
     assert eligible([r], "saramin") == []
 
 
-def test_eligible_accepts_profile_url_when_url_absent() -> None:
-    """url 키 없이 profile_url 만 유효해도 통과(reconstruct 와 동일 해석) — Codex 과잉제외 차단."""
+def test_eligible_excludes_profile_url_only_schema_drift() -> None:
+    """register 스키마 URL 키는 'url' — url 없이 profile_url 만 있는 dict 는 제외(fail-closed).
+    하류 build_message/clickup 이 r['url'] 을 읽으므로 통과시키면 KeyError — Codex 재검증 재현 차단."""
     r = _runner_dict(visible_text="backend", summary="부산대 8년")
     r["profile_url"] = r.pop("url")
-    assert eligible([r], "saramin") == [r]
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_excludes_non_finite_score() -> None:
+    """score=inf/-inf/nan 비유한 값은 제외 — inf>=threshold 로 통과하던 fail-open 차단(Codex 재검증)."""
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        r = _runner_dict(score=bad, visible_text="backend", summary="부산대")
+        assert eligible([r], "saramin") == []
 
 
 def test_eligible_skips_non_dict_items_without_crash() -> None:
