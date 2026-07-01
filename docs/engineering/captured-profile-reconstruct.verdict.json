@@ -1,0 +1,44 @@
+{
+  "slice": "PC-C1a1",
+  "title": "register dict→CapturedProfile 재구성 어댑터(fail-closed)",
+  "worktree": "task/captured-profile-reconstruct",
+  "base": "8bb4ea6 (PC-C0 포함)",
+  "acceptance_criterion": "reconstruct 헬퍼가 가용필드(education·employment_history[EmploymentTenure]·visible_text) 복원 + 하드제외 필수필드 결손 dict fail-closed; verify.sh exit 0.",
+  "sot": ["fail-open 금지(결손=제외)", "SOT5(models.CapturedProfile 재사용, 제2 프로필 타입 금지)", "PC-C1a 등록게이트 선행 primitive"],
+  "generate": {
+    "by": "Claude Opus 4.8 (1M)",
+    "change": "humansearch_register.reconstruct_captured_profile(result, channel) + _reconstruct_tenures. 가용필드 복원, 결손/무효 시 None(fail-closed). URL은 is_valid_profile_url, 본문 공허는 매처 _normalize 재사용.",
+    "red_commit": "f4ed126 (ImportError=RED)",
+    "green_commits": ["981bd4d 최초 GREEN", "c7880e0 Codex fail-open 5건 차단", "57bce42 name 과잉제외 되돌림"]
+  },
+  "verify_pass1_self": {
+    "by": "Claude (게이트4b step1)",
+    "found_and_fixed": [
+      {"id": "FO-HEADLINE", "vector": "프리랜서 표기가 headline 에만 → 매처 미스캔", "fix": "headline→ocr_text 스캔"},
+      {"id": "FO-NOTEXT", "vector": "텍스트 None/빈값 → no-text 통과", "fix": "본문 공허 판정 fail-closed"}
+    ]
+  },
+  "verify_pass2_codex": {
+    "by": "codex:codex-rescue (agentId ab58280fe146cfc13)",
+    "verdict": "FAIL",
+    "pytest": "665 passed (+1 env lock fail, 코드무관)",
+    "existing_tests_weakened": "no",
+    "findings": [
+      {"id": "FO-NAME", "vector": "프리랜서 표기가 name/why_fit 에만", "sev": "high", "resolution": "name-fold 시도(c7880e0)했으나 pass3에서 과잉제외 유발 → 되돌림(57bce42). 최종: name/why_fit 미스캔 — name 은 신원필드라 프리랜서 신호 없음(신호는 본문에 있어 스캔됨), why_fit 은 채점산출물. FO-NAME 은 비현실 벡터로 판정(실제 이름/채점출력에 프리랜서 마커 없음)."},
+      {"id": "FO-SCHOOL-TEXT", "vector": "전문대 마커가 visible_text 에 있고 education 필드 결손", "sev": "high", "resolution": "비수정(범위밖) — 학교컷은 매처가 education 필드만 스캔하는 설계(PC-C0 전문대학원 오탐가드도 education 기준). register 경로는 education 필드를 채우고 학교컷은 portal(saramin/jobkorea) 채널만. 매처 스캔면 확장은 별도 슬라이스."},
+      {"id": "FO-TENURE-SHAPE", "vector": "employment_history 위치형 튜플/리스트 항목 skip → 잦은이직 누출", "sev": "high", "resolution": "위치형 [company,start,end] 복원 추가(c7880e0)"},
+      {"id": "FO-ZEROWIDTH", "vector": "제로폭(U+200B)만인 텍스트 → 통과", "sev": "med", "resolution": "매처 _normalize 재사용해 본문 공허 판정 → fail-closed(c7880e0)"},
+      {"id": "FO-BADURL", "vector": "무효 URL(not-a-url·제로폭·내부공백)로 profile 생성", "sev": "med", "resolution": "is_valid_profile_url 로 재구성 fail-closed(c7880e0)"},
+      {"id": "EXC-SKILLS", "vector": "skills=int → tuple() TypeError", "sev": "med", "resolution": "list/tuple 타입가드(c7880e0)"}
+    ]
+  },
+  "verify_pass3_codex_reverify": {
+    "by": "codex:codex-rescue (agentId a062f5c3f4ed3193e)",
+    "verdict": "FAIL(수정전) → 유일 결함 해소",
+    "closed_5": "name/tenure형상/제로폭/무효url/skills 5건 전부 CLOSED 확인",
+    "new_defect_from_fix": {"id": "OE-NAME", "vector": "김외주 → freelancer (name-fold 가 '외주' 2글자 마커 부분문자열 오탐)", "sev": "med", "resolution": "57bce42 로 name 스캔 되돌림 — 김외주 정상후보 재검증 None 확인"},
+    "clean_checks": "정상 한국이름(김주·박외수·이외숙·정개인)·실제 포털URL(사람인/잡코리아/링크드인)·정상본문 _normalize·위치형 tenure 엣지형상 — 과잉제외/예외 없음(자체+Codex 확인)"
+  },
+  "final_verify": "670 passed, 3 xfailed, 5 subtests passed (verify.sh exit 0)",
+  "conclusion": "reconstruct 어댑터 GREEN. 자기적대 2건 + Codex 5건 fail-open 차단 + Codex 재검증 과잉제외 1건 차단(각 회귀테스트). 매처 스캔면(education 필드 밖 학교마커) 한계·'외주' 2글자 마커 looseness 는 별도(PC-C0c). PC-C1a(등록게이트 hard_exclude 배선)의 선행 primitive 준비 완료."
+}
