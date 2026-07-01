@@ -399,6 +399,8 @@ def test_h4_fullwidth_freelancer_excluded() -> None:
 #   - freelancer 경로는 공백만 접고 제로폭(U+200B..U+200D, U+FEFF) 못 지움 → 프리+제로폭+랜서 우회
 # 보이지 않는 문자는 chr(0x....) 로 주입해 소스가 눈에 보이게(리뷰 가능) 둔다.
 _ZWSP, _ZWNJ, _ZWJ, _BOM, _TAB = (chr(c) for c in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x09))
+# 게이트4b 자기적대에서 추가로 재현한 우회 벡터(스펙의 명시 4문자를 넘는 같은 class):
+_WJ, _SHY, _MVS, _VS = (chr(c) for c in (0x2060, 0x00AD, 0x180E, 0xFE0F))
 
 
 @pytest.mark.parametrize(
@@ -418,6 +420,12 @@ _ZWSP, _ZWNJ, _ZWJ, _BOM, _TAB = (chr(c) for c in (0x200B, 0x200C, 0x200D, 0xFEF
         ("전 문" + _TAB + "대학교", "backend", "saramin", "low_tier_school"),      # 학교 경로 탭·공백
         ("부 산 대 학 교 학사", "backend", "saramin", None),                       # 허용대(부산대) 공백우회도 정규화→허용
         ("robotics", "robotics", "linkedin_rps", None),                          # 링크드인 학교컷 미적용(회귀)
+        # ── 게이트4b(자기 적대검증) 확장: category Cf·variation selector 전면 차단 재현 ──
+        ("", f"프리{_WJ}랜서", "saramin", "freelancer"),                        # word joiner U+2060
+        ("", f"프리{_SHY}랜서", "jobkorea", "freelancer"),                      # soft hyphen U+00AD
+        ("", f"프리{_MVS}랜서", "saramin", "freelancer"),                       # mongolian vowel sep U+180E
+        ("", f"프리{_VS}랜서", "saramin", "freelancer"),                        # variation selector U+FE0F
+        ("전문" + _WJ + "대학", "backend", "saramin", "low_tier_school"),       # 학교 경로 word joiner
     ],
 )
 def test_h4_hard_exclude_normalizes_before_match(education, visible_text, channel, expected) -> None:
