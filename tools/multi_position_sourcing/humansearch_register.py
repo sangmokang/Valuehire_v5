@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.multi_position_sourcing.humansearch import PASS_THRESHOLD, is_valid_profile_url
+from tools.multi_position_sourcing.humansearch import PASS_THRESHOLD, _normalize, is_valid_profile_url
 from tools.multi_position_sourcing.models import CapturedProfile, Channel, EmploymentTenure
 
 POSITION_ID = "86ey2cdfj"
@@ -43,6 +43,15 @@ def _reconstruct_tenures(raw: object) -> tuple[EmploymentTenure, ...]:
                     end_month=str(e.get("end_month", "") or ""),
                 )
             )
+        elif isinstance(e, (list, tuple)) and len(e) >= 2 and str(e[1] or "").strip():
+            # 위치형 [company, start_month, end_month?] — 잦은이직 신호가 튜플/배열 형상으로 와도 놓치지 않음.
+            out.append(
+                EmploymentTenure(
+                    company=str(e[0] or ""),
+                    start_month=str(e[1] or ""),
+                    end_month=str(e[2] or "") if len(e) > 2 else "",
+                )
+            )
     return tuple(out)
 
 
@@ -57,25 +66,30 @@ def reconstruct_captured_profile(result: object, channel: Channel) -> CapturedPr
     if not isinstance(result, dict):
         return None
     url = result.get("url") or result.get("profile_url")
-    if not isinstance(url, str) or not url.strip():
-        return None  # 신원(URL) 결손 → fail-closed
+    if not is_valid_profile_url(url):
+        return None  # 신원(URL) 결손·무효(공백·제로폭·비http) → fail-closed
     visible_text = str(result.get("visible_text", "") or "")
     summary = str(result.get("summary", "") or "")
     headline = str(result.get("headline", "") or "")
-    # 프리랜서 마커를 볼 텍스트원(본문·요약·헤드라인)이 하나도 없으면 판정 불가 → fail-closed(제외).
-    if not (visible_text + summary + headline).strip():
+    name = str(result.get("name", "") or "")
+    # 판정 가능한 '본문'(본문·요약·헤드라인)이 전무하거나 보이지 않는 문자·공백뿐이면 판정 불가 → fail-closed.
+    # name 은 신원(본문 아님)이라 본문 유무 판정엔 세지 않는다(name 만으로 '깨끗함' 신뢰 금지). 매처와 동일 _normalize.
+    if not _normalize(visible_text + summary + headline):
         return None
+    # headline·name 은 마커 스캔 대상(프리랜서 표기가 거기에만 있을 수 있음) → ocr_text 슬롯.
+    # why_fit/why_not/breakdown 은 채점 산출물(후보 텍스트 아님) → 스캔 안 함(오탐 방지).
+    extra = " ".join(s for s in (headline, name) if s)
+    skills = result.get("skills")
     return CapturedProfile(
         profile_url=url,
         source_channel=channel,
         visible_text=visible_text,
         summary=summary,
-        # headline 도 하드제외 텍스트 스캔 대상 — CapturedProfile 여분 텍스트 슬롯(ocr_text)에 실어
-        # 프리랜서 표기가 headline 에만 있는 후보도 매처가 보게 한다(fail-open 차단).
-        ocr_text=headline,
+        # headline·name 을 매처가 스캔하도록 여분 텍스트 슬롯(ocr_text)에 싣는다(fail-open 차단).
+        ocr_text=extra,
         captured_at=str(result.get("captured_at", "") or ""),
         education=str(result.get("education", "") or ""),
-        skills=tuple(result.get("skills") or ()),
+        skills=tuple(skills) if isinstance(skills, (list, tuple)) else (),
         employment_history=_reconstruct_tenures(result.get("employment_history", ())),
     )
 
