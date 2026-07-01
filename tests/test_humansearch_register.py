@@ -139,10 +139,12 @@ def test_reconstructed_clean_profile_passes() -> None:
 
 
 # ── 게이트4b step2(Codex 2차 적대검증) 발견 회귀 ──────────────────
-def test_reconstruct_freelancer_in_name_only() -> None:
-    """프리랜서 표기가 name 에만 있어도 매처가 봐야 한다 — Codex fail-open."""
-    d = _runner_dict(name="프리랜서 홍길동", visible_text="backend", summary="", headline="")
-    assert hard_exclude_reason(reconstruct_captured_profile(d, "saramin"), "saramin") == "freelancer"
+def test_reconstruct_name_marker_does_not_overexclude() -> None:
+    """name 은 신원 필드 — 마커 스캔 대상 아님. 이름에 우연히 2글자 마커 부분문자열('외주' 등)이
+    있어도 본문이 정상이면 제외하지 않는다 — Codex 재검증 과잉제외(김외주→freelancer) 차단.
+    프리랜서 신호는 본문(visible_text·summary·headline)에서 잡는다."""
+    d = _runner_dict(name="김외주", visible_text="backend engineer 안정적", summary="부산대 8년", headline="")
+    assert hard_exclude_reason(reconstruct_captured_profile(d, "saramin"), "saramin") is None
 
 
 def test_reconstruct_invisible_only_text_is_fail_closed() -> None:

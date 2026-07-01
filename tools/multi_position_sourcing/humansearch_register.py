@@ -71,22 +71,19 @@ def reconstruct_captured_profile(result: object, channel: Channel) -> CapturedPr
     visible_text = str(result.get("visible_text", "") or "")
     summary = str(result.get("summary", "") or "")
     headline = str(result.get("headline", "") or "")
-    name = str(result.get("name", "") or "")
     # 판정 가능한 '본문'(본문·요약·헤드라인)이 전무하거나 보이지 않는 문자·공백뿐이면 판정 불가 → fail-closed.
-    # name 은 신원(본문 아님)이라 본문 유무 판정엔 세지 않는다(name 만으로 '깨끗함' 신뢰 금지). 매처와 동일 _normalize.
+    # 매처와 동일 _normalize 재사용. name/why_fit 은 스캔하지 않는다 — name 은 신원 필드라 프리랜서 신호가
+    # 없고(그 신호는 본문에 있어 스캔됨), name 스캔은 '외주' 등 2글자 마커의 부분문자열 오탐만 키운다(Codex 재검증 재현).
     if not _normalize(visible_text + summary + headline):
         return None
-    # headline·name 은 마커 스캔 대상(프리랜서 표기가 거기에만 있을 수 있음) → ocr_text 슬롯.
-    # why_fit/why_not/breakdown 은 채점 산출물(후보 텍스트 아님) → 스캔 안 함(오탐 방지).
-    extra = " ".join(s for s in (headline, name) if s)
     skills = result.get("skills")
     return CapturedProfile(
         profile_url=url,
         source_channel=channel,
         visible_text=visible_text,
         summary=summary,
-        # headline·name 을 매처가 스캔하도록 여분 텍스트 슬롯(ocr_text)에 싣는다(fail-open 차단).
-        ocr_text=extra,
+        # headline 은 프로필 설명 텍스트 — 매처가 스캔하도록 여분 슬롯(ocr_text)에 싣는다(headline-only 프리랜서 차단).
+        ocr_text=headline,
         captured_at=str(result.get("captured_at", "") or ""),
         education=str(result.get("education", "") or ""),
         skills=tuple(skills) if isinstance(skills, (list, tuple)) else (),
