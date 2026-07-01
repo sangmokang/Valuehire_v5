@@ -236,3 +236,23 @@ def test_eligible_sorts_passers_by_score_desc() -> None:
     lo = _runner_dict(score=75, visible_text="backend", summary="부산대", url="https://x.co/a")
     hi = _runner_dict(score=95, visible_text="backend", summary="부산대", url="https://x.co/b")
     assert eligible([lo, hi], "saramin") == [hi, lo]
+
+
+# ── 게이트4b step2(Codex 2차 적대검증) 발견 회귀 ──────────────────
+def test_eligible_excludes_nan_score() -> None:
+    """score=NaN 은 어떤 비교도 False → '<threshold' 를 통과하던 fail-open 차단(Codex)."""
+    r = _runner_dict(score=float("nan"), visible_text="backend", summary="부산대")
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_accepts_profile_url_when_url_absent() -> None:
+    """url 키 없이 profile_url 만 유효해도 통과(reconstruct 와 동일 해석) — Codex 과잉제외 차단."""
+    r = _runner_dict(visible_text="backend", summary="부산대 8년")
+    r["profile_url"] = r.pop("url")
+    assert eligible([r], "saramin") == [r]
+
+
+def test_eligible_skips_non_dict_items_without_crash() -> None:
+    """results 에 비dict 항목이 섞여도 예외 없이 skip(fail-closed) — Codex exception."""
+    clean = _runner_dict(visible_text="backend", summary="부산대", url="https://x.co/ok")
+    assert eligible([clean, None, "bad-item", 123], "saramin") == [clean]
