@@ -82,11 +82,25 @@ def test_reconstruct_empty_url_is_fail_closed() -> None:
 
 
 def test_reconstruct_no_text_fields_is_fail_closed() -> None:
-    """프리랜서 마커를 볼 텍스트가 전혀 없으면 판정불가 → fail-closed(제외)."""
+    """프리랜서 마커를 볼 텍스트원(본문·요약·헤드라인)이 전혀 없으면 판정불가 → fail-closed(제외)."""
     d = _runner_dict()
     del d["visible_text"]
     del d["summary"]
+    d.pop("headline", None)
     assert reconstruct_captured_profile(d, "saramin") is None
+
+
+def test_reconstruct_none_text_values_is_fail_closed() -> None:
+    """텍스트 필드가 None/빈값뿐이면 no-text → fail-closed (키 존재만으로 통과 금지)."""
+    d = _runner_dict(visible_text=None, summary=None, headline=None)
+    assert reconstruct_captured_profile(d, "saramin") is None
+
+
+def test_reconstructed_profile_detects_freelancer_in_headline_only() -> None:
+    """프리랜서 표기가 headline 에만 있어도 매처가 봐야 한다 — 자기 적대검증(fail-open 차단)."""
+    d = _runner_dict(visible_text="", summary="", headline="프리랜서 개발자")
+    p = reconstruct_captured_profile(d, "saramin")
+    assert hard_exclude_reason(p, "saramin") == "freelancer"
 
 
 def test_reconstruct_non_dict_is_fail_closed() -> None:
