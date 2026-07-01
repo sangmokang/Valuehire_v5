@@ -1,0 +1,50 @@
+{
+  "slice": "PC-C0",
+  "title": "하드제외 매처 정규화 통일 — 단일 _normalize() (공백·제로폭·NFKC·전각)",
+  "worktree": "task/hardexclude-matcher-normalize",
+  "acceptance_criterion": "단일 normalize()를 프리랜서·전문대·전각 매칭 전에 적용; education='OO전 문 대학 졸업'->low_tier_school, visible_text='프리<U+200B>랜서'->freelancer, 'ＦＲＥＥＬＡＮＣＥ'->freelancer(회귀); verify.sh exit 0.",
+  "sot": ["SOT5(단일 normalize 통일·제각각 collapse 금지)", "하드제외 매처 정확성", "봇처럼 굴지 않기(우회 차단)"],
+  "generate": {
+    "by": "Claude Opus 4.8 (1M)",
+    "change": "humansearch.py: _normalize()(NFKC -> _is_invisible(category Cf + variation selector U+FE00..FE0F/U+E0100..E01EF) 제거 -> \\s+ 전부 제거 -> lower) 신설. _profile_text·_is_low_tier_school·hard_exclude_reason(freelancer) 이 동일 _normalize 통과. 기존 이중분기(text OR collapsed) 제거(동치·상위집합).",
+    "red_commit": "1488de8 — 7 failed(우회면)/5 passed(회귀면) = RED",
+    "green_commits": ["9e98765 GREEN normalize", "ef7ea37 전문대학원 과잉제외 가드"],
+    "verify": "635 passed, 3 xfailed, 5 subtests passed (verify.sh exit 0)"
+  },
+  "verify_pass1_self_adversarial": {
+    "by": "Claude (게이트4b step1)",
+    "closed_bypasses": [
+      {"vector": "U+2060 word joiner", "before": "None", "after": "freelancer", "sev": "high", "note": "스펙 명시 4문자 밖 — category Cf 전면 제거로 닫음"},
+      {"vector": "U+00AD soft hyphen", "sev": "high"},
+      {"vector": "U+180E mongolian vowel sep", "sev": "med"},
+      {"vector": "variation selector U+FE0F", "sev": "med"},
+      {"vector": "NFD 자소분리 한글, bidi(U+202A/U+2066), NBSP(U+00A0), 전각공백(U+3000)", "result": "모두 차단 확인"}
+    ],
+    "regression_introduced_and_fixed": [
+      {"id": "FP-GRADSCHOOL", "vector": "전문대학원(경영 전문 대학원 등) — normalize 공백접힘이 '전문대' 부분일치로 과잉제외 widen", "sev": "high(business: elite 후보 유실)", "fix": "ef7ea37 — _is_low_tier_school 에서 '전문대학원' allowlist 선행", "note": "unspaced 법학전문대학원은 pre-existing FP; 내 변경이 spaced까지 widen → 가드로 둘 다 해소"}
+    ]
+  },
+  "verify_pass2_codex_rescue": {
+    "by": "codex:codex-rescue (독립 2차, gpt-5.x)",
+    "verdict": "FAIL",
+    "existing_tests_weakened": "no (git diff 234fde5..HEAD — H4/H5 단언 추가만, 삭제·약화 없음)",
+    "pytest": "635 passed / 0 failed",
+    "new_findings": [
+      {"id": "BYP-COMPAT-JAMO-FREE", "input": "U+314D U+3161 U+3139 U+3163 U+3139 U+3150 U+3134 U+3145 U+3153 (호환자모 '프리랜서')", "expected": "freelancer", "actual": "None", "sev": "high"},
+      {"id": "BYP-COMPAT-JAMO-SCHOOL", "input": "U+3148 U+3153 U+3134 U+3141 U+315C U+3134 U+3137 U+3150 (호환자모 '전문대')", "expected": "low_tier_school", "actual": "None", "sev": "high"},
+      {"id": "BYP-HOMOGLYPH-P", "input": "U+0070+리랜서 'p리랜서'", "expected": "freelancer", "actual": "None", "sev": "med"},
+      {"id": "BYP-HOMOGLYPH-F", "input": "U+0066+리랜서 'f리랜서'", "expected": "freelancer", "actual": "None", "sev": "med"},
+      {"id": "FP-OEJU", "input": "'해외 주재원 경력'", "expected": "None", "actual": "freelancer", "sev": "high", "note": "Codex 재발견 — '외주' 2글자 부분일치 과잉제외"}
+    ]
+  },
+  "triage": {
+    "decision": "PC-C0 ship. Codex 신규 발견은 전량 PC-C0 charter 밖 + pre-existing(구코드 234fde5 도 동일 누출/과잉제외 — 재현 확인)이며 PC-C0 가 유발·악화하지 않음. 자모/homoglyph 는 결정론 normalize 가 아니라 '퍼지 매칭'(FP 위험·현실빈도 낮음: 시각적으로 깨진 낱자 텍스트) 영역, '외주'는 사장님 확정 마커 정책 변경이라 각각 별도 슬라이스.",
+    "pre_existing_proof": "234fde5 원본 _profile_text(NFKC+lower)+이중분기 재현: compat-jamo·p리랜서·해외주재원 모두 구코드도 누출/오탐 True.",
+    "resolution_in_slice": "known-open 3건을 xfail(strict) 테스트로 장부 고정: test_h4_compat_jamo_freelancer_known_open / test_h4_compat_jamo_low_tier_known_open / test_h4_oeju_marker_overexcludes_known_open. 후속 슬라이스가 고치면 XPASS 로 뒤집혀 xfail 제거를 강제.",
+    "not_fixed_here": [
+      {"id": "PC-C0b(제안)", "scope": "자모(호환자모/homoglyph) 퍼지매칭 — 별도 RED+적대검증. FP 위험 때문에 하드제외 아닌 별도 완충층 검토."},
+      {"id": "PC-C0c(제안)", "scope": "'외주' 마커 경계(word-boundary) — 사장님 마커 정책 결정 필요('외주 개발' 류로 구체화 vs 제거)."}
+    ]
+  },
+  "conclusion": "PC-C0(공백·제로폭·NFKC·전각 우회 통일 차단)은 GREEN·독립검증상 회귀 없음으로 배송 가능. 단 매처의 자모·마커 경계 우회면은 미해결(known-open, xfail 고정)이며 PC-C0 완료가 '매처 전면 무결'을 뜻하지 않는다 — 후속 PC-C0b/PC-C0c 로 이관."
+}

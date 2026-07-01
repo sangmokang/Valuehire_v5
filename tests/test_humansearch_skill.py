@@ -393,6 +393,107 @@ def test_h4_fullwidth_freelancer_excluded() -> None:
     assert hard_exclude_reason(p, "saramin") == "freelancer"
 
 
+# ── PC-C0: 하드제외 매처 단일 normalize (공백 collapse + 제로폭/포맷 strip + NFKC) ──
+# 2차 적대검증(V1·T) 재현: hard_exclude_reason 을 "불러도" 매처가 새던 라이브 결함.
+#   - _is_low_tier_school 은 공백 collapse 없음 → '전 문 대학' 띄어쓰기 우회
+#   - freelancer 경로는 공백만 접고 제로폭(U+200B..U+200D, U+FEFF) 못 지움 → 프리+제로폭+랜서 우회
+# 보이지 않는 문자는 chr(0x....) 로 주입해 소스가 눈에 보이게(리뷰 가능) 둔다.
+_ZWSP, _ZWNJ, _ZWJ, _BOM, _TAB = (chr(c) for c in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x09))
+# 게이트4b 자기적대에서 추가로 재현한 우회 벡터(스펙의 명시 4문자를 넘는 같은 class):
+_WJ, _SHY, _MVS, _VS = (chr(c) for c in (0x2060, 0x00AD, 0x180E, 0xFE0F))
+
+
+@pytest.mark.parametrize(
+    "education, visible_text, channel, expected",
+    [
+        # ── 인수기준 3면 ──
+        ("OO전 문 대학 졸업", "backend", "saramin", "low_tier_school"),          # 띄어쓰기(현행 None=RED)
+        ("", f"프리{_ZWSP}랜서 개발자", "saramin", "freelancer"),               # 제로폭 U+200B(현행 None=RED)
+        ("", "ＦＲＥＥＬＡＮＣＥ developer", "saramin", "freelancer"),                 # 전각 NFKC 회귀 유지
+        # ── 게이트4b(자기 적대검증): 내가 스스로 깨본 우회면들을 회귀로 고정 ──
+        ("", f"프리{_BOM}랜서", "saramin", "freelancer"),                       # BOM U+FEFF
+        ("", f"프리{_ZWJ}랜서 개발", "saramin", "freelancer"),                   # zero-width joiner U+200D
+        ("", f"프리{_ZWNJ}랜서", "jobkorea", "freelancer"),                      # zero-width non-joiner U+200C
+        ("", "프 리 랜 서 개발자", "saramin", "freelancer"),                         # 글자마다 공백
+        ("", "Ｆreeｌance worker", "saramin", "freelancer"),                         # 전각+혼합 대소문자
+        ("전문" + _ZWSP + "대학 졸업", "backend", "jobkorea", "low_tier_school"),  # 학교 경로 제로폭
+        ("전 문" + _TAB + "대학교", "backend", "saramin", "low_tier_school"),      # 학교 경로 탭·공백
+        ("부 산 대 학 교 학사", "backend", "saramin", None),                       # 허용대(부산대) 공백우회도 정규화→허용
+        ("robotics", "robotics", "linkedin_rps", None),                          # 링크드인 학교컷 미적용(회귀)
+        # ── 게이트4b(자기 적대검증) 확장: category Cf·variation selector 전면 차단 재현 ──
+        ("", f"프리{_WJ}랜서", "saramin", "freelancer"),                        # word joiner U+2060
+        ("", f"프리{_SHY}랜서", "jobkorea", "freelancer"),                      # soft hyphen U+00AD
+        ("", f"프리{_MVS}랜서", "saramin", "freelancer"),                       # mongolian vowel sep U+180E
+        ("", f"프리{_VS}랜서", "saramin", "freelancer"),                        # variation selector U+FE0F
+        ("전문" + _WJ + "대학", "backend", "saramin", "low_tier_school"),       # 학교 경로 word joiner
+        # ── 과잉제외 방지: 전문대학원(로스쿨·의전원·MBA)은 하위 아님. normalize 공백접힘이
+        #    '경영 전문 대학원'까지 '전문대학원'으로 접어 과잉제외 widen 하던 것을 차단(자기 적대검증 발견) ──
+        ("법학전문대학원", "backend", "saramin", None),                           # 로스쿨 — 제외 금지
+        ("의학전문대학원 졸업", "backend", "jobkorea", None),                      # 의전원 — 제외 금지
+        ("경영 전문 대학원", "backend", "saramin", None),                          # 공백 MBA — widen 차단
+        ("OO전문대학 졸업", "backend", "saramin", "low_tier_school"),             # 전문대학(원 없음)은 제외 유지
+    ],
+)
+def test_h4_hard_exclude_normalizes_before_match(education, visible_text, channel, expected) -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/c0",
+        source_channel="saramin",
+        visible_text=visible_text,
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+        education=education,
+    )
+    assert hard_exclude_reason(p, channel) == expected, (education, visible_text, channel)
+
+
+# ── PC-C0 후속(별도 슬라이스): Codex 2차 적대검증이 재현한 pre-existing 우회/과잉제외 ──
+# PC-C0 charter(공백·제로폭·NFKC·전각) 밖의 '자모 퍼지매칭'·'마커 정책' 영역이라 분리한다.
+# (구코드 234fde5 도 동일하게 누출·과잉제외 — PC-C0 가 유발/악화한 것 아님. verdict.json 참조)
+# xfail(strict) 로 장부에 고정: 후속 슬라이스가 고치면 XPASS 로 뒤집혀 이 마커 제거를 강제한다.
+_COMPAT_FREE = "".join(chr(c) for c in (0x314D, 0x3161, 0x3139, 0x3163, 0x3139, 0x3150, 0x3134, 0x3145, 0x3153))
+_COMPAT_JEON = "".join(chr(c) for c in (0x3148, 0x3153, 0x3134, 0x3141, 0x315C, 0x3134, 0x3137, 0x3150))
+
+
+@pytest.mark.xfail(reason="PC-C0 후속: 호환자모 조합 '프리랜서' 우회(자모 퍼지매칭 별도 슬라이스)", strict=True)
+def test_h4_compat_jamo_freelancer_known_open() -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/cj1",
+        source_channel="saramin",
+        visible_text=_COMPAT_FREE,
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+    )
+    assert hard_exclude_reason(p, "saramin") == "freelancer"
+
+
+@pytest.mark.xfail(reason="PC-C0 후속: 호환자모 조합 '전문대' 우회", strict=True)
+def test_h4_compat_jamo_low_tier_known_open() -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/cj2",
+        source_channel="saramin",
+        visible_text="backend",
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+        education=_COMPAT_JEON,
+    )
+    assert hard_exclude_reason(p, "saramin") == "low_tier_school"
+
+
+@pytest.mark.xfail(
+    reason="PC-C0 후속: '외주' 2글자 마커가 '해외 주재원' 과잉제외 — 마커 경계 정책(사장님 결정) 별도 슬라이스",
+    strict=True,
+)
+def test_h4_oeju_marker_overexcludes_known_open() -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/oj",
+        source_channel="saramin",
+        visible_text="해외 주재원 경력 10년",
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+    )
+    assert hard_exclude_reason(p, "saramin") is None
+
+
 def test_h4_unknown_private_school_passes_by_design() -> None:
     """기계는 명시 마커(전문대 등)만 제외. 미지의 사립대는 통과 → SKILL 의 사람/LLM 판단으로.
 
