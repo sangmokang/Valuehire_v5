@@ -393,6 +393,45 @@ def test_h4_fullwidth_freelancer_excluded() -> None:
     assert hard_exclude_reason(p, "saramin") == "freelancer"
 
 
+# ── PC-C0: 하드제외 매처 단일 normalize (공백 collapse + 제로폭/포맷 strip + NFKC) ──
+# 2차 적대검증(V1·T) 재현: hard_exclude_reason 을 "불러도" 매처가 새던 라이브 결함.
+#   - _is_low_tier_school 은 공백 collapse 없음 → '전 문 대학' 띄어쓰기 우회
+#   - freelancer 경로는 공백만 접고 제로폭(U+200B..U+200D, U+FEFF) 못 지움 → 프리+제로폭+랜서 우회
+# 보이지 않는 문자는 chr(0x....) 로 주입해 소스가 눈에 보이게(리뷰 가능) 둔다.
+_ZWSP, _ZWNJ, _ZWJ, _BOM, _TAB = (chr(c) for c in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x09))
+
+
+@pytest.mark.parametrize(
+    "education, visible_text, channel, expected",
+    [
+        # ── 인수기준 3면 ──
+        ("OO전 문 대학 졸업", "backend", "saramin", "low_tier_school"),          # 띄어쓰기(현행 None=RED)
+        ("", f"프리{_ZWSP}랜서 개발자", "saramin", "freelancer"),               # 제로폭 U+200B(현행 None=RED)
+        ("", "ＦＲＥＥＬＡＮＣＥ developer", "saramin", "freelancer"),                 # 전각 NFKC 회귀 유지
+        # ── 게이트4b(자기 적대검증): 내가 스스로 깨본 우회면들을 회귀로 고정 ──
+        ("", f"프리{_BOM}랜서", "saramin", "freelancer"),                       # BOM U+FEFF
+        ("", f"프리{_ZWJ}랜서 개발", "saramin", "freelancer"),                   # zero-width joiner U+200D
+        ("", f"프리{_ZWNJ}랜서", "jobkorea", "freelancer"),                      # zero-width non-joiner U+200C
+        ("", "프 리 랜 서 개발자", "saramin", "freelancer"),                         # 글자마다 공백
+        ("", "Ｆreeｌance worker", "saramin", "freelancer"),                         # 전각+혼합 대소문자
+        ("전문" + _ZWSP + "대학 졸업", "backend", "jobkorea", "low_tier_school"),  # 학교 경로 제로폭
+        ("전 문" + _TAB + "대학교", "backend", "saramin", "low_tier_school"),      # 학교 경로 탭·공백
+        ("부 산 대 학 교 학사", "backend", "saramin", None),                       # 허용대(부산대) 공백우회도 정규화→허용
+        ("robotics", "robotics", "linkedin_rps", None),                          # 링크드인 학교컷 미적용(회귀)
+    ],
+)
+def test_h4_hard_exclude_normalizes_before_match(education, visible_text, channel, expected) -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/c0",
+        source_channel="saramin",
+        visible_text=visible_text,
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+        education=education,
+    )
+    assert hard_exclude_reason(p, channel) == expected, (education, visible_text, channel)
+
+
 def test_h4_unknown_private_school_passes_by_design() -> None:
     """기계는 명시 마커(전문대 등)만 제외. 미지의 사립대는 통과 → SKILL 의 사람/LLM 판단으로.
 
