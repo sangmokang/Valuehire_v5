@@ -446,6 +446,54 @@ def test_h4_hard_exclude_normalizes_before_match(education, visible_text, channe
     assert hard_exclude_reason(p, channel) == expected, (education, visible_text, channel)
 
 
+# ── PC-C0 후속(별도 슬라이스): Codex 2차 적대검증이 재현한 pre-existing 우회/과잉제외 ──
+# PC-C0 charter(공백·제로폭·NFKC·전각) 밖의 '자모 퍼지매칭'·'마커 정책' 영역이라 분리한다.
+# (구코드 234fde5 도 동일하게 누출·과잉제외 — PC-C0 가 유발/악화한 것 아님. verdict.json 참조)
+# xfail(strict) 로 장부에 고정: 후속 슬라이스가 고치면 XPASS 로 뒤집혀 이 마커 제거를 강제한다.
+_COMPAT_FREE = "".join(chr(c) for c in (0x314D, 0x3161, 0x3139, 0x3163, 0x3139, 0x3150, 0x3134, 0x3145, 0x3153))
+_COMPAT_JEON = "".join(chr(c) for c in (0x3148, 0x3153, 0x3134, 0x3141, 0x315C, 0x3134, 0x3137, 0x3150))
+
+
+@pytest.mark.xfail(reason="PC-C0 후속: 호환자모 조합 '프리랜서' 우회(자모 퍼지매칭 별도 슬라이스)", strict=True)
+def test_h4_compat_jamo_freelancer_known_open() -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/cj1",
+        source_channel="saramin",
+        visible_text=_COMPAT_FREE,
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+    )
+    assert hard_exclude_reason(p, "saramin") == "freelancer"
+
+
+@pytest.mark.xfail(reason="PC-C0 후속: 호환자모 조합 '전문대' 우회", strict=True)
+def test_h4_compat_jamo_low_tier_known_open() -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/cj2",
+        source_channel="saramin",
+        visible_text="backend",
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+        education=_COMPAT_JEON,
+    )
+    assert hard_exclude_reason(p, "saramin") == "low_tier_school"
+
+
+@pytest.mark.xfail(
+    reason="PC-C0 후속: '외주' 2글자 마커가 '해외 주재원' 과잉제외 — 마커 경계 정책(사장님 결정) 별도 슬라이스",
+    strict=True,
+)
+def test_h4_oeju_marker_overexcludes_known_open() -> None:
+    p = CapturedProfile(
+        profile_url="https://www.saramin.co.kr/profile/oj",
+        source_channel="saramin",
+        visible_text="해외 주재원 경력 10년",
+        summary="",
+        captured_at="2026-07-02T00:00:00+00:00",
+    )
+    assert hard_exclude_reason(p, "saramin") is None
+
+
 def test_h4_unknown_private_school_passes_by_design() -> None:
     """기계는 명시 마커(전문대 등)만 제외. 미지의 사립대는 통과 → SKILL 의 사람/LLM 판단으로.
 
