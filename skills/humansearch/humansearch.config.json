@@ -10,7 +10,8 @@
       "by_position_name": "사장님이 포지션명 또는 ClickUp positionId 제공 → JD 로드",
       "by_visible_screen": "현재 브라우저에 검색결과·포지션이 명확히 보임 → 그 화면을 SOT 삼음"
     },
-    "required_one_of": ["position_name", "position_id", "visible_search_url"],
+    "required_any": ["position_name", "position_id", "position_text", "position_url", "visible_search_url"],
+    "required_any_note": "최소 1개 필요, 복수 허용(2026-07-02 확장) — 포지션·검색 URL 모두 여러 개를 받을 수 있다. 상세 스키마는 position_inputs / search_url_inputs.",
     "search_already_set_by_human": true
   },
 

@@ -1,0 +1,42 @@
+{
+  "claim_id": "humansearch-claude-skill-2026-07-02",
+  "mode": "mixed",
+  "risk": "L2",
+  "goal_doc": "docs/engineering/humansearch-claude-skill-goal-2026-07-02.md",
+  "generator": {
+    "author": "Claude Fable 5 (G)",
+    "claim": "/humansearch 확장 스펙 5요건을 skills/humansearch SOT(SKILL.md+config)에 기계 강제(H6)로 반영하고, .claude/skills/humansearch 발동 심(로컬 비추적, aisearch 선례)으로 등록",
+    "changed_files": [
+      "skills/humansearch/SKILL.md",
+      "skills/humansearch/humansearch.config.json",
+      "tests/test_humansearch_skill.py",
+      ".claude/skills/humansearch/SKILL.md (로컬 비추적 — .gitignore:19)"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "evidence": "RED 4e80fe0(2 failed 56 passed) → GREEN 640193b(58 passed) → V1 수정 후 59 passed / verify 617 passed exit 0",
+    "self_mutation": "SKILL 채널ID 제거→1 failed / config list_id 변조→1 failed / 원복→passed (mutant 2/2 사살)",
+    "live_wiring": "available-skills 목록에 humansearch 실등장(세션 리마인더로 확인) — 발동 배선 증명"
+  },
+  "v1": {
+    "author": "Codex (fresh, codex-rescue)",
+    "verdict": "fail",
+    "findings": [
+      {"id": 1, "claim": "H6 = 마커/스키마 껍데기(심층 필드·행동 미단언)", "triage": "부분 수용 — config 심층 필드(db_path/table/upsert_key·search_url_inputs·parent_dedup·subtask_requires·no_alarm_bomb) 단언 추가. 행동(라이브 DB쓰기·Discord 발송) 검증은 문서 SOT 슬라이스 범위 밖(goal 비범위) — 러너 배선 조각에서 커버"},
+      {"id": 2, "claim": "구 단수 입력 계약(required_one_of)과 복수 확장 모순", "triage": "실결함 수용 — required_any(복수 허용)로 교체 + SKILL 입력 절 복수 명시 + 회귀테스트 test_h6_no_single_input_contract_leftover"},
+      {"id": 3, "claim": "런타임(tools/*) 미배선", "triage": "charter 밖 — goal 비범위에 사전 선언(러너 파라미터화는 별도 조각, 현재 스크래치패드 런타임 오버라이드로 운영, 2026-07-02 뤼튼·로보틱스 2회 실행 증거)"},
+      {"id": 4, "claim": "./verify.sh exit 1 (portal profile lock PermissionError)", "triage": "재현 불가(환경 결함) — owner 환경 재실행 시 해당 테스트 1 passed, verify 617 passed exit 0. 원인: V1 샌드박스가 라이브 순회가 만든 ~/.valuehire/.../.profile.lock(600) 접근 불가"}
+    ],
+    "repro_commands": "./verify.sh · pytest -k h6 · git diff --numstat 4e80fe0^..640193b -- tests/ (43/0 append-only, 약화 0)",
+    "source_transcript": "tasks/a12d9f2a7c6597ab4.output"
+  },
+  "post_v1_fix": {
+    "command": "python3 -m pytest tests/test_humansearch_skill.py -q && ./verify.sh",
+    "output": "59 passed / 617 passed, 5 subtests passed / verify: pytest exit=0"
+  },
+  "failed_attempts": [
+    {"attempt": "로보틱스 순회 1차 실행", "root_cause": "백그라운드 탭 가상스크롤 → 카드 0 렌더(결과수 1.4K+인데 미렌더) → 프리플라이트 fail-closed 정상 작동", "repro": "bringToFront 없이 collect_cards → PreflightError", "next_change": "attach 직후 Page.bringToFront + Emulation.setFocusEmulationEnabled — SKILL '실행 함정'에 명문화"}
+  ],
+  "test_weakening": "없음 — append-only (git diff --numstat: 기존 삭제 0)",
+  "status": "V1 반영 완료 · verify GREEN · PR 대기"
+}

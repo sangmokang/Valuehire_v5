@@ -485,8 +485,33 @@ def test_h6_config_has_position_inputs_and_reporting() -> None:
     assert rep["discord_channel_id"] == "814353841088757800"
     assert rep["progress_report"] is True and rep["completion_report"] is True
     assert rep["fallback"] == "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL"
+    assert "no_alarm_bomb" in rep  # 알람 폭탄 금지 정책이 스키마에 있어야 함
 
     persist = cfg["persistence"]
     assert persist["save_all_opened_profiles"] is True
     assert persist["save_search_list"] is True
     assert persist["screenshot_then_text"] is True
+    assert persist["db_path"] == "~/.vh-data/ai-search-candidates.db"
+    assert persist["db_table"] == "ai_search_candidates"
+    assert persist["db_upsert_key"] == "(url, position_id)"
+
+    urls = cfg["search_url_inputs"]
+    assert urls["semi_assembled"] is True
+    assert set(urls["channels"]) == {"saramin", "jobkorea", "linkedin_rps"}
+
+    assert "매칭 이유" in " ".join(reg["subtask_requires"])
+    assert reg["parent_dedup"], "부모 Task 중복 방지(검색→재사용) 규칙 필수"
+
+
+def test_h6_no_single_input_contract_leftover() -> None:
+    """V1(Codex 2026-07-02) 적발 — 구 단수 입력 계약(required_one_of)이 복수 확장과 공존하면 모순.
+
+    invocation 은 required_any(복수 허용)로만 선언돼야 하고, SKILL 입력 절도 복수를 명시해야 한다.
+    """
+    cfg = load_humansearch_config()
+    inv = cfg["invocation"]
+    assert "required_one_of" not in inv, "구 단수 계약 잔재 — 복수 확장과 모순"
+    assert set(inv["required_any"]) >= {"position_name", "position_id", "visible_search_url"}
+    text = SKILL.read_text(encoding="utf-8")
+    assert "다음 중 하나가 있으면 시작" not in text, "SKILL 입력 절이 여전히 단수 계약"
+    assert "복수 허용" in text
