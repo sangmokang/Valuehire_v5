@@ -52,3 +52,33 @@ def test_d1_reply_chunked_under_discord_limit() -> None:
     chunks = chunk_reply("가" * 4500)
     assert all(len(c) <= 1900 for c in chunks)
     assert "".join(chunks) == "가" * 4500
+
+
+# ── V1(Codex 2026-07-03) 적발 결함 회귀봉인 ──
+def test_d1_v1_kill_switch_multi_whitespace() -> None:
+    """'봇   정지'(공백 3개)·탭도 킬 스위치 — 공백 정규화 우회 금지."""
+    assert is_kill_command("봇   정지")
+    assert is_kill_command("stop\tbot")
+
+
+def test_d1_v1_single_instance_lock(tmp_path) -> None:
+    """리스너 2개 동시 실행 금지 — 두 번째 acquire 는 실패해야(중복 실행 차단)."""
+    from scripts.discord_command_listener import acquire_single_instance_lock
+    lock = tmp_path / "bridge.lock"
+    assert acquire_single_instance_lock(lock, pid=11111) is True
+    # 살아있는 프로세스(pid=자기 자신)로 기록된 락은 두 번째가 못 얻음
+    import os
+    lock.write_text(str(os.getpid()))
+    assert acquire_single_instance_lock(lock, pid=22222) is False
+    # 죽은 pid 락은 회수 가능
+    lock.write_text("99999999")
+    assert acquire_single_instance_lock(lock, pid=33333) is True
+
+
+def test_d1_v1_state_saved_atomically(tmp_path) -> None:
+    """상태 저장은 임시파일→교체(원자적) — 동시 쓰기로 반쪽 파일 금지."""
+    from scripts.discord_command_listener import save_last_atomic
+    state = tmp_path / "state.json"
+    save_last_atomic(state, "12345")
+    import json
+    assert json.loads(state.read_text())["last_id"] == "12345"
