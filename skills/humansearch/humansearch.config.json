@@ -88,6 +88,52 @@
     }
   },
 
+  "position_inputs": {
+    "multiple": true,
+    "sources": ["clickup_task", "text", "url"],
+    "note": "2026-07-02 사장님 — 포지션은 ClickUp task·텍스트·URL 로 복수 입력. 1검색 결과를 여러 JD 로 동시 채점(재오픈 없이 raw 필드 재채점)."
+  },
+
+  "search_url_inputs": {
+    "semi_assembled": true,
+    "channels": ["saramin", "jobkorea", "linkedin_rps"],
+    "note": "사람이 걸어둔 반조립 서치 URL 복수 — 안전하면 채널별 동시(병렬), 위험 시 순차 폴백(channels.execution 준용)."
+  },
+
+  "clickup_registration": {
+    "list_id": "901818680208",
+    "list_name": "FY26AI_Search",
+    "structure": "position_parent_task + candidate_subtasks",
+    "parent_dedup": "부모 Task 를 먼저 검색해 없으면 생성, 있으면 재사용",
+    "priority_signals": [
+      "학력: 서울권 대학·해외 우수대·지방 국공립(단국대 이상)",
+      "직무 적합성",
+      "이직 안정(잦은 단기이직 아님)",
+      "프리랜서 제외",
+      "OTW(Open to work) 우선 — 이직 의향 분명"
+    ],
+    "subtask_requires": ["매칭 이유 간단 설명", "profile_url 무결성(is_valid_profile_url)"]
+  },
+
+  "persistence": {
+    "save_all_opened_profiles": true,
+    "save_search_list": true,
+    "screenshot_then_text": true,
+    "db_path": "~/.vh-data/ai-search-candidates.db",
+    "db_table": "ai_search_candidates",
+    "db_upsert_key": "(url, position_id)",
+    "note": "열어본 프로필·검색 리스트는 점수 무관 전부 저장(SOT22 R6) — 스크린샷→텍스트 전환 후 results.json + DB upsert."
+  },
+
+  "reporting": {
+    "discord_channel_id": "814353841088757800",
+    "auth": "DISCORD_BOT_TOKEN (봇 메시지 API)",
+    "progress_report": true,
+    "completion_report": true,
+    "fallback": "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL",
+    "no_alarm_bomb": "중간 보고는 페이지 단위 1건, 완료 1건으로 묶는다"
+  },
+
   "safety_invariants": {
     "no_auto_send_offer": "제안·메일 '보내기' 자동 클릭 금지(SOT 3). humansearch 는 '후보 브리핑'만 발송.",
     "yield_to_owner_chrome": "사장님 chrome 점유 시 즉시 양보 → 손 떼면 자동 재개(SOT 2 / R4). 봇 행동 금지.",
