@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .models import CapturedProfile, EmploymentTenure, Position, PositionMatch
 
 HIGH_TIER_COMPANY_SIGNALS = {
@@ -134,10 +136,28 @@ def _university_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ..
     return 0, ()
 
 
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9+#.]+")
+
+
+def keyword_in_text(keyword: str, text: str) -> bool:
+    """직무 키워드가 text에 포함되는지 — ASCII 단일토큰은 단어경계, 그 외는 부분일치(대소문자 무시).
+
+    'java'가 'javascript'에, 'account'가 'accounting'에, 'ai'가 'email'에 오탐되지 않게
+    영숫자 단어경계를 강제한다. 한글 등 비ASCII·다단어 구는 형태소 경계가 모호해 부분일치를 유지한다.
+    """
+    kw = keyword.strip().lower()
+    if not kw:
+        return False
+    lower = text.lower()
+    if _ASCII_TOKEN_RE.fullmatch(kw):
+        return re.search(r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])", lower) is not None
+    return kw in lower
+
+
 def _role_direct_score(profile: CapturedProfile, position: Position) -> tuple[int, tuple[str, ...]]:
     """직무 직결성 — 후보 기술스택(skills)이 JD must/nice 키워드와 직결되면 가점."""
     skills = " ".join(profile.skills).lower()
-    direct = [kw for kw in (position.must_haves + position.nice_to_haves) if kw.lower() in skills]
+    direct = [kw for kw in (position.must_haves + position.nice_to_haves) if keyword_in_text(kw, skills)]
     score = min(12, len(direct) * 4)
     reasons = (f"role-direct skill match: {', '.join(direct[:3])}",) if direct else ()
     return score, reasons

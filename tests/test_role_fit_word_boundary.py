@@ -70,7 +70,8 @@ def test_cjk_substring_preserved():
     [
         ("c++", "c++ and rust", True),
         ("c++", "c plus plus", False),
-        (".net", "asp.net core developer", True),
+        ("go", "go and rust", True),
+        ("go", "golang rocks", False),   # go ∉ golang (알파벳 경계)
     ],
 )
 def test_symbol_tokens(kw, text, expected):
