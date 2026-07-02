@@ -103,3 +103,32 @@ def test_role_direct_score_no_false_positive():
     pos = _pos(must_haves=("account",))
     score, _reasons = _role_direct_score(prof, pos)
     assert score == 0  # 'account'가 'accounting'에 오탐되어 가점되면 RED
+
+
+# ── Codex V1 적대검증 반영: 버전숫자·심볼접두·전각·배선누락 ──────────
+@pytest.mark.parametrize(
+    "kw,text",
+    [
+        (".net", "asp.net core developer"),  # 심볼 접두 — 매칭 유지
+        ("c++", "c++17 and rust"),           # 버전 숫자 — 매칭 유지
+        ("python", "python3 django"),         # 버전 숫자 — 매칭 유지
+        ("react", "react18 hooks"),
+    ],
+)
+def test_version_and_symbol_edges_still_match(kw, text):
+    assert keyword_in_text(kw, text) is True
+
+
+def test_fullwidth_normalized():
+    assert keyword_in_text("java", "ＪＡＶＡ 개발자") is True  # NFKC 전각 정규화
+
+
+def test_score_profile_for_position_must_have_uses_boundary():
+    """Codex V1이 잡은 배선누락 회귀 — score_profile_for_position must_have도 경계매칭."""
+    from tools.multi_position_sourcing.scoring import score_profile_for_position
+
+    prof = _prof(visible_text="javascript developer", skills=("javascript",))
+    pos = _pos(must_haves=("java",))
+    match = score_profile_for_position(prof, pos)
+    # 'java'가 'javascript'에 오탐되어 must-have 히트로 잡히면 RED
+    assert "must-have direct hits: java" not in " ".join(match.why_fit)

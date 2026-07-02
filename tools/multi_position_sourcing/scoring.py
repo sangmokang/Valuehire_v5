@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from .models import CapturedProfile, EmploymentTenure, Position, PositionMatch
 
@@ -139,19 +140,30 @@ def _university_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ..
 _ASCII_TOKEN_RE = re.compile(r"[a-z0-9+#.]+")
 
 
-def keyword_in_text(keyword: str, text: str) -> bool:
-    """직무 키워드가 text에 포함되는지 — ASCII 단일토큰은 단어경계, 그 외는 부분일치(대소문자 무시).
+def _fold(s: str) -> str:
+    """NFKC 정규화 후 소문자 — 전각(ＪＡＶＡ)·호환문자를 반각으로 접는다(하드제외 매처와 동일 철학)."""
+    return unicodedata.normalize("NFKC", s).lower()
 
-    'java'가 'javascript'에, 'account'가 'accounting'에, 'ai'가 'email'에 오탐되지 않게
-    영숫자 단어경계를 강제한다. 한글 등 비ASCII·다단어 구는 형태소 경계가 모호해 부분일치를 유지한다.
+
+def keyword_in_text(keyword: str, text: str) -> bool:
+    """직무 키워드가 text에 포함되는지 — ASCII 단일토큰은 영숫자 단어경계, 그 외는 부분일치.
+
+    오탐 차단: 'java'∉'javascript', 'account'∉'accounting', 'ai'∉'email', 'go'∉'golang'.
+    정탐 유지: 버전 숫자('python'∈'python3', 'c++'∈'c++17')·심볼 접두('.net'∈'asp.net').
+    한글 등 비ASCII·다단어 구는 형태소 경계가 모호해 부분일치. NFKC 로 전각(ＪＡＶＡ) 정규화.
     """
-    kw = keyword.strip().lower()
+    kw = _fold(keyword).strip()
     if not kw:
         return False
-    lower = text.lower()
-    if _ASCII_TOKEN_RE.fullmatch(kw):
-        return re.search(r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])", lower) is not None
-    return kw in lower
+    text_folded = _fold(text)
+    if not _ASCII_TOKEN_RE.fullmatch(kw):
+        return kw in text_folded
+    # ASCII 단일토큰: 키워드의 영숫자 가장자리에만 경계를 건다.
+    #  왼쪽: 앞이 영숫자면 단어 일부(오탐) → 차단. 키워드가 심볼로 시작하면(.net) 경계 불필요.
+    #  오른쪽: 뒤가 '문자'면 오탐(java|javascript) → 차단. '숫자'는 버전표기라 허용(python3).
+    left = r"(?<![a-z0-9])" if kw[0].isalnum() else ""
+    right = r"(?![a-z])" if kw[-1].isalnum() else ""
+    return re.search(left + re.escape(kw) + right, text_folded) is not None
 
 
 def _role_direct_score(profile: CapturedProfile, position: Position) -> tuple[int, tuple[str, ...]]:
@@ -192,7 +204,7 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
     why_fit: list[str] = []
     why_not: list[str] = []
 
-    must_have_hits = _contains_any(text, position.must_haves)
+    must_have_hits = [kw for kw in position.must_haves if kw and keyword_in_text(kw, text)]
     must_score = round(40 * (len(must_have_hits) / max(1, len(position.must_haves))))
     if must_have_hits:
         why_fit.append(f"must-have direct hits: {', '.join(must_have_hits)}")
