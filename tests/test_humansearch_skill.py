@@ -447,3 +447,46 @@ def test_world_elite_school_gets_full_education_score(school: str) -> None:
     assert match.score_breakdown["education"] == 30, (
         f"{school} 학력 만점 기대(30) 실제 {match.score_breakdown['education']}"
     )
+
+
+# ── H6 (2026-07-02 사장님 확장 스펙) — /humansearch 5요건이 SOT(SKILL+config)에 박혀야 한다 ──
+H6_SKILL_MARKERS = (
+    "901818680208",        # ClickUp FY26AI_Search 리스트 — Task+Subtask 등록처
+    "814353841088757800",  # Discord 보고 채널(중간·완료)
+    "Open to work",        # OTW 우선(이직 의향 분명)
+    "복수",                # 포지션 복수 입력(ClickUp/텍스트/URL)
+    "반조립",              # 반조립 서치 URL 입력
+    "중간 보고",           # 서치 절차 중간 보고
+)
+
+
+def test_h6_skill_md_has_2026_07_02_expansion_markers() -> None:
+    """확장 스펙 5요건(멀티채널 URL·복수 포지션·ClickUp 등록·전부 저장·Discord 보고)이 SKILL.md에 명문화."""
+    text = SKILL.read_text(encoding="utf-8")
+    missing = [m for m in H6_SKILL_MARKERS if m not in text]
+    assert not missing, f"SKILL.md 에 확장 스펙 마커 누락: {missing}"
+
+
+def test_h6_config_has_position_inputs_and_reporting() -> None:
+    """config: 포지션 입력원(clickup/text/url 복수) + ClickUp 등록처 + Discord 채널 보고가 스키마로 고정."""
+    cfg = load_humansearch_config()
+    inputs = cfg["position_inputs"]
+    assert inputs["multiple"] is True
+    assert set(inputs["sources"]) >= {"clickup_task", "text", "url"}
+
+    reg = cfg["clickup_registration"]
+    assert reg["list_id"] == "901818680208"
+    assert reg["structure"] == "position_parent_task + candidate_subtasks"
+    assert "OTW" in " ".join(reg["priority_signals"]) or any(
+        "open to work" in s.lower() for s in reg["priority_signals"]
+    )
+
+    rep = cfg["reporting"]
+    assert rep["discord_channel_id"] == "814353841088757800"
+    assert rep["progress_report"] is True and rep["completion_report"] is True
+    assert rep["fallback"] == "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL"
+
+    persist = cfg["persistence"]
+    assert persist["save_all_opened_profiles"] is True
+    assert persist["save_search_list"] is True
+    assert persist["screenshot_then_text"] is True
