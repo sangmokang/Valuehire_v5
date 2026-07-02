@@ -127,7 +127,11 @@
   },
 
   "reporting": {
-    "discord_channel_id": "814353841088757800",
+    "discord_dm_user_id": "814353841088757800",
+    "dm_bot": "hermes_v5 (1512101118543397056)",
+    "dm_channel_id": "1512503041448743092",
+    "helper": "scripts/dm_report.py",
+    "backup_bot": "hermes (1512501524792738064) → DM 채널 1509944917009629364",
     "auth": "DISCORD_BOT_TOKEN (봇 메시지 API)",
     "progress_report": true,
     "completion_report": true,

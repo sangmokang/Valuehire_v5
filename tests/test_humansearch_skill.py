@@ -482,7 +482,12 @@ def test_h6_config_has_position_inputs_and_reporting() -> None:
     )
 
     rep = cfg["reporting"]
-    assert rep["discord_channel_id"] == "814353841088757800"
+    # 2026-07-03 사장님 정정: 814353841088757800 은 채널이 아니라 사장님 '유저 ID' — 봇 DM 으로 보고
+    assert rep["discord_dm_user_id"] == "814353841088757800"
+    assert rep["dm_bot"] == "hermes_v5 (1512101118543397056)"
+    assert rep["dm_channel_id"] == "1512503041448743092"
+    assert rep["helper"] == "scripts/dm_report.py"
+    assert rep["backup_bot"] == "hermes (1512501524792738064) → DM 채널 1509944917009629364"
     assert rep["progress_report"] is True and rep["completion_report"] is True
     assert rep["fallback"] == "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL"
     assert "no_alarm_bomb" in rep  # 알람 폭탄 금지 정책이 스키마에 있어야 함
