@@ -48,3 +48,32 @@ def test_h7_empty_inputs_fail_closed() -> None:
     """빈 입력은 조용한 성공이 아니라 빈 결과 + missing 없음(추측 금지)."""
     r = expand_search_terms([], "")
     assert r.expanded == () and r.missing == () and r.research_queries == ()
+
+
+# ── V1(Codex 2026-07-03) 적발 결함 회귀봉인 ──
+def test_h7_v1_no_korean_substring_false_positive() -> None:
+    """'제어판'은 '제어'가 아니다 — 부분문자열 오확장 금지."""
+    r = expand_search_terms(["제어판 설계"], "")
+    assert "control" not in " ".join(r.expanded).lower() or "제어" in "제어판 설계".split()
+
+
+def test_h7_v1_short_token_does_not_cover_cpp() -> None:
+    """검색어 'c' 가 JD 의 'C++' 을 덮은 척하면 안 됨 — 갭으로 남아야."""
+    jd = "자격요건: C++ 능숙"
+    r = expand_search_terms(["c"], jd)
+    assert any("c++" == m.lower() for m in r.missing), f"C++ 갭 미검출: {r.missing}"
+
+
+def test_h7_v1_none_input_does_not_crash() -> None:
+    """None/비문자 입력은 크래시가 아니라 빈 결과로(fail-safe)."""
+    r = expand_search_terms([None, "  "], None)  # type: ignore[list-item, arg-type]
+    assert r.expanded == () and r.missing == ()
+
+
+def test_h7_v1_jd_noise_words_not_core() -> None:
+    """'Requirements'·'modern'·'Hard' 같은 잡음은 핵심 키워드가 아니다."""
+    jd = "Requirements: modern C++, Hard RTOS 경험"
+    r = expand_search_terms(["로봇"], jd)
+    low = {t.lower() for t in r.jd_core}
+    assert "requirements" not in low and "modern" not in low and "hard" not in low
+    assert "c++" in low and "rtos" in low
