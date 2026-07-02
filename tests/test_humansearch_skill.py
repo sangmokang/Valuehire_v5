@@ -491,6 +491,11 @@ def test_h6_config_has_position_inputs_and_reporting() -> None:
     assert rep["progress_report"] is True and rep["completion_report"] is True
     assert rep["fallback"] == "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL"
     assert "no_alarm_bomb" in rep  # 알람 폭탄 금지 정책이 스키마에 있어야 함
+    assert "clickup_urls" in rep["completion_report_includes"]  # 완료 DM 에 ClickUp URL(2026-07-03)
+
+    kx = cfg["keyword_expansion"]
+    assert kx["enabled"] is True
+    assert kx["module"] == "tools/multi_position_sourcing/humansearch_keyword_expand.py"
 
     persist = cfg["persistence"]
     assert persist["save_all_opened_profiles"] is True

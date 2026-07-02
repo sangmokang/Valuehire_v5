@@ -136,7 +136,16 @@
     "progress_report": true,
     "completion_report": true,
     "fallback": "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL",
-    "no_alarm_bomb": "중간 보고는 페이지 단위 1건, 완료 1건으로 묶는다"
+    "no_alarm_bomb": "중간 보고는 페이지 단위 1건, 완료 1건으로 묶는다",
+    "completion_report_includes": ["clickup_urls", "keyword_gap_report"]
+  },
+
+  "keyword_expansion": {
+    "enabled": true,
+    "module": "tools/multi_position_sourcing/humansearch_keyword_expand.py",
+    "function": "expand_search_terms(owner_terms, jd_text) -> KeywordExpansion",
+    "steps": ["한↔영 양방향 확장", "띄어쓰기 변형", "JD 핵심 키워드 갭(missing) 검출", "LLM 문맥 검증·큐레이션", "재검색 제안·실행"],
+    "note": "2026-07-03 사장님 — 서치 후 사장님 검색어가 놓친 키워드를 찾아 재검색. 기계 확장은 보수적 사전, 최종 판단은 LLM."
   },
 
   "safety_invariants": {
