@@ -62,9 +62,13 @@ def chunk_reply(text: str, limit: int = 1900) -> list[str]:
 
 # ── I/O (테스트 비대상 — 라이브 검증) ──
 def _token() -> str:
-    for line in (REPO / ".env.local").read_text().splitlines():
-        if line.startswith("DISCORD_BOT_TOKEN="):
-            return line.split("=", 1)[1].strip()
+    # .env.local 은 비추적 — worktree 에는 없음. 본 저장소(worktrees/<n>/../..)까지 폴백.
+    for base in (REPO, REPO.parent.parent):
+        env = base / ".env.local"
+        if env.exists():
+            for line in env.read_text().splitlines():
+                if line.startswith("DISCORD_BOT_TOKEN="):
+                    return line.split("=", 1)[1].strip()
     return os.environ["DISCORD_BOT_TOKEN"]
 
 
