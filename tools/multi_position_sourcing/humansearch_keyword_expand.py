@@ -65,6 +65,9 @@ _STOPWORDS = {
     "있으신", "있는", "경험", "경력", "이상", "우대", "능숙", "이해", "기반", "관련",
     "그리고", "또는", "하는", "위한", "대한", "함께", "모듈", "and", "or", "the",
     "with", "for", "of", "in", "to", "years", "etc",
+    # V1(Codex 2026-07-03): 섹션 제목·수식어 잡음은 핵심 키워드가 아님
+    "requirements", "qualifications", "preferred", "responsibilities",
+    "modern", "hard", "soft", "strong", "good", "excellent", "plus",
 }
 
 
@@ -94,18 +97,22 @@ def _translate(term: str) -> set[str]:
         out.update(EN_KO_MULTI[low])
     if low in EN_KO:
         out.add(EN_KO[low])
-    # 한→영: 용어가 통째로 사전에 있으면 그 번역, 아니면 포함된 단어별
+    # 한→영: 통째 일치 또는 *토큰 단위 일치*만 — '제어판'⊃'제어' 류 부분문자열
+    # 오확장 금지(V1 Codex 2026-07-03 적발).
     if term in KO_EN:
         out.add(KO_EN[term])
     else:
+        tokens = set(term.split())
         for ko, en in KO_EN_GLOSSARY:
-            if ko in term:
+            if ko in tokens or (" " in ko and ko in term):
                 out.add(en)
     return out - {term}
 
 
 def expand_search_terms(owner_terms: list[str] | tuple[str, ...], jd_text: str) -> KeywordExpansion:
-    owner_terms = [t.strip() for t in owner_terms if t and t.strip()]
+    # fail-safe: None/비문자 입력은 크래시가 아니라 빈 결과(V1 Codex 2026-07-03)
+    owner_terms = [t.strip() for t in (owner_terms or ()) if isinstance(t, str) and t.strip()]
+    jd_text = jd_text if isinstance(jd_text, str) else ""
     if not owner_terms and not jd_text.strip():
         return KeywordExpansion((), (), (), ())
 
@@ -146,7 +153,11 @@ def expand_search_terms(owner_terms: list[str] | tuple[str, ...], jd_text: str) 
             translations.add(KO_EN[kw].lower())
         if low in EN_KO:
             translations.add(EN_KO[low].lower())
-        if any(any(t in c or c in t for c in cover_expanded) for t in translations):
+        # 커버 판정: 완전 일치 또는 양쪽 3자 이상일 때만 포함 관계 인정
+        # ('c' 가 'c++' 을 덮은 척 금지 — V1 Codex 2026-07-03 적발)
+        def _covers(a: str, b: str) -> bool:
+            return a == b or (len(a) >= 3 and len(b) >= 3 and (a in b or b in a))
+        if any(any(_covers(t, c) for c in cover_expanded) for t in translations):
             continue
         missing.append(kw)
 
