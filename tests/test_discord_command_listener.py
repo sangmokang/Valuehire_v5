@@ -1,0 +1,54 @@
+"""D1 (2026-07-03 사장님) — 디스코드 DM 으로 Claude 에 명령 내리는 다리 (RED 먼저).
+
+안전 계약: ①사장님(OWNER_ID) 메시지만 명령으로 인정 ②봇 자신·타인 메시지 무시
+③이미 처리한 메시지(id<=last) 재실행 금지 ④빈/공백 명령 무시 ⑤"봇 정지"는 킬 스위치
+⑥회신은 2000자 제한 안전 분할.
+"""
+from __future__ import annotations
+
+from scripts.discord_command_listener import (
+    OWNER_ID,
+    chunk_reply,
+    is_kill_command,
+    select_new_commands,
+)
+
+
+def _msg(mid: str, author: str, content: str) -> dict:
+    return {"id": mid, "author": {"id": author}, "content": content}
+
+
+def test_d1_only_owner_messages_selected() -> None:
+    msgs = [
+        _msg("101", OWNER_ID, "서치 상태 알려줘"),
+        _msg("102", "9999", "해킹 시도"),          # 타인 — 무시
+        _msg("103", "1512101118543397056", "봇 자신"),  # 봇 — 무시
+    ]
+    cmds, last = select_new_commands(msgs, last_id="100")
+    assert [c["content"] for c in cmds] == ["서치 상태 알려줘"]
+    assert last == "103"
+
+
+def test_d1_already_processed_not_rerun() -> None:
+    msgs = [_msg("50", OWNER_ID, "옛 명령"), _msg("120", OWNER_ID, "새 명령")]
+    cmds, last = select_new_commands(msgs, last_id="100")
+    assert [c["content"] for c in cmds] == ["새 명령"]
+    assert last == "120"
+
+
+def test_d1_empty_and_whitespace_ignored() -> None:
+    msgs = [_msg("201", OWNER_ID, "   "), _msg("202", OWNER_ID, "")]
+    cmds, last = select_new_commands(msgs, last_id="200")
+    assert cmds == [] and last == "202"
+
+
+def test_d1_kill_switch() -> None:
+    assert is_kill_command("봇 정지")
+    assert is_kill_command("  stop bot  ")
+    assert not is_kill_command("정지하지 말고 계속")
+
+
+def test_d1_reply_chunked_under_discord_limit() -> None:
+    chunks = chunk_reply("가" * 4500)
+    assert all(len(c) <= 1900 for c in chunks)
+    assert "".join(chunks) == "가" * 4500
