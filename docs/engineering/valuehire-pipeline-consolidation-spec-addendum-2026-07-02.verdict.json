@@ -1,0 +1,44 @@
+{
+  "claim_id": "pipeline-consolidation-addendum-2026-07-02",
+  "mode": "noncode-planning",
+  "risk": "L3",
+  "artifact": "docs/engineering/valuehire-pipeline-consolidation-spec-addendum-2026-07-02.md",
+  "generator": {
+    "author": "Claude (오케스트레이터) + 워크플로 조사에이전트 4",
+    "claim": "무인 헤드헌팅 4영역(매칭정밀도·개인화·3사JD품질·완결감사)을 실제 코드로 조사해 7/1 백로그에 없는 신규 조각(PC-I1~I4·J1~J2·K1~K6)과 반박 제외항목을 도출",
+    "method": "Workflow wf_11f6f3e0-7e8, 9 agents, opus-4-8[1m], subagent_tokens=755219",
+    "evidence_paths": [
+      "workflow transcript: subagents/workflows/wf_11f6f3e0-7e8/journal.jsonl",
+      "task output: tasks/wbx4ghx2i.output (1027 lines)"
+    ]
+  },
+  "v1": {
+    "author": "Workflow 검증에이전트 4 (리셋 컨텍스트, 영역별 반증 임무)",
+    "verdicts": { "matching-precision": "needs_revision", "personalization-message": "needs_revision", "process-jd-quality": "solid", "autonomy-obstacle-audit": "needs_revision" },
+    "refutations_accepted": [
+      "owner-activity 센서 부재 주장 거짓 — owner_activity.py가 task/ai-search-pipeline-wip에 실재(osascript/ioreg HIDIdleTime), PC-F1 살베지 대상 → 신규 OS센서 조각 제외",
+      "owner_activity_detected 라이브 배선은 PC-F2/PC-D2b가 이미 커버 → 신규 제외",
+      "match.py 하드제외 배선/채점기 2중병존 비결정 — match.py 프로덕션 호출자 0(고아), 하드제외 위치 PC-D3 확정 → 제외",
+      "의미임베딩 부재가 현재 자율성 차단 — embed/match 고아라 미소비 → PC-I4 P2(미래인프라)로 강등",
+      "신규 연봉필드 — PC-C5/C6(salary_raw) 중복 → 제외",
+      "이 브랜치 능동적 후보유출 P0 — 라이브는 merged main 기준, 실제는 장부-코드 불일치 → PC-K1로 정정",
+      "must_haves 'ai' 지배축 부풀림 — 'ai'는 nice_to_haves(0.2) → 인과 정정(substring 오탐 자체는 유효)"
+    ],
+    "v1_missed_added_by_orchestrator": [
+      "데몬은 dry_run이 아니라 크래시-루프(Desktop 경로 부재+set -euo pipefail+KeepAlive) → PC-K6 우선순위 상향",
+      "완결성 비평 에이전트가 '완결.'만 반환(본문 부실) → 교차연결 §3 오케스트레이터 직접 합성"
+    ]
+  },
+  "t_machine": {
+    "confirmed_by_git_grep": [
+      "git rev-list --left-right --count main...HEAD = 22 0 (현재 브랜치 하드제외 P0 미포함)",
+      "embed.py:38-49 sha1 stub, humansearch.py:174 substring, humansearch_cdp_run.py:151-161 years 미설정",
+      "humansearch_cdp_run.py hard_exclude grep 0건(main 포함), :197 cards[:max_profiles]=25",
+      "owner_activity.py in task/ai-search-pipeline-wip only; harvest_policy 간격/지터/캡 0건",
+      "llm_keywords.py:160/229 빈 boolean_query 조용통과, harvest_runner.py:77-79 asyncio.run",
+      "valuehire-search-loop.sh Desktop 경로 부재 + plist KeepAlive"
+    ]
+  },
+  "status": "진행중",
+  "note": "이 부록은 게이트1 스펙 산출물(코드변경 아님). 각 신규 조각은 별도 worktree에서 RED→GREEN→게이트4b(Codex V2 포함)로 이행. BUG-HARVEST-ASYNC/BOOL-FAILOPEN은 T 미재현(PLAUSIBLE)=착수 시 재현 먼저."
+}
