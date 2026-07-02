@@ -34,7 +34,9 @@ _KILL_PHRASES = ("봇 정지", "봇정지", "stop bot", "stopbot")
 
 
 def is_kill_command(content: str) -> bool:
-    low = content.strip().lower().replace("  ", " ")
+    # V1(Codex): 공백 2개 치환으론 '봇   정지'(3개)·탭 우회 가능 → 모든 공백을 1개로 정규화
+    import re as _re
+    low = _re.sub(r"\s+", " ", content.strip().lower())
     return any(k in low for k in _KILL_PHRASES) and not low.startswith("정지하지")
 
 
@@ -91,6 +93,36 @@ def _send(text: str) -> None:
         time.sleep(0.6)
 
 
+def acquire_single_instance_lock(lock_path: Path, pid: int) -> bool:
+    """리스너 단일 실행 보장(V1 Codex: 2개 동시 실행=중복 명령 실행).
+
+    락 파일에 기록된 pid 가 살아 있으면 False(두 번째 실행 거부).
+    죽은 pid·빈 락은 회수하고 자기 pid 를 기록한다.
+    """
+    try:
+        if lock_path.exists():
+            old = lock_path.read_text().strip()
+            if old.isdigit():
+                try:
+                    os.kill(int(old), 0)  # 살아있음 검사(시그널 미전송)
+                    return False
+                except (ProcessLookupError, PermissionError, OverflowError):
+                    pass  # 죽었거나 무효 — 회수
+    except OSError:
+        return False
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(str(pid))
+    return True
+
+
+def save_last_atomic(state_path: Path, last_id: str) -> None:
+    """임시파일→os.replace 원자 교체(V1 Codex: 동시 쓰기 반쪽 파일 방지)."""
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = state_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"last_id": last_id}))
+    os.replace(tmp, state_path)
+
+
 def _load_last() -> str:
     if STATE.exists():
         return json.loads(STATE.read_text()).get("last_id", "0")
@@ -98,8 +130,7 @@ def _load_last() -> str:
 
 
 def _save_last(last_id: str) -> None:
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps({"last_id": last_id}))
+    save_last_atomic(STATE, last_id)
 
 
 def _run_claude(prompt: str) -> str:
@@ -116,7 +147,13 @@ def _run_claude(prompt: str) -> str:
         return "❌ claude CLI 를 찾을 수 없음"
 
 
+LOCK = Path.home() / ".valuehire" / "discord_cmd_bridge.lock"
+
+
 def main() -> None:
+    if not acquire_single_instance_lock(LOCK, os.getpid()):
+        print("이미 다른 리스너가 실행 중 — 종료(중복 실행 금지)", flush=True)
+        return
     last = _load_last()
     # 시작 시 과거 대화 재실행 방지: last=0 이면 현재 최신 id 로 초기화
     if last == "0":
@@ -128,16 +165,23 @@ def main() -> None:
     while True:
         try:
             msgs = _api("GET", f"/channels/{DM_CHANNEL}/messages?after={last}&limit=50")
-            cmds, last = select_new_commands(list(msgs), last)
-            _save_last(last)
+            cmds, page_last = select_new_commands(list(msgs), last)
+            if not cmds:
+                # 명령 없는 페이지(타인/봇 메시지)만 포인터 전진
+                last = page_last
+                _save_last(last)
             for m in cmds:
                 content = m["content"].strip()
                 if is_kill_command(content):
+                    _save_last(m["id"])
                     _send("🛑 명령 다리 정지합니다.")
                     return
                 _send(f"⏳ 접수: {content[:120]} — 실행 중…")
                 result = _run_claude(content)
                 _send(f"✅ 결과:\n{result[:5500]}")
+                # V1(Codex): 실행 *완료 후* 저장 — 중간에 죽으면 재실행(유실 금지, at-least-once)
+                last = m["id"]
+                _save_last(last)
         except Exception as e:  # noqa: BLE001
             print(f"loop error: {e}", flush=True)
             time.sleep(30)
