@@ -78,10 +78,34 @@ async def _body_text(page: Any, limit: int = 3000) -> str:
         return ""
 
 
+# 보안챌린지/세션락 감지 토큰. SOT26 block_detection.unified_regex 의 **부분집합**이다(전체가 아님).
+# 왜 부분집합인가(adversarial V2/V3 재현): 이 함수는 로그인/준비체크에서 페이지 innerText 를 스캔하는데,
+# ready_check 는 talent-pool/home 등 후보·마케팅 텍스트가 있는 표면도 훑는다. 그래서 후보 경력에 흔한
+# SOT26 토큰(recaptcha·보안문자·자동입력 방지·unusual activity·verify you)을 raw abort 트리거로 쓰면
+# 정상 로그인/검색을 오탐해 막는다. → 후보 텍스트에 **나타나지 않는 명확한** 신호만 쓴다:
+#   · 기존 캡차/보안 토큰(보안문자·captcha·2단계·인증번호·이상 접근·checkpoint·challenge)
+#   · 신규(SOT26:163 지시): RPS 멀티세션 락 + authwall + URL 블록 마커(/uas/login·login-cap·protechts).
+# _CHALLENGE_TOKENS ⊆ SOT26 는 파리티 테스트로 강제(드리프트/오탈자 차단), 완전 일치는 요구하지 않는다.
+_CHALLENGE_TOKENS: tuple[str, ...] = (
+    "보안문자",
+    "captcha",
+    "2단계",
+    "인증번호",
+    "이상 접근",
+    "checkpoint",
+    "challenge",
+    "authwall",
+    "multiple sign-ins",
+    "only one session",
+    "enterprise-authentication",
+    "/uas/login",
+    "protechts",
+)
+
+
 def _has_security_challenge(text: str, url: str = "") -> bool:
-    challenge_terms = ("보안문자", "CAPTCHA", "2단계", "인증번호", "이상 접근", "checkpoint", "challenge")
     haystack = f"{text} {url}".lower()
-    return any(term.lower() in haystack for term in challenge_terms)
+    return any(token.lower() in haystack for token in _CHALLENGE_TOKENS)
 
 
 def _result(channel: Channel, *, ready: bool, login: str, note: str = "", url: str = "") -> dict[str, object]:

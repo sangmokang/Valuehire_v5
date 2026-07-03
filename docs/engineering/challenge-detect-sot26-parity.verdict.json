@@ -1,0 +1,65 @@
+{
+  "claim_id": "challenge-detect-sot26-parity",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude",
+    "claim": "보안챌린지 감지 두 detector를 SOT26 block_detection.unified_regex(18토큰)로 통일: (1) portal_login._has_security_challenge → _CHALLENGE_TOKENS(파리티), (2) humansearch_preflight.build_probe_js captcha 정규식 확장. RPS 멀티세션락·authwall·recaptcha·/uas/login·unusual activity 탐지 → 봇 STOP(SOT2).",
+    "changed_files": ["tools/multi_position_sourcing/portal_login.py", "tools/multi_position_sourcing/humansearch_preflight.py", "tests/test_challenge_detect_parity.py", "docs/engineering/challenge-detect-sot26-parity-goal-2026-07-03.md"],
+    "command": "PYTHONSAFEPATH=1 PYTHONPATH=$WT .venv-playwright/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "artifact": "824 passed, 3 xfailed, 5 subtests passed",
+    "live_evidence": "_has_security_challenge 프로덕션 호출 7곳(portal_login 로그인/준비체크 + portal_autologin). build_probe_js는 assert_live_or_abort(humansearch_preflight)→humansearch_cdp_run.py:21 라이브 사람검색 게이트. 두 detector 모두 SOT26 토큰 커버 재현.",
+    "mutation": "portal_login 토큰 하나 제거 시 파리티+탐지 테스트 사살(재현). preflight 토큰은 build_probe_js 문자열 containment 테스트로 가드."
+  },
+  "v1": {
+    "author": "Codex Rescue (fresh 세션)",
+    "agentId": "a1d9357aa116d537a",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/665abe23-e8c0-43f1-9f3f-7882a108738d/tasks/a1d9357aa116d537a.output",
+    "verdict": "fail",
+    "counterexamples_accepted": [
+      "[중] humansearch_preflight.build_probe_js가 별도 좁은 captcha 정규식(security verification|captcha|checkpoint|체크포인트|로봇이 아닙니다 5토큰)으로 챌린지 감지, humansearch_cdp_run.py:21이 호출 — 사람검색 경로에 SOT26 신규토큰(authwall·unusual activity·verify you·자동입력 방지·protechts·보안문자·2단계·인증번호 등) 구멍. → preflight captcha 정규식을 SOT26 토큰으로 확장 + build_probe_js containment 테스트 추가."
+    ],
+    "counterexample_rejected": [
+      "[낮음] 'verify you'가 'verify your email'에 과잉매칭 — SOT26 지정 토큰 + STOP=안전방향(봇 정지가 계정차단보다 안전). SOT가 단일진실이라 코드는 파리티 유지(SOT 자체 조정은 별건).",
+      "[환경] 전체 1 failed(822) — .profile.lock 샌드박스 권한, 이 변경 무관. 생성자 로컬 824 passed 재현(T)."
+    ],
+    "t_confirmed": "humansearch_preflight.py:134 captcha 정규식 실재 + humansearch_cdp_run.py:21 assert_live_or_abort import 확인. 파리티 테스트가 SOT26 드리프트 잡는 것 Codex도 재현(protechts 제거→RED)."
+  },
+  "failed_attempts": [
+    { "attempt": "portal_login._has_security_challenge만 SOT26 통일", "root_cause": "보안챌린지 detector가 2개(portal_login Python + humansearch_preflight in-browser JS) — 사람검색 경로의 두번째 detector 누락(부분배선 R4)", "repro": "build_probe_js()에 'authwall' 등 미포함, 사람검색 preflight가 못 잡음", "next_change": "preflight captcha 정규식도 SOT26 토큰으로 확장 + containment 테스트" }
+  ],
+  "v2": {
+    "author": "Claude reset (fresh 세션)",
+    "agentId": "a7e08c7646ea3d3c1",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/665abe23-e8c0-43f1-9f3f-7882a108738d/tasks/a7e08c7646ea3d3c1.output",
+    "verdict": "fail",
+    "findings_accepted": [
+      "[F1 중~중상 실회귀] preflight 정규식에 흔한단어 challenge·2단계 추가로, preflight가 스캔하는 '결과페이지 innerText'(후보/JD 텍스트 가득)에서 정상 검색이 캡차 오탐→assert_live_or_abort(humansearch_cdp_run.py:199, uncaught) PreflightError로 순회 전체 중단. node 실행 재현. 안전방향이나 humansearch 해피패스 상시 파손(가용성 회귀). → preflight를 결과-표면 안전 subset(challenge·2단계·verify you·이상 접근·인증번호 제외)로 교정. portal_login(로그인 표면)은 full 18 유지 = context-aware 설계.",
+      "[F2 낮음 검증갭] preflight JS가 문자열 containment로만 테스트돼 실행 미검증 → F1 못 잡음. → captcha 정규식을 실제 컴파일해 오탐(benign)·탐지(block) 행동 테스트로 교체."
+    ],
+    "findings_sound": ["파리티 정확(protechts 제거→2 RED)", "build_probe_js node/V8 실행 SyntaxError 없음·괄호균형", "824 passed 재현", "테스트 약화 0(+83 삽입만)", "제3 detector 없음(2개가 전부, V1 유효)"],
+    "fix_evidence": "V2 F1 end-to-end 재현: 'challenge'+'2단계' 포함 정상페이지 captcha 오탐=False(교정 후), 블록페이지=True. 전체 837 passed. preflight authwall 제거 mutation→탐지테스트 사살."
+  },
+  "v3": {
+    "author": "Claude reset (fresh 세션)",
+    "agentId": "ae2daf513583705b1",
+    "verdict": "fail",
+    "findings_accepted": [
+      "[F3-1 중 재현] F1 수정이 흔한 5단어(challenge·2단계 등)만 제거하고, 같은 변경이 새로 넣은 recaptcha·보안문자·자동입력 방지·unusual activity(보안/FDS/ML 후보 일상 어휘)를 preflight에 남김 → 그런 후보 1명만 결과에 섞여도 순회 통째 중단. → **preflight 확장 전면 원복**(결과표면 텍스트스캔 확장 자체가 해로움).",
+      "[핵심 통찰] 진짜 블록/캡차/세션락 페이지는 후보 카드 미렌더 → results_rendered=False + URL 마커로 이미 abort. preflight 텍스트 키워드 확장은 불필요+과잉탐지만 유발. 과소탐지(실블록 놓침) 위험은 낮음(다중 fail-closed 게이트).",
+      "[F3-2 저신뢰] portal_login full18도 ready_check(talent-pool/home 표면) 오탐 위험 → 후보텍스트 흔한 SOT26토큰 제외한 안전subset으로 축소."
+    ]
+  },
+  "rework": "적대검증 3라운드(V1 gap→내 확장→V2 F1 회귀→V3 F3-1 미완)가 '키워드 raw abort로 SOT26 full-parity'가 근본 취약(SOT26 토큰은 false_positive_guard와 짝)임을 드러냄. 최종: portal_login에 **모호하지 않은 세션락/authwall/URL 블록 신호만** 추가(SOT26:163 지시분), preflight 원복(순변경0), _CHALLENGE_TOKENS⊆SOT26. full-parity 주장 철회. 신규 6토큰 후보/JD/UI 텍스트 오탐 0 재현. 전체 825 passed.",
+  "v4": {
+    "author": "Claude reset (fresh 세션)",
+    "agentId": "a89f2c136aa6c0b05",
+    "verdict": "pass",
+    "independent_repro": "825 passed 재현. preflight diff=코멘트만(순변경0, 회귀 원복 확정). tests=신규파일만(약화0). portal_login 기존7 보존+신규6 추가만. 13토큰⊆SOT26, 오탈자→subset RED·authwall제거→탐지 RED(mutation 비공허). 정상 텍스트 12종(enterprise authentication·single sign-on·session timeout·authentication wall 등) 오탐0, 블록6종 탐지.",
+    "residual_accepted": "[낮음·비블로커] 'only one session per user policy' 문구 오탐 여지 — 단 이 함수는 로그인/준비체크 표면(랜딩 폼 body)만 스캔(후보 이력서는 원복된 preflight 담당), 안전측(STOP>계정차단), SOT26 tradeoff 명문화, 세션관리 JD가 랜딩표면에 뜰 확률~0. 배송 차단 아님."
+  },
+  "final_scope": "portal_login._has_security_challenge 에 모호하지 않은 6토큰 추가(authwall·multiple sign-ins·only one session·enterprise-authentication·/uas/login·protechts, SOT26:163 RPS 세션락 지시분). preflight 원복. _CHALLENGE_TOKENS⊆SOT26. 후보텍스트 흔한 SOT26토큰은 raw abort 오탐 위험이라 미채택.",
+  "three_way_agree": true,
+  "status": "게이트4b 통과(V1 gap→rework, V2 F1→원복, V3 F3-1→보수축소, V4 PASS) — 배송대기"
+}
