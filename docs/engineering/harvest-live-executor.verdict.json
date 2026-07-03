@@ -1,0 +1,32 @@
+{
+  "piece": "PC-D5",
+  "slug": "harvest-live-executor",
+  "title": "라이브 ExecuteHarvestItem 어댑터 (GuardedPortalSearchRunner→harvest 계약, 챌린지 STOP)",
+  "branch": "task/harvest-live-executor",
+  "date": "2026-07-03",
+  "acceptance_criterion": "GuardedPortalSearchRunner 를 harvest 계약(HarvestItem→Iterable[profile], 챌린지 감지 시 STOP)으로 감싸는 어댑터가, 결정론 소비 테스트에서 (1) 정상 검색 시 프로필 Iterable 반환, (2) 비-searched(세션락·authwall·재인증·pacing 상한·DOM오류)·pause_site 감지 시 즉시 STOP(남은 키워드 안 두드림, 사유 기록), (3) STOP 시 그때까지 찾은 카드 보존, (4) run_harvest_cycle 에 execute_item 으로 실제 동작. verify.sh(전체 pytest) exit 0.",
+  "implementation": "tools/multi_position_sourcing/harvest_executor.py (HarvestSearchExecutor, HarvestStopSignal, _stop_reason)",
+  "tests": "tests/test_harvest_executor.py (12개)",
+  "reuse": "GuardedPortalSearchRunner(portal_runtime.py) 감쌈 + portal_queue_executor.execute_queue_item 의 STOP 규율 선례 일치. ai-search-pipeline-wip 의 portal_worker DOM 대기 살베지는 하위 계층(worker.run_one_search)이라 이 조각 범위 밖 — 어댑터는 그 위 러너 계층을 감싼다.",
+  "gates": {
+    "G_self_mutation": {
+      "verdict": "PASS",
+      "evidence": "자가 적대검증 — 뮤테이션 6종 전부 test 로 caught: M1(break 제거→계속 두드림, 5 failed), M2(pacing 카운터 미증가, 1 failed), M3(STOP 사유 미기록, 6 failed), M4(STOP분기 카드보존 제거, 1 failed), M5(searched 판정 반전, 8 failed), M6(pause_site 가드 제거, 1 failed). 초기 테스트가 M3/M4/M6 를 못 잡던 구멍을 발견해 테스트 4건 보강."
+    },
+    "V1_codex": {
+      "verdict": "PASS",
+      "rounds": 3,
+      "evidence": "codex:rescue 3라운드. 1차 FAIL: pacing_blocked(일일 상한)를 STOP 으로 안 봐 남은 키워드 계속 두드림(portal_queue_executor 선례 불일치, SOT2 봇금지 위반) → searched 외 전부 즉시 STOP 으로 수정. 2차 FAIL: searched+pause_site=True 가 STOP 을 빠져나감(내가 죽은코드로 오판해 제거한 pause_site 가드) → 가드 복원+테스트로 못박음. 3차 PASS: status×pause_site 10개 조합 직접 순회 escaped_stop=False 확인, searched+pause_site=False 만 진행. 12 passed / 전체 841 passed 재현."
+    },
+    "V2_reset_claude": {
+      "verdict": "PASS",
+      "evidence": "리셋 Claude(code-reviewer) 최종본 독립 검증 — 0 issues. status×pause_site 전조합 매트릭스로 STOP 규율 airtight 확인(searched AND NOT pause_site 만 continue, 나머지 전부 break). 뮤테이션 3종(break 제거·pause_site 가드 제거·searched 반전) 전부 killed. async 계약·카드보존·고아여부(정당한 staged seam) 확인. 초기 V2 는 수정 전 코드에서 selector_missing 미STOP 을 MEDIUM 으로 지적했고, 이는 최종본에서 해소됨."
+    },
+    "T_full_suite": {
+      "verdict": "PASS",
+      "evidence": "verify.sh 인터프리터 .venv/bin/python 로 전체 pytest: 841 passed, 3 xfailed, 5 subtests passed (baseline 829 + 신규 12). 회귀 0."
+    }
+  },
+  "orphan_check": "run_harvest_cycle 의 프로덕션 드라이버는 아직 없음(테스트만 호출). 이 어댑터는 그 이음매를 채우는 seam 으로, 소비 드라이버는 설계도상 PC-D2b(상시 Harvest 드라이버)·PC-K6(데몬)가 담당(둘 다 PC-D5 depends_on). 통합테스트 test_adapter_plugs_into_run_harvest_cycle 로 ExecuteHarvestItem 계약 충족을 증명 → dead code 아님, staged delivery.",
+  "residual_risk": "라이브 실운영(실제 포털 검색→카드 추출) 은 단일 pytest 로 완결 판정 불가. 순수 결정 로직(STOP 규율·카드누적·페이싱 카운터)은 기계검증 완료. segment→keyword 매핑은 코드베이스에 없어 keywords_for_segment 주입 계약으로 남김(구체 매핑은 후속 조각). 라이브 카드 추출 품질(wait_for_search_results 등 wip 살베지)은 하위 계층 후속."
+}
