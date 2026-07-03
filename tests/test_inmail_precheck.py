@@ -289,6 +289,36 @@ def test_language_empty_name_falls_back_to_text() -> None:
     assert body_language_for_profile("", visible_text="로보틱스 엔지니어 5년") == "ko"
 
 
+# ── lang_ko: 한국어 기본·로마자 한국 이름 오판 제거 (사장님 2026-07-03) ──
+@pytest.mark.parametrize(
+    "name",
+    ["HyunJun Jo", "Hyunjun Cho", "Minsu Kim", "Sumin LEE", "Sangbeom Park",
+     "Jongchan Baek", "Kangwon Lee", "Jo HyunJun"],
+)
+def test_lang_ko_romanized_korean_name(name: str) -> None:
+    """로마자 표기 한국 이름(성씨 신호)은 한국인 → 본문 한국어."""
+    assert body_language_for_profile(name) == "ko"
+
+
+def test_lang_ko_latin_name_with_hangul_text() -> None:
+    """이름이 라틴이어도 프로필에 한글(한국 대학 등)이 보이면 한국인."""
+    assert body_language_for_profile("HyunJun Jo", visible_text="고려대학교 PhD") == "ko"
+
+
+def test_lang_ko_foreign_names_stay_english() -> None:
+    """명백한 외국 이름은 영어 유지(사장님 명시 잘한 점 — Meseret 건)."""
+    assert body_language_for_profile(MESERET) == "en"
+    assert body_language_for_profile("John Smith") == "en"
+
+
+def test_lang_ko_precheck_no_warning_for_romanized_korean() -> None:
+    """재발 봉인: 'HyunJun Jo' + 한국어 본문에 language_mismatch 경고 금지."""
+    body = _ok_body_ko("HyunJun Jo")
+    result = precheck_inmail(body, profile_name="HyunJun Jo", channel="linkedin_rps")
+    assert result.ok, result.stops
+    assert not any("language" in w for w in result.warnings)
+
+
 # ── codexv1: codex 1차 적대검증(FAIL 5건) 회귀 봉인 ────────────────
 def test_codexv1_two_char_latin_token_no_false_pass() -> None:
     """[HIGH] 'et'⊂'Meseret' 우연 포함 일치 fail-open 차단."""
