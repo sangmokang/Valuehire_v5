@@ -1,0 +1,42 @@
+{
+  "claim_id": "bool-query-failclosed",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude",
+    "claim": "boolean 채널(linkedin_rps/public_web)에 유효 keywords 가 있는데 boolean_query 가 비/공백이면 KeywordGenerationError(fail-closed). 신규 _require_boolean_query(channel-aware·None-safe)를 boolean_query 생산 3경로(inject_boolean_queries·inject_channel_search_filters·build_llm_keyword_sessions) 전부에 배선. 평문 채널(saramin/jobkorea) 과잉 raise 없음.",
+    "changed_files": ["tools/multi_position_sourcing/llm_keywords.py", "tests/test_bool_query_failclosed.py", "docs/engineering/bool-query-failclosed-goal-2026-07-03.md"],
+    "command": "PYTHONSAFEPATH=1 PYTHONPATH=$WT .venv-playwright/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "artifact": "736 passed, 3 xfailed, 5 subtests passed",
+    "live_evidence": "_require_boolean_query 호출 3곳: llm_keywords.py:170(inject_boolean_queries)·244(inject_channel_search_filters)·286(build_llm_keyword_sessions). inject_channel_search_filters는 dry_run.py:111(라이브 검색 드라이버) 배선. build_llm_queue_items→build_llm_keyword_sessions 경유.",
+    "mutation": "가드 raise 제거 시 raise-테스트 실패(사살). channel-aware 조건 제거 시 평문 채널 과잉raise로 회귀 테스트 실패."
+  },
+  "v1": {
+    "author": "Codex Rescue (fresh 세션)",
+    "agentId": "af886dbedcc873919",
+    "source_jsonl": "/Users/kangsangmo/.claude/projects/-Users-kangsangmo-Valuehire-v5/79a80386-5701-4643-8994-30a21ad94e2e/subagents/agent-af886dbedcc873919.jsonl",
+    "verdict": "fail",
+    "counterexamples_accepted": [
+      "[major] build_llm_keyword_sessions(llm_keywords.py:283)가 3번째 boolean_query 소비 경로인데 가드 미배선 — boolean 채널 빈 쿼리 조용히 통과(BUG 여전). → _require_boolean_query 배선(286) + build_llm_queue_items도 이 경유로 커버.",
+      "[minor] _require_boolean_query가 boolean_query=None 직접 입력 시 AttributeError. → `plan.boolean_query or ''` None-safe + channel-aware 로 하드닝(KeywordGenerationError 로 수렴)."
+    ],
+    "counterexample_rejected": [
+      "'전체 1 failed(730)' — PortalLogin .profile.lock 권한(Codex 샌드박스) 문제, 이 변경 무관. 격리 재실행 731/736 재현(T).",
+      "평문 채널·public_web 과잉raise — Codex도 '이상 없음' 확인(채널 격리 정상)."
+    ]
+  },
+  "failed_attempts": [
+    { "attempt": "inject_boolean_queries·inject_channel_search_filters 2곳만 가드", "root_cause": "boolean_query 생산 경로가 3개(build_llm_keyword_sessions 누락) — 부분배선(R4)", "repro": "build_llm_keyword_sessions(channels=('linkedin_rps',), empty_bq) raise 안 함", "next_change": "가드를 channel-aware 로 만들어 build_llm_keyword_sessions(전채널 순회)에도 안전 배선" }
+  ],
+  "v2": {
+    "author": "Claude reset (fresh 세션)",
+    "agentId": "a3e78a9b06dfeaaf4",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/665abe23-e8c0-43f1-9f3f-7882a108738d/tasks/a3e78a9b06dfeaaf4.output",
+    "verdict": "pass",
+    "independent_repro": "736 passed 재현(Codex의 1 failed는 .profile.lock 샌드박스 아티팩트 — V2 736/736). filters['boolean_query'] 설정 3곳(179·248·286) 전부 _require 통과 후 = 제4 유출 없음. build_keyword_plan(고정표)은 boolean_query 미설정, channel_search_render/portal_queue_executor read-only 다운스트림. 평문(saramin/jobkorea) 격리·None 방어 정상. git diff: 기존 테스트 수정 0·assert삭제 0.",
+    "what_v1_missed": "없음 — V1의 2건(제3경로·None) 모두 봉인 확인. 신규 관찰: int/list boolean_query 는 AttributeError 이나 generate_keyword_plan:124 이 항상 str 강제라 프로덕션 도달 불가 → 실결함 아님(위협모델 밖), 문서화만."
+  },
+  "three_way_agree": true,
+  "status": "게이트4b 통과(G·V1·V2·T 수렴) — 배송대기. 잔여 비차단: int/list boolean_query unreachable 하드닝(원하면 isinstance 가드)"
+}
