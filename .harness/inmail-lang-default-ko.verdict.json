@@ -1,0 +1,29 @@
+{
+  "claim_id": "inmail-lang-default-ko",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "언어 판정 한국어 기본: 로마자 한국 성씨·한글 신호→ko, 명백한 외국인만 en",
+    "changed_files": ["tools/multi_position_sourcing/inmail_precheck.py", "tests/test_inmail_precheck.py", "skills/humansearch/SKILL.md", "skills/humansearch/references/inmail-golden-sample.md"],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "evidence": "801 passed, 3 xfailed; 라이브: HyunJun Jo 토트 문구 expected_language=ko, language 경고 0",
+    "author": "Claude(G)"
+  },
+  "v1": {
+    "verdict": "pass_with_medium_finding",
+    "author": "Codex(agentId aeacefa40373e3545, thread 019f26d9-f9bb-7990-83f9-a1b359bf196d)",
+    "note": "1차 라운드 FAIL(high) → 재검증 라운드 PASS+medium. 판정 파일은 codex 샌드박스가 형제 워크트리 쓰기 차단(open/apply_patch/redirect 전부 Operation not permitted)하여 본 파일은 G가 transcript 본문 그대로 옮겨 적음(위조 방지: source_jsonl 참조).",
+    "finding": "inmail_precheck.py:173 _KOREAN_SURNAMES_ROMANIZED 에 Paik/Yim/Chey/Yeom/Maeng 누락 → Brian Paik 등 한국 이름이 en 오판",
+    "survived": "Meseret·John Smith en 유지 / 빈이름·이니셜·하이픈 crash 0 / HyunJun Jo+한국어 본문 경고 0 / 테스트 약화 diff 0 / 52 passed",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/e5873c35-1aa1-4c68-a0a2-7bbd363669fe/tasks/aeacefa40373e3545.output"
+  },
+  "v2": {
+    "verdict": "pass",
+    "author": "Claude(V2)",
+    "independent_repro": "수정 커밋 후 Brian Paik/Andrew Yim/Eunice Chey/Joyce Yeom/Alice Maeng/Minsoo Yeom 전부 ko, Sohn/Rhee/Gwak/Pyun/Koo ko 유지, Meseret·John Smith en 유지 — 본 파일과 같은 턴의 실행 출력",
+    "what_v1_missed": "없음(v1 medium 발견을 수정+회귀 5건 봉인). yum(염) 변형은 G가 추가."
+  },
+  "three_way_agree": true,
+  "status": "GREEN(ship 대기)"
+}

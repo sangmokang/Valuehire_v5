@@ -190,6 +190,7 @@ _KOREAN_SURNAMES_ROMANIZED: frozenset[str] = frozenset(
         "ma", "pi", "ki", "gi", "ji", "jee", "myung", "myeong",
         "bong", "sa", "seol", "sul", "gye", "kye", "pyeon", "pyun",
         "hyun", "hyeon", "kook", "guk", "kuk", "ye",
+        "paik", "yim", "chey", "yeom", "yum", "maeng",  # codex V1 적발 누락분
     }
 )
 

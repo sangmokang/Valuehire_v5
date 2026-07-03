@@ -293,7 +293,8 @@ def test_language_empty_name_falls_back_to_text() -> None:
 @pytest.mark.parametrize(
     "name",
     ["HyunJun Jo", "Hyunjun Cho", "Minsu Kim", "Sumin LEE", "Sangbeom Park",
-     "Jongchan Baek", "Kangwon Lee", "Jo HyunJun"],
+     "Jongchan Baek", "Kangwon Lee", "Jo HyunJun",
+     "Brian Paik", "Andrew Yim", "Eunice Chey", "Joyce Yeom", "Alice Maeng"],  # codex V1 적발
 )
 def test_lang_ko_romanized_korean_name(name: str) -> None:
     """로마자 표기 한국 이름(성씨 신호)은 한국인 → 본문 한국어."""
