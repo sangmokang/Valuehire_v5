@@ -131,10 +131,12 @@ def build_probe_js() -> str:
         results_text: rm ? rm[0] : '',
         logged_in_account: am ? am[1].trim() : '',
         multiple_signins: /multiple sign-ins|only one session|동시 로그인/i.test(txt),
-        // 결과페이지 innerText(후보/JD 텍스트 가득)를 스캔하므로 흔한 단어(challenge·2단계·verify you·
-        // 이상 접근·인증번호)는 제외한 블록-특정 토큰만 쓴다 — 정상 검색을 캡차로 오탐해 순회를 중단시키지
-        // 않기 위해서다(로그인 표면인 portal_login._has_security_challenge 는 full SOT26 토큰 사용).
-        captcha: /security verification|captcha|recaptcha|보안문자|자동입력 방지|checkpoint|체크포인트|\/uas\/login|login-cap|unusual activity|enterprise-authentication|authwall|protechts|로봇이 아닙니다/i.test(txt)
+        // ⚠️ 이 정규식은 결과페이지 innerText(후보/JD 텍스트 가득)를 스캔한다. 후보 경력에 흔한
+        // 단어(recaptcha·보안문자·자동입력 방지·unusual activity·challenge·2단계 등)를 넣으면 정상
+        // 검색을 캡차로 오탐해 순회를 통째로 중단시킨다(adversarial V2/V3 재현). 진짜 블록/캡차/세션락
+        // 페이지는 후보 카드를 렌더하지 않아 results_rendered=False + URL 마커(_LOGIN_REDIRECT_MARKERS)로
+        // 이미 abort 되므로, 여기 텍스트 스캔은 좁은 블록-특정 문구만 유지한다(확장 금지).
+        captcha: /security verification|captcha|checkpoint|체크포인트|로봇이 아닙니다/i.test(txt)
       };
     })()"""
 
