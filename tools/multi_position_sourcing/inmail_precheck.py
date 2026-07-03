@@ -168,16 +168,46 @@ def count_briefing_elements(elements: dict) -> int:
     return count
 
 
+# 한국 성씨 로마자 표기 (주요 변형 포함) — 이름이 라틴이어도 이 성씨가 있으면 한국인으로 본다.
+# 사장님 2026-07-03: "누가 들어도 한국 이름이고 한국 대학 나왔으면 한국인. 한국어가 기본."
+_KOREAN_SURNAMES_ROMANIZED: frozenset[str] = frozenset(
+    {
+        "kim", "gim", "lee", "yi", "rhee", "ree", "park", "pak", "bak",
+        "choi", "choe", "chwe", "jung", "jeong", "chung", "cheong",
+        "kang", "gang", "cho", "jo", "joh", "yoon", "yun", "youn",
+        "jang", "chang", "lim", "im", "rim", "leem", "han", "hahn",
+        "oh", "seo", "suh", "shin", "sin", "kwon", "gwon", "kweon",
+        "hwang", "whang", "ahn", "an", "song", "yoo", "yu", "ryu", "ryoo",
+        "hong", "jeon", "jun", "chun", "cheon", "moon", "mun",
+        "baek", "paek", "back", "baik", "heo", "hur", "huh",
+        "nam", "roh", "noh", "no", "ha", "kwak", "gwak", "kwack",
+        "sung", "seong", "cha", "joo", "ju", "chu", "woo", "wu",
+        "koo", "ku", "goo", "gu", "min", "bae", "pae", "bai",
+        "do", "doh", "eom", "um", "uhm", "pyo", "byun", "byeon", "byoun",
+        "son", "sohn", "yang", "gil", "kil", "ko", "go", "koh", "goh",
+        "na", "ra", "rah", "la", "wang", "chae", "bang", "pang",
+        "sim", "shim", "tak", "jin", "yeo", "won", "ok", "seok", "suk",
+        "ma", "pi", "ki", "gi", "ji", "jee", "myung", "myeong",
+        "bong", "sa", "seol", "sul", "gye", "kye", "pyeon", "pyun",
+        "hyun", "hyeon", "kook", "guk", "kuk", "ye",
+    }
+)
+
+
 def body_language_for_profile(name: str, visible_text: str = "") -> str:
-    """프로필 이름·이력이 영문이면 'en'(인사말만 한국어 허용), 아니면 'ko'."""
+    """본문 언어 판정 — **한국어가 기본**(사장님 2026-07-03: 외국인 채용 비율 현저히 낮음).
+    'en'은 명백한 외국인 신호(라틴 이름 + 한국 성씨 아님 + 한글 신호 0)일 때만."""
     name = (name or "").strip()
-    if name:
-        if _HANGUL.search(name):
-            return "ko"
-        if _LATIN.search(name):
-            return "en"
     text = (visible_text or "").strip()
-    if text and not _HANGUL.search(text) and _LATIN.search(text):
+    if name and _HANGUL.search(name):
+        return "ko"
+    if text and _HANGUL.search(text):
+        return "ko"  # 프로필에 한글(한국 대학 등) = 한국인
+    if name and _LATIN.search(name):
+        if any(t in _KOREAN_SURNAMES_ROMANIZED for t in _name_tokens(name)):
+            return "ko"  # 로마자 표기 한국 이름(HyunJun Jo 등)
+        return "en"
+    if text and _LATIN.search(text):
         return "en"
     return "ko"
 
