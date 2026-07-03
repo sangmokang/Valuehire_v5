@@ -107,13 +107,29 @@
       "remediation": "커밋 d0ad0a1 — _reject_reserved_header: 예약 헤더(공백 변형 포함)로 시작하는 입력 전 경로 거부"
     },
     "round7": {
-      "verdict": "PENDING",
-      "target_commit": "d0ad0a1"
+      "verdict": "fail",
+      "target_commit": "d0ad0a1",
+      "findings": [
+        "1(blocking). 예약 헤더 사이 유니코드 공백(NBSP·U+202F·U+2003·U+3000) 삽입 시 우회",
+        "2(followup). 선두/말미 개행·줄분리는 strip 으로 조용히 제거(유출 없음)"
+      ],
+      "remediation": "커밋 3c24d02 — 헤더 판정을 NFKC 접기 + isspace 전체 + Cf/Mn/Me 제거 후 수행"
+    },
+    "round8": {
+      "verdict": "pass",
+      "target_commit": "3c24d02",
+      "findings_followup_only": [
+        "렌티큘러 괄호(【주요 업무】)·HTML 엔티티/태그·불릿 접두·Mc 결합문자 헤더 변형 — 고의적 조작 수준",
+        "company_briefing=None 은 요소 0개 warning 경로로 통과 — 스펙상 정상(브리핑<6 은 보고 후 진행)"
+      ],
+      "regression": "round1~7 재현 케이스 전부 차단 확인, 테스트 약화 없음(git diff), focused pytest 28 passed"
     }
   },
   "open_assumptions": [
-    "한자 혼용 표기(미確認) 등 고의적 이형 마커는 미검출 — 내부 호출자 위협모델상 followup (V1 round3 severity 판정과 일치)"
+    "한자 혼용 표기(미確認)·렌티큘러 괄호·HTML 엔티티/태그·Mc 결합문자 등 고의적 이형 변형은 미검출 — 내부 호출자(humansearch) 위협모델상 followup 수용 (V1 round3·8 severity 판정 일치)",
+    "최종 안전망은 발송 직전 사람 눈 + 컴포저 입력 후 스크린샷 대조 절차(골든샘플 SOT)가 그대로 유지됨"
   ],
-  "three_way_agree": false,
-  "status": "진행중 — V1 최종확인(round4) 대기"
+  "three_way_agree": true,
+  "three_way_note": "L2 등급 — G(mutation 4종+자기반증) + V1(codex 8라운드, 최종 pass) + T(verify.sh 906 passed exit 0) 일치. V2 승격 조건(하드제외·발송 경계 직접 변경) 미해당(goal §1).",
+  "status": "GREEN 후보 — PR/CI/merge 대기"
 }

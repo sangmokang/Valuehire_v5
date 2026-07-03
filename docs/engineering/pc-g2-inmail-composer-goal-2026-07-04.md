@@ -151,5 +151,21 @@ language = "ko"
 - 1,899 캡 초과 STOP 강제 단언(→ PC-G2b).
 - 개인화 오프너·브리핑 사실 자체의 수집(호출자·humansearch가 제공; 이 함수는 조립만).
 
-## 적대 검증 로그
-(구현 세션이 채운다 — 브리핑 7 vs 8 결정 근거, V1 Codex 판정 본문+agentId, mutation 증거.)
+## 적대 검증 로그 (2026-07-04 구현 세션)
+
+- **브리핑 7 vs 8 결정**: `BRIEFING_ELEMENT_KEYS`(8키) + `BRIEFING_MIN_ELEMENTS`(6)를 단일 진실로 채택.
+  근거: 현행 SOT(`inmail_precheck.py:34-44`, 골든샘플 v2, 전역 스킬 2026-07-02 "8요소 상향")이 백로그의 옛
+  "R20 7요소" 문구보다 우선(SOT5). 테스트는 `count_briefing_elements(...) >= 6` 단언, 7요소 하드코딩 없음.
+- **정합성 수정**: 본 문서 §2.2 의 `precheck_inmail(..., briefing_elements=<dict>)`는 실제 시그니처와 다름 —
+  실제 인자는 `briefing_element_count: int` (기존 `count_briefing_elements()`로 개수를 세서 전달, 재구현 없음).
+- **RED 증거**: 커밋 96ef48e (ImportError — 함수 미구현 상태에서 인수기준 테스트 먼저 커밋).
+- **mutation 증거(G)**: ①P.S. CTA 제거→3 failed ②VERIFIED-PULL 제거→3 failed ③이름 하드코딩→2 failed
+  ④캡가드 호출 제거→최초 생존→spy 배선 테스트(ed4aed4)로 봉인 후 1 failed. 전 mutant 사멸.
+- **V1(codex-rescue, 독립 세션) 8라운드**: 상세는 `linkedin-jd-composer.verdict.json`.
+  blocking 발견→봉인 이력: zero-width ※미확인 우회(7aa14c8) → 마커 변형·비문자열(9c1b454) →
+  전 경로 공통검문(5147b55) → None 항목·language/channel 타입(783a709) → 제어문자 주입(3cd6e2e) →
+  U+2028/29 자기반증(5352615) → 예약 헤더 위장(d0ad0a1) → 유니코드 공백 접기(3c24d02).
+  **round8 최종 pass** (남은 findings 는 전부 followup — 한자 혼용·렌티큘러 괄호·HTML 태그 등 고의적 조작 수준,
+  내부 호출자 위협모델상 수용. 발송 직전 사람 확인 + 스크린샷 대조 절차가 최종 안전망).
+- **범위 밖 분리**: precheck 이름검사 부분일치 오탐(순서 뒤집힌/잘린 이름 통과) → 이슈 #60.
+- **T(기계)**: `./verify.sh` — `906 passed, 3 xfailed, 5 subtests passed` exit 0.
