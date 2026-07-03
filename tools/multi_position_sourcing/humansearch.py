@@ -150,8 +150,15 @@ def _profile_text(profile: CapturedProfile) -> str:
     return _normalize(raw)
 
 
-def hard_exclude_reason(profile: CapturedProfile, channel: Channel) -> str | None:
-    """채점 전 제외 사유. 없으면 None(=채점 대상). 사장님 확정 규칙."""
+def hard_exclude_reason(
+    profile: CapturedProfile, channel: Channel, *, seniority_max: int | None = None
+) -> str | None:
+    """채점 전 제외 사유. 없으면 None(=채점 대상). 사장님 확정 규칙.
+
+    ``seniority_max`` 가 주어지면 JD 경력상한 초과(오버스펙)를 컷한다(PC-I1). 경력은
+    ``profile.years_experience``(러너가 졸업연도/근속으로 산출, PC-I2). 미상(None)이면 컷하지 않는다
+    — 잘못 제외하지 않는다(fail-open on unknown; 컷은 확실히 초과일 때만).
+    """
     text = _profile_text(profile)  # 이미 _normalize(공백 제거·제로폭 strip·NFKC·소문자) 적용됨
 
     if any(_normalize(marker) in text for marker in FREELANCER_MARKERS):
@@ -162,6 +169,13 @@ def hard_exclude_reason(profile: CapturedProfile, channel: Channel) -> str | Non
 
     if channel in PORTAL_SCHOOL_CUT_CHANNELS and _is_low_tier_school(profile.education):
         return "low_tier_school"
+
+    if (
+        seniority_max is not None
+        and profile.years_experience is not None
+        and profile.years_experience > seniority_max
+    ):
+        return "seniority_over_cap"
 
     return None
 

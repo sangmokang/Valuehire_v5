@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.multi_position_sourcing import raw_cdp as cdp
 from tools.multi_position_sourcing.humansearch import hard_exclude_reason, score_humansearch
+from tools.multi_position_sourcing.scoring import tenure_months
 from tools.multi_position_sourcing.humansearch_preflight import assert_live_or_abort
 from tools.multi_position_sourcing.models import (
     CapturedProfile,
@@ -137,11 +138,43 @@ def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
+_YEAR_RE = re.compile(r"(19\d{2}|20\d{2})")
+
+
+def compute_years_experience(
+    education: str, employment_history, *, today_year: int
+) -> int | None:
+    """졸업연도/근속으로 경력연차 산출(PC-I2). fail-closed: 근거 없으면 None(상한 컷 안 되게).
+
+    1) education 에 그럴듯한 졸업연도(1950~오늘)가 있으면 오늘−졸업연도(가장 최신 졸업 기준).
+    2) 없으면 근속합산 폴백: 완료 재직은 tenure_months 재사용, 현재 재직(end 빈값)은 start~오늘.
+    3) 둘 다 없으면 None.
+    """
+    grad_years = [int(y) for y in _YEAR_RE.findall(education or "") if 1950 <= int(y) <= today_year]
+    if grad_years:
+        return max(0, today_year - max(grad_years))
+
+    total_months = 0
+    counted = False
+    for tenure in employment_history:
+        months = tenure_months(tenure.start_month, tenure.end_month)
+        if months is None and tenure.start_month and not tenure.end_month:
+            starts = _YEAR_RE.findall(tenure.start_month)
+            if starts:
+                months = max(0, (today_year - int(starts[0])) * 12)
+        if months is not None and months >= 0:
+            total_months += months
+            counted = True
+    return (total_months // 12) if counted else None
+
+
 def runner_hard_exclude(prof: CapturedProfile) -> str | None:
     """러너면 하드제외 — 캡처 직후 적용(results.json 에서 제외). 판정은 단일 출처
     humansearch.hard_exclude_reason 재사용(재구현 금지, SOT5). 채널은 프로필의 source_channel —
     링크드인은 학교컷 미적용, 사람인·잡코리아만 전문대 컷(등록면 PC-C1a 와 동일 규칙)."""
-    return hard_exclude_reason(prof, prof.source_channel)
+    return hard_exclude_reason(
+        prof, prof.source_channel, seniority_max=POSITION.seniority_max
+    )
 
 
 def collect_results(rows: Iterable[dict]) -> list[dict]:
@@ -165,6 +198,7 @@ def process_profile(tab, card: dict, idx: int) -> dict:
     except Exception as e:
         log(f"  screenshot fail: {e}")
         shot = Path("")
+    tenures = build_tenures(info.get("dates", []))
     prof = CapturedProfile(
         profile_url=card["url"],
         source_channel="linkedin_rps",
@@ -173,8 +207,12 @@ def process_profile(tab, card: dict, idx: int) -> dict:
         captured_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
         screenshot_path=str(shot),
         education=education,
+        # PC-I2: 졸업연도/근속으로 경력연차 산출 → PC-I1 경력상한 컷의 입력.
+        years_experience=compute_years_experience(
+            education, tenures, today_year=date.today().year
+        ),
         evidence_paths=(str(shot),) if shot else (),
-        employment_history=build_tenures(info.get("dates", [])),
+        employment_history=tenures,
     )
     match = score_humansearch(prof, POSITION)
     return {
