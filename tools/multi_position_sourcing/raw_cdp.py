@@ -11,7 +11,9 @@ import time
 import urllib.request
 from typing import Any
 
-import websocket  # websocket-client
+# websocket(websocket-client)는 실제 CDP 연결(CDPTab)에서만 필요하다. 모듈 최상단에서 import 하면
+# 이 모듈을 재사용하는 순수 로직(예: humansearch_cdp_run 의 하드제외 함수)을 라이브 브라우저·websocket
+# 없는 환경(CI)에서 테스트할 수 없다 → 연결 시점으로 지연 import 한다.
 
 
 CDP_HTTP = "http://localhost:9222"
@@ -44,6 +46,8 @@ class CDPTab:
     def __init__(self, ws_url: str):
         # Chrome rejects ws handshakes carrying an Origin header unless launched with
         # --remote-allow-origins. Suppressing the Origin header sidesteps the 403.
+        import websocket  # websocket-client (지연 import — 라이브 연결 시점에만 필요)
+
         self.ws = websocket.create_connection(
             ws_url, max_size=None, timeout=60, suppress_origin=True
         )

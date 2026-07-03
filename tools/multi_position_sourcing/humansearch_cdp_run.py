@@ -11,13 +11,14 @@ import random
 import re
 import sys
 import time
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.multi_position_sourcing import raw_cdp as cdp
-from tools.multi_position_sourcing.humansearch import score_humansearch
+from tools.multi_position_sourcing.humansearch import hard_exclude_reason, score_humansearch
 from tools.multi_position_sourcing.humansearch_preflight import assert_live_or_abort
 from tools.multi_position_sourcing.models import (
     CapturedProfile,
@@ -136,6 +137,21 @@ def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
 
 
+def runner_hard_exclude(prof: CapturedProfile) -> str | None:
+    """러너면 하드제외 — 캡처 직후 적용(results.json 에서 제외). 판정은 단일 출처
+    humansearch.hard_exclude_reason 재사용(재구현 금지, SOT5). 채널은 프로필의 source_channel —
+    링크드인은 학교컷 미적용, 사람인·잡코리아만 전문대 컷(등록면 PC-C1a 와 동일 규칙)."""
+    return hard_exclude_reason(prof, prof.source_channel)
+
+
+def collect_results(rows: Iterable[dict]) -> list[dict]:
+    """results.json 산출 — 하드제외 표시된 행을 뺀다(프리랜서·단기이직 2회+·전문대 0건).
+
+    순서 보존. 열어본 프로필의 스크린샷은 process_profile 에서 이미 저장되므로(save-all), 여기서
+    빼는 것은 results.json 산출뿐이다."""
+    return [row for row in rows if not row.get("hard_exclude")]
+
+
 def process_profile(tab, card: dict, idx: int) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     tab.navigate(card["url"], wait_ms=8000)
@@ -165,6 +181,8 @@ def process_profile(tab, card: dict, idx: int) -> dict:
         "idx": idx,
         "name": name,
         "url": card["url"],
+        # 러너면 하드제외(PC-C3a): 캡처 직후 적용 — 프리랜서·단기이직·전문대면 results.json 제외.
+        "hard_exclude": runner_hard_exclude(prof),
         "otw": info.get("otw", False),
         "headline": _clean(info.get("headline", "")),
         "education": education,
@@ -198,22 +216,28 @@ def main(max_profiles: int = 25, start: int = 0) -> None:
     # 시작조차 하지 않는다. 봇처럼 같은 네비게이션을 반복하지 않는다(SOT22 R2).
     assert_live_or_abort(tab)
     log(f"collected {len(cards)} cards on page start={start}")
-    results = []
+    all_rows: list[dict] = []
     for i, card in enumerate(cards[:max_profiles], 1):
         try:
             r = process_profile(tab, card, i)
-            tag = "✅PASS" if r["score"] >= 70 else "  "
-            log(f"{tag} #{i:02d} {r['name']!r} score={r['score']} otw={r['otw']} edu={r['education'][:30]!r}")
-            results.append(r)
+            hx = r.get("hard_exclude")
+            tag = "⛔HX  " if hx else ("✅PASS" if r["score"] >= 70 else "  ")
+            log(f"{tag} #{i:02d} {r['name']!r} score={r['score']} otw={r['otw']} edu={r['education'][:30]!r}"
+                + (f" hard_exclude={hx}" if hx else ""))
+            all_rows.append(r)
         except Exception as e:
             log(f"  #{i} ERROR {card.get('name')}: {e}")
+        # 러너면 하드제외(PC-C3a): results.json 은 하드제외 뺀 것만(프리랜서·단기이직·전문대 0건).
         (OUT_DIR / "results.json").write_text(
-            json.dumps(results, ensure_ascii=False, indent=2))
+            json.dumps(collect_results(all_rows), ensure_ascii=False, indent=2))
         if i < len(cards[:max_profiles]):
             human_delay()
     tab.close()
+    results = collect_results(all_rows)
+    excluded = [r for r in all_rows if r.get("hard_exclude")]
     passers = [r for r in results if r["score"] >= 70]
-    log(f"=== DONE: {len(results)} scored, {len(passers)} passers(>=70) ===")
+    log(f"=== DONE: {len(all_rows)} opened, {len(excluded)} hard-excluded, "
+        f"{len(results)} scored, {len(passers)} passers(>=70) ===")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,31 @@
+{
+  "piece": "PC-C3a",
+  "slug": "humansearch-runner-hardexclude",
+  "title": "러너면 하드제외 — humansearch_cdp_run results.json 프리랜서·단기이직·전문대 0건",
+  "branch": "task/humansearch-runner-hardexclude",
+  "date": "2026-07-04",
+  "acceptance_criterion": "humansearch_cdp_run이 프로필 캡처(CapturedProfile prof) 직후 hard_exclude_reason(prof,channel)을 적용해 results.json 산출에 프리랜서·단기이직2회+·전문대 대상 0건임을 러너 레벨 테스트로 단언(하드제외 3면 중 러너/results.json면); verify.sh exit 0.",
+  "implementation": "tools/multi_position_sourcing/humansearch_cdp_run.py — runner_hard_exclude(prof)=hard_exclude_reason(prof,source_channel) 재사용 + collect_results(rows)=하드제외 뺀 것만. process_profile 이 hard_exclude 필드 세팅, main 루프가 results.json 을 collect_results 로 산출.",
+  "tests": "tests/test_humansearch_runner_hardexclude.py (7개)",
+  "reuse": "humansearch.hard_exclude_reason 단일 출처 재사용(재구현 금지, SOT5). 하드제외 3면 중 매처(PC-C0)·등록면(PC-C1a)에 이은 러너/results.json 면.",
+  "gates": {
+    "G_self_mutation": {
+      "verdict": "PASS",
+      "evidence": "자가 뮤테이션 M1~M3 전부 caught: M1(runner_hard_exclude 항상 None, 3 failed), M2(collect_results 필터 제거, 3 failed), M3(collect_results 조건 반전, 2 failed)."
+    },
+    "V1_codex": {
+      "verdict": "PASS",
+      "evidence": "codex:rescue(agentId af75f272007c5f433) PASS. 가짜 탭으로 main() 실행 — 프리랜서 후보 results.json 제외·정상만 남음·스크린샷은 제외후보 포함 2개 모두 저장(save-all). 뮤테이션 5종 전부 caught(항상None·필터제거·조건반전·채널 linkedin_rps 하드코딩·채널 saramin 하드코딩). 배선 확인(process_profile:185 hard_exclude 세팅→main:231 collect_results→__main__:243). HOME 분리 전체 876 passed. 관찰: score_humansearch 가 hard_exclude 앞 실행이나 부작용 없어 무해."
+    },
+    "V2_reset_claude": {
+      "verdict": "PASS",
+      "evidence": "리셋 Claude(code-reviewer, agentId a4b3fbe07bc875c66) PASS. 인수기준 표 전부, R4 배선 완결(고아/부분배선 0, 크래시세이프 증분 write), 채널 라우팅(linkedin_rps 학교컷 제외·saramin/jobkorea 전문대컷), save-all 유지(스크린샷 line164 hard_exclude 전 저장), hard_exclude 키 부재/None/falsy 누출 0(row.get), SOT5 단일출처, 뮤테이션 5/5 사살, 비과적합. 전체 878 passed."
+    },
+    "T_full_suite": {
+      "verdict": "PASS",
+      "evidence": ".venv/bin/python 전체 pytest: 878 passed, 3 xfailed, 5 subtests passed. 회귀 0."
+    }
+  },
+  "orphan_check": "프로덕션 경로 __main__→main()→process_profile(hard_exclude 세팅, line185)→collect_results(results.json 산출, line231). runner_hard_exclude·collect_results 모두 실호출(grep 증명). 고아/부분배선 아님.",
+  "residual_risk": "runner 의 source_channel 은 humansearch_cdp_run 에서 linkedin_rps 하드코딩(RPS 전용 러너) — 다채널 러너 확장 시 source_channel 주입 필요. 하드제외 판정은 단일출처 hard_exclude_reason 이라 규칙 드리프트 없음. 경력상한(seniority_over_cap)은 PC-I1/I2 에서 추가."
+}
