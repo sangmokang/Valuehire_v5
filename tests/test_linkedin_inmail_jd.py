@@ -132,6 +132,50 @@ def test_briefing_non_string_values_rejected():
             build_linkedin_inmail_jd(**kwargs)
 
 
+def test_unverified_marker_in_other_paths_rejected():
+    """codex V1 round3 결함 1: 브리핑 밖 경로(오프너·회사명·타이틀·JD·근무지)로
+    미확인 마커가 유출되면 안 된다 — 생략이 아니라 ValueError(의미 왜곡 방지)."""
+    marker = "※‍미확인"  # ZWJ 삽입 변형
+    for field, value in (
+        ("personalized_opener", f"커리어가 인상 깊습니다. {marker}"),
+        ("company_name", f"뤼튼 {marker}"),
+        ("position_title", f"Sales Lead {marker}"),
+        ("location", f"서울 {marker}"),
+    ):
+        kwargs = golden_kwargs()
+        kwargs[field] = value
+        with pytest.raises(ValueError, match=field):
+            build_linkedin_inmail_jd(**kwargs)
+    kwargs = golden_kwargs()
+    kwargs["jd_responsibilities"] = ["딜 발굴", f"플레이북 {marker}"]
+    with pytest.raises(ValueError, match="jd_responsibilities"):
+        build_linkedin_inmail_jd(**kwargs)
+
+
+def test_non_string_scalar_inputs_rejected():
+    """codex V1 round3 결함 2: 타이틀 등 문자열 인자에 dict/list/int/None 이 들어오면
+    repr 유출 없이 ValueError 로 거부."""
+    for field in ("candidate_name", "personalized_opener", "company_name",
+                  "position_title", "location"):
+        for bad in ({"a": 1}, ["x"], 123):
+            kwargs = golden_kwargs()
+            kwargs[field] = bad
+            with pytest.raises(ValueError, match=field):
+                build_linkedin_inmail_jd(**kwargs)
+    for field in ("candidate_name", "company_name", "position_title"):
+        kwargs = golden_kwargs()
+        kwargs[field] = None
+        with pytest.raises(ValueError, match=field):
+            build_linkedin_inmail_jd(**kwargs)
+
+
+def test_non_string_jd_list_items_rejected():
+    kwargs = golden_kwargs()
+    kwargs["jd_qualifications"] = ["실적", {"bullet": "dict"}]
+    with pytest.raises(ValueError, match="jd_qualifications"):
+        build_linkedin_inmail_jd(**kwargs)
+
+
 def test_empty_jd_lists_rejected():
     """codex V1 결함 2: 불릿 없는 헤더만 있는 문구가 조용히 만들어지면 안 된다(fail-closed)."""
     for field in ("jd_responsibilities", "jd_qualifications", "why_consider"):

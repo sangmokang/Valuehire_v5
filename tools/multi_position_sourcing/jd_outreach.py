@@ -89,7 +89,8 @@ def _contains_unverified(value: str) -> bool:
     folded = unicodedata.normalize("NFKC", value)
     folded = "".join(
         ch for ch in folded
-        if unicodedata.category(ch) not in ("Cf", "Mn", "Cc") and not ch.isspace()
+        if unicodedata.category(ch) not in ("Cf", "Mn", "Mc", "Me", "Cc")
+        and not ch.isspace()
     )
     return _UNVERIFIED_CORE in folded
 
@@ -98,9 +99,35 @@ def _contains_unverified(value: str) -> bool:
 _UNVERIFIED_CORE = UNVERIFIED_MARKER.lstrip("※")
 
 
-def _bullets(field: str, items: list[str]) -> str:
-    """불릿 조립. 빈/공백뿐 리스트는 fail-closed 거부(codex V1 결함 2 — 무불릿 헤더 금지)."""
-    cleaned = [item.strip() for item in (items or []) if item and item.strip()]
+def _clean_text(field: str, value, *, required: bool = True) -> str:
+    """문자열 인자 공통 검문(codex V1 round3) — str 강제(repr 유출 금지) +
+    비표시문자 제거 + 미확인 마커 거부. 브리핑 밖 경로는 생략이 의미를 왜곡하므로
+    마커 발견 시 조용히 빼지 않고 ValueError 로 STOP(fail-closed)."""
+    if value is None:
+        if required:
+            raise ValueError(f"{field} 비어 있음 — 필수 입력")
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field} 는 문자열이어야 함(현재 {type(value).__name__}) — repr 유출 금지(fail-closed)"
+        )
+    text = _strip_invisible(value).strip()
+    if required and not text:
+        raise ValueError(f"{field} 비어 있음 — 필수 입력")
+    if text and _contains_unverified(text):
+        raise ValueError(f"{field} 에 미확인 마커 포함 — 출처 있는 내용만 넣을 것(fail-closed)")
+    return text
+
+
+def _bullets(field: str, items) -> str:
+    """불릿 조립. 항목은 문자열만, 빈/공백뿐 리스트는 fail-closed 거부(무불릿 헤더 금지)."""
+    if items is not None and not isinstance(items, (list, tuple)):
+        raise ValueError(f"{field} 는 리스트여야 함(현재 {type(items).__name__})")
+    cleaned = []
+    for item in items or []:
+        text = _clean_text(field, item, required=False)
+        if text:
+            cleaned.append(text)
     if not cleaned:
         raise ValueError(f"{field} 비어 있음 — 불릿 없는 헤더만 있는 문구 금지(fail-closed)")
     return "\n".join(f"· {item}" for item in cleaned)
@@ -127,12 +154,11 @@ def build_linkedin_inmail_jd(
     - 최종 판정은 precheck_inmail(단일 검문소)에 위임하되, 채널 캡(PC-G1)은
       조립 직후 즉시 확인한다(초과분을 하류로 흘려보내지 않음).
     """
-    name = (candidate_name or "").strip()
-    if not name:
-        raise ValueError("candidate_name 비어 있음 — 수확 JSON 의 name 을 그대로 넣을 것")
-    opener = (personalized_opener or "").strip()
-    if not opener:
-        raise ValueError("personalized_opener 비어 있음 — 정곡 관찰 1줄 필수")
+    name = _clean_text("candidate_name", candidate_name)
+    opener = _clean_text("personalized_opener", personalized_opener)
+    company = _clean_text("company_name", company_name)
+    title = _clean_text("position_title", position_title)
+    loc = _clean_text("location", location, required=False)
     if language not in _VERIFIED_PULL:
         raise ValueError(f"language 는 {sorted(_VERIFIED_PULL)} 중 하나: '{language}'")
     unknown = set(company_briefing or {}) - set(BRIEFING_ELEMENT_KEYS)
@@ -141,7 +167,7 @@ def build_linkedin_inmail_jd(
             f"company_briefing 에 §1.5 8요소 밖 키 금지(SOT5): {sorted(unknown)}"
         )
 
-    briefing_lines = [company_name]
+    briefing_lines = [company]
     for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, 미확인·빈값은 생략
         raw = (company_briefing or {}).get(key)
         if raw is not None and not isinstance(raw, str):
@@ -154,7 +180,7 @@ def build_linkedin_inmail_jd(
             briefing_lines.append(f"· {value}")
 
     sections = [
-        f"[제목] {company_name}, {position_title}",
+        f"[제목] {company}, {title}",
         f"안녕하세요 {name}님,",
         f"{_INTRO}\n{opener}",
         "\n".join(briefing_lines),
@@ -165,8 +191,8 @@ def build_linkedin_inmail_jd(
         _CLOSING,
         _PS_CTA,
     ]
-    if location and location.strip():
-        sections.append(f"[근무지] {location.strip()}")
+    if loc:
+        sections.append(f"[근무지] {loc}")
 
     body = "\n\n".join(sections)
     return assert_outreach_jd_within_cap(body, channel=channel)
