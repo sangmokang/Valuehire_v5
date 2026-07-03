@@ -1,0 +1,54 @@
+{
+  "claim_id": "pc-a0-clickup-createtask-listid",
+  "backlog_id": "PC-A0",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "author": "claude (this session)",
+    "claim": "ClickUpCreateTask 계약을 Protocol 로 확장해 목적지 list_id(선택, 기본 None)를 받게 하고, run_position_registration 에 clickup_list_id 키워드 인자를 추가했다. list_id 가 주어지면 create-task 어댑터까지 그대로 전달하고, 없으면 종전 2-인자 호출 그대로라 기존 어댑터·테스트가 회귀 없이 GREEN(동작 불변, 시그니처만 확장). SOT3 준수(발송/부작용 없음).",
+    "changed_files": [
+      "tools/multi_position_sourcing/position_registration.py",
+      "tests/test_position_registration.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "899 passed, 3 xfailed, 5 subtests passed in 5.54s (V1 하드닝 반영 후 +1 회귀테스트)",
+    "red_evidence": "commit 068aa03: test_list_id_forwarded_to_create_task -> TypeError: run_position_registration() got an unexpected keyword argument 'clickup_list_id' (구현 전 RED). 나머지 2개(하위호환 가드)는 구현 전/후 모두 GREEN 회귀가드.",
+    "mutation_evidence": [
+      "Mutant A (항상 3-인자 호출, clickup_list_id 조건 무시) -> test_legacy_two_arg_fake_still_works_without_list_id FAIL (TypeError, 기존 2-인자 어댑터 파괴) — 물림",
+      "Mutant B (list_id 전달 제거, 항상 2-인자) -> test_list_id_forwarded_to_create_task FAIL (list_id None != '901814621569') — 물림",
+      "Mutant C ('if clickup_list_id:' -> 'is not None', 빈 문자열 footgun 부활) -> test_empty_string_list_id_treated_as_absent FAIL — 물림"
+    ],
+    "orphan_status": "의도된 seam — clickup_list_id 는 PC-A1 이 소비/단언할 선행 primitive(백로그 sot_guard: 원자성 분할). 현 프로덕션 호출자 dry_run.py 는 dry_run=True 이며 clickup_create_task 를 주입하지 않아 create 경로 미도달 → 회귀 위험 0. 실제 목적지 배선은 PC-A1 범위."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "뮤테이션 1차 실행 — 구현을 커밋하지 않은 채 mutant 적용 후 git checkout -- <file> 로 복원",
+      "root_cause": "구현이 미커밋 상태라 git checkout 이 mutant 뿐 아니라 구현 전체를 HEAD(RED 테스트만 있는 커밋)로 되돌려 원본 파일로 회귀. Mutant B 실행이 원본(구현 없음) 위에서 돌아 실패가 mutant 때문인지 RED 때문인지 구분 불가.",
+      "repro": "uncommitted impl + perl mutate + git checkout -- file (2회)",
+      "next_change": "구현을 먼저 커밋(8992514)한 뒤 mutant 적용 → checkout 이 '커밋된 구현'으로 복원되게 함. 재실행 결과 Mutant A/B 각각 정확한 가드가 물음(branch_remaining=0·forward_calls_remaining=0 로 mutant 실제 적용 확인)."
+    }
+  ],
+  "v1": {
+    "author": "codex-rescue (독립 세션, agentId ac6fe658a9b03df62)",
+    "verdict": "PASS",
+    "source_jsonl": "tasks/ac6fe658a9b03df62.output (블록 4·5)",
+    "checks_reproduced": [
+      "호출자/하위호환 스캔(프로덕션 caller dry_run.py 는 dry_run=True·create_task 미주입)",
+      "빈 문자열 엣지(clickup_list_id='')",
+      "고아 배선 — create 경로에서만 전달, duplicate/comment 경로 불변",
+      "positional-only Protocol 런타임 호환(키워드 페이크 정상)",
+      "새 테스트 뮤테이션(always-3-arg·always-2-arg)",
+      "SOT3 부작용/발송/시크릿 스캔 — 신규 없음"
+    ],
+    "findings": "인스코프 결함 0(PASS). caveat 1건: clickup_list_id='' 가 3번째 인자로 전달돼 2-인자 어댑터를 깰 수 있으나 현 프로덕션 호출자 없음 → 결함 아님. 별건: codex 샌드박스의 verify.sh exit 1 은 무관한 기존 portal-worker 락파일 권한 문제(897 passed,1 failed) — 이 변경과 무관, 로컬 verify 는 clean.",
+    "note_verify_sandbox": "codex 샌드박스 verify.sh 1 실패는 pre-existing portal-worker lock permission — 본 변경 무관. 생성자 로컬 verify.sh exit 0(899 passed)."
+  },
+  "post_v1_hardening": {
+    "reason": "V1 caveat(빈 문자열 footgun) 선제 차단 — non-blocking 이지만 PC-A1 seam 견고화(SOT5 '내 코드 헛점 전제').",
+    "change": "call-site 조건 'if clickup_list_id is not None' -> 'if clickup_list_id' (None·빈 문자열 모두 목적지 없음 처리). 회귀테스트 test_empty_string_list_id_treated_as_absent 추가, Mutant C 로 봉인.",
+    "commit": "3번째 커밋(빈 문자열 처리+회귀), verify.sh exit 0 = 899 passed"
+  },
+  "three_way_agree": "N/A (L2 — V1 PASS 로 충분; V2/3자대조는 L3 풀하네스용)",
+  "status": "GREEN — G(자기 mutation 3종 사살) + V1(codex) PASS + caveat 선제 하드닝. verify.sh exit 0(899 passed, 3 xfailed). 배송 준비 완료."
+}

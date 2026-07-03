@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Protocol, Sequence
 
 from tools.multi_position_sourcing.posting_extractor import extract_posting
 from tools.multi_position_sourcing.posting_models import (
@@ -24,8 +24,22 @@ RenderFetch = Callable[[str], FetchResult]
 ImageDownloader = Callable[[tuple[str, ...], str], tuple[str, ...]]
 VisionAnalyzer = Callable[[tuple[str, ...]], VisionAnalysis]
 ClickUpSearch = Callable[[PostingRecognition], Sequence[ExistingPositionTask]]
-ClickUpCreateTask = Callable[[str, str], tuple[str, str]]
 ClickUpCreateComment = Callable[[str, str], str]
+
+
+class ClickUpCreateTask(Protocol):
+    """포지션 태스크 생성 어댑터 계약.
+
+    목적지 ``list_id`` 를 선택 인자로 받는다(기본 None → 종전 2-인자 호출과 동일).
+    PC-A0: 계약만 확장(순수 seam). 실제 목적지 전달·단언은 PC-A1 이 수행한다.
+    list_id 를 넘기지 않는 기존 2-인자 어댑터도 그대로 호환된다(호출부가 None 또는
+    빈 문자열이면 3번째 인자를 붙이지 않는다).
+    """
+
+    def __call__(
+        self, title: str, body: str, list_id: str | None = None, /
+    ) -> tuple[str, str]:
+        ...
 
 
 def build_task_title(recognition: PostingRecognition) -> str:
@@ -198,6 +212,7 @@ def run_position_registration(
     clickup_search: Optional[ClickUpSearch] = None,
     clickup_create_task: Optional[ClickUpCreateTask] = None,
     clickup_create_comment: Optional[ClickUpCreateComment] = None,
+    clickup_list_id: Optional[str] = None,
     artifacts_dir: str = "artifacts/position_registration",
     confidence_threshold: float = 0.55,
     dry_run: bool = True,
@@ -270,7 +285,13 @@ def run_position_registration(
     task_id = ""
     task_url = ""
     if not dry_run and clickup_create_task is not None:
-        task_id, task_url = clickup_create_task(title, body)
+        # 목적지 list_id 가 실제로 주어지면 어댑터까지 전달(PC-A1 단언 seam). None 또는
+        # 빈 문자열은 '목적지 없음'으로 보고 종전 2-인자 호출 그대로 — 빈 문자열을 3번째
+        # 인자로 흘려 기존 2-인자 어댑터를 깨는 footgun 을 막는다(codex V1 caveat). SOT5 계약 확장.
+        if clickup_list_id:
+            task_id, task_url = clickup_create_task(title, body, clickup_list_id)
+        else:
+            task_id, task_url = clickup_create_task(title, body)
     return RegistrationOutcome(
         status="created",
         is_new_task=True,
