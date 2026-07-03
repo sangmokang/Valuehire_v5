@@ -32,8 +32,8 @@ class ClickUpCreateTask(Protocol):
 
     목적지 ``list_id`` 를 선택 인자로 받는다(기본 None → 종전 2-인자 호출과 동일).
     PC-A0: 계약만 확장(순수 seam). 실제 목적지 전달·단언은 PC-A1 이 수행한다.
-    list_id 를 넘기지 않는 기존 2-인자 어댑터도 그대로 호환된다(호출부가 None 이면
-    3번째 인자를 붙이지 않음).
+    list_id 를 넘기지 않는 기존 2-인자 어댑터도 그대로 호환된다(호출부가 None 또는
+    빈 문자열이면 3번째 인자를 붙이지 않는다).
     """
 
     def __call__(
@@ -285,9 +285,10 @@ def run_position_registration(
     task_id = ""
     task_url = ""
     if not dry_run and clickup_create_task is not None:
-        # 목적지 list_id 가 주어지면 어댑터까지 전달(PC-A1 단언 seam); 없으면 종전 2-인자
-        # 호출 그대로 — 기존 2-인자 어댑터와의 호환을 깨지 않는다(SOT5 계약 확장).
-        if clickup_list_id is not None:
+        # 목적지 list_id 가 실제로 주어지면 어댑터까지 전달(PC-A1 단언 seam). None 또는
+        # 빈 문자열은 '목적지 없음'으로 보고 종전 2-인자 호출 그대로 — 빈 문자열을 3번째
+        # 인자로 흘려 기존 2-인자 어댑터를 깨는 footgun 을 막는다(codex V1 caveat). SOT5 계약 확장.
+        if clickup_list_id:
             task_id, task_url = clickup_create_task(title, body, clickup_list_id)
         else:
             task_id, task_url = clickup_create_task(title, body)

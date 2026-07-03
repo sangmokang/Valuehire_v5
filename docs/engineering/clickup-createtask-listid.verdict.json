@@ -1,0 +1,38 @@
+{
+  "claim_id": "pc-a0-clickup-createtask-listid",
+  "backlog_id": "PC-A0",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "author": "claude (this session)",
+    "claim": "ClickUpCreateTask 계약을 Protocol 로 확장해 목적지 list_id(선택, 기본 None)를 받게 하고, run_position_registration 에 clickup_list_id 키워드 인자를 추가했다. list_id 가 주어지면 create-task 어댑터까지 그대로 전달하고, 없으면 종전 2-인자 호출 그대로라 기존 어댑터·테스트가 회귀 없이 GREEN(동작 불변, 시그니처만 확장). SOT3 준수(발송/부작용 없음).",
+    "changed_files": [
+      "tools/multi_position_sourcing/position_registration.py",
+      "tests/test_position_registration.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "898 passed, 3 xfailed, 5 subtests passed in 5.82s",
+    "red_evidence": "commit 068aa03: test_list_id_forwarded_to_create_task -> TypeError: run_position_registration() got an unexpected keyword argument 'clickup_list_id' (구현 전 RED). 나머지 2개(하위호환 가드)는 구현 전/후 모두 GREEN 회귀가드.",
+    "mutation_evidence": [
+      "Mutant A (항상 3-인자 호출, clickup_list_id 조건 무시) -> test_legacy_two_arg_fake_still_works_without_list_id FAIL (TypeError, 기존 2-인자 어댑터 파괴) — 물림",
+      "Mutant B (list_id 전달 제거, 항상 2-인자) -> test_list_id_forwarded_to_create_task FAIL (list_id None != '901814621569') — 물림"
+    ],
+    "orphan_status": "의도된 seam — clickup_list_id 는 PC-A1 이 소비/단언할 선행 primitive(백로그 sot_guard: 원자성 분할). 현 프로덕션 호출자 dry_run.py 는 dry_run=True 이며 clickup_create_task 를 주입하지 않아 create 경로 미도달 → 회귀 위험 0. 실제 목적지 배선은 PC-A1 범위."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "뮤테이션 1차 실행 — 구현을 커밋하지 않은 채 mutant 적용 후 git checkout -- <file> 로 복원",
+      "root_cause": "구현이 미커밋 상태라 git checkout 이 mutant 뿐 아니라 구현 전체를 HEAD(RED 테스트만 있는 커밋)로 되돌려 원본 파일로 회귀. Mutant B 실행이 원본(구현 없음) 위에서 돌아 실패가 mutant 때문인지 RED 때문인지 구분 불가.",
+      "repro": "uncommitted impl + perl mutate + git checkout -- file (2회)",
+      "next_change": "구현을 먼저 커밋(8992514)한 뒤 mutant 적용 → checkout 이 '커밋된 구현'으로 복원되게 함. 재실행 결과 Mutant A/B 각각 정확한 가드가 물음(branch_remaining=0·forward_calls_remaining=0 로 mutant 실제 적용 확인)."
+    }
+  ],
+  "v1": {
+    "author": "codex-rescue (독립 세션)",
+    "verdict": "PENDING",
+    "findings": null
+  },
+  "three_way_agree": false,
+  "status": "진행중 — V1(codex) 판정 대기"
+}

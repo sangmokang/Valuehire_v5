@@ -541,6 +541,25 @@ class DestinationListIdTests(unittest.TestCase):
         # (title, body) 2-튜플 그대로 — list_id 미전달로 시그니처 불변 보장.
         self.assertEqual(len(legacy.calls[0]), 2)  # type: ignore[attr-defined]
 
+    def test_empty_string_list_id_treated_as_absent(self) -> None:
+        # codex V1 caveat: clickup_list_id="" 를 3번째 인자로 흘리면 기존 2-인자 어댑터가
+        # 깨진다 → 빈 문자열은 '목적지 없음'으로 보고 2-인자 호출한다(footgun 차단).
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        legacy = make_clickup_create_task()  # 2-인자 전용 어댑터
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=make_http_fetch(RICH_WANTED_HTML),
+            clickup_search=make_clickup_search([]),
+            clickup_create_task=legacy,
+            clickup_list_id="",
+            dry_run=False,
+        )
+        self.assertEqual(outcome.status, "created")  # TypeError 없이 생성 성공
+        self.assertEqual(len(legacy.calls), 1)  # type: ignore[attr-defined]
+        self.assertEqual(len(legacy.calls[0]), 2)  # type: ignore[attr-defined]
+
     def test_list_id_none_calls_two_arg_form(self) -> None:
         # clickup_list_id=None(기본) 이면 3-인자 페이크에도 list_id 로 None 이 흘러야 한다(중립).
         parsed = parse_discord_position_registration_request(
