@@ -28,7 +28,7 @@ _SOT22 = json.loads(
         encoding="utf-8"
     )
 )
-_BOT = _SOT22["linkedin"]["bot_protection"]
+_BOT = _SOT22["channels"]["linkedin"]["bot_protection"]
 
 
 def test_bounds_read_from_sot22_single_source() -> None:
