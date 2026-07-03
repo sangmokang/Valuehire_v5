@@ -88,6 +88,17 @@ def test_years_tenure_fallback_includes_current_employment() -> None:
     assert compute_years_experience("", emp, today_year=2026) == 6
 
 
+def test_years_current_employment_is_month_precise() -> None:
+    # V1(Codex): 현재재직은 월까지 봐야 함 — 2020-12~2026-07 = 5년7개월 → floor 5년(6 아님).
+    emp = (EmploymentTenure(company="X", start_month="2020-12", end_month=""),)
+    assert compute_years_experience("", emp, today_year=2026, today_month=7) == 5
+
+
+def test_future_graduation_range_not_counted_as_experience() -> None:
+    # V1(Codex): "BS 2023 – 2027"은 2027 졸업예정(재학) — 시작연도 2023 을 졸업으로 오인 금지 → None.
+    assert compute_years_experience("University BS 2023 - 2027", (), today_year=2026) is None
+
+
 def test_years_none_when_no_grad_no_tenure() -> None:
     assert compute_years_experience("", (), today_year=2026) is None
 

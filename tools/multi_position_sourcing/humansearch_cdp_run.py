@@ -142,26 +142,28 @@ _YEAR_RE = re.compile(r"(19\d{2}|20\d{2})")
 
 
 def compute_years_experience(
-    education: str, employment_history, *, today_year: int
+    education: str, employment_history, *, today_year: int, today_month: int = 1
 ) -> int | None:
     """졸업연도/근속으로 경력연차 산출(PC-I2). fail-closed: 근거 없으면 None(상한 컷 안 되게).
 
-    1) education 에 그럴듯한 졸업연도(1950~오늘)가 있으면 오늘−졸업연도(가장 최신 졸업 기준).
-    2) 없으면 근속합산 폴백: 완료 재직은 tenure_months 재사용, 현재 재직(end 빈값)은 start~오늘.
+    1) education 의 졸업연도(가장 최신)로 오늘−졸업. 단 education 의 최신 연도가 미래면(재학·졸업예정)
+       졸업 경로를 쓰지 않는다 — 시작연도를 졸업으로 오인해 경력을 부풀리지 않는다.
+    2) 없으면 근속합산 폴백: tenure_months 재사용(월 정밀). 현재 재직(end 빈값)은 오늘(YYYY-MM)까지.
     3) 둘 다 없으면 None.
     """
-    grad_years = [int(y) for y in _YEAR_RE.findall(education or "") if 1950 <= int(y) <= today_year]
-    if grad_years:
-        return max(0, today_year - max(grad_years))
+    all_years = [int(y) for y in _YEAR_RE.findall(education or "")]
+    plausible = [y for y in all_years if 1950 <= y <= today_year]
+    # education 에 미래 연도가 있으면(졸업 range 의 끝이 미래=재학) 졸업 경로 건너뜀 → 폴백/None.
+    if plausible and max(all_years) <= today_year:
+        return max(0, today_year - max(plausible))
 
+    today_ym = f"{today_year:04d}-{today_month:02d}"
     total_months = 0
     counted = False
     for tenure in employment_history:
-        months = tenure_months(tenure.start_month, tenure.end_month)
-        if months is None and tenure.start_month and not tenure.end_month:
-            starts = _YEAR_RE.findall(tenure.start_month)
-            if starts:
-                months = max(0, (today_year - int(starts[0])) * 12)
+        # 현재 재직(end 빈값)은 오늘까지로 월 정밀 계산(tenure_months 재사용).
+        end = tenure.end_month or today_ym
+        months = tenure_months(tenure.start_month, end)
         if months is not None and months >= 0:
             total_months += months
             counted = True
@@ -209,7 +211,7 @@ def process_profile(tab, card: dict, idx: int) -> dict:
         education=education,
         # PC-I2: 졸업연도/근속으로 경력연차 산출 → PC-I1 경력상한 컷의 입력.
         years_experience=compute_years_experience(
-            education, tenures, today_year=date.today().year
+            education, tenures, today_year=date.today().year, today_month=date.today().month
         ),
         evidence_paths=(str(shot),) if shot else (),
         employment_history=tenures,
