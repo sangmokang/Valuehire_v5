@@ -126,6 +126,21 @@ def generate_keyword_plan(position, channel: Channel, *, llm_client: LLMClient) 
     return LLMKeywordPlan(channel=channel, keywords=keywords, boolean_query=boolean_query)
 
 
+def _require_boolean_query(channel: Channel, plan) -> str:
+    """boolean 채널 계약(fail-closed): 유효 keywords 가 있는데 boolean_query 가 비/공백이면 raise.
+
+    ``generate_keyword_plan`` 이 예외가 아니라 빈 boolean_query 를 반환하면 X-ray 검색이 빈 쿼리로
+    0건이 난다. 조용히 통과(``if boolean_query:`` else skip)하지 않고 여기서 막는다(BUG-BOOL-FAILOPEN).
+    """
+    bq = plan.boolean_query
+    if plan.keywords and not bq.strip():
+        raise KeywordGenerationError(
+            f"{channel}: boolean 채널인데 유효 keywords 에도 boolean_query 가 비었습니다 "
+            "(빈 쿼리 0건 검색 위험, BUG-BOOL-FAILOPEN)."
+        )
+    return bq
+
+
 def inject_boolean_queries(
     sessions: tuple[KeywordSession, ...],
     position,
@@ -152,7 +167,7 @@ def inject_boolean_queries(
     boolean_query_by_channel: dict[Channel, str] = {}
     for channel in boolean_channels_present:
         plan = generate_keyword_plan(position, channel, llm_client=llm_client)
-        boolean_query_by_channel[channel] = plan.boolean_query
+        boolean_query_by_channel[channel] = _require_boolean_query(channel, plan)
 
     updated: list[KeywordSession] = []
     for session in sessions:
@@ -225,7 +240,8 @@ def inject_channel_search_filters(
     extra_by_channel: dict[Channel, dict] = {}
 
     for channel in sorted(c for c in channels_present if c in BOOLEAN_CHANNELS):
-        boolean_query = generate_keyword_plan(position, channel, llm_client=llm_client).boolean_query
+        plan = generate_keyword_plan(position, channel, llm_client=llm_client)
+        boolean_query = _require_boolean_query(channel, plan)
         if boolean_query:
             extra_by_channel[channel] = {"boolean_query": boolean_query}
 
