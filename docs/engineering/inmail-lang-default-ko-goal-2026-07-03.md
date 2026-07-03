@@ -38,4 +38,19 @@
 squash 커밋 revert 1회.
 
 ## 적대 검증 로그
-(append)
+
+### codex V1 (agentId aeacefa40373e3545, thread 019f26d9-f9bb-7990-83f9-a1b359bf196d)
+- 1차 라운드 `VERDICT: FAIL`(high) → 재검증 라운드 `VERDICT: PASS` + medium 1건.
+- 발견: `_KOREAN_SURNAMES_ROMANIZED` 에 Paik/Yim/Chey/Yeom/Maeng 누락 → Brian Paik 등 en 오판.
+- 반증 생존: Meseret·John Smith en 유지 / 빈이름·이니셜·하이픈 crash 0 / HyunJun Jo+한국어 본문 경고 0 /
+  테스트 약화 diff 0 / 52 passed.
+- ⚠️ codex 샌드박스가 형제 워크트리 쓰기를 차단해 verdict 파일은 미생성 — 본문은 transcript
+  (`.../tasks/aeacefa40373e3545.output`) 그대로, 장부는 `.harness/inmail-lang-default-ko.verdict.json` 에 G가 전사.
+
+### Claude V2 (같은 세션이나 codex 증거를 명령 재실행으로 독립 재현)
+| 항목 | codex 주장 | V2 재현 |
+|---|---|---|
+| Paik/Yim/Chey/Yeom/Maeng en 오판 | FAIL | 사실 → 성씨 추가(+yum) 후 전부 ko ✅ |
+| Sohn/Rhee/Gwak/Pyun/Koo ko | PASS | 일치 ✅ |
+| Meseret·John Smith en 유지 | PASS | 일치 ✅ |
+- 수정 후 verify 801 passed + 3 xfailed exit 0. 회귀 5건 봉인.
