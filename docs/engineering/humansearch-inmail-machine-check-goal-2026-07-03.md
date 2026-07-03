@@ -101,4 +101,30 @@ revert 하나로 이전 골든샘플(086b4f1) 상태로 복원된다. 런타임 
 
 ## 적대 검증 로그
 
-(머지 전 codex 1차 → Claude 2차 본문을 여기에 append)
+### codex 1차 (V1) — VERDICT: FAIL → 전량 수정
+- agentId `ad9aad299c3012877`, transcript output:
+  `/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/e5873c35-1aa1-4c68-a0a2-7bbd363669fe/tasks/ad9aad299c3012877.output`
+- **판정 본문 원본(위조 방지)**: `.harness/humansearch-inmail-machine-check.verdict.json` (repo 커밋) —
+  findings 5건 + tried(반증 시도) 15항 전문 보존. repro 픽스처 `.harness/inmail_*_false_pass.txt` 등 커밋.
+- codex 반증 시도(요지): 호칭 변형·성/이름 역순·빈 입력 fail-closed·NFC/NFD·비BMP 이모지·CRLF·
+  1899/1900 경계·zero-width/전각 우회·R21 CTA 오탐·briefing warning — **깨려 했으나 실패**.
+  기존 테스트 약화 없음(git diff 확인, 신규 파일).
+
+### Claude 2차 (V2) — codex 판정 재공격, 격리 재현 (2026-07-03, 수정 커밋 95163dc)
+
+| # | codex 발견 (severity) | 판정 | 조치 | V2 격리 재현 결과 |
+|---|---|---|---|---|
+| 1 | 'et'⊂'Meseret' 2글자 라틴 우연일치 fail-open (HIGH) | 사실 — 재현됨 | 포함일치 라틴≥3자/한글≥2자 제한 | repro exit 1, `name_mismatch` ✅ |
+| 2 | '전 화' 공백 삽입 우회 (HIGH) | 사실 — 재현됨 | `전\s?화·통\s?화` 매칭(과잉차단은 fail-closed 허용) | repro exit 1, `call_request` ✅ |
+| 3 | 언어 규칙 미강제 드리프트 (MED) | 사실 | **warning 승격**(STOP 아님 — 사장님 기계 STOP 5종에 언어 없음, 보고 후 진행) + 문서 명시 | repro ok=true + `language_mismatch` warning ✅ |
+| 4 | P.S. CTA 미검사 (MED) | 사실 — Movensys ③ 절반 누락 | `ps_cta_missing` STOP 추가 | repro exit 1 ✅ |
+| 5 | 단독 자모 vs goal `{2,}` 스펙 드리프트 (LOW) | 사실(문서 결함) | 코드(보수) 기준으로 goal·골든샘플 정정 + 회귀 고정 | `ㄱ 항목` STOP 테스트 ✅ |
+
+- 양방향 의심(codex PASS 주장 독립 재현): 성/이름 역순 True·호칭 변형 True·빈 프로필 fail-closed·
+  이모지 1자·CRLF 2자 — 전부 일치. 추가 공격: 한글 1자 토큰 우연일치 → len≥2 필터로 배제 확인.
+- 상관 블라인드스팟(정직 표기): 이 게이트는 SKILL 문서가 CLI 실행을 강제하는 **문서 구동형** 배선이다
+  (humansearch 자체가 문서 구동 스킬). LLM이 CLI를 건너뛰는 것 자체를 코드로 막을 수는 없고,
+  doc-guard 테스트(AC8)가 SKILL의 강제 문구를 기계로 고정한다.
+- 판정 정정 표: codex가 잡은 내 결함 5건 / 내가 codex에서 잡은 누락 0건(단 #3·#5는 STOP이 아니라
+  warning·문서정정으로 등급 조정 — 근거 위 표).
+- 수정 후 회귀 7건 추가, verify 767 passed + 3 xfailed, exit 0.
