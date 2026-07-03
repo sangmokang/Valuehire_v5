@@ -487,6 +487,78 @@ class PastedJdTests(unittest.TestCase):
         self.assertFalse(outcome.external_posting_sent)
 
 
+def make_clickup_create_task_capturing(
+    task_id: str = "TASK123", task_url: str = "https://app.clickup.com/t/TASK123"
+):
+    """3-인자 계약(title, body, list_id)을 기록하는 페이크 — 목적지 전달 단언용."""
+    calls: list[tuple[str, str, "str | None"]] = []
+
+    def clickup_create_task(title: str, body: str, list_id: str | None = None) -> tuple[str, str]:
+        calls.append((title, body, list_id))
+        return task_id, task_url
+
+    clickup_create_task.calls = calls  # type: ignore[attr-defined]
+    return clickup_create_task
+
+
+class DestinationListIdTests(unittest.TestCase):
+    """PC-A0 — ClickUpCreateTask 계약에 목적지 list_id 추가(순수 확장·회귀 0)."""
+
+    def test_list_id_forwarded_to_create_task(self) -> None:
+        # 목적지 list_id 를 주면 create_task 어댑터까지 그대로 전달돼야 한다(PC-A1 단언의 선행 seam).
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        create_task = make_clickup_create_task_capturing()
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=make_http_fetch(RICH_WANTED_HTML),
+            clickup_search=make_clickup_search([]),
+            clickup_create_task=create_task,
+            clickup_list_id="901814621569",
+            dry_run=False,
+        )
+        self.assertEqual(outcome.status, "created")
+        self.assertEqual(len(create_task.calls), 1)  # type: ignore[attr-defined]
+        _title, _body, list_id = create_task.calls[0]  # type: ignore[attr-defined]
+        self.assertEqual(list_id, "901814621569")
+
+    def test_legacy_two_arg_fake_still_works_without_list_id(self) -> None:
+        # list_id 미지정 시 기존 2-인자 페이크가 회귀 없이 그대로 호출돼야 한다(동작 불변).
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        legacy = make_clickup_create_task()  # def clickup_create_task(title, body)
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=make_http_fetch(RICH_WANTED_HTML),
+            clickup_search=make_clickup_search([]),
+            clickup_create_task=legacy,
+            dry_run=False,
+        )
+        self.assertEqual(outcome.status, "created")
+        self.assertEqual(len(legacy.calls), 1)  # type: ignore[attr-defined]
+        # (title, body) 2-튜플 그대로 — list_id 미전달로 시그니처 불변 보장.
+        self.assertEqual(len(legacy.calls[0]), 2)  # type: ignore[attr-defined]
+
+    def test_list_id_none_calls_two_arg_form(self) -> None:
+        # clickup_list_id=None(기본) 이면 3-인자 페이크에도 list_id 로 None 이 흘러야 한다(중립).
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        create_task = make_clickup_create_task_capturing()
+        run_position_registration(
+            parsed,
+            http_fetch=make_http_fetch(RICH_WANTED_HTML),
+            clickup_search=make_clickup_search([]),
+            clickup_create_task=create_task,
+            dry_run=False,
+        )
+        self.assertEqual(len(create_task.calls), 1)  # type: ignore[attr-defined]
+        _title, _body, list_id = create_task.calls[0]  # type: ignore[attr-defined]
+        self.assertIsNone(list_id)
+
+
 class SafetyTests(unittest.TestCase):
     def test_every_outcome_no_external_no_secret(self) -> None:
         parsed = parse_discord_position_registration_request(
