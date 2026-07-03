@@ -176,6 +176,32 @@ def test_non_string_jd_list_items_rejected():
         build_linkedin_inmail_jd(**kwargs)
 
 
+def test_control_char_injection_rejected():
+    """codex V1 round5 결함: 줄바꿈·NUL 등 제어문자로 가짜 섹션 주입이 되면 안 된다.
+    모든 텍스트 입력은 한 줄 — 제어문자 발견 시 ValueError(fail-closed)."""
+    cases = [
+        ("company_name", "뤼튼\n[가짜섹션]"),
+        ("position_title", "AX\x00Lead"),
+        ("personalized_opener", "첫 줄입니다.\n[가짜섹션] 둘째 줄입니다."),
+        ("candidate_name", "Jihoon\nPark"),
+        ("location", "서울\r\n[가짜]"),
+    ]
+    for field, value in cases:
+        kwargs = golden_kwargs()
+        kwargs[field] = value
+        with pytest.raises(ValueError, match=field):
+            build_linkedin_inmail_jd(**kwargs)
+    kwargs = golden_kwargs()
+    kwargs["jd_responsibilities"] = ["정상 업무\n[가짜섹션] 줄바꿈"]
+    with pytest.raises(ValueError, match="jd_responsibilities"):
+        build_linkedin_inmail_jd(**kwargs)
+    kwargs = golden_kwargs()
+    kwargs["company_briefing"] = dict(golden_kwargs()["company_briefing"])
+    kwargs["company_briefing"]["one_line"] = "정의\n[가짜섹션]"
+    with pytest.raises(ValueError, match="one_line"):
+        build_linkedin_inmail_jd(**kwargs)
+
+
 def test_none_jd_list_item_rejected():
     """codex V1 round4 결함 1: 리스트 안 None 이 조용히 빠지면 안 된다 — 명시 거부."""
     for field in ("jd_responsibilities", "jd_qualifications", "why_consider"):

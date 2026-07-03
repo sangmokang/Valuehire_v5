@@ -99,10 +99,17 @@ def _contains_unverified(value: str) -> bool:
 _UNVERIFIED_CORE = UNVERIFIED_MARKER.lstrip("※")
 
 
+def _reject_control(field: str, text: str) -> None:
+    """제어문자(Cc — 개행·NUL·탭 등) 거부 — 모든 텍스트 입력은 한 줄.
+    개행 주입으로 가짜 섹션 헤더를 만드는 공격 차단(codex V1 round5)."""
+    if any(unicodedata.category(ch) == "Cc" for ch in text):
+        raise ValueError(f"{field} 에 제어문자(개행 포함) — 한 줄 입력만 허용(fail-closed)")
+
+
 def _clean_text(field: str, value, *, required: bool = True) -> str:
     """문자열 인자 공통 검문(codex V1 round3) — str 강제(repr 유출 금지) +
-    비표시문자 제거 + 미확인 마커 거부. 브리핑 밖 경로는 생략이 의미를 왜곡하므로
-    마커 발견 시 조용히 빼지 않고 ValueError 로 STOP(fail-closed)."""
+    비표시문자 제거 + 제어문자 거부 + 미확인 마커 거부. 브리핑 밖 경로는 생략이
+    의미를 왜곡하므로 마커 발견 시 조용히 빼지 않고 ValueError 로 STOP(fail-closed)."""
     if value is None:
         if required:
             raise ValueError(f"{field} 비어 있음 — 필수 입력")
@@ -112,6 +119,7 @@ def _clean_text(field: str, value, *, required: bool = True) -> str:
             f"{field} 는 문자열이어야 함(현재 {type(value).__name__}) — repr 유출 금지(fail-closed)"
         )
     text = _strip_invisible(value).strip()
+    _reject_control(field, text)
     if required and not text:
         raise ValueError(f"{field} 비어 있음 — 필수 입력")
     if text and _contains_unverified(text):
@@ -186,6 +194,7 @@ def build_linkedin_inmail_jd(
                 " — 리스트/None 혼입 repr 유출 금지(fail-closed)"
             )
         value = _strip_invisible(raw or "").strip()
+        _reject_control(f"company_briefing['{key}']", value)
         if value and not _contains_unverified(value):
             briefing_lines.append(f"· {value}")
 
