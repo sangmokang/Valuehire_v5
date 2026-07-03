@@ -1,19 +1,31 @@
-"""아웃리치 JD 컴포저 — 채널별 본문 길이 캡 가드 (PC-G1).
+"""아웃리치 JD 컴포저 — 길이 캡 가드(PC-G1) + LinkedIn InMail 본문 조립(PC-G2).
 
-후보 맞춤 JD(InMail/이직제안 본문)를 "보낼 수 있는 상태"로 조립하는 모듈의
-첫 조각. 여기서는 **길이 검증만** 한다 — 컴포저 산출물(PC-G2)이 채널 한도를
-넘지 않음을 발송 전에 기계로 못박는다.
+후보 맞춤 JD(InMail/이직제안 본문)를 "보낼 수 있는 상태"로 조립하는 모듈.
+PC-G1 = 채널 글자수 캡 가드, PC-G2 = 골든샘플 v2 구조의 본문 문자열 조립(순수함수).
 
 SOT 가드:
-- SOT3: 길이 검증만. Send/컴포저 insert 같은 자동 부작용 없음. 초과 시 STOP(raise).
-- SOT5: 채널 한도(linkedin_rps 1899 등)·글자수 계산을 재정의하지 않고
-  inmail_precheck 의 CHANNEL_CHAR_LIMITS·char_count 를 그대로 재사용한다.
+- SOT3: 문자열 조립·검증만. Send/컴포저 insert 같은 자동 부작용 없음 —
+  발송·저장은 언제나 사장님 손. 초과 시 STOP(raise).
+- SOT5: 채널 한도·글자수·브리핑 8요소를 재정의하지 않고 inmail_precheck 의
+  CHANNEL_CHAR_LIMITS·char_count·BRIEFING_ELEMENT_KEYS 를 그대로 재사용한다.
+- 문구 구조 SOT: skills/humansearch/references/inmail-golden-sample.md (v2).
 """
 from __future__ import annotations
 
-from .inmail_precheck import CHANNEL_CHAR_LIMITS, char_count
+import unicodedata
 
-__all__ = ["OutreachJdCapError", "assert_outreach_jd_within_cap"]
+from .inmail_precheck import (
+    BRIEFING_ELEMENT_KEYS,
+    CHANNEL_CHAR_LIMITS,
+    UNVERIFIED_MARKER,
+    char_count,
+)
+
+__all__ = [
+    "OutreachJdCapError",
+    "assert_outreach_jd_within_cap",
+    "build_linkedin_inmail_jd",
+]
 
 
 class OutreachJdCapError(ValueError):
@@ -38,3 +50,193 @@ def assert_outreach_jd_within_cap(body: str, channel: str = "linkedin_rps") -> s
             f"outreach_jd_over_cap: {channel} 본문 {count}자 > 한도 {limit}자 — STOP"
         )
     return body
+
+
+# ── PC-G2: 골든샘플 v2 고정 문단 — 함수가 삽입하므로 누락이 구조적으로 불가능 ──
+
+_INTRO = "저는 테크 서치펌 밸류커넥트(Valueconnect)의 헤드헌터 강상모라고 합니다."
+
+_VERIFIED_PULL: dict[str, str] = {
+    "ko": (
+        "밸류커넥트는 꼭 이번 기회가 아니더라도, 레주메를 보내주시면 개인정보를 지켜 "
+        "개선된 버전의 이력서 피드백을 무료로 드리고 있습니다. 커리어에 도움 되시리라 생각합니다."
+    ),
+    "en": (
+        "Even if this role is not for you, send us your resume and we will "
+        "return free resume feedback with your privacy protected."
+    ),
+}
+
+_CLOSING = "그럼 또 소통 나눌 수 있기를 기대합니다. 감사합니다!\n강상모 드림"
+
+# R21 표준 인입 CTA — "딱 맞지 않으셔도"는 부정문(과장 아님, precheck 허용 패턴)
+_PS_CTA = (
+    "P.S. 지금 이 포지션이 딱 맞지 않으셔도 괜찮습니다. 밸류커넥트가 이력서를 직접 검증해, "
+    "더 잘 맞는 기회까지 연결해 드립니다 — 무료 커리어 검증 신청: https://valuehire.cc/resume"
+)
+
+
+def _strip_invisible(text: str) -> str:
+    """형식 문자(Cf — zero-width 류) 제거. ※미확인 마커 우회 차단(codex V1 결함 1)."""
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
+def _contains_unverified(value: str) -> bool:
+    """미확인 마커 검출 — fail-closed. exact '※미확인' 매칭이 아니라
+    NFKC 접기 + 비표시/공백류(Cf·Mn·Cc·Z*) 제거 후 '미확인' 포함이면 참:
+    공백·NBSP·이형선택자 삽입, 전각 치환(codex V1 round2 변형 공격)을 전부 잡는다.
+    출처 있는 브리핑 사실에 '미확인'이 들어갈 일은 없다 — 의심스러우면 생략이 안전."""
+    folded = unicodedata.normalize("NFKC", value)
+    folded = "".join(
+        ch for ch in folded
+        if unicodedata.category(ch) not in ("Cf", "Mn", "Mc", "Me", "Cc")
+        and not ch.isspace()
+    )
+    return _UNVERIFIED_CORE in folded
+
+
+# SOT 마커(※미확인)에서 기호를 뺀 핵심어 — 전각 치환(＊미확인 등)도 잡기 위해 기호 무시
+_UNVERIFIED_CORE = UNVERIFIED_MARKER.lstrip("※")
+
+
+def _reject_control(field: str, text: str) -> None:
+    """제어·줄분리 문자(Cc/Zl/Zp — 개행·NUL·U+2028/29 등) 거부 — 모든 텍스트 입력은 한 줄.
+    개행류 주입으로 가짜 섹션 헤더를 만드는 공격 차단(codex V1 round5 + 자기반증)."""
+    if any(unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in text):
+        raise ValueError(f"{field} 에 제어·줄분리 문자(개행 포함) — 한 줄 입력만 허용(fail-closed)")
+
+
+# 본문 구조를 만드는 예약 섹션 헤더 — 입력이 이걸로 시작하면 구조 위장(codex V1 round6)
+_RESERVED_HEADERS: tuple[str, ...] = (
+    "[제목]", "[주요 업무]", "[자격 요건]", "[왜 검토할 만한가]", "[근무지]",
+)
+
+
+def _reject_reserved_header(field: str, text: str) -> None:
+    """예약 섹션 헤더로 시작하는 입력 거부 — 앞머리 개행이 strip 으로 사라진 뒤
+    남는 가짜 헤더(또는 개행 없이 직접 넣은 헤더)가 본문 구조를 위장하는 것 차단.
+    판정은 NFKC 접기 + 유니코드 공백 전체·비표시 문자 제거 후 — ASCII 공백만 지우면
+    NBSP·U+202F·U+2003·U+3000 삽입으로 우회됨(codex V1 round7)."""
+    folded = unicodedata.normalize("NFKC", text)
+    compact = "".join(
+        ch for ch in folded
+        if not ch.isspace() and unicodedata.category(ch) not in ("Cf", "Mn", "Me")
+    )
+    for header in _RESERVED_HEADERS:
+        if compact.startswith(header.replace(" ", "")):
+            raise ValueError(
+                f"{field} 가 예약 섹션 헤더 {header} 로 시작 — 구조 위장 금지(fail-closed)"
+            )
+
+
+def _clean_text(field: str, value, *, required: bool = True) -> str:
+    """문자열 인자 공통 검문(codex V1 round3) — str 강제(repr 유출 금지) +
+    비표시문자 제거 + 제어문자 거부 + 미확인 마커 거부. 브리핑 밖 경로는 생략이
+    의미를 왜곡하므로 마커 발견 시 조용히 빼지 않고 ValueError 로 STOP(fail-closed)."""
+    if value is None:
+        if required:
+            raise ValueError(f"{field} 비어 있음 — 필수 입력")
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{field} 는 문자열이어야 함(현재 {type(value).__name__}) — repr 유출 금지(fail-closed)"
+        )
+    text = _strip_invisible(value).strip()
+    _reject_control(field, text)
+    _reject_reserved_header(field, text)
+    if required and not text:
+        raise ValueError(f"{field} 비어 있음 — 필수 입력")
+    if text and _contains_unverified(text):
+        raise ValueError(f"{field} 에 미확인 마커 포함 — 출처 있는 내용만 넣을 것(fail-closed)")
+    return text
+
+
+def _bullets(field: str, items) -> str:
+    """불릿 조립. 항목은 문자열만, 빈/공백뿐 리스트는 fail-closed 거부(무불릿 헤더 금지)."""
+    if items is not None and not isinstance(items, (list, tuple)):
+        raise ValueError(f"{field} 는 리스트여야 함(현재 {type(items).__name__})")
+    cleaned = []
+    for item in items or []:
+        if item is None:  # None 혼입은 조용히 빼지 않고 명시 거부(codex V1 round4)
+            raise ValueError(f"{field} 에 None 항목 포함 — 문자열 불릿만 허용(fail-closed)")
+        text = _clean_text(field, item, required=False)
+        if text:
+            cleaned.append(text)
+    if not cleaned:
+        raise ValueError(f"{field} 비어 있음 — 불릿 없는 헤더만 있는 문구 금지(fail-closed)")
+    return "\n".join(f"· {item}" for item in cleaned)
+
+
+def build_linkedin_inmail_jd(
+    *,
+    candidate_name: str,
+    personalized_opener: str,
+    company_name: str,
+    position_title: str,
+    company_briefing: dict,
+    jd_responsibilities: list[str],
+    jd_qualifications: list[str],
+    why_consider: list[str],
+    location: str | None = None,
+    language: str = "ko",
+    channel: str = "linkedin_rps",
+) -> str:
+    """골든샘플 v2 구조로 InMail 본문 문자열을 조립해 반환. 부수효과 0(Send/insert 없음).
+
+    - candidate_name 은 수확 JSON 의 name 그대로 인사말에 박는다(손 재입력 금지, ①).
+    - VERIFIED-PULL(⑤)·P.S. CTA(⑥)는 여기서 고정 삽입 — 호출자가 빠뜨릴 수 없다.
+    - 최종 판정은 precheck_inmail(단일 검문소)에 위임하되, 채널 캡(PC-G1)은
+      조립 직후 즉시 확인한다(초과분을 하류로 흘려보내지 않음).
+    """
+    name = _clean_text("candidate_name", candidate_name)
+    opener = _clean_text("personalized_opener", personalized_opener)
+    company = _clean_text("company_name", company_name)
+    title = _clean_text("position_title", position_title)
+    loc = _clean_text("location", location, required=False)
+    if not isinstance(language, str) or language not in _VERIFIED_PULL:
+        raise ValueError(f"language 는 {sorted(_VERIFIED_PULL)} 중 하나: {language!r}")
+    if not isinstance(channel, str):
+        raise ValueError(
+            f"channel 은 문자열이어야 함(현재 {type(channel).__name__}) — fail-closed"
+        )
+    if company_briefing is not None and not isinstance(company_briefing, dict):
+        raise ValueError(
+            f"company_briefing 은 dict 여야 함(현재 {type(company_briefing).__name__}) — fail-closed"
+        )
+    unknown = set(company_briefing or {}) - set(BRIEFING_ELEMENT_KEYS)
+    if unknown:
+        raise ValueError(
+            f"company_briefing 에 §1.5 8요소 밖 키 금지(SOT5): {sorted(unknown)}"
+        )
+
+    briefing_lines = [company]
+    for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, 미확인·빈값은 생략
+        raw = (company_briefing or {}).get(key)
+        if raw is not None and not isinstance(raw, str):
+            raise ValueError(
+                f"company_briefing['{key}'] 는 문자열이어야 함(현재 {type(raw).__name__})"
+                " — 리스트/None 혼입 repr 유출 금지(fail-closed)"
+            )
+        value = _strip_invisible(raw or "").strip()
+        _reject_control(f"company_briefing['{key}']", value)
+        _reject_reserved_header(f"company_briefing['{key}']", value)
+        if value and not _contains_unverified(value):
+            briefing_lines.append(f"· {value}")
+
+    sections = [
+        f"[제목] {company}, {title}",
+        f"안녕하세요 {name}님,",
+        f"{_INTRO}\n{opener}",
+        "\n".join(briefing_lines),
+        f"[주요 업무]\n{_bullets('jd_responsibilities', jd_responsibilities)}",
+        f"[자격 요건]\n{_bullets('jd_qualifications', jd_qualifications)}",
+        f"[왜 검토할 만한가]\n{_bullets('why_consider', why_consider)}",
+        _VERIFIED_PULL[language],
+        _CLOSING,
+        _PS_CTA,
+    ]
+    if loc:
+        sections.append(f"[근무지] {loc}")
+
+    body = "\n\n".join(sections)
+    return assert_outreach_jd_within_cap(body, channel=channel)
