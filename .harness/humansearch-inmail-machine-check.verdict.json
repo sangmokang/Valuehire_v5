@@ -1,0 +1,56 @@
+{
+  "verdict": "fail",
+  "findings": [
+    {
+      "severity": "high",
+      "file": "tools/multi_position_sourcing/inmail_precheck.py",
+      "line": 135,
+      "claim": "AC1 fail-open: a two-character greeting token is accepted by substring matching. Greeting 'et' passes profile 'Meseret Abayebas Tadese', so a coincidental short token can satisfy the name gate.",
+      "repro": "/Users/kangsangmo/Valuehire_v5/.venv/bin/python -m tools.multi_position_sourcing.inmail_precheck --body-file .harness/inmail_twochar_false_pass.txt --profile-name \"Meseret Abayebas Tadese\" --channel linkedin_rps ; observed exit 0 with {\"ok\": true, \"stops\": []}"
+    },
+    {
+      "severity": "high",
+      "file": "tools/multi_position_sourcing/inmail_precheck.py",
+      "line": 68,
+      "claim": "AC3 fail-open: Korean call-request wording can bypass the banned-wording lint by inserting whitespace inside the word. '5분만 전 화 가능하실까요?' is a call request but the regex only matches contiguous '전화' or '통화'.",
+      "repro": "/Users/kangsangmo/Valuehire_v5/.venv/bin/python -m tools.multi_position_sourcing.inmail_precheck --body-file .harness/inmail_call_whitespace_bypass.txt --profile-name \"Meseret Abayebas Tadese\" --channel linkedin_rps ; observed exit 0 with {\"ok\": true, \"stops\": []}"
+    },
+    {
+      "severity": "medium",
+      "file": "tools/multi_position_sourcing/inmail_precheck.py",
+      "line": 176,
+      "claim": "Doc-code drift: SKILL.md and the golden sample require English-profile bodies to be English, but precheck_inmail does not enforce body_language_for_profile or inspect body language. A Korean body for 'Meseret Abayebas Tadese' passes.",
+      "repro": "/Users/kangsangmo/Valuehire_v5/.venv/bin/python -m tools.multi_position_sourcing.inmail_precheck --body-file .harness/inmail_korean_body_english_profile_false_pass.txt --profile-name \"Meseret Abayebas Tadese\" --channel linkedin_rps ; observed exit 0 with {\"ok\": true, \"stops\": []}"
+    },
+    {
+      "severity": "medium",
+      "file": "tools/multi_position_sourcing/inmail_precheck.py",
+      "line": 220,
+      "claim": "Doc-code drift / incident recurrence gap: the goal and golden sample state the Movensys VERIFIED-PULL plus P.S. CTA omission should be sealed, but code only checks VERIFIED-PULL markers. A body with no P.S. CTA passes.",
+      "repro": "/Users/kangsangmo/Valuehire_v5/.venv/bin/python -m tools.multi_position_sourcing.inmail_precheck --body-file .harness/inmail_missing_ps_false_pass.txt --profile-name \"Meseret Abayebas Tadese\" --channel linkedin_rps ; observed exit 0 with {\"ok\": true, \"stops\": []}"
+    },
+    {
+      "severity": "low",
+      "file": "tools/multi_position_sourcing/inmail_precheck.py",
+      "line": 74,
+      "claim": "AC5 over-block / spec drift: the goal says jamo STOP is for consecutive jamo `[ㄱ-ㅣ]{2,}`, but the implementation flags any single jamo. A body containing a single outline marker 'ㄱ 항목' stops with typo_jamo.",
+      "repro": "/Users/kangsangmo/Valuehire_v5/.venv/bin/python .harness/inmail_precheck_adversarial_repro.py ; inspect key AC5_single_jamo_overblock, observed {\"ok\": false, \"stops\": [\"typo_jamo: ...\"]}"
+    }
+  ],
+  "tried": [
+    "Read strict-mode instructions from /Users/kangsangmo/.codex/skills/st/SKILL.md.",
+    "Read repo SOT and harness files: CLAUDE.md, docs/harness.md, Makefile, package.json, docs/sot/22-talent-search-filters.md, docs/sot/22-talent-search-filters.json, docs/sot/23-channel-dom-selectors.md, docs/sot/24-position-jd-sot.json, docs/sot/25-ai-search-execution-process.md, docs/sot/25-ai-search-execution-process.json, docs/sot/26-portal-login-spec.json, docs/sot/27-humansearch-browsing-preflight.json, docs/sot/25-execution-discipline.verdict.json, docs/sot/26-portal-login-spec.verdict.json.",
+    "Read contract and target artifacts: docs/engineering/humansearch-inmail-machine-check-goal-2026-07-03.md, tools/multi_position_sourcing/inmail_precheck.py, tests/test_inmail_precheck.py, skills/humansearch/SKILL.md, skills/humansearch/references/inmail-golden-sample.md.",
+    "Ran /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/test_inmail_precheck.py -q: 34 passed.",
+    "Ran ./verify.sh: 759 passed, 3 xfailed, 1 failed. The failure was unrelated to inmail_precheck and caused by sandbox denial creating /Users/kangsangmo/.valuehire/portal_profiles/linkedin_rps/default/.profile.lock.",
+    "Ran git diff 7ee0cea~1..b2c82f2 -- tests/test_inmail_precheck.py and git diff --name-status/stat for the same path: tests/test_inmail_precheck.py is a new 309-line file in that comparison, not a weakened prior file.",
+    "AC1 attacks: honorific variant 'Meseret 연구원님' survived correctly; surname/given order 'Tadese Meseret' survived correctly; empty body, None body through precheck_inmail, and empty profile failed closed; two-character token 'et' falsely passed and is reported.",
+    "AC2 attacks: NFC vs NFD Hangul both counted as 2; non-BMP emoji counted as 1; CRLF counted as two codepoints for CR+LF; 1899 passed and 1900 stopped for linkedin_rps.",
+    "AC3 attacks: zero-width plus fullwidth/case variation '딱\\u200b맞는 포지션, ＰＨＯＮＥ　ＣＡＬＬ' stopped; exact R21 CTA '딱 맞지 않으셔도' passed; a normal non-banned sentence passed; whitespace-split Korean call request falsely passed and is reported.",
+    "AC4 attacks: briefing_element_count=1 returned ok=true with briefing_below_6 warning, not STOP.",
+    "AC5 attacks: normal Korean body returned ok=true; single-jamo outline marker over-block reproduced and is reported; substring typo probe containing '하니다' inside a longer token stopped, noted but not separately reported because the phrase still contains the known typo literal.",
+    "AC6 attacks: removing VERIFIED-PULL stopped; English resume feedback marker passed; removing P.S. CTA while keeping VERIFIED-PULL falsely passed and is reported.",
+    "AC7 attacks: body_language_for_profile returned en/ko for English, Korean, and empty-name visible-text fallbacks; precheck_inmail did not enforce the documented language decision and falsely passed a Korean body for an English profile.",
+    "AC8 attacks: SKILL.md and golden sample contain inmail_precheck, language, limits, channel boundary, and Send prohibition markers; unknown channel failed closed; doc-code drift remains for language enforcement and P.S. CTA enforcement."
+  ]
+}
