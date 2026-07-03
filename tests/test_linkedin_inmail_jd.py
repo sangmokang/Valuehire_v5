@@ -202,6 +202,16 @@ def test_control_char_injection_rejected():
         build_linkedin_inmail_jd(**kwargs)
 
 
+def test_unicode_line_separator_injection_rejected():
+    """자기반증 발견: U+2028(LS)/U+2029(PS)도 splitlines 가 줄바꿈으로 취급 —
+    가짜 섹션 주입 가능하므로 Cc 와 동일하게 거부."""
+    for ch in (" ", " "):
+        kwargs = golden_kwargs()
+        kwargs["company_name"] = f"뤼튼{ch}[가짜섹션]"
+        with pytest.raises(ValueError, match="company_name"):
+            build_linkedin_inmail_jd(**kwargs)
+
+
 def test_none_jd_list_item_rejected():
     """codex V1 round4 결함 1: 리스트 안 None 이 조용히 빠지면 안 된다 — 명시 거부."""
     for field in ("jd_responsibilities", "jd_qualifications", "why_consider"):

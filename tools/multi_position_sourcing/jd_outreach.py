@@ -100,10 +100,10 @@ _UNVERIFIED_CORE = UNVERIFIED_MARKER.lstrip("※")
 
 
 def _reject_control(field: str, text: str) -> None:
-    """제어문자(Cc — 개행·NUL·탭 등) 거부 — 모든 텍스트 입력은 한 줄.
-    개행 주입으로 가짜 섹션 헤더를 만드는 공격 차단(codex V1 round5)."""
-    if any(unicodedata.category(ch) == "Cc" for ch in text):
-        raise ValueError(f"{field} 에 제어문자(개행 포함) — 한 줄 입력만 허용(fail-closed)")
+    """제어·줄분리 문자(Cc/Zl/Zp — 개행·NUL·U+2028/29 등) 거부 — 모든 텍스트 입력은 한 줄.
+    개행류 주입으로 가짜 섹션 헤더를 만드는 공격 차단(codex V1 round5 + 자기반증)."""
+    if any(unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in text):
+        raise ValueError(f"{field} 에 제어·줄분리 문자(개행 포함) — 한 줄 입력만 허용(fail-closed)")
 
 
 def _clean_text(field: str, value, *, required: bool = True) -> str:
