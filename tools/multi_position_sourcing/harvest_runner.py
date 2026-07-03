@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import cycle
 
@@ -75,11 +74,13 @@ def build_harvest_queue(
 
 
 def _resolve(value: object) -> object:
-    """execute_item 이 코루틴을 돌려주면 완료까지 돌려 결과를 반환(sync/async 호출 경로 모두 지원).
+    """execute_item 이 코루틴을 돌려주면 완료까지 돌려 결과를 반환(sync 호출 경로).
 
-    ``asyncio.run`` 은 실행중 이벤트루프 안에서 호출 불가(RuntimeError). live Harvest 드라이버가
-    async 컨텍스트로 돌 때 크래시하지 않도록, 실행중 루프가 있으면 별도 스레드의 새 루프에서
-    코루틴을 완주시켜 결과를 회수한다(현재 루프 블로킹·미await 경고 회피, BUG-HARVEST-ASYNC).
+    ``asyncio.run`` 은 실행중 이벤트루프 안에서 호출 불가(RuntimeError). 실행중 루프 안에서 임의
+    코루틴을 sync 로 안전하게 해결할 방법은 없다 — 별도 스레드+새 루프 방식은 outer-loop 의존
+    코루틴에서 deadlock/cross-loop 에러를 낸다(adversarial V1 지적). 그래서 코루틴을 닫아 미await
+    경고를 막고 명시적 예외로 fail-closed 한다(호출부 run_harvest_cycle 이 잡아 status=fail 로그).
+    live async 드라이버는 execute_item 을 직접 await 하는 async 경로를 써야 한다(BUG-HARVEST-ASYNC).
     """
     if not asyncio.iscoroutine(value):
         return value
@@ -87,8 +88,11 @@ def _resolve(value: object) -> object:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(value)  # 실행중 루프 없음 — 표준 경로
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, value).result()
+    value.close()  # 코루틴 미await 경고 방지
+    raise RuntimeError(
+        "sync run_harvest_cycle 은 실행중 이벤트루프에서 async execute_item 을 해결할 수 없다 "
+        "— async 드라이버가 execute_item 을 직접 await 해야 한다."
+    )
 
 
 def run_harvest_cycle(

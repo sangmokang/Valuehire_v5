@@ -11,14 +11,14 @@
 ## 근본 원인
 `asyncio.run`은 실행중 루프에서 호출 불가. live Harvest 드라이버가 async 컨텍스트로 run_harvest_cycle을 돌리고 execute_item이 코루틴을 반환하면 사이클이 통째로 크래시(0건 수집).
 
-## 계약 (SDD)
+## 계약 (SDD) — adversarial V1 반영판
 `_resolve(value)`:
 - 코루틴 아님 → 그대로 반환.
-- 코루틴 + 실행중 루프 없음 → `asyncio.run`(현행 유지).
-- 코루틴 + 실행중 루프 있음 → 별도 스레드의 새 루프에서 완료(현재 루프 블로킹·미await 경고 회피). 크래시 금지.
+- 코루틴 + 실행중 루프 없음 → `asyncio.run`(현행 유지, sync 완주).
+- 코루틴 + 실행중 루프 있음 → **코루틴을 닫고 명시적 도메인 예외로 fail-closed.** (별도 스레드+새 루프 방식은 outer-loop 의존 코루틴에서 deadlock/cross-loop 에러를 낸다 — V1 지적. 실행중 루프에서 임의 코루틴을 sync 로 안전 해결할 방법은 없다.) 호출부 `run_harvest_cycle` 이 잡아 status=fail 로그. **크래시(asyncio 내부)·hang·미await 경고 금지.** async 지원은 별도 async 드라이버의 몫(비범위).
 
 ## 인수기준 (기계검증 1)
-`tests/test_harvest_resolve_loop.py` GREEN: (a) 비코루틴 passthrough, (b) sync 컨텍스트 코루틴 resolve(회귀), (c) **실행중 이벤트루프에서 `_resolve(코루틴)`가 RuntimeError 없이 결과 반환**, (d) 실행중 루프에서 `run_harvest_cycle`(async execute_item)가 크래시 없이 저장 완료. + `./verify.sh` exit 0.
+`tests/test_harvest_resolve_loop.py` GREEN: (a) 비코루틴 passthrough, (b) sync 컨텍스트 코루틴 resolve(회귀), (c) **실행중 이벤트루프에서 `_resolve(코루틴)`가 asyncio 내부 크래시·미await 경고 없이 명확한 도메인 예외로 fail-closed**, (d) 실행중 루프에서 `run_harvest_cycle`(async execute_item)가 크래시/hang 없이 fail-closed(저장0, status=fail). + `./verify.sh` exit 0.
 
 ## 적용 게이트
 harness 0→1→2(RED)→3(GREEN)→4(verify)→4b(자기적대+Codex V1+Claude V2)→5(ship PR).
