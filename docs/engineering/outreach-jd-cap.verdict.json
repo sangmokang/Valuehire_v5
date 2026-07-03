@@ -1,0 +1,25 @@
+{
+  "claim_id": "PC-G1-outreach-jd-cap",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "assert_outreach_jd_within_cap: 채널 글자수 캡 가드. 1900>1899 raise, 1899 통과. CHANNEL_CHAR_LIMITS·char_count 재사용(1899 재정의 없음). 길이검증만(자동 발송/insert 없음).",
+    "changed_files": [
+      "tools/multi_position_sourcing/jd_outreach.py",
+      "tests/test_jd_outreach_cap.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "artifact": "verify: 861 passed, 3 xfailed, 5 subtests passed in 8.14s / pytest exit=0",
+    "mutation_evidence": "수동 뮤턴트(> → >=) 적용 시 5 failed(경계/NFC 테스트) → 되돌림 후 9 passed. 테스트가 무는 것 확인.",
+    "live_evidence": "PC-G1은 순수 가드 함수(고아 아님). 후속 PC-G2(build_linkedin_inmail_jd)가 이 캡가드를 호출해 배선 예정 — 현 조각은 계약/가드만."
+  },
+  "v1": {
+    "author": "codex-rescue (fresh session)",
+    "verdict": "pass",
+    "notes": "9/9 tests pass, boundary correct (==1899 passes, 1900 raises, jd_outreach.py:34-40), reuses inmail_precheck.CHANNEL_CHAR_LIMITS/char_count (jd_outreach.py:14, no redefinition), unknown channel raises before counting (fail-closed), NFC-vs-raw explicit via char_count, no auto-send/insert side effect.",
+    "flaky_note": "codex 환경 verify.sh는 무관한 PortalLoginHumanInterventionTests 프로필락 PermissionError로 exit 1 — 이번 변경 무관, 실제 크롬 프로필 점유 의존 기존 항목. 생성자 환경에서는 exit 0."
+  },
+  "three_way_agree": "L2 — G(뮤턴트 검증)+V1(codex PASS)+T(verify exit 0) 일치. V2 재검증은 L3에서만 필수, 본 조각 L2라 생략.",
+  "status": "GREEN"
+}
