@@ -191,6 +191,22 @@ def test_golden_within_channel_cap(golden_body):
     assert assert_outreach_jd_within_cap(body, channel="linkedin_rps") == body
 
 
+def test_composer_routes_through_cap_guard(monkeypatch):
+    """컴포저가 PC-G1 캡가드를 실제로 거치는지(배선). STOP 강제 단언은 PC-G2b."""
+    import tools.multi_position_sourcing.jd_outreach as mod
+
+    calls: list[str] = []
+    orig = mod.assert_outreach_jd_within_cap
+
+    def spy(body: str, channel: str = "linkedin_rps") -> str:
+        calls.append(channel)
+        return orig(body, channel=channel)
+
+    monkeypatch.setattr(mod, "assert_outreach_jd_within_cap", spy)
+    mod.build_linkedin_inmail_jd(**golden_kwargs())
+    assert calls == ["linkedin_rps"], "컴포저가 캡가드를 호출하지 않음(배선 끊김)"
+
+
 # ── 구조: 제목·근무지·서명 (골든샘플 v2) ──
 
 
