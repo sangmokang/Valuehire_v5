@@ -151,18 +151,23 @@ def compute_years_experience(
     2) 없으면 근속합산 폴백: tenure_months 재사용(월 정밀). 현재 재직(end 빈값)은 오늘(YYYY-MM)까지.
     3) 둘 다 없으면 None.
     """
-    all_years = [int(y) for y in _YEAR_RE.findall(education or "")]
+    edu = education or ""
+    ongoing_edu = "present" in edu.lower() or "현재" in edu or "재학" in edu
+    all_years = [int(y) for y in _YEAR_RE.findall(edu)]
     plausible = [y for y in all_years if 1950 <= y <= today_year]
-    # education 에 미래 연도가 있으면(졸업 range 의 끝이 미래=재학) 졸업 경로 건너뜀 → 폴백/None.
-    if plausible and max(all_years) <= today_year:
+    # 졸업 경로는 (a)미래 연도(졸업 range 끝이 미래) 또는 (b)재학 표기(Present/현재)면 쓰지 않는다 —
+    # 시작연도를 졸업으로 오인해 경력을 부풀리지 않는다(V1 Codex). 그 경우 근속합산 폴백으로.
+    if plausible and max(all_years) <= today_year and not ongoing_edu:
         return max(0, today_year - max(plausible))
 
     today_ym = f"{today_year:04d}-{today_month:02d}"
     total_months = 0
     counted = False
     for tenure in employment_history:
-        # 현재 재직(end 빈값)은 오늘까지로 월 정밀 계산(tenure_months 재사용).
-        end = tenure.end_month or today_ym
+        # 현재 재직(end 빈값 또는 Present/현재)은 오늘까지로 월 정밀 계산(tenure_months 재사용).
+        end = tenure.end_month
+        if not end or end in ("Present", "present", "현재"):
+            end = today_ym
         months = tenure_months(tenure.start_month, end)
         if months is not None and months >= 0:
             total_months += months

@@ -99,6 +99,19 @@ def test_future_graduation_range_not_counted_as_experience() -> None:
     assert compute_years_experience("University BS 2023 - 2027", (), today_year=2026) is None
 
 
+def test_ongoing_education_not_counted_as_graduation() -> None:
+    # V1(Codex 2차): "2023 - Present"/"현재"는 재학중 — 시작연도를 졸업으로 오인 금지 → None.
+    assert compute_years_experience("University BS 2023 - Present", (), today_year=2026) is None
+    assert compute_years_experience("서울대 2023 - 현재", (), today_year=2026) is None
+
+
+def test_tenure_end_present_literal_treated_as_current() -> None:
+    # V1(Codex 2차): end_month 에 'Present'/'현재' 리터럴이 직접 들어와도 현재재직으로 계산(방어).
+    for marker in ("Present", "현재"):
+        emp = (EmploymentTenure(company="X", start_month="2020-12", end_month=marker),)
+        assert compute_years_experience("", emp, today_year=2026, today_month=7) == 5
+
+
 def test_years_none_when_no_grad_no_tenure() -> None:
     assert compute_years_experience("", (), today_year=2026) is None
 
