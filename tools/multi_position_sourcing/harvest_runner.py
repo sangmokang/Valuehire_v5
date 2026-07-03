@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import cycle
 
@@ -74,10 +75,20 @@ def build_harvest_queue(
 
 
 def _resolve(value: object) -> object:
-    """execute_item 이 코루틴을 돌려주면 완료까지 돌려 결과를 반환(sync 호출 경로 지원)."""
-    if asyncio.iscoroutine(value):
-        return asyncio.run(value)
-    return value
+    """execute_item 이 코루틴을 돌려주면 완료까지 돌려 결과를 반환(sync/async 호출 경로 모두 지원).
+
+    ``asyncio.run`` 은 실행중 이벤트루프 안에서 호출 불가(RuntimeError). live Harvest 드라이버가
+    async 컨텍스트로 돌 때 크래시하지 않도록, 실행중 루프가 있으면 별도 스레드의 새 루프에서
+    코루틴을 완주시켜 결과를 회수한다(현재 루프 블로킹·미await 경고 회피, BUG-HARVEST-ASYNC).
+    """
+    if not asyncio.iscoroutine(value):
+        return value
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(value)  # 실행중 루프 없음 — 표준 경로
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, value).result()
 
 
 def run_harvest_cycle(

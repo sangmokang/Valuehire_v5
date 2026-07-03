@@ -61,3 +61,28 @@ def test_run_harvest_cycle_from_running_loop():
     assert summary.saved_profiles >= 1
     assert summary.dropped == 0
     assert saved
+
+
+def test_run_harvest_cycle_from_loop_fail_closed_on_coro_exception():
+    """실행중 루프에서 execute_item 코루틴이 예외를 raise 하면 크래시 아닌 fail-closed(저장 0)."""
+    queue = build_harvest_queue(("it_ai_data",), machines=("macbook",))
+
+    async def execute_item(item):
+        raise RuntimeError("search failed")
+
+    def save_rail(profile: str) -> None:  # pragma: no cover - 실패 시 호출되면 안 됨
+        raise AssertionError("실패 아이템은 저장하면 안 된다")
+
+    async def driver():
+        return run_harvest_cycle(
+            queue,
+            execute_item=execute_item,
+            save_rail=save_rail,
+            run_id="run-loop-fail",
+            today="2026-07-03",
+        )
+
+    summary = asyncio.run(driver())
+    assert summary.saved_profiles == 0
+    fails = [rec for rec in summary.log_records if rec.get("status") == "fail"]
+    assert fails and all(rec.get("fail_reason") for rec in fails)
