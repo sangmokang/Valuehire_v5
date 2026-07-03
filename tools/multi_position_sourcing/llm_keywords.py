@@ -126,6 +126,23 @@ def generate_keyword_plan(position, channel: Channel, *, llm_client: LLMClient) 
     return LLMKeywordPlan(channel=channel, keywords=keywords, boolean_query=boolean_query)
 
 
+def _require_boolean_query(channel: Channel, plan) -> str:
+    """boolean 채널 계약(fail-closed): boolean 채널에 유효 keywords 가 있는데 boolean_query 가
+    비/공백이면 raise. 비-boolean 채널·정상값은 그대로 반환 — 어느 채널에도 안전하게 호출 가능.
+
+    ``generate_keyword_plan`` 이 예외가 아니라 빈 boolean_query 를 반환하면 X-ray 검색이 빈 쿼리로
+    0건이 난다. 조용히 통과(``if boolean_query:`` else skip)하지 않고 여기서 막는다(BUG-BOOL-FAILOPEN).
+    비문자열(None) 입력도 방어적으로 처리해 AttributeError 대신 도메인 예외로 수렴한다.
+    """
+    bq = plan.boolean_query or ""
+    if channel in _BOOLEAN_CHANNELS and plan.keywords and not bq.strip():
+        raise KeywordGenerationError(
+            f"{channel}: boolean 채널인데 유효 keywords 에도 boolean_query 가 비었습니다 "
+            "(빈 쿼리 0건 검색 위험, BUG-BOOL-FAILOPEN)."
+        )
+    return bq
+
+
 def inject_boolean_queries(
     sessions: tuple[KeywordSession, ...],
     position,
@@ -152,7 +169,7 @@ def inject_boolean_queries(
     boolean_query_by_channel: dict[Channel, str] = {}
     for channel in boolean_channels_present:
         plan = generate_keyword_plan(position, channel, llm_client=llm_client)
-        boolean_query_by_channel[channel] = plan.boolean_query
+        boolean_query_by_channel[channel] = _require_boolean_query(channel, plan)
 
     updated: list[KeywordSession] = []
     for session in sessions:
@@ -225,7 +242,8 @@ def inject_channel_search_filters(
     extra_by_channel: dict[Channel, dict] = {}
 
     for channel in sorted(c for c in channels_present if c in BOOLEAN_CHANNELS):
-        boolean_query = generate_keyword_plan(position, channel, llm_client=llm_client).boolean_query
+        plan = generate_keyword_plan(position, channel, llm_client=llm_client)
+        boolean_query = _require_boolean_query(channel, plan)
         if boolean_query:
             extra_by_channel[channel] = {"boolean_query": boolean_query}
 
@@ -264,7 +282,8 @@ def build_llm_keyword_sessions(
     sessions: list[KeywordSession] = []
     for channel in channels:
         plan = generate_keyword_plan(position, channel, llm_client=llm_client)
-        base_filters = {"boolean_query": plan.boolean_query} if plan.boolean_query else {}
+        boolean_query = _require_boolean_query(channel, plan)
+        base_filters = {"boolean_query": boolean_query} if boolean_query else {}
         for keyword in plan.keywords:
             sessions.append(
                 KeywordSession(
