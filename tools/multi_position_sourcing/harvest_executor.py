@@ -9,8 +9,12 @@ GuardedSearchResult`` 계약이라 드롭인이 안 됐다 — 이 어댑터가 
 핵심 규칙(SOT2, 봇 금지):
   - ``HarvestItem`` 은 segment_id + channel 만 갖고 keyword 가 없다. 코드베이스에 segment→keyword
     매핑이 없으므로 ``keywords_for_segment`` 를 주입받는다.
-  - 챌린지(세션락·authwall·재인증·사이트중단)를 감지하면 그 아이템은 **즉시 STOP** — 빈 반환 +
-    사유를 ``stops`` 에 기록한다. 챌린지 후 다음 키워드를 계속 두드리지 않는다(기계적 반복 금지).
+  - STOP 규율은 같은 러너를 감싸는 기존 어댑터 ``portal_queue_executor.execute_queue_item`` 선례와
+    일치한다: ``searched`` 만 다음 키워드로 진행하고, 그 외 모든 status(not_ready·pacing_blocked·
+    error·selector_missing) 또는 pause_site 는 **즉시 halt**한다. 챌린지(세션락·authwall·재인증)·
+    일일 상한·DOM 오류를 만나면 남은 키워드를 계속 두드리지 않는다(기계적 반복 금지).
+  - STOP 해도 그 전에 이미 찾은 카드는 버리지 않는다(harvest 는 발견 즉시 저장=차감0). STOP 사유는
+    ``stops`` 에 기록해 드라이버(PC-D2b/PC-K6)가 사이트 양보/중단을 판단하게 한다.
   - 이 어댑터는 브라우저/네트워크 수명주기를 소유하지 않는다. ``runner_for_channel`` 이 채널별
     러너를 지연 생성한다(``portal_queue_executor.make_execute_item`` 참조 패턴).
 """
@@ -24,25 +28,19 @@ from .harvest_runner import HarvestItem
 from .models import Channel, SegmentId
 from .portal_runtime import GuardedPortalSearchRunner, GuardedSearchResult
 
-# not_ready/error 는 그 자체론 STOP 이 아니다 — reauth_cause(재인증/세션락/로그인 리다이렉트)가
-# 함께 있거나 pause_site(사이트 중단)일 때만 챌린지로 판정한다.
-_REAUTH_STATUSES = frozenset({"not_ready", "error"})
-
 
 def _stop_reason(result: GuardedSearchResult) -> str:
-    """이 검색 결과가 '챌린지라 STOP' 이면 사유 문자열을, 아니면 빈 문자열을 돌려준다."""
+    """비-``searched`` 결과의 STOP 사유 문자열(관측·디버깅용). pause_site 를 최우선 표기."""
     if result.pause_site:
         return f"pause_site:{result.reason or result.reauth_cause or result.status}"
-    if result.status in _REAUTH_STATUSES and result.reauth_cause:
+    if result.reauth_cause:
         return f"{result.status}:{result.reauth_cause}"
-    if result.status == "error":
-        return f"error:{result.reason}"
-    return ""
+    return f"{result.status}:{result.reason}" if result.reason else result.status
 
 
 @dataclass(frozen=True)
 class HarvestStopSignal:
-    """한 HarvestItem 이 챌린지로 STOP 된 사건(드라이버가 사이트 양보/중단 판단에 소비)."""
+    """한 HarvestItem 이 STOP 된 사건(드라이버가 사이트 양보/중단 판단에 소비)."""
 
     channel: Channel
     segment_id: SegmentId
@@ -53,8 +51,9 @@ class HarvestSearchExecutor:
     """``GuardedPortalSearchRunner`` 를 harvest 계약(``ExecuteHarvestItem``)으로 감싼다.
 
     ``executor(item)`` (코루틴) 은 ``HarvestItem`` 을 받아 segment 키워드들을 라이브 검색하고
-    발견 프로필(``candidate_cards``)들의 튜플을 돌려준다. 챌린지 감지 시 그 아이템은 빈 튜플을
-    돌려주고 사유를 ``stops`` 에 남긴다. ``ExecuteHarvestItem`` 계약을 만족하므로
+    발견 프로필(``candidate_cards``)들의 튜플을 돌려준다. 비-``searched`` 상태(챌린지·상한·오류)나
+    ``pause_site`` 를 만나면 즉시 멈추고(남은 키워드 안 두드림) 사유를 ``stops`` 에 남긴다 — 그때까지
+    모은 카드는 보존한다. ``ExecuteHarvestItem`` 계약을 만족하므로
     ``run_harvest_cycle(execute_item=executor, ...)`` 에 그대로 꽂힌다.
     """
 
@@ -81,16 +80,21 @@ class HarvestSearchExecutor:
             result = await runner.run_keyword_search(
                 keyword, searches_today=self._searches_today
             )
-            reason = _stop_reason(result)
-            if reason:
-                # 챌린지/재인증/사이트중단 → 봇처럼 계속 두드리지 않는다. 즉시 STOP.
-                self.stops.append(
-                    HarvestStopSignal(
-                        channel=item.channel, segment_id=item.segment_id, reason=reason
-                    )
-                )
-                return ()
+            # searched 일 때만 카드를 모으고 다음 키워드로 진행한다(선례 portal_queue_executor 와
+            # 동일 — searched 는 pause_site 를 세우지 않는다). 그 외는 아래에서 즉시 STOP.
             if result.status == "searched":
                 self._searches_today += 1
                 collected.extend(result.candidate_cards)
+                continue
+            # 그 외 모든 상태(챌린지·상한·오류) 또는 pause_site → 즉시 STOP.
+            # 봇처럼 남은 키워드를 두드리지 않는다(SOT2). 이미 찾은 카드는 보존.
+            collected.extend(result.candidate_cards)
+            self.stops.append(
+                HarvestStopSignal(
+                    channel=item.channel,
+                    segment_id=item.segment_id,
+                    reason=_stop_reason(result),
+                )
+            )
+            break
         return tuple(collected)
