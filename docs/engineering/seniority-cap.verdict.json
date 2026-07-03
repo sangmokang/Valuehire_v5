@@ -1,0 +1,35 @@
+{
+  "piece": "PC-I1+PC-I2",
+  "slug": "seniority-cap",
+  "title": "졸업연도 파생 경력상한 컷 (seniority_over_cap + compute_years_experience)",
+  "branch": "task/seniority-cap",
+  "date": "2026-07-04",
+  "acceptance_criterion": {
+    "PC-I1": "JD seniority_max=5에 졸업연도 파생 years=12 프로필이 hard_exclude_reason(...)=='seniority_over_cap'로 제외, ≤5년은 None(통과).",
+    "PC-I2": "교육/dates 픽스처에서 졸업연도 있으면 정확산출(오늘-최신졸업), 없으면 근속합산 폴백, 둘 다 없으면 None(fail-closed). verify.sh exit 0."
+  },
+  "implementation": "humansearch.hard_exclude_reason(*, seniority_max) — years_experience>seniority_max 초과 시 seniority_over_cap, 미상 None fail-open, 2인자 하위호환. humansearch_cdp_run.compute_years_experience(education,emp,*,today_year,today_month) — 졸업연도(최신) 우선(미래연도·재학표기 제외), 근속합산 폴백(tenure_months 재사용, 현재재직=오늘까지 월정밀), 둘다없음 None. 러너 배선: process_profile years_experience 산출, runner_hard_exclude 가 POSITION.seniority_max 전달.",
+  "tests": "tests/test_seniority_cap.py (17개)",
+  "reuse": "PC-I1 은 hard_exclude_reason 확장(단일출처 SOT5). PC-I2 근속합산은 scoring.tenure_months 재사용. CapturedProfile.years_experience(선존 필드) 사용.",
+  "gates": {
+    "G_self_mutation": {
+      "verdict": "PASS",
+      "evidence": "자가 뮤테이션 M1~M5 caught: M1(seniority 컷 무력화), M2(경계 >→>=), M3(졸업연도 max→min), M4(폴백 항상 None), M5(현재재직 폴백 분기 무력화, V2 지적 후 추가된 테스트가 사살)."
+    },
+    "V1_codex": {
+      "verdict": "PASS",
+      "rounds": 3,
+      "evidence": "codex:rescue 3라운드. 1차 FAIL 2결함: (a)현재재직 (오늘연도-시작연도)*12 월무시 부풀림(2020-12~2026-07=5년7개월→6) → tenure_months(start,오늘YYYY-MM) 재사용 월정밀 수정, (b)education 미래연도 버린 뒤 시작연도를 졸업 오인(2023-2027→3) → 최신연도 미래면 졸업경로 스킵 수정. 2차 FAIL 2결함: (c)education 'Present/현재'(재학) 시작연도 졸업 오인→ 재학표기 스킵, (d)EmploymentTenure.end='Present' 리터럴 미처리 → 방어정규화. 3차(agentId adf30f42) PASS: 3케이스 재현(재학None·end리터럴5·정상6·미래None), 17 passed·전체 895. scoring._month_index 유효월 미검증은 PC-I3(#46) 기존버그로 charter밖 재확인만."
+    },
+    "V2_reset_claude": {
+      "verdict": "PASS",
+      "evidence": "리셋 Claude(code-reviewer, agentId a9ab21f0) PASS(PC-I1·PC-I2). 경계(years==max 통과)·None fail-open·2인자 하위호환·졸업연도 최신·미래연도 거부·freelancer 우선·배선(process_profile→runner_hard_exclude→POSITION.seniority_max)·SOT5 전부 확인. LOW 테스트구멍(현재재직 폴백 분기 미검증, 뮤테이션5) 지적 → 테스트 추가로 봉인."
+    },
+    "T_full_suite": {
+      "verdict": "PASS",
+      "evidence": ".venv/bin/python 전체 pytest: 895 passed, 3 xfailed, 5 subtests passed. 회귀 0."
+    }
+  },
+  "orphan_check": "hard_exclude_reason:seniority_over_cap 는 runner_hard_exclude 가 POSITION.seniority_max 전달로 사용. compute_years_experience 는 process_profile 이 years_experience 산출에 사용. 프로덕션 경로 __main__→main→process_profile 실배선(grep). 이 러너 POSITION 은 seniority_max 기본 99라 현재 inert(컷 안 걸림)이나 배선 실재 — 상한 설정 포지션에서 작동.",
+  "residual_risk": "[pre-existing, charter밖] scoring._month_index 가 'YYYY-13'/'YYYY-00' 등 유효월(1~12) 미검증 → 잘못된 월을 유효 취급(PC-I3/#46 소유). 실 LinkedIn 데이터는 build_tenures 가 유효 Mon YYYY 만 넘기므로 프로덕션 무영향. 별도 조각(scoring 하드닝)에서 처리 권장. 이 러너 POSITION seniority_max=99 라 상한 컷은 inert — 상한 설정 포지션 도입 시 활성."
+}
