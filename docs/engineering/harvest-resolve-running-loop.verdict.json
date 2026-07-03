@@ -1,23 +1,43 @@
 {
   "claim_id": "harvest-resolve-running-loop",
-  "mode": "code-change", "risk": "L3",
+  "mode": "code-change",
+  "risk": "L3",
   "generator": {
     "author": "Claude",
     "claim": "_resolve 가 실행중 이벤트루프에서 asyncio.run 크래시하던 것을, 코루틴 닫고 명시적 도메인 예외로 fail-closed(run_harvest_cycle→status=fail). sync 경로 무변경. deadlock/미await경고 없음.",
-    "changed_files": ["tools/multi_position_sourcing/harvest_runner.py", "tests/test_harvest_resolve_loop.py", "docs/engineering/harvest-resolve-running-loop-goal-2026-07-03.md"],
+    "changed_files": [
+      "tools/multi_position_sourcing/harvest_runner.py",
+      "tests/test_harvest_resolve_loop.py",
+      "docs/engineering/harvest-resolve-running-loop-goal-2026-07-03.md"
+    ],
     "command": "pytest tests/test_harvest_resolve_loop.py tests/test_reservoir_harvest.py -q",
-    "exit_code": 0, "artifact": "신규 4 passed + harvest 19 passed",
+    "exit_code": 0,
+    "artifact": "신규 4 passed + harvest 19 passed",
     "live_evidence": "버그 재현(T): 실행중 루프 _resolve(coro)→'asyncio.run cannot be called from a running event loop'. 배선: run_harvest_cycle:142 tuple(_resolve(execute_item(item))). run_harvest_cycle 프로덕션 호출자 0(라이브 미배선, PC-D5 미착수) — spec-sanctioned 하드닝(현재 프로덕션 무영향).",
     "mutation": "스레드-fail분기 대신 항상 asyncio.run 되돌리면 running-loop 테스트 RED."
   },
   "v1": {
-    "author": "Codex Rescue (fresh)", "agentId": "ac8e030772839cd6e", "verdict": "fail",
+    "author": "Codex Rescue (fresh)",
+    "agentId": "ac8e030772839cd6e",
+    "verdict": "fail",
     "counterexample": "스레드+새루프(Option A) 방식이 outer-event-loop 의존 코루틴에서 deadlock (Future.result()가 outer loop 블록).",
     "generator_reconciliation": "T 재현: outer-loop 의존 코루틴 4구성(Future/Event/Lock/self) 모두 hang 아니라 error 또는 정상(cross-loop 에러=fail-closed)로, Codex의 정확한 hang은 내 환경 미재현. 그러나 스레드 방식의 원리적 위험(deadlock/cross-loop)은 인정 → 스레드 방식 폐기하고 fail-closed 설계(Option B)로 전환. 스레드 없음=deadlock 원천 불가(alarm 가드로 no-hang 재현)."
   },
   "failed_attempts": [
-    { "attempt": "Option A: 실행중 루프면 ThreadPoolExecutor+새루프에서 asyncio.run", "root_cause": "outer-loop 의존 코루틴은 새 루프에서 완주 불가(deadlock/cross-loop 에러) — sync로 임의 코루틴 해결은 근본 불가", "repro": "Codex 지적 + T 반증(에러화). alarm 가드", "next_change": "Option B: 스레드 안 쓰고 코루틴 닫고 fail-closed(도메인 예외)—deadlock 원천 제거, 인수기준의 'fail 로그' 옵션 충족" }
+    {
+      "attempt": "Option A: 실행중 루프면 ThreadPoolExecutor+새루프에서 asyncio.run",
+      "root_cause": "outer-loop 의존 코루틴은 새 루프에서 완주 불가(deadlock/cross-loop 에러) — sync로 임의 코루틴 해결은 근본 불가",
+      "repro": "Codex 지적 + T 반증(에러화). alarm 가드",
+      "next_change": "Option B: 스레드 안 쓰고 코루틴 닫고 fail-closed(도메인 예외)—deadlock 원천 제거, 인수기준의 'fail 로그' 옵션 충족"
+    }
   ],
-  "v2": { "author": "Claude reset (예정)", "verdict": "pending" },
-  "three_way_agree": false, "status": "진행중(Option B 전환 완료, V2 대기)"
+  "v2": {
+    "author": "Claude reset (fresh)",
+    "agentId": "a69c8a8e19e8ad660",
+    "verdict": "pass",
+    "independent_repro": "829 passed·verify exit0 재현. outer-loop 의존 코루틴 7종(Future/Event/Lock/중첩/raise/gather/create_task) 실행중 루프에서 전부 즉시 도메인 RuntimeError, HANG 0(스레드 없어 원천불가, alarm 가드). value.close()가 미await 경고 억제(warnings-as-error 통과). _resolve RuntimeError가 run_harvest_cycle:147 except에 캡슐화(status=fail×4·저장0·탈출없음). sync 경로 무회귀. tests diff 순수추가·약화0.",
+    "what_v1_missed": "없음 — V1 deadlock 우려를 스레드 폐기로 원천 제거. async-from-running-loop 미지원은 goal 비범위(PC-D5 async 드라이버)."
+  },
+  "three_way_agree": true,
+  "status": "게이트4b 통과(V1 deadlock지적→Option B 전환→V2 PASS) — 배송대기"
 }
