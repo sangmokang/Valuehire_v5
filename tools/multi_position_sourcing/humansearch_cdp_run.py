@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.multi_position_sourcing import raw_cdp as cdp
 from tools.multi_position_sourcing.humansearch import score_humansearch
+from tools.multi_position_sourcing.humansearch_preflight import assert_live_or_abort
 from tools.multi_position_sourcing.models import (
     CapturedProfile,
     EmploymentTenure,
@@ -192,6 +193,10 @@ def main(max_profiles: int = 25, start: int = 0) -> None:
     log(f"=== humansearch CDP run | start={start} max={max_profiles} ===")
 
     cards = collect_cards(tab, start)
+    # fail-closed 라이브 게이트 (docs/sot/27): 검색이 살아있는 상태가 아니면(세션 만료/세션충돌/
+    # 캡차/로그인 리다이렉트/결과 미렌더) 여기서 PreflightError 로 즉시 중단 — 수집/채점을
+    # 시작조차 하지 않는다. 봇처럼 같은 네비게이션을 반복하지 않는다(SOT22 R2).
+    assert_live_or_abort(tab)
     log(f"collected {len(cards)} cards on page start={start}")
     results = []
     for i, card in enumerate(cards[:max_profiles], 1):

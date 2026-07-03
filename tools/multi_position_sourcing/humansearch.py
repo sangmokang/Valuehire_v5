@@ -114,20 +114,46 @@ def is_valid_profile_url(url: Any) -> bool:
     return parsed.scheme in _URL_SAFE_SCHEMES and bool(parsed.hostname)
 
 
+def _is_invisible(ch: str) -> bool:
+    """마커 매칭 전에 지워야 할 '보이지 않는 삽입 문자'인지.
+
+    category Cf(포맷) 전부 — U+200B..U+200D(제로폭)·U+FEFF(BOM)뿐 아니라 U+2060(word joiner)·
+    U+00AD(soft hyphen)·U+180E 등 같은 우회 벡터를 한 번에 닫는다(자기 적대검증서 재현).
+    variation selector(U+FE00..U+FE0F, U+E0100..U+E01EF)도 보이지 않는 삽입 통로라 함께 제거.
+    is_valid_profile_url 이 이미 Cf 를 거부하는 것과 동일 정책(단일 출처).
+    """
+    if unicodedata.category(ch) == "Cf":
+        return True
+    cp = ord(ch)
+    return 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF
+
+
+def _normalize(text: str) -> str:
+    """하드제외 마커 매칭용 *단일* 정규화 — 프리랜서·전문대·전각 매칭 '전에' 적용(SOT5).
+
+    순서: NFKC(전각 ＦＲＥＥＬＡＮＣＥ·호환문자 표준형 접기) →
+          보이지 않는 삽입 문자(_is_invisible: category Cf·variation selector) 제거 →
+          공백 전부 제거(collapse) → 소문자.
+    제로폭·띄어쓰기('전 문 대학')·전각 어느 우회로도 매처가 새지 않게 한 곳으로 통일(2차검증 재현 차단).
+    """
+    if not text:
+        return ""
+    folded = unicodedata.normalize("NFKC", text)
+    stripped = "".join(ch for ch in folded if not _is_invisible(ch))
+    collapsed = re.sub(r"\s+", "", stripped)
+    return collapsed.lower()
+
+
 def _profile_text(profile: CapturedProfile) -> str:
-    # NFKC: 전각(ＦＲＥＥＬＡＮＣＥ)·호환문자를 표준형으로 접어 마커 매칭 우회를 막는다.
     raw = " ".join([profile.summary, profile.visible_text, profile.ocr_text])
-    return unicodedata.normalize("NFKC", raw).lower()
+    return _normalize(raw)
 
 
 def hard_exclude_reason(profile: CapturedProfile, channel: Channel) -> str | None:
     """채점 전 제외 사유. 없으면 None(=채점 대상). 사장님 확정 규칙."""
-    text = _profile_text(profile)
-    collapsed = re.sub(r"\s+", "", text)  # '프리  랜서' 류 공백 삽입 우회 차단
+    text = _profile_text(profile)  # 이미 _normalize(공백 제거·제로폭 strip·NFKC·소문자) 적용됨
 
-    if any(marker in text for marker in FREELANCER_MARKERS) or any(
-        re.sub(r"\s+", "", marker) in collapsed for marker in FREELANCER_MARKERS
-    ):
+    if any(_normalize(marker) in text for marker in FREELANCER_MARKERS):
         return "freelancer"
 
     if count_short_tenure_hops(profile.employment_history) >= FREQUENT_JOB_CHANGE_MIN_HOPS:
@@ -140,15 +166,19 @@ def hard_exclude_reason(profile: CapturedProfile, channel: Channel) -> str | Non
 
 
 def _is_low_tier_school(education: str) -> bool:
-    edu = (education or "").lower()
+    edu = _normalize(education)  # 프리랜서 경로와 동일 정규화 — '전 문 대학'·제로폭 우회 차단
     if not edu:
         return False
+    # 전문대학원(법학·의학·경영 등)은 하위 아님 — '전문대' 부분일치로 인한 과잉제외 방지.
+    # normalize 의 공백 제거가 '경영 전문 대학원'까지 '전문대학원'으로 접으므로 low_tier 마커보다 먼저 건다.
+    if "전문대학원" in edu:
+        return False
     # 지방 국공립·명문대 신호가 있으면 절대 하위로 보지 않는다(allowlist 우선).
-    if any(name.lower() in edu for name in REGIONAL_NATIONAL_UNIVERSITIES):
+    if any(_normalize(name) in edu for name in REGIONAL_NATIONAL_UNIVERSITIES):
         return False
-    if any(sig.lower() in edu for sig in HIGH_TIER_SCHOOL_SIGNALS):
+    if any(_normalize(sig) in edu for sig in HIGH_TIER_SCHOOL_SIGNALS):
         return False
-    return any(marker in edu for marker in LOW_TIER_SCHOOL_MARKERS)
+    return any(_normalize(marker) in edu for marker in LOW_TIER_SCHOOL_MARKERS)
 
 
 # ── 하위 점수 (각 0.0~1.0) ─────────────────────────────────────────
