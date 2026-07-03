@@ -81,6 +81,12 @@ def load_tenures() -> dict[str, list]:
 
 
 def main(dry: bool) -> None:
+    # V1(Codex): 동시 실행 2개 = 중복 insert — 단일 실행 락(디스코드 다리와 동일 유틸 재사용)
+    from scripts.discord_command_listener import acquire_single_instance_lock
+    import os as _os
+    lock = Path.home() / ".valuehire" / "supabase_backfill.lock"
+    if not dry and not acquire_single_instance_lock(lock, _os.getpid()):
+        raise SystemExit("이미 다른 적재기가 실행 중 — 종료(중복 insert 방지)")
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     rows = [dict(r) for r in conn.execute(

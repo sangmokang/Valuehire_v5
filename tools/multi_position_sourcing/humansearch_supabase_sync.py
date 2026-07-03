@@ -16,12 +16,16 @@ from typing import Any
 from .humansearch import is_valid_profile_url
 
 
-def _briefing(local: dict[str, Any]) -> dict[str, Any]:
+def _briefing(local: dict[str, Any]) -> dict[str, Any] | None:
+    """briefing 파싱. 깨진 JSON/비dict/누락 = None (V1 Codex: 조용한 {} 대체 금지)."""
+    raw = local.get("candidate_briefing")
+    if not raw:
+        return None
     try:
-        b = json.loads(local.get("candidate_briefing") or "{}")
-        return b if isinstance(b, dict) else {}
+        b = json.loads(raw)
     except (ValueError, TypeError):
-        return {}
+        return None
+    return b if isinstance(b, dict) else None
 
 
 def to_profile_archive_row(local: dict[str, Any]) -> dict[str, Any] | None:
@@ -42,7 +46,7 @@ def to_profile_archive_row(local: dict[str, Any]) -> dict[str, Any] | None:
         "text_length": len(local.get("raw_text") or ""),
         "screenshot_count": 1 if shot else 0,
         "screenshot_paths": [shot] if shot else [],
-        "structured_json": json.dumps(_briefing(local), ensure_ascii=False),
+        "structured_json": json.dumps(_briefing(local) or {}, ensure_ascii=False),
     }
 
 
@@ -50,11 +54,18 @@ def to_sourcing_result_row(local: dict[str, Any], position_title: str) -> dict[s
     """로컬 후보 1행 → sourcing_results 페이로드. url/점수 무효면 None(fail-closed)."""
     url = local.get("url")
     score = local.get("match_score")
-    if not is_valid_profile_url(url) or not isinstance(score, (int, float)):
+    # bool 은 int 의 하위타입 — True 가 점수 1로 새는 것 차단(V1 Codex). 범위 0~100 강제.
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not (0 <= score <= 100):
+        return None
+    if not is_valid_profile_url(url):
         return None
     b = _briefing(local)
+    if b is None:  # 학력·경력 칸이 비게 됨 — 적재 거부(fail-closed)
+        return None
     why_fit = b.get("why_fit") or []
     why_not = b.get("why_not") or []
+    # 경력 칸에 학력 문장 금지(V1 Codex·사장님 지적) — 학력은 education_summary 로만.
+    career_items = [w for w in why_fit if not str(w).startswith("학력")]
     return {
         "position_id": local.get("position_id") or "",
         "position_title": position_title,
@@ -64,8 +75,8 @@ def to_sourcing_result_row(local: dict[str, Any], position_title: str) -> dict[s
         "candidate_name": local.get("name") or "",
         "match_score": int(score),
         "education_summary": (b.get("education") or "")[:500],
-        "career_summary": "; ".join(why_fit)[:800],
-        "fit_reason": (local.get("fit_reason") or "; ".join(why_fit))[:800],
+        "career_summary": "; ".join(career_items)[:800],
+        "fit_reason": ("; ".join(career_items) or local.get("fit_reason") or "")[:800],
         "match_points": why_fit,
         "mismatch_points": why_not,
         "candidate_briefing": json.dumps(b, ensure_ascii=False)[:4000],
