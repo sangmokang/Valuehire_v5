@@ -41,7 +41,18 @@
     "findings_sound": ["파리티 정확(protechts 제거→2 RED)", "build_probe_js node/V8 실행 SyntaxError 없음·괄호균형", "824 passed 재현", "테스트 약화 0(+83 삽입만)", "제3 detector 없음(2개가 전부, V1 유효)"],
     "fix_evidence": "V2 F1 end-to-end 재현: 'challenge'+'2단계' 포함 정상페이지 captcha 오탐=False(교정 후), 블록페이지=True. 전체 837 passed. preflight authwall 제거 mutation→탐지테스트 사살."
   },
-  "v3_note": "V2가 내 V1-수정에서 회귀(F1)를 적발 → 교정 후 리셋 V3로 재확인(안전subset 과소탐지 여부).",
+  "v3": {
+    "author": "Claude reset (fresh 세션)",
+    "agentId": "ae2daf513583705b1",
+    "verdict": "fail",
+    "findings_accepted": [
+      "[F3-1 중 재현] F1 수정이 흔한 5단어(challenge·2단계 등)만 제거하고, 같은 변경이 새로 넣은 recaptcha·보안문자·자동입력 방지·unusual activity(보안/FDS/ML 후보 일상 어휘)를 preflight에 남김 → 그런 후보 1명만 결과에 섞여도 순회 통째 중단. → **preflight 확장 전면 원복**(결과표면 텍스트스캔 확장 자체가 해로움).",
+      "[핵심 통찰] 진짜 블록/캡차/세션락 페이지는 후보 카드 미렌더 → results_rendered=False + URL 마커로 이미 abort. preflight 텍스트 키워드 확장은 불필요+과잉탐지만 유발. 과소탐지(실블록 놓침) 위험은 낮음(다중 fail-closed 게이트).",
+      "[F3-2 저신뢰] portal_login full18도 ready_check(talent-pool/home 표면) 오탐 위험 → 후보텍스트 흔한 SOT26토큰 제외한 안전subset으로 축소."
+    ]
+  },
+  "rework": "적대검증 3라운드(V1 gap→내 확장→V2 F1 회귀→V3 F3-1 미완)가 '키워드 raw abort로 SOT26 full-parity'가 근본 취약(SOT26 토큰은 false_positive_guard와 짝)임을 드러냄. 최종: portal_login에 **모호하지 않은 세션락/authwall/URL 블록 신호만** 추가(SOT26:163 지시분), preflight 원복(순변경0), _CHALLENGE_TOKENS⊆SOT26. full-parity 주장 철회. 신규 6토큰 후보/JD/UI 텍스트 오탐 0 재현. 전체 825 passed.",
+  "v4": { "author": "Claude reset (예정)", "verdict": "pending" },
   "three_way_agree": false,
-  "status": "진행중(V2 회귀 F1/F2 교정 완료, V3 재검증 대기)"
+  "status": "진행중(보수 재작업 완료, V4 최종 재검증 대기)"
 }
