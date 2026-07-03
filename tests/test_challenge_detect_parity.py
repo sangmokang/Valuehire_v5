@@ -65,19 +65,53 @@ def test_token_set_parity_with_sot26():
     assert code_tokens == sot_tokens
 
 
-def test_humansearch_preflight_probe_screens_sot26_tokens():
-    """Codex V1 반영 — 사람검색 preflight(in-browser JS) captcha 감지도 SOT26 토큰을 screen.
+def _preflight_captcha_regex():
+    """preflight in-browser JS 의 captcha 정규식을 추출·컴파일(JS≈Python re 프록시로 행동검증)."""
+    import re as _re
 
-    portal_login 로그인게이트 detector만 고치면 사람검색(humansearch_cdp_run→assert_live_or_abort)
-    경로엔 옛 좁은 정규식이 남아 authwall·unusual activity·recaptcha 등을 못 잡는다(구멍).
-    """
+    from tools.multi_position_sourcing.humansearch_preflight import build_probe_js
+
+    m = _re.search(r"captcha: /(.+?)/i\.test", build_probe_js())
+    assert m, "captcha 정규식 추출 실패"
+    return _re.compile(m.group(1), _re.IGNORECASE)
+
+
+@pytest.mark.parametrize(
+    "block_text",
+    [
+        "LinkedIn authwall blocking access",
+        "we noticed unusual activity on your account",
+        "google reCAPTCHA widget",
+        "보안문자 를 입력하세요",
+        "자동입력 방지 문자",
+        "protechts anti-bot",
+        "redirected to /uas/login-cap",
+        "enterprise-authentication/sessions",
+    ],
+)
+def test_preflight_detects_real_block_signals(block_text):
+    """Codex V1 반영 — 사람검색 preflight 도 실제 블록 신호(authwall·unusual activity·recaptcha 등)를 탐지(STOP)."""
+    assert _preflight_captcha_regex().search(block_text)
+
+
+@pytest.mark.parametrize(
+    "benign_text",
+    [
+        "loves a good technical challenge",  # 'challenge' 흔한 후보/JD 단어
+        "2단계 전형 면접 안내",                    # '2단계' 흔한 전형 문구
+        "we will verify your references",     # 'verify you' 흔한 문구
+        "128 results 검색 결과",
+        "Senior Backend Engineer at Toss",
+    ],
+)
+def test_preflight_no_false_abort_on_benign_results_text(benign_text):
+    """V2 F1 회귀 봉인 — 결과페이지의 흔한 후보/JD 문구를 캡차로 오탐해 순회를 중단하면 안 됨."""
+    assert not _preflight_captcha_regex().search(benign_text)
+
+
+def test_preflight_keeps_multiple_signin_field():
+    """멀티세션 락은 preflight 의 별도 필드(multiple_signins)에서 계속 잡는다."""
     from tools.multi_position_sourcing.humansearch_preflight import build_probe_js
 
     js = build_probe_js()
-    for token in [
-        "recaptcha", "보안문자", "자동입력 방지", "login-cap", "unusual activity",
-        "verify you", "enterprise-authentication", "2단계", "authwall", "인증번호", "protechts",
-    ]:
-        assert token in js, f"preflight probe가 SOT26 챌린지 토큰 {token!r} 를 screen 하지 않음"
-    # 멀티세션 락은 preflight 의 별도 필드(multiple_signins)에서 계속 잡는다.
     assert "multiple sign-ins" in js and "only one session" in js

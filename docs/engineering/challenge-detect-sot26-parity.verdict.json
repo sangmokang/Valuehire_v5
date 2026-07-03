@@ -1,0 +1,35 @@
+{
+  "claim_id": "challenge-detect-sot26-parity",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude",
+    "claim": "보안챌린지 감지 두 detector를 SOT26 block_detection.unified_regex(18토큰)로 통일: (1) portal_login._has_security_challenge → _CHALLENGE_TOKENS(파리티), (2) humansearch_preflight.build_probe_js captcha 정규식 확장. RPS 멀티세션락·authwall·recaptcha·/uas/login·unusual activity 탐지 → 봇 STOP(SOT2).",
+    "changed_files": ["tools/multi_position_sourcing/portal_login.py", "tools/multi_position_sourcing/humansearch_preflight.py", "tests/test_challenge_detect_parity.py", "docs/engineering/challenge-detect-sot26-parity-goal-2026-07-03.md"],
+    "command": "PYTHONSAFEPATH=1 PYTHONPATH=$WT .venv-playwright/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "artifact": "824 passed, 3 xfailed, 5 subtests passed",
+    "live_evidence": "_has_security_challenge 프로덕션 호출 7곳(portal_login 로그인/준비체크 + portal_autologin). build_probe_js는 assert_live_or_abort(humansearch_preflight)→humansearch_cdp_run.py:21 라이브 사람검색 게이트. 두 detector 모두 SOT26 토큰 커버 재현.",
+    "mutation": "portal_login 토큰 하나 제거 시 파리티+탐지 테스트 사살(재현). preflight 토큰은 build_probe_js 문자열 containment 테스트로 가드."
+  },
+  "v1": {
+    "author": "Codex Rescue (fresh 세션)",
+    "agentId": "a1d9357aa116d537a",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/665abe23-e8c0-43f1-9f3f-7882a108738d/tasks/a1d9357aa116d537a.output",
+    "verdict": "fail",
+    "counterexamples_accepted": [
+      "[중] humansearch_preflight.build_probe_js가 별도 좁은 captcha 정규식(security verification|captcha|checkpoint|체크포인트|로봇이 아닙니다 5토큰)으로 챌린지 감지, humansearch_cdp_run.py:21이 호출 — 사람검색 경로에 SOT26 신규토큰(authwall·unusual activity·verify you·자동입력 방지·protechts·보안문자·2단계·인증번호 등) 구멍. → preflight captcha 정규식을 SOT26 토큰으로 확장 + build_probe_js containment 테스트 추가."
+    ],
+    "counterexample_rejected": [
+      "[낮음] 'verify you'가 'verify your email'에 과잉매칭 — SOT26 지정 토큰 + STOP=안전방향(봇 정지가 계정차단보다 안전). SOT가 단일진실이라 코드는 파리티 유지(SOT 자체 조정은 별건).",
+      "[환경] 전체 1 failed(822) — .profile.lock 샌드박스 권한, 이 변경 무관. 생성자 로컬 824 passed 재현(T)."
+    ],
+    "t_confirmed": "humansearch_preflight.py:134 captcha 정규식 실재 + humansearch_cdp_run.py:21 assert_live_or_abort import 확인. 파리티 테스트가 SOT26 드리프트 잡는 것 Codex도 재현(protechts 제거→RED)."
+  },
+  "failed_attempts": [
+    { "attempt": "portal_login._has_security_challenge만 SOT26 통일", "root_cause": "보안챌린지 detector가 2개(portal_login Python + humansearch_preflight in-browser JS) — 사람검색 경로의 두번째 detector 누락(부분배선 R4)", "repro": "build_probe_js()에 'authwall' 등 미포함, 사람검색 preflight가 못 잡음", "next_change": "preflight captcha 정규식도 SOT26 토큰으로 확장 + containment 테스트" }
+  ],
+  "v2": { "author": "Claude reset (예정)", "verdict": "pending" },
+  "three_way_agree": false,
+  "status": "진행중"
+}
