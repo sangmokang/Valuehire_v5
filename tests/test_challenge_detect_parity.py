@@ -63,3 +63,21 @@ def test_token_set_parity_with_sot26():
     sot_tokens = {t.strip().lower() for t in sot["block_detection"]["unified_regex"].split("|")}
     code_tokens = {t.strip().lower() for t in _CHALLENGE_TOKENS}
     assert code_tokens == sot_tokens
+
+
+def test_humansearch_preflight_probe_screens_sot26_tokens():
+    """Codex V1 반영 — 사람검색 preflight(in-browser JS) captcha 감지도 SOT26 토큰을 screen.
+
+    portal_login 로그인게이트 detector만 고치면 사람검색(humansearch_cdp_run→assert_live_or_abort)
+    경로엔 옛 좁은 정규식이 남아 authwall·unusual activity·recaptcha 등을 못 잡는다(구멍).
+    """
+    from tools.multi_position_sourcing.humansearch_preflight import build_probe_js
+
+    js = build_probe_js()
+    for token in [
+        "recaptcha", "보안문자", "자동입력 방지", "login-cap", "unusual activity",
+        "verify you", "enterprise-authentication", "2단계", "authwall", "인증번호", "protechts",
+    ]:
+        assert token in js, f"preflight probe가 SOT26 챌린지 토큰 {token!r} 를 screen 하지 않음"
+    # 멀티세션 락은 preflight 의 별도 필드(multiple_signins)에서 계속 잡는다.
+    assert "multiple sign-ins" in js and "only one session" in js

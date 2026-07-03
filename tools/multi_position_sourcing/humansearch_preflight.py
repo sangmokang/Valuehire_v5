@@ -131,7 +131,7 @@ def build_probe_js() -> str:
         results_text: rm ? rm[0] : '',
         logged_in_account: am ? am[1].trim() : '',
         multiple_signins: /multiple sign-ins|only one session|동시 로그인/i.test(txt),
-        captcha: /security verification|captcha|checkpoint|체크포인트|로봇이 아닙니다/i.test(txt)
+        captcha: /security verification|captcha|recaptcha|보안문자|자동입력 방지|checkpoint|체크포인트|\/uas\/login|login-cap|unusual activity|verify you|enterprise-authentication|이상 접근|2단계|authwall|challenge|인증번호|protechts|로봇이 아닙니다/i.test(txt)
       };
     })()"""
 
