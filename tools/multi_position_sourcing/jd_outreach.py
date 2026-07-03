@@ -81,6 +81,23 @@ def _strip_invisible(text: str) -> str:
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
+def _contains_unverified(value: str) -> bool:
+    """미확인 마커 검출 — fail-closed. exact '※미확인' 매칭이 아니라
+    NFKC 접기 + 비표시/공백류(Cf·Mn·Cc·Z*) 제거 후 '미확인' 포함이면 참:
+    공백·NBSP·이형선택자 삽입, 전각 치환(codex V1 round2 변형 공격)을 전부 잡는다.
+    출처 있는 브리핑 사실에 '미확인'이 들어갈 일은 없다 — 의심스러우면 생략이 안전."""
+    folded = unicodedata.normalize("NFKC", value)
+    folded = "".join(
+        ch for ch in folded
+        if unicodedata.category(ch) not in ("Cf", "Mn", "Cc") and not ch.isspace()
+    )
+    return _UNVERIFIED_CORE in folded
+
+
+# SOT 마커(※미확인)에서 기호를 뺀 핵심어 — 전각 치환(＊미확인 등)도 잡기 위해 기호 무시
+_UNVERIFIED_CORE = UNVERIFIED_MARKER.lstrip("※")
+
+
 def _bullets(field: str, items: list[str]) -> str:
     """불릿 조립. 빈/공백뿐 리스트는 fail-closed 거부(codex V1 결함 2 — 무불릿 헤더 금지)."""
     cleaned = [item.strip() for item in (items or []) if item and item.strip()]
@@ -125,9 +142,15 @@ def build_linkedin_inmail_jd(
         )
 
     briefing_lines = [company_name]
-    for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, ※미확인·빈값은 생략
-        value = _strip_invisible(str((company_briefing or {}).get(key) or "")).strip()
-        if value and UNVERIFIED_MARKER not in value:
+    for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, 미확인·빈값은 생략
+        raw = (company_briefing or {}).get(key)
+        if raw is not None and not isinstance(raw, str):
+            raise ValueError(
+                f"company_briefing['{key}'] 는 문자열이어야 함(현재 {type(raw).__name__})"
+                " — 리스트/None 혼입 repr 유출 금지(fail-closed)"
+            )
+        value = _strip_invisible(raw or "").strip()
+        if value and not _contains_unverified(value):
             briefing_lines.append(f"· {value}")
 
     sections = [

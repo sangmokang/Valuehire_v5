@@ -1,0 +1,62 @@
+{
+  "claim_id": "pc-g2-linkedin-jd-composer",
+  "issue": "https://github.com/sangmokang/Valuehire_v5/issues/59",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "author": "claude (this session)",
+    "claim": "build_linkedin_inmail_jd 가 골든샘플 v2 구조의 InMail 본문 문자열을 조립해 반환하며, 독립 검사기 precheck_inmail(ok=True)·PC-G1 캡가드를 통과하고 부수효과가 없다(SOT3).",
+    "changed_files": [
+      "tools/multi_position_sourcing/jd_outreach.py",
+      "tests/test_linkedin_inmail_jd.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "892 passed, 3 xfailed, 5 subtests passed in 5.67s",
+    "red_evidence": "commit 96ef48e: ImportError: cannot import name 'build_linkedin_inmail_jd' (구현 전 RED)",
+    "mutation_evidence": [
+      "mutant 1 P.S. CTA 삽입 제거 -> 3 failed (물림)",
+      "mutant 2 VERIFIED-PULL 삽입 제거 -> 3 failed (물림)",
+      "mutant 3 인사말 이름 하드코딩(Rocha연구원) -> 2 failed (물림)",
+      "mutant 4 캡가드 호출 제거 -> 최초 13 passed 생존 -> spy 배선 테스트 추가(ed4aed4) 후 1 failed (봉인)"
+    ],
+    "briefing_7_vs_8_resolution": "옛 백로그 'R20 7요소' 문구 대신 현행 SOT BRIEFING_ELEMENT_KEYS(8키)+BRIEFING_MIN_ELEMENTS(6)를 단일 진실로 사용. 테스트는 count_briefing_elements(...) >= 6 으로 단언, 7요소 하드코딩 없음.",
+    "orphan_status": "seam 허용 — 소비자는 humansearch #8 문구 작성 및 하류 PC-D 발송 드래프트(백로그). 현재 조각은 계약+함수까지."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "mutation 검사 1차 실행(구현 커밋 전)",
+      "root_cause": "미커밋 구현 파일에 git checkout -- 로 복원 시도 -> 구현 자체가 지워져 mutant 2~4 가 collection error 로 무의미해짐",
+      "repro": "uncommitted file + git checkout -- <file>",
+      "next_change": "구현을 먼저 커밋(2cc8e40)한 뒤 mutation 재실행 — 해결됨"
+    },
+    {
+      "attempt": "mutant 4 (캡가드 호출 제거)",
+      "root_cause": "골든 픽스처가 캡 이내라 외부 캡 검사 테스트로는 내부 배선 미검출",
+      "repro": "sed 로 return assert_outreach_jd_within_cap(...) -> return body 치환 후 pytest 13 passed",
+      "next_change": "monkeypatch spy 로 캡가드 호출 배선을 직접 단언(test_composer_routes_through_cap_guard) — 봉인됨"
+    }
+  ],
+  "v1": {
+    "author": "codex-rescue (독립 세션, thread 019f28c9-b472-7c70-936d-87a756f5a73f)",
+    "round1": {
+      "verdict": "fail",
+      "findings": [
+        "1. zero-width(\\u200b 등) 붙은 ※미확인 이 브리핑 생략을 우회해 본문 잔류 + precheck ok=True",
+        "2. 빈 JD 리스트 → 불릿 없는 헤더만 있는 문구가 조용히 생성됨",
+        "3. precheck 이름검사가 부분 토큰 일치라 'Jihoon' 인사말이 'Park Jihoon' 프로필에도 ok=True"
+      ],
+      "attacks_tried": "12건 (캡 초과 STOP 정상, 8키 밖 키 거부 정상, 개행 이름 STOP 정상, 금지워딩 STOP 정상, AST 부수효과 없음, 기존 테스트 삭제 없음 등)"
+    },
+    "remediation": {
+      "finding1": "커밋 7aa14c8 — _strip_invisible(Cf 제거) 후 ※미확인 포함 판정 + RED 테스트",
+      "finding2": "커밋 7aa14c8 — _bullets fail-closed ValueError + RED 테스트",
+      "finding3": "범위 밖(배송된 inmail_precheck 의도된 부분일치 설계) → 이슈 #60 분리"
+    },
+    "round2": {
+      "verdict": "PENDING"
+    }
+  },
+  "three_way_agree": false,
+  "status": "진행중 — V1 재검증(round2) 대기"
+}

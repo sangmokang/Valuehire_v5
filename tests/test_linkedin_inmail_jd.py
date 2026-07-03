@@ -104,6 +104,34 @@ def test_ac2_unverified_marker_zero_width_bypass_blocked():
     assert "​" not in body and "﻿" not in body
 
 
+def test_ac2_unverified_marker_variants_blocked():
+    """codex V1 round2 결함 1: 마커 변형(공백·NBSP·이형선택자·전각치환 삽입)도 생략돼야 한다."""
+    variants = [
+        "※ 미확인",            # 마커 안 공백
+        "※ 미확인",       # NBSP
+        "※미️확인",       # variation selector 삽입
+        "＊미확인",             # 전각 별표 치환
+        "시리즈B 규모 ※ 미 확 인",  # 값 중간 + 낱자 분리
+    ]
+    for variant in variants:
+        kwargs = golden_kwargs()
+        kwargs["company_briefing"] = dict(kwargs["company_briefing"])
+        kwargs["company_briefing"]["parent_group"] = variant
+        body = build_linkedin_inmail_jd(**kwargs)
+        assert "미확인" not in body.replace(" ", ""), f"변형 마커 유출: {variant!r}"
+        assert variant not in body
+
+
+def test_briefing_non_string_values_rejected():
+    """codex V1 round2 결함 2: 리스트/None 혼입 브리핑 값이 repr 로 새어들면 안 된다."""
+    for bad in (["​※미확인"], [None], 123, {"nested": "dict"}):
+        kwargs = golden_kwargs()
+        kwargs["company_briefing"] = dict(kwargs["company_briefing"])
+        kwargs["company_briefing"]["parent_group"] = bad
+        with pytest.raises(ValueError, match="parent_group"):
+            build_linkedin_inmail_jd(**kwargs)
+
+
 def test_empty_jd_lists_rejected():
     """codex V1 결함 2: 불릿 없는 헤더만 있는 문구가 조용히 만들어지면 안 된다(fail-closed)."""
     for field in ("jd_responsibilities", "jd_qualifications", "why_consider"):
