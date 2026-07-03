@@ -1,19 +1,29 @@
-"""아웃리치 JD 컴포저 — 채널별 본문 길이 캡 가드 (PC-G1).
+"""아웃리치 JD 컴포저 — 길이 캡 가드(PC-G1) + LinkedIn InMail 본문 조립(PC-G2).
 
-후보 맞춤 JD(InMail/이직제안 본문)를 "보낼 수 있는 상태"로 조립하는 모듈의
-첫 조각. 여기서는 **길이 검증만** 한다 — 컴포저 산출물(PC-G2)이 채널 한도를
-넘지 않음을 발송 전에 기계로 못박는다.
+후보 맞춤 JD(InMail/이직제안 본문)를 "보낼 수 있는 상태"로 조립하는 모듈.
+PC-G1 = 채널 글자수 캡 가드, PC-G2 = 골든샘플 v2 구조의 본문 문자열 조립(순수함수).
 
 SOT 가드:
-- SOT3: 길이 검증만. Send/컴포저 insert 같은 자동 부작용 없음. 초과 시 STOP(raise).
-- SOT5: 채널 한도(linkedin_rps 1899 등)·글자수 계산을 재정의하지 않고
-  inmail_precheck 의 CHANNEL_CHAR_LIMITS·char_count 를 그대로 재사용한다.
+- SOT3: 문자열 조립·검증만. Send/컴포저 insert 같은 자동 부작용 없음 —
+  발송·저장은 언제나 사장님 손. 초과 시 STOP(raise).
+- SOT5: 채널 한도·글자수·브리핑 8요소를 재정의하지 않고 inmail_precheck 의
+  CHANNEL_CHAR_LIMITS·char_count·BRIEFING_ELEMENT_KEYS 를 그대로 재사용한다.
+- 문구 구조 SOT: skills/humansearch/references/inmail-golden-sample.md (v2).
 """
 from __future__ import annotations
 
-from .inmail_precheck import CHANNEL_CHAR_LIMITS, char_count
+from .inmail_precheck import (
+    BRIEFING_ELEMENT_KEYS,
+    CHANNEL_CHAR_LIMITS,
+    UNVERIFIED_MARKER,
+    char_count,
+)
 
-__all__ = ["OutreachJdCapError", "assert_outreach_jd_within_cap"]
+__all__ = [
+    "OutreachJdCapError",
+    "assert_outreach_jd_within_cap",
+    "build_linkedin_inmail_jd",
+]
 
 
 class OutreachJdCapError(ValueError):
@@ -38,3 +48,91 @@ def assert_outreach_jd_within_cap(body: str, channel: str = "linkedin_rps") -> s
             f"outreach_jd_over_cap: {channel} 본문 {count}자 > 한도 {limit}자 — STOP"
         )
     return body
+
+
+# ── PC-G2: 골든샘플 v2 고정 문단 — 함수가 삽입하므로 누락이 구조적으로 불가능 ──
+
+_INTRO = "저는 테크 서치펌 밸류커넥트(Valueconnect)의 헤드헌터 강상모라고 합니다."
+
+_VERIFIED_PULL: dict[str, str] = {
+    "ko": (
+        "밸류커넥트는 꼭 이번 기회가 아니더라도, 레주메를 보내주시면 개인정보를 지켜 "
+        "개선된 버전의 이력서 피드백을 무료로 드리고 있습니다. 커리어에 도움 되시리라 생각합니다."
+    ),
+    "en": (
+        "Even if this role is not for you, send us your resume and we will "
+        "return free resume feedback with your privacy protected."
+    ),
+}
+
+_CLOSING = "그럼 또 소통 나눌 수 있기를 기대합니다. 감사합니다!\n강상모 드림"
+
+# R21 표준 인입 CTA — "딱 맞지 않으셔도"는 부정문(과장 아님, precheck 허용 패턴)
+_PS_CTA = (
+    "P.S. 지금 이 포지션이 딱 맞지 않으셔도 괜찮습니다. 밸류커넥트가 이력서를 직접 검증해, "
+    "더 잘 맞는 기회까지 연결해 드립니다 — 무료 커리어 검증 신청: https://valuehire.cc/resume"
+)
+
+
+def _bullets(items: list[str]) -> str:
+    return "\n".join(f"· {item.strip()}" for item in items if item and item.strip())
+
+
+def build_linkedin_inmail_jd(
+    *,
+    candidate_name: str,
+    personalized_opener: str,
+    company_name: str,
+    position_title: str,
+    company_briefing: dict,
+    jd_responsibilities: list[str],
+    jd_qualifications: list[str],
+    why_consider: list[str],
+    location: str | None = None,
+    language: str = "ko",
+    channel: str = "linkedin_rps",
+) -> str:
+    """골든샘플 v2 구조로 InMail 본문 문자열을 조립해 반환. 부수효과 0(Send/insert 없음).
+
+    - candidate_name 은 수확 JSON 의 name 그대로 인사말에 박는다(손 재입력 금지, ①).
+    - VERIFIED-PULL(⑤)·P.S. CTA(⑥)는 여기서 고정 삽입 — 호출자가 빠뜨릴 수 없다.
+    - 최종 판정은 precheck_inmail(단일 검문소)에 위임하되, 채널 캡(PC-G1)은
+      조립 직후 즉시 확인한다(초과분을 하류로 흘려보내지 않음).
+    """
+    name = (candidate_name or "").strip()
+    if not name:
+        raise ValueError("candidate_name 비어 있음 — 수확 JSON 의 name 을 그대로 넣을 것")
+    opener = (personalized_opener or "").strip()
+    if not opener:
+        raise ValueError("personalized_opener 비어 있음 — 정곡 관찰 1줄 필수")
+    if language not in _VERIFIED_PULL:
+        raise ValueError(f"language 는 {sorted(_VERIFIED_PULL)} 중 하나: '{language}'")
+    unknown = set(company_briefing or {}) - set(BRIEFING_ELEMENT_KEYS)
+    if unknown:
+        raise ValueError(
+            f"company_briefing 에 §1.5 8요소 밖 키 금지(SOT5): {sorted(unknown)}"
+        )
+
+    briefing_lines = [company_name]
+    for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, ※미확인·빈값은 생략
+        value = str((company_briefing or {}).get(key) or "").strip()
+        if value and not value.startswith(UNVERIFIED_MARKER):
+            briefing_lines.append(f"· {value}")
+
+    sections = [
+        f"[제목] {company_name}, {position_title}",
+        f"안녕하세요 {name}님,",
+        f"{_INTRO}\n{opener}",
+        "\n".join(briefing_lines),
+        f"[주요 업무]\n{_bullets(jd_responsibilities)}",
+        f"[자격 요건]\n{_bullets(jd_qualifications)}",
+        f"[왜 검토할 만한가]\n{_bullets(why_consider)}",
+        _VERIFIED_PULL[language],
+        _CLOSING,
+        _PS_CTA,
+    ]
+    if location and location.strip():
+        sections.append(f"[근무지] {location.strip()}")
+
+    body = "\n\n".join(sections)
+    return assert_outreach_jd_within_cap(body, channel=channel)
