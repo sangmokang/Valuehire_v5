@@ -1,0 +1,31 @@
+{
+  "piece": "PC-F1",
+  "slug": "owner-activity-detector",
+  "title": "owner-activity detector 순수모듈(compute_yield_decision) — R4 양보·자동재개 첫 코드강제",
+  "branch": "task/owner-activity-detector",
+  "date": "2026-07-03",
+  "acceptance_criterion": "tests/test_owner_activity.py에서 compute_yield_decision가 (a)frontmost_is_chrome=True→yield=True, (b)frontmost_is_chrome=False & os_idle_seconds>=180→yield=False(재개), (c)False & idle<180→yield=True를 결정론 반환하고, 이 커밋은 owner_activity.py(회수분)와 테스트 외 소스 미변경; verify.sh exit 0.",
+  "implementation": "tools/multi_position_sourcing/owner_activity.py (compute_yield_decision 순수함수 신규 + detect_owner_activity_snapshot 이 위임 + OS 리더 _macos_frontmost_app/_macos_idle_seconds 살베지)",
+  "tests": "tests/test_owner_activity.py (11개: compute_yield_decision 6 + snapshot 위임/fail-closed 5)",
+  "salvage": "task/ai-search-pipeline-wip 의 owner_activity.py·test_owner_activity.py 회수. 결정 로직을 순수 compute_yield_decision 으로 추출/개명(신규작성 아님), OS 읽기(osascript frontmost·ioreg HIDIdleTime)와 분리. 결정규칙은 스펙(3케이스)에 맞춰 재정의 — wip 의 'chrome AND idle<threshold' 보다 보수적인 'chrome OR idle<threshold'(어떤 앱이든 최근 활동 시 양보, R4 강화).",
+  "gates": {
+    "G_self_mutation": {
+      "verdict": "PASS",
+      "evidence": "자가 뮤테이션 M1~M4 전부 test caught: M1(크롬 앞창 양보 분기 무력화→2 failed), M2(None idle fail-closed 뒤집기 True→False→1 failed), M3(임계 < → <= 경계 180→1 failed), M4(snapshot 위임 무력화 detected=True 고정→1 failed)."
+    },
+    "V1_codex": {
+      "verdict": "PASS",
+      "evidence": "codex:rescue(agentId a7b62e215675f7533) 1라운드 PASS. 직접 호출로 인수기준 5케이스 일치(Chrome→True·None→True·179.999→True·180.0→False·9999/600→False). fail-closed 전 경로(unsupported·osascript실패·ioreg실패·파싱실패·예외) 모두 detected=True 확인, 앞지르는 경로 재현 안 됨. compute_yield_decision 위임 monkeypatch 확인. git diff 2파일만. 뮤테이션(부호·None·크롬분기) 모두 RED. worker_should_yield 계약 bool 의미 일치. writable HOME 전체 850 passed."
+    },
+    "V2_reset_claude": {
+      "verdict": "PASS",
+      "evidence": "리셋 Claude(code-reviewer, agentId ab30f1361626e68b4) PASS. 인수기준 표 검증, fail-closed 전 경로 yield(누락 없음), SOT1 준수 확인(osascript=앱이름만·ioreg=idle 집계만, pyautogui/pynput/AppKit/URL/쿠키/DOM/키입력 미열람), 뮤테이션 4종 caught, 정당한 seam. 지적한 or→and 뉘앙스는 compute_yield_decision 이 None 을 fail-closed 처리해 yield 결과 동일(안전 갭 아님, detection_status 라벨만 차이)."
+    },
+    "T_full_suite": {
+      "verdict": "PASS",
+      "evidence": "verify.sh 인터프리터 .venv/bin/python 로 전체 pytest: 852 passed, 3 xfailed, 5 subtests passed (baseline 841 + 신규 11). 회귀 0. 변경 파일 owner_activity.py(신규)+test_owner_activity.py(신규) 2개뿐(소스 미변경 원칙 준수)."
+    }
+  },
+  "orphan_check": "compute_yield_decision·detect_owner_activity_snapshot 의 프로덕션 소비자는 아직 없음(PC-F2 배선 예정 seam). 소비 계약 harvest_policy.worker_should_yield(owner_activity_detected=bool) 와 bool 의미 정합. detect_owner_activity_snapshot 이 compute_yield_decision 을 소비(모듈 내 위임)해 dead code 아님.",
+  "residual_risk": "실제 OS 읽기(osascript/ioreg 라이브)는 mac 실기에서만 검증 가능 — 순수 결정·파싱·fail-closed 는 기계검증 완료. 스펙 규칙 (a) '크롬 앞창이면 idle 무관 양보'는 보수적(사장님이 크롬창 앞에 두고 오래 자리 비워도 워커가 계속 양보=재개 안 함) — 의도된 R4 안전편향. 사장님이 '유휴 크롬은 재개'를 원하면 스펙 변경(compute_yield_decision 에 idle 조건 추가). 라이브 러너 배선은 PC-F2."
+}
