@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>밸류하이어 최근 구현 브리핑 — 2026-07-04</title>
+<style>
+  :root {
+    --ink:#1a1f2e; --sub:#5a6478; --line:#e3e7ef; --bg:#f7f8fb; --card:#ffffff;
+    --blue:#2456d6; --blue-bg:#eef3fe; --green:#1d7a4f; --green-bg:#e9f7ef;
+    --amber:#9a6700; --amber-bg:#fff6e0; --red:#b3261e; --red-bg:#fdecea;
+    --purple:#6b3fd4; --purple-bg:#f2edfd;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Apple SD Gothic Neo","Pretendard","Noto Sans KR",sans-serif;
+         background:var(--bg); color:var(--ink); line-height:1.65; padding:0 0 80px; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 24px; }
+  header { background:linear-gradient(135deg,#1a2c5e 0%,#2456d6 100%); color:#fff; padding:48px 0 40px; margin-bottom:36px; }
+  header .wrap h1 { font-size:1.9rem; letter-spacing:-0.5px; }
+  header .wrap p.sub { opacity:.85; margin-top:10px; font-size:1.02rem; }
+  header .meta { margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; }
+  .chip { background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.3);
+          padding:4px 12px; border-radius:999px; font-size:.82rem; }
+  h2 { font-size:1.35rem; margin:44px 0 6px; letter-spacing:-0.3px; }
+  h2 .no { color:var(--blue); margin-right:8px; }
+  p.lead { color:var(--sub); margin-bottom:18px; font-size:.95rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+          padding:22px 24px; margin-bottom:16px; box-shadow:0 1px 3px rgba(20,30,60,.05); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  @media (max-width:840px){ .grid2,.grid3{grid-template-columns:1fr;} }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th { text-align:left; background:#f0f3f9; padding:10px 12px; border-bottom:2px solid var(--line); white-space:nowrap; }
+  td { padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  .tablebox { overflow-x:auto; }
+  code, .path { font-family:"SF Mono",Menlo,monospace; font-size:.82em; background:#eef1f7;
+         padding:2px 6px; border-radius:5px; color:#37415c; word-break:break-all; }
+  .tag { display:inline-block; padding:2px 10px; border-radius:999px; font-size:.75rem; font-weight:700; white-space:nowrap; }
+  .tag.g { background:var(--green-bg); color:var(--green); }
+  .tag.b { background:var(--blue-bg); color:var(--blue); }
+  .tag.a { background:var(--amber-bg); color:var(--amber); }
+  .tag.r { background:var(--red-bg); color:var(--red); }
+  .tag.p { background:var(--purple-bg); color:var(--purple); }
+  .flow { display:flex; flex-wrap:wrap; align-items:stretch; gap:8px; margin:14px 0 4px; }
+  .fstep { flex:1 1 130px; min-width:128px; background:var(--blue-bg); border:1.5px solid #c9d9fb;
+           border-radius:12px; padding:12px 12px 10px; position:relative; }
+  .fstep.human { background:var(--green-bg); border-color:#bfe6cf; }
+  .fstep.guard { background:var(--amber-bg); border-color:#f2dfa8; }
+  .fstep b { display:block; font-size:.9rem; margin-bottom:4px; }
+  .fstep span { font-size:.78rem; color:var(--sub); display:block; }
+  .arrow { align-self:center; color:#9aa7c4; font-weight:700; }
+  .skill { border-left:5px solid var(--blue); }
+  .skill h3, .card h3 { font-size:1.05rem; margin-bottom:8px; }
+  .skill .trg { background:#f4f7ff; border-radius:8px; padding:8px 12px; font-size:.85rem; margin:8px 0; }
+  ul { padding-left:20px; }
+  li { margin:5px 0; }
+  .do-dont { display:grid; grid-template-columns:1fr 1fr; gap:0; border-radius:10px; overflow:hidden; margin-top:10px; font-size:.88rem; }
+  @media (max-width:840px){ .do-dont{grid-template-columns:1fr;} }
+  .do { background:var(--green-bg); padding:12px 16px; }
+  .dont { background:var(--red-bg); padding:12px 16px; }
+  .do b { color:var(--green); } .dont b { color:var(--red); }
+  .bp { border-left:5px solid var(--green); }
+  .bp .say { background:#0f172a; color:#d7e3ff; border-radius:8px; padding:10px 14px;
+             font-size:.88rem; margin:8px 0; font-family:"SF Mono",Menlo,monospace; }
+  .bp .say::before { content:"💬 이렇게 말하세요: "; color:#8fb4ff; font-family:inherit; }
+  .note { background:var(--amber-bg); border:1px solid #f2dfa8; border-radius:10px;
+          padding:12px 16px; font-size:.88rem; margin-top:10px; }
+  .layers { display:flex; flex-direction:column; gap:8px; }
+  .layer { display:flex; gap:14px; align-items:flex-start; background:var(--card);
+           border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
+  .layer .n { flex:0 0 34px; height:34px; border-radius:50%; background:var(--blue);
+              color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .layer div b { display:block; font-size:.93rem; }
+  .layer div span { font-size:.83rem; color:var(--sub); }
+  footer { margin-top:56px; padding-top:20px; border-top:1px solid var(--line);
+           color:var(--sub); font-size:.82rem; }
+  .small { font-size:.82rem; color:var(--sub); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>밸류하이어 무인 헤드헌팅 — 최근 구현 브리핑</h1>
+    <p class="sub">최근 합쳐진 부품 12건(PR #51~#63)과 스킬 3종의 구조·기능·사용법 가이드</p>
+    <div class="meta">
+      <span class="chip">기준일 2026-07-04</span>
+      <span class="chip">전체 검사 906개 통과 상태</span>
+      <span class="chip">모든 부품 CI 초록 + 병합 완료</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ============ 1. 큰 그림 ============ -->
+<h2><span class="no">1</span>큰 그림 — 지금 파이프라인이 흘러가는 순서</h2>
+<p class="lead">포지션 하나가 들어오면 아래 순서로 흘러갑니다. 파란 상자는 자동, 노란 상자는 안전장치(검문소), 초록 상자는 <b>항상 사장님 손</b>입니다.</p>
+
+<div class="card">
+  <div class="flow">
+    <div class="fstep"><b>① 포지션 등록</b><span>ClickUp에 포지션 Task (기본 리스트)</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep"><b>② /url 사전 세팅</b><span>LinkedIn RPS 검색을 미리 만들어 링크+검색식 레시피를 댓글로 저장</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep"><b>③ /humansearch 순회</b><span>걸어둔 검색결과를 돌며 후보 채점 (70점+ 합격)</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep guard"><b>④ 하드제외 + 경력컷</b><span>프리랜서·단기이직·전문대·경력초과 자동 걸러냄</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep"><b>⑤ ClickUp 등록</b><span>FY26AI_Search 보드에 포지션 부모 + 후보 자식 Task</span></div>
+  </div>
+  <div class="flow">
+    <div class="fstep"><b>⑥ 제안 문구 자동 조립</b><span>새 부품 PC-G2 — 개인화 InMail 본문을 글자로만 생성</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep guard"><b>⑦ 발송 전 검문소</b><span>이름·글자수·금지워딩·필수문단 기계 검사 (하나라도 걸리면 STOP)</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep human"><b>⑧ 사장님이 보냄</b><span>붙여넣기·Send 클릭은 언제나 사람. 자동 발송 없음</span></div>
+  </div>
+  <p class="small" style="margin-top:10px">이 전체가 도는 동안 밑바닥에서 <b>봇방지 페이싱</b>(사람 같은 간격), <b>양보·자동재개</b>(사장님이 크롬 쓰면 멈췄다 다시), <b>차단감지 STOP</b>(로그인창·경고 뜨면 즉시 중단)이 항상 켜져 있습니다.</p>
+</div>
+
+<!-- ============ 2. 스킬 3종 ============ -->
+<h2><span class="no">2</span>스킬 3종 — 말로 부르는 자동화 (정본: <span class="path">.claude/skills/</span>)</h2>
+<p class="lead">이제 스킬 정본이 저장소에 버전관리됩니다(커밋 7ae256f). 어느 세션에서든 같은 절차가 보장됩니다.</p>
+
+<div class="grid3">
+  <div class="card skill">
+    <h3>🔎 aisearch — 처음부터 찾기</h3>
+    <div class="trg">"서치해줘", "후보 찾아줘", "AI Search 돌려", "잡코리아도 같이"</div>
+    <ul>
+      <li><b>하는 일:</b> JD를 읽고 검색 키워드를 스스로 만들어 <b>사람인·잡코리아·LinkedIn RPS 3사 병렬</b>로 검색 → 적합도 평가 → 표준 JSON 보고</li>
+      <li><b>안 하는 일:</b> 옛 버전(v4) 코드 사용 금지, 임의 추정 후보 금지</li>
+      <li><b>언제:</b> 검색 조건이 아직 없는 <b>새 포지션</b>일 때</li>
+    </ul>
+  </div>
+  <div class="card skill">
+    <h3>🚶 humansearch — 걸어둔 것 순회</h3>
+    <div class="trg">"휴먼서치", "/humansearch", "이 검색 URL로 후보 찾아", "리스팅 돌면서 채점"</div>
+    <ul>
+      <li><b>하는 일:</b> 사람이 미리 걸어둔 검색결과를 순회하며 채점(학력30·직무50·논리10·이직안정10) → ClickUp 등록 → Discord 보고 → 요청 시 <b>핵심 후보 1명 제안 문구</b>까지</li>
+      <li><b>안 하는 일:</b> 검색어 생성(그건 aisearch), 제안 <b>발송</b>(사장님 수동)</li>
+      <li><b>언제:</b> /url로 <b>세팅해둔 포지션</b>을 돌릴 때</li>
+    </ul>
+  </div>
+  <div class="card skill">
+    <h3>🔗 url — 검색 미리 세팅</h3>
+    <div class="trg">"/url", "RPS 서치 URL 준비", "이 포지션 서치 URL 세팅"</div>
+    <ul>
+      <li><b>하는 일:</b> ClickUp 포지션 기준으로 LinkedIn RPS 검색을 만들고(위치·경력 필터 + 검색식 3단계) 검색 링크 1개 + 검색식 레시피를 포지션 댓글에 저장</li>
+      <li><b>주의:</b> RPS는 프로젝트당 라이브 검색 <b>1개만</b> 유지됨 — 링크 여러 개 저장은 성립 안 함(라이브 검증됨)</li>
+      <li><b>언제:</b> 밤새 humansearch 돌리기 <b>전에 미리</b></li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ 3. 최근 부품 12건 ============ -->
+<h2><span class="no">3</span>최근 합쳐진 부품 12건 (PR #51 → #63)</h2>
+<p class="lead">전부 "검사 먼저 → 구현 → 내가 깨보기 → Codex가 또 깨보기 → CI 초록 → 병합"의 관문을 통과했습니다.</p>
+
+<div class="card tablebox">
+<table>
+  <tr><th>PR</th><th>부품</th><th>쉬운 말로 — 무엇을 왜</th><th>핵심 파일</th></tr>
+  <tr>
+    <td>#63</td><td><span class="tag p">PC-G2</span> InMail 문구 생성기</td>
+    <td><b>이번에 만든 것.</b> 후보 정보를 넣으면 개인화 제안 문구를 규격대로 조립해 <b>글자로만</b> 돌려줌. 절대 안 보냄. Codex 공격 8라운드에서 구멍 7개 찾아 전부 봉인 후 통과. (상세는 §4)</td>
+    <td><span class="path">tools/multi_position_sourcing/jd_outreach.py</span></td>
+  </tr>
+  <tr>
+    <td>#62</td><td><span class="tag b">PC-A0</span> ClickUp 목적지 고정</td>
+    <td>후보 등록이 엉뚱한 보드로 가지 않도록 목적지 리스트 ID를 단일 출처로 고정.</td>
+    <td><span class="path">tools/multi_position_sourcing/humansearch_register.py</span></td>
+  </tr>
+  <tr>
+    <td>#61</td><td><span class="tag a">PC-I1/I2</span> 경력상한 컷</td>
+    <td>근속 합산이 이력 일부만 잡혀 시니어가 통과하던 문제 → <b>졸업연도로 경력을 보정</b>해 상한 초과자를 자동으로 거름.</td>
+    <td><span class="path">tools/multi_position_sourcing/humansearch.py</span></td>
+  </tr>
+  <tr>
+    <td>#58</td><td><span class="tag a">PC-C3a</span> 러너면 하드제외</td>
+    <td>순회 러너가 점수만 매기고 프리랜서·단기이직 2회+·전문대를 안 거르던 구멍 → 러너 결과물(results.json) 단계에서 0건 보장.</td>
+    <td><span class="path">tools/multi_position_sourcing/humansearch_cdp_run.py</span></td>
+  </tr>
+  <tr>
+    <td>#57</td><td><span class="tag r">PC-E1</span> 봇방지 페이싱</td>
+    <td>키워드 사이 대기시간(20~60초 등)을 규칙 파일 <b>한 곳(SOT22)</b>에서만 읽고, 무작위처럼 보이지만 재현 가능한 지터 + 무한반복 캡. 기계처럼 두드리는 행동 원천 차단.</td>
+    <td><span class="path">tools/multi_position_sourcing/harvest_policy.py</span></td>
+  </tr>
+  <tr>
+    <td>#56</td><td><span class="tag p">PC-G1</span> 글자수 안전장치</td>
+    <td>제안 본문이 채널 한도(LinkedIn 1,899자 / 사람인·잡코리아 2,000자)를 넘으면 <b>보내기 전에 기계가 STOP</b>. PC-G2가 이걸 불러 씀.</td>
+    <td><span class="path">tools/multi_position_sourcing/jd_outreach.py</span></td>
+  </tr>
+  <tr>
+    <td>#55</td><td><span class="tag g">PC-F1</span> 양보·자동재개 감지</td>
+    <td>사장님이 크롬을 쓰는지 <b>앞창 앱 이름과 자리비움 시간만</b> 보고 판단(내용·URL은 절대 안 봄) → 쓰는 중이면 자동작업 양보, 손 떼면 자동 재개. 판단 실패 시엔 무조건 양보.</td>
+    <td><span class="path">tools/multi_position_sourcing/owner_activity.py</span></td>
+  </tr>
+  <tr>
+    <td>#54</td><td><span class="tag b">PC-D5</span> 수확 라이브 어댑터</td>
+    <td>상시 수확(harvest) 이음매에 실제 검색 러너를 꽂는 어댑터. 차단·오류가 나면 남은 키워드를 계속 두드리지 않고 <b>즉시 멈춤</b>, 단 이미 찾은 후보는 버리지 않음.</td>
+    <td><span class="path">tools/multi_position_sourcing/harvest_executor.py</span></td>
+  </tr>
+  <tr>
+    <td>#53</td><td><span class="tag b">PC-K4</span> 수확 크래시 방지</td>
+    <td>실행 중 이벤트루프에서 죽던 크래시를 안전한 실패(fail-closed)로 바꿈.</td>
+    <td><span class="path">tools/multi_position_sourcing/harvest_runner.py</span></td>
+  </tr>
+  <tr>
+    <td>#52</td><td><span class="tag r">PC-F3</span> 차단 감지 강화</td>
+    <td>LinkedIn 세션락·로그인벽(authwall)·URL 차단을 감지하면 봇처럼 재시도하지 않고 STOP.</td>
+    <td><span class="path">tools/multi_position_sourcing/portal_ops.py</span> 계열</td>
+  </tr>
+  <tr>
+    <td>#51</td><td><span class="tag g">언어 기본 한국어</span></td>
+    <td>로마자 한국 이름(예: Jihoon Park)은 한국인으로 판정 → 제안 문구 기본 한국어. 명백한 외국인만 영어.</td>
+    <td><span class="path">tools/multi_position_sourcing/inmail_precheck.py</span></td>
+  </tr>
+  <tr>
+    <td>7ae256f</td><td><span class="tag g">스킬 정본 버전관리</span></td>
+    <td>aisearch·humansearch·url 스킬과 /st 커맨드 정본을 저장소에 넣음 — 세션이 바뀌어도 같은 절차 보장.</td>
+    <td><span class="path">.claude/skills/</span></td>
+  </tr>
+</table>
+</div>
+
+<!-- ============ 4. PC-G2 상세 ============ -->
+<h2><span class="no">4</span>이번 부품 상세 — PC-G2 제안 문구 생성기</h2>
+<p class="lead">함수 하나: <code>build_linkedin_inmail_jd(...)</code> — 넣으면 완성된 InMail 본문 문자열이 나옵니다.</p>
+
+<div class="grid2">
+  <div class="card">
+    <h3>📥 무엇을 넣나</h3>
+    <ul>
+      <li><b>후보 이름</b> — 수확 데이터의 이름 <b>그대로</b> (손으로 옮겨 적기 금지)</li>
+      <li><b>정곡 관찰 1줄</b> — 이력 요약·나열이 아니라 "이 분만 보고 연락한 이유" 한 문장</li>
+      <li><b>회사 브리핑 8요소</b> — 한줄정의·연혁·투자·매출·인원·모기업·대표 발언·최근뉴스 (출처 있는 것만, 최소 6개)</li>
+      <li><b>JD 불릿</b> — 주요 업무 / 자격 요건 / 왜 검토할 만한가(2~3개)</li>
+      <li>근무지(선택), 언어(ko/en), 채널</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>📤 무엇이 나오나</h3>
+    <ul>
+      <li>골든샘플 v2 구조의 완성 본문: 제목 → 인사 → 소개+관찰 → 회사 브리핑 → 주요업무 → 자격요건 → 왜 검토 → <b>무료 이력서 피드백 문단(자동 삽입)</b> → 클로징 → <b>P.S. 인입 링크(자동 삽입)</b> → 근무지</li>
+      <li>필수 문단 2개는 함수가 <b>강제로 넣기 때문에 누락 자체가 불가능</b></li>
+      <li>글자수 한도(1,899자) 자동 확인 후 반환 — 초과면 예외로 STOP</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <h3>🛡️ 8라운드 공격에서 봉인된 입력 검문 (전부 자동)</h3>
+  <div class="tablebox">
+  <table>
+    <tr><th>공격 시도</th><th>지금 동작</th></tr>
+    <tr><td>"※미확인" 표시를 보이지 않는 문자·특수공백·전각기호로 위장해 본문에 끼워넣기</td><td>유니코드 접기 검사로 전부 탐지 → 그 항목 생략</td></tr>
+    <tr><td>업무/자격 리스트를 비우거나 None 섞기</td><td>즉시 거부(빈 헤더 문구 생성 불가)</td></tr>
+    <tr><td>이름·제목 등에 숫자/리스트/딕셔너리 같은 엉뚱한 타입</td><td>즉시 거부(깨진 표기 유출 불가)</td></tr>
+    <tr><td>줄바꿈·NUL·특수 줄바꿈 문자로 가짜 구역 만들기</td><td>즉시 거부(모든 입력은 한 줄)</td></tr>
+    <tr><td>입력을 "[주요 업무]" 같은 예약 제목처럼 꾸미기(특수공백 변형 포함)</td><td>즉시 거부(본문 구조 위장 불가)</td></tr>
+  </table>
+  </div>
+  <p class="small" style="margin-top:8px">검증 기록: <span class="path">docs/engineering/linkedin-jd-composer.verdict.json</span> · 남은 한계(한자 혼용 같은 고의적 변형)는 발송 직전 <b>사람 눈 + 스크린샷 대조</b>가 최종 안전망.</p>
+</div>
+
+<!-- ============ 5. 안전장치 계층 ============ -->
+<h2><span class="no">5</span>안전장치 5겹 — 회사 불변식이 코드로 어떻게 강제되나</h2>
+<div class="layers">
+  <div class="layer"><div class="n">1</div><div><b>로그인은 절대 안 건드림</b><span>3사 자동 로그인 보호. 로그인된 크롬은 죽이지 않음. 캡차는 사람에게.</span></div></div>
+  <div class="layer"><div class="n">2</div><div><b>봇처럼 안 굴기</b><span>사람 같은 대기 간격(PC-E1) + 차단신호 감지 즉시 STOP(PC-F3) + 무한반복 캡. 막히면 두드리지 않고 원인부터.</span></div></div>
+  <div class="layer"><div class="n">3</div><div><b>사장님 우선</b><span>크롬 쓰시면 자동작업이 양보하고, 손 떼면 자동 재개(PC-F1). 내용은 안 보고 앞창 이름만 봄.</span></div></div>
+  <div class="layer"><div class="n">4</div><div><b>보내기는 사람만</b><span>생성기(PC-G2)는 글자만 만들고, 검문소(precheck)가 이름·글자수·금지워딩·필수문단을 기계로 검사. 통과 못 하면 문구 제공 자체가 STOP. Send는 늘 사장님.</span></div></div>
+  <div class="layer"><div class="n">5</div><div><b>코드는 두 번 깬다</b><span>모든 부품은 검사 먼저(RED) → 구현 → 자기 공격 → Codex 독립 공격 → CI 초록 → 병합. 이번 PC-G2는 8라운드까지 감.</span></div></div>
+</div>
+
+<!-- ============ 6. Best Practices ============ -->
+<h2><span class="no">6</span>Best Practices — 이렇게 쓰시면 가장 잘 돌아갑니다</h2>
+
+<div class="card bp">
+  <h3>① 새 포지션이 생겼을 때 (권장 기본 루틴)</h3>
+  <div class="say">/url — ClickUp의 [포지션명] 서치 URL 미리 세팅해</div>
+  <div class="say">/humansearch — 세팅해둔 [포지션명] 돌려서 후보 채점하고 등록해</div>
+  <ul>
+    <li>낮에 /url로 세팅 → 저녁/밤에 /humansearch 실행이 가장 효율적입니다(순회는 시간이 걸림).</li>
+    <li>포지션 여러 개를 한 번에 줘도 됩니다 — 순서대로 순회합니다.</li>
+  </ul>
+</div>
+
+<div class="card bp">
+  <h3>② 검색 조건이 아직 없는 포지션 → aisearch</h3>
+  <div class="say">서치해줘 — [ClickUp 포지션 링크 또는 JD 텍스트]</div>
+  <ul>
+    <li>키워드를 스스로 뽑아 3사 병렬로 찾습니다. 결과는 항상 표준 형식(점수·이유·프로필 링크)으로.</li>
+    <li>70점 이상만 등록됩니다. 등록 전 하드제외(프리랜서·단기이직·전문대)와 경력상한 컷이 자동 적용됩니다.</li>
+  </ul>
+</div>
+
+<div class="card bp">
+  <h3>③ 핵심 후보에게 제안 보내고 싶을 때</h3>
+  <div class="say">이 후보([이름/링크])한테 [회사/포지션] 개인화 제안 문구 만들어줘</div>
+  <ul>
+    <li>생성기가 규격대로 조립 → 검문소 통과 문구만 받아보시게 됩니다.</li>
+    <li><b>사장님이 하실 일 딱 3가지:</b> 문구 읽고 → 컴포저에 붙여넣고 화면과 대조 → Send 클릭.</li>
+    <li>붙여넣은 뒤 이름·글자수가 화면과 같은지 한 번 훑어보세요(고의적 변형 문자는 기계가 못 잡는 마지막 1%).</li>
+  </ul>
+  <div class="note">⚠️ "그냥 보내줘"라고 하셔도 자동 발송은 하지 않습니다 — 현재 회사 규칙입니다. 반자동·자동으로 가는 단계별 계획은 아래 <b>§7 발송 자동화 로드맵</b>에 정리했습니다.</div>
+</div>
+
+<div class="card bp">
+  <h3>④ 환경 관련 습관 2가지</h3>
+  <ul>
+    <li><b>다른 PC에서 LinkedIn RPS를 직접 쓰실 때:</b> <code>./scripts/rps_switch.sh on</code> 켜고 쓰신 뒤 <code>off</code> — 자동화와 세션 충돌을 막습니다.</li>
+    <li><b>이 컴퓨터에서 크롬을 쓰실 때:</b> 아무것도 안 하셔도 됩니다. 자동작업이 알아서 양보했다가 손 떼시면 재개합니다.</li>
+  </ul>
+</div>
+
+<div class="card bp">
+  <h3>⑤ 작업을 시킬 때 — 양과 질을 모두 잡는 지시법</h3>
+  <div class="do-dont">
+    <div class="do"><b>이렇게 (잘 돌아감)</b>
+      <ul>
+        <li>"~가 참이면 끝난 것" 기준을 한 줄로: <i>"등록된 후보 전원이 학력컷 통과면 완료"</i></li>
+        <li>한 번에 한 조각씩 (작게 시키면 검증이 촘촘해짐)</li>
+        <li>중요한 작업엔 "/st 붙여서 해" — 독립 이중검증까지 돌립니다</li>
+        <li>이상하면 바로 "지금 뭐 하고 있어? 쉽게 설명해"</li>
+      </ul>
+    </div>
+    <div class="dont"><b>이건 피하기 (품질 저하)</b>
+      <ul>
+        <li>"알아서 다 해줘" 식 큰 덩어리 — 검증 없이 넘어가는 부분이 생김</li>
+        <li>돌아가는 중에 같은 계정으로 수동 검색 병행 (세션 충돌 → 차단 위험)</li>
+        <li>검사 통과 전에 "됐지?" — "완료"는 CI 초록 + 병합 후에만 참말</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 7. 반자동→자동 발송 로드맵 ============ -->
+<h2><span class="no">7</span>발송 자동화 로드맵 — 반자동을 거쳐 자동으로 (플랜)</h2>
+<p class="lead">지금은 "보내기 = 항상 사장님 손"이 회사 규칙입니다. 이 규칙은 <b>사장님이 명시적으로 바꾸기 전까지 그대로</b>이고, 아래는 그날을 위해 미리 그려두는 단계별 전환 계획입니다. 핵심 원칙: <b>자동화 수준은 무사고 실적으로만 한 단계씩 올라간다.</b></p>
+
+<div class="card">
+  <div class="flow">
+    <div class="fstep human"><b>단계 0 — 지금 (수동)</b><span>문구 생성·검문은 자동, 붙여넣기·Send는 사람. 오늘 기준 여기까지 완성.</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep guard"><b>단계 1 — 반자동 (다음 목표)</b><span>시스템이 "보낼 준비 완료" 대기열을 만들고, 사장님은 승인 한 번. 입력·대조까지 자동, Send만 사람.</span></div>
+    <div class="arrow">→</div>
+    <div class="fstep"><b>단계 2 — 조건부 자동 (추후)</b><span>규칙 개정 후, 승인된 범위 안에서만 자동 발송 + 전건 사후보고.</span></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h3>🟡 단계 1 — 반자동 "승인 대기열" 설계</h3>
+    <p class="small" style="margin-bottom:8px">사장님의 클릭을 3번(읽기→붙여넣기→Send)에서 <b>2번(승인→Send)</b>으로 줄이는 단계.</p>
+    <ul>
+      <li><b>흐름:</b> humansearch가 핵심 후보 선정 → 생성기(PC-G2)가 문구 조립 → 검문소 통과분만 <b>Discord DM으로 "발송 대기" 카드</b> 도착(후보·문구·점수·근거) → 사장님이 "승인"이라고 답하면 → 시스템이 컴포저에 <b>자동 입력 + 화면 스크린샷 대조</b>까지 마치고 → <b>Send 클릭만 사장님</b></li>
+      <li><b>재사용 부품:</b> 문구 생성(PC-G2)·검문소(precheck)·글자수 캡(PC-G1)·Discord 보고 경로(dm_report)·페이싱(PC-E1) — 새로 만드는 건 대기열·승인 명령·컴포저 자동입력 3개</li>
+      <li><b>선행 조건(코드):</b> ① 캡 초과 STOP 테스트 강화(PC-G2b) ② 생성기를 humansearch 절차에 배선 ③ 이름검사 오탐 수리(#60) ④ 컴포저 입력 후 스크린샷-원문 자동 대조</li>
+      <li><b>안전:</b> 승인 없이 입력 자체를 안 함 · 입력 후 대조 불일치면 자동 폐기 + 보고 · 승인 유효시간(예: 24시간) 지나면 자동 만료</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>🔵 단계 2 — 조건부 자동 발송 (규칙 개정 필요)</h3>
+    <p class="small" style="margin-bottom:8px">아래 <b>승격 조건을 전부 충족</b>하고, 사장님이 회사 규칙(보내기=사람)을 명시적으로 개정한 뒤에만 시작.</p>
+    <ul>
+      <li><b>승격 조건(기계로 셀 수 있는 것):</b> 반자동 운영 30일 + 오발송 0건 + 대조 불일치 자동차단 실적 확인 + #60 수리 완료</li>
+      <li><b>범위 제한:</b> 사장님이 <b>포지션 단위로 사전 승인한 것만</b> 자동 발송(화이트리스트). 신규 포지션은 항상 반자동부터</li>
+      <li><b>가드레일:</b> 일일 발송 상한(채널별) · 사람 같은 간격(PC-E1 재사용) · 발송 직전 검문 재실행 · 킬스위치 한 마디("자동발송 꺼")로 즉시 전체 중단 · 전건 Discord 사후보고(누구에게·언제·몇 자)</li>
+      <li><b>실패 시:</b> 어떤 오류든 그 채널 자동발송 전체 정지 + 원인 보고 후 사람 재승인 전 재개 금지 (fail-closed)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <h3>⚠️ 자동 발송의 리스크 — 미리 알고 가야 하는 것</h3>
+  <div class="tablebox">
+  <table>
+    <tr><th>리스크</th><th>내용</th><th>대비</th></tr>
+    <tr><td><b>오발송</b></td><td>다른 후보 이름·회사가 섞인 메일이 나감 (Movensys 사고 유형)</td><td>이중 검문(생성 시 + 발송 직전) + 스크린샷 대조 + #60 이름검사 수리</td></tr>
+    <tr><td><b>계정 제재</b></td><td>LinkedIn 등은 자동 발송 도구에 계정 제한을 걸 수 있음(약관)</td><td>사람 간격 페이싱 + 일일 상한 + 차단신호 즉시 STOP. <b>단계 2 진입 전 채널별 약관 리스크 별도 검토 필수</b></td></tr>
+    <tr><td><b>평판</b></td><td>기계 냄새 나는 대량 메일 → 회신율 하락·스팸 신고</td><td>개인화 오프너 필수(생성기 구조가 강제) + 하루 소량 + 핵심 후보만</td></tr>
+    <tr><td><b>회수 불가</b></td><td>발송은 되돌릴 수 없는 동작</td><td>그래서 승격은 실적으로만, 범위는 화이트리스트로만, 중단은 한 마디로</td></tr>
+  </table>
+  </div>
+  <p class="small" style="margin-top:8px">요약: <b>반자동(단계 1)은 지금 부품으로 곧 갈 수 있고 안전 이득이 큽니다. 자동(단계 2)은 실적 + 규칙 개정 + 약관 검토라는 3중 문을 다 열어야 갑니다.</b></p>
+</div>
+
+<!-- ============ 8. 남은 일 ============ -->
+<h2><span class="no">8</span>정직한 한계와 다음 조각</h2>
+<div class="card">
+  <ul>
+    <li><b>이슈 #60:</b> 검문소 이름검사가 순서 뒤집힌 이름(Jihoon ↔ Park Jihoon)을 통과시키는 오탐 — 별도 수리 예정.</li>
+    <li><b>PC-G2b:</b> 글자수 초과 시 STOP을 테스트로 못박는 조각 (지금도 초과 시 예외는 발생, 단언 강화가 남음).</li>
+    <li><b>배선:</b> PC-G2 생성기를 humansearch 제안 절차(#8)에 실제로 연결하는 후속 조각. 지금은 부품 완성 + 계약까지.</li>
+    <li><b>PC-G3:</b> 사람인·잡코리아 채널용 문구 생성기는 아직 없음(LinkedIn만).</li>
+    <li>고의적 유니코드 변형(한자 혼용 등)은 기계가 못 잡음 — 발송 직전 사람 확인이 설계상 최종 안전망.</li>
+  </ul>
+</div>
+
+<footer>
+  <b>근거 경로(직접 확인한 것만):</b> git log #51~#63 · <span class="path">tools/multi_position_sourcing/</span>(jd_outreach.py, inmail_precheck.py, owner_activity.py, harvest_executor.py, harvest_policy.py) · <span class="path">.claude/skills/{aisearch,humansearch,url}/SKILL.md</span> · <span class="path">docs/harness.md</span> · <span class="path">docs/engineering/linkedin-jd-composer.verdict.json</span> · 검사 상태: ./verify.sh 906 passed (2026-07-04)<br>
+  이 문서는 브리핑용 스냅샷입니다 — 세부 규칙의 정본은 항상 위 원본 파일입니다.
+</footer>
+
+</div>
+</body>
+</html>
