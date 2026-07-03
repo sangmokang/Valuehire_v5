@@ -548,3 +548,81 @@ def test_world_elite_school_gets_full_education_score(school: str) -> None:
     assert match.score_breakdown["education"] == 30, (
         f"{school} 학력 만점 기대(30) 실제 {match.score_breakdown['education']}"
     )
+
+
+# ── H6 (2026-07-02 사장님 확장 스펙) — /humansearch 5요건이 SOT(SKILL+config)에 박혀야 한다 ──
+H6_SKILL_MARKERS = (
+    "901818680208",        # ClickUp FY26AI_Search 리스트 — Task+Subtask 등록처
+    "814353841088757800",  # Discord 보고 채널(중간·완료)
+    "Open to work",        # OTW 우선(이직 의향 분명)
+    "복수",                # 포지션 복수 입력(ClickUp/텍스트/URL)
+    "반조립",              # 반조립 서치 URL 입력
+    "중간 보고",           # 서치 절차 중간 보고
+)
+
+
+def test_h6_skill_md_has_2026_07_02_expansion_markers() -> None:
+    """확장 스펙 5요건(멀티채널 URL·복수 포지션·ClickUp 등록·전부 저장·Discord 보고)이 SKILL.md에 명문화."""
+    text = SKILL.read_text(encoding="utf-8")
+    missing = [m for m in H6_SKILL_MARKERS if m not in text]
+    assert not missing, f"SKILL.md 에 확장 스펙 마커 누락: {missing}"
+
+
+def test_h6_config_has_position_inputs_and_reporting() -> None:
+    """config: 포지션 입력원(clickup/text/url 복수) + ClickUp 등록처 + Discord 채널 보고가 스키마로 고정."""
+    cfg = load_humansearch_config()
+    inputs = cfg["position_inputs"]
+    assert inputs["multiple"] is True
+    assert set(inputs["sources"]) >= {"clickup_task", "text", "url"}
+
+    reg = cfg["clickup_registration"]
+    assert reg["list_id"] == "901818680208"
+    assert reg["structure"] == "position_parent_task + candidate_subtasks"
+    assert "OTW" in " ".join(reg["priority_signals"]) or any(
+        "open to work" in s.lower() for s in reg["priority_signals"]
+    )
+
+    rep = cfg["reporting"]
+    # 2026-07-03 사장님 정정: 814353841088757800 은 채널이 아니라 사장님 '유저 ID' — 봇 DM 으로 보고
+    assert rep["discord_dm_user_id"] == "814353841088757800"
+    assert rep["dm_bot"] == "hermes_v5 (1512101118543397056)"
+    assert rep["dm_channel_id"] == "1512503041448743092"
+    assert rep["helper"] == "scripts/dm_report.py"
+    assert rep["backup_bot"] == "hermes (1512501524792738064) → DM 채널 1509944917009629364"
+    assert rep["progress_report"] is True and rep["completion_report"] is True
+    assert rep["fallback"] == "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL"
+    assert "no_alarm_bomb" in rep  # 알람 폭탄 금지 정책이 스키마에 있어야 함
+    assert "clickup_urls" in rep["completion_report_includes"]  # 완료 DM 에 ClickUp URL(2026-07-03)
+
+    kx = cfg["keyword_expansion"]
+    assert kx["enabled"] is True
+    assert kx["module"] == "tools/multi_position_sourcing/humansearch_keyword_expand.py"
+
+    persist = cfg["persistence"]
+    assert persist["save_all_opened_profiles"] is True
+    assert persist["save_search_list"] is True
+    assert persist["screenshot_then_text"] is True
+    assert persist["db_path"] == "~/.vh-data/ai-search-candidates.db"
+    assert persist["db_table"] == "ai_search_candidates"
+    assert persist["db_upsert_key"] == "(url, position_id)"
+
+    urls = cfg["search_url_inputs"]
+    assert urls["semi_assembled"] is True
+    assert set(urls["channels"]) == {"saramin", "jobkorea", "linkedin_rps"}
+
+    assert "매칭 이유" in " ".join(reg["subtask_requires"])
+    assert reg["parent_dedup"], "부모 Task 중복 방지(검색→재사용) 규칙 필수"
+
+
+def test_h6_no_single_input_contract_leftover() -> None:
+    """V1(Codex 2026-07-02) 적발 — 구 단수 입력 계약(required_one_of)이 복수 확장과 공존하면 모순.
+
+    invocation 은 required_any(복수 허용)로만 선언돼야 하고, SKILL 입력 절도 복수를 명시해야 한다.
+    """
+    cfg = load_humansearch_config()
+    inv = cfg["invocation"]
+    assert "required_one_of" not in inv, "구 단수 계약 잔재 — 복수 확장과 모순"
+    assert set(inv["required_any"]) >= {"position_name", "position_id", "visible_search_url"}
+    text = SKILL.read_text(encoding="utf-8")
+    assert "다음 중 하나가 있으면 시작" not in text, "SKILL 입력 절이 여전히 단수 계약"
+    assert "복수 허용" in text
