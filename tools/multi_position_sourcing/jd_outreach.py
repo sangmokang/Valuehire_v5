@@ -12,6 +12,8 @@ SOT 가드:
 """
 from __future__ import annotations
 
+import unicodedata
+
 from .inmail_precheck import (
     BRIEFING_ELEMENT_KEYS,
     CHANNEL_CHAR_LIMITS,
@@ -74,8 +76,17 @@ _PS_CTA = (
 )
 
 
-def _bullets(items: list[str]) -> str:
-    return "\n".join(f"· {item.strip()}" for item in items if item and item.strip())
+def _strip_invisible(text: str) -> str:
+    """형식 문자(Cf — zero-width 류) 제거. ※미확인 마커 우회 차단(codex V1 결함 1)."""
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
+def _bullets(field: str, items: list[str]) -> str:
+    """불릿 조립. 빈/공백뿐 리스트는 fail-closed 거부(codex V1 결함 2 — 무불릿 헤더 금지)."""
+    cleaned = [item.strip() for item in (items or []) if item and item.strip()]
+    if not cleaned:
+        raise ValueError(f"{field} 비어 있음 — 불릿 없는 헤더만 있는 문구 금지(fail-closed)")
+    return "\n".join(f"· {item}" for item in cleaned)
 
 
 def build_linkedin_inmail_jd(
@@ -115,8 +126,8 @@ def build_linkedin_inmail_jd(
 
     briefing_lines = [company_name]
     for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, ※미확인·빈값은 생략
-        value = str((company_briefing or {}).get(key) or "").strip()
-        if value and not value.startswith(UNVERIFIED_MARKER):
+        value = _strip_invisible(str((company_briefing or {}).get(key) or "")).strip()
+        if value and UNVERIFIED_MARKER not in value:
             briefing_lines.append(f"· {value}")
 
     sections = [
@@ -124,9 +135,9 @@ def build_linkedin_inmail_jd(
         f"안녕하세요 {name}님,",
         f"{_INTRO}\n{opener}",
         "\n".join(briefing_lines),
-        f"[주요 업무]\n{_bullets(jd_responsibilities)}",
-        f"[자격 요건]\n{_bullets(jd_qualifications)}",
-        f"[왜 검토할 만한가]\n{_bullets(why_consider)}",
+        f"[주요 업무]\n{_bullets('jd_responsibilities', jd_responsibilities)}",
+        f"[자격 요건]\n{_bullets('jd_qualifications', jd_qualifications)}",
+        f"[왜 검토할 만한가]\n{_bullets('why_consider', why_consider)}",
         _VERIFIED_PULL[language],
         _CLOSING,
         _PS_CTA,

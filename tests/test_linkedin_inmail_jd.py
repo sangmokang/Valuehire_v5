@@ -93,6 +93,29 @@ def test_ac2_briefing_elements_in_body(golden_body):
         assert value in body, f"브리핑 요소 '{key}' 값이 body 에 없음"
 
 
+def test_ac2_unverified_marker_zero_width_bypass_blocked():
+    """codex V1 결함 1: zero-width 문자가 붙은 ※미확인 이 본문에 새어들면 안 된다."""
+    kwargs = golden_kwargs()
+    kwargs["company_briefing"] = dict(kwargs["company_briefing"])
+    kwargs["company_briefing"]["parent_group"] = "​※미확인"
+    kwargs["company_briefing"]["recent_news"] = "﻿※미확인 (출처 없음)"
+    body = build_linkedin_inmail_jd(**kwargs)
+    assert "※미확인" not in body
+    assert "​" not in body and "﻿" not in body
+
+
+def test_empty_jd_lists_rejected():
+    """codex V1 결함 2: 불릿 없는 헤더만 있는 문구가 조용히 만들어지면 안 된다(fail-closed)."""
+    for field in ("jd_responsibilities", "jd_qualifications", "why_consider"):
+        kwargs = golden_kwargs()
+        kwargs[field] = []
+        with pytest.raises(ValueError, match=field):
+            build_linkedin_inmail_jd(**kwargs)
+        kwargs[field] = ["  ", ""]  # 공백뿐인 리스트도 빈 것으로 취급
+        with pytest.raises(ValueError, match=field):
+            build_linkedin_inmail_jd(**kwargs)
+
+
 def test_ac2_unverified_briefing_value_omitted():
     kwargs = golden_kwargs()
     kwargs["company_briefing"] = dict(kwargs["company_briefing"])
