@@ -52,7 +52,14 @@
     ]
   },
   "rework": "적대검증 3라운드(V1 gap→내 확장→V2 F1 회귀→V3 F3-1 미완)가 '키워드 raw abort로 SOT26 full-parity'가 근본 취약(SOT26 토큰은 false_positive_guard와 짝)임을 드러냄. 최종: portal_login에 **모호하지 않은 세션락/authwall/URL 블록 신호만** 추가(SOT26:163 지시분), preflight 원복(순변경0), _CHALLENGE_TOKENS⊆SOT26. full-parity 주장 철회. 신규 6토큰 후보/JD/UI 텍스트 오탐 0 재현. 전체 825 passed.",
-  "v4": { "author": "Claude reset (예정)", "verdict": "pending" },
-  "three_way_agree": false,
-  "status": "진행중(보수 재작업 완료, V4 최종 재검증 대기)"
+  "v4": {
+    "author": "Claude reset (fresh 세션)",
+    "agentId": "a89f2c136aa6c0b05",
+    "verdict": "pass",
+    "independent_repro": "825 passed 재현. preflight diff=코멘트만(순변경0, 회귀 원복 확정). tests=신규파일만(약화0). portal_login 기존7 보존+신규6 추가만. 13토큰⊆SOT26, 오탈자→subset RED·authwall제거→탐지 RED(mutation 비공허). 정상 텍스트 12종(enterprise authentication·single sign-on·session timeout·authentication wall 등) 오탐0, 블록6종 탐지.",
+    "residual_accepted": "[낮음·비블로커] 'only one session per user policy' 문구 오탐 여지 — 단 이 함수는 로그인/준비체크 표면(랜딩 폼 body)만 스캔(후보 이력서는 원복된 preflight 담당), 안전측(STOP>계정차단), SOT26 tradeoff 명문화, 세션관리 JD가 랜딩표면에 뜰 확률~0. 배송 차단 아님."
+  },
+  "final_scope": "portal_login._has_security_challenge 에 모호하지 않은 6토큰 추가(authwall·multiple sign-ins·only one session·enterprise-authentication·/uas/login·protechts, SOT26:163 RPS 세션락 지시분). preflight 원복. _CHALLENGE_TOKENS⊆SOT26. 후보텍스트 흔한 SOT26토큰은 raw abort 오탐 위험이라 미채택.",
+  "three_way_agree": true,
+  "status": "게이트4b 통과(V1 gap→rework, V2 F1→원복, V3 F3-1→보수축소, V4 PASS) — 배송대기"
 }
