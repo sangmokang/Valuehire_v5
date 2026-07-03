@@ -130,6 +130,21 @@ def test_name_korean_with_title_suffix_matches() -> None:
     assert not greeting_matches_profile("안녕하세요 Rocha연구원님,", MESERET)
 
 
+def test_name_nimkke_variant_matches() -> None:
+    """자기적대 발견: '님께' 변형 인사말이 추출 실패(fail-closed 오탐)하면 안 된다."""
+    assert extract_greeting_name("안녕하세요 조현용님께,") == "조현용"
+    assert greeting_matches_profile("안녕하세요 조현용님께,", "조현용")
+
+
+def test_name_zero_width_evasion_blocked() -> None:
+    """자기적대: zero-width·전각 삽입으로 금지 워딩 린트를 우회할 수 없다."""
+    body = _ok_body_ko("Meseret") + "\n딱​맞는 포지션, ５분만 통화"
+    result = precheck_inmail(body, profile_name=MESERET, channel="linkedin_rps")
+    labels = [s for s in result.stops if "forbidden" in s]
+    assert any("exaggeration" in s for s in labels)
+    assert any("call_request" in s for s in labels)
+
+
 def test_name_english_greeting_forms() -> None:
     assert extract_greeting_name("Hi Meseret,\n\nbody") is not None
     assert greeting_matches_profile("Hi Meseret,", MESERET)
