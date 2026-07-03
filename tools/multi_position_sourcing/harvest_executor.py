@@ -80,9 +80,10 @@ class HarvestSearchExecutor:
             result = await runner.run_keyword_search(
                 keyword, searches_today=self._searches_today
             )
-            # searched 일 때만 카드를 모으고 다음 키워드로 진행한다(선례 portal_queue_executor 와
-            # 동일 — searched 는 pause_site 를 세우지 않는다). 그 외는 아래에서 즉시 STOP.
-            if result.status == "searched":
+            # searched 이고 사이트가 살아있을 때만 카드를 모으고 다음 키워드로 진행한다.
+            # pause_site 는 status 와 무관한 무조건 STOP 신호(사이트 양보/중단, 사람 개입) — 러너의
+            # 내부 불변식(searched⇒pause_site=False)에 기대지 않고 어댑터가 직접 방어한다(SOT2).
+            if result.status == "searched" and not result.pause_site:
                 self._searches_today += 1
                 collected.extend(result.candidate_cards)
                 continue

@@ -210,6 +210,30 @@ def test_pause_site_alone_stops_even_without_reauth_or_error() -> None:
     assert len(runner.calls) == 1  # 두 번째 키워드 안 두드림
 
 
+def test_searched_with_pause_site_still_stops() -> None:
+    """pause_site 는 status 와 무관한 무조건 STOP — status='searched' 여도 멈춘다(봇금지 방어).
+
+    실제 러너는 searched 에 pause_site 를 세우지 않지만, 어댑터는 그 불변식에 기대지 않고
+    pause_site 를 최우선 STOP 신호로 방어한다(V1 Codex 지적). 카드는 보존하되 다음 키워드는
+    두드리지 않는다.
+    """
+    runner = _FakeRunner(
+        [
+            _result("searched", cards=("p1",), pause_site=True),
+            _result("searched", cards=("must_not_reach",)),
+        ]
+    )
+    ex = _executor(runner, ("kw1", "kw2"))
+    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="m1")
+
+    out = tuple(asyncio.run(ex(item)))
+
+    assert out == ("p1",)  # searched 카드는 보존
+    assert len(ex.stops) == 1
+    assert "pause_site" in ex.stops[0].reason
+    assert len(runner.calls) == 1  # pause_site 후 다음 키워드 안 두드림
+
+
 def test_pause_site_error_stops_empty_with_reason() -> None:
     runner = _FakeRunner([_result("error", pause_site=True, reason="reauth recovery failed")])
     ex = _executor(runner, ("kw1",))
