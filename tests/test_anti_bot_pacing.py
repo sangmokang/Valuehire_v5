@@ -93,3 +93,41 @@ def test_should_continue_custom_cap() -> None:
 def test_unknown_kind_rejected() -> None:
     with pytest.raises(Exception):
         pacing_bounds_ms("nonexistent")
+
+
+def test_bounds_actually_read_from_sot_file_not_hardcoded(tmp_path, monkeypatch) -> None:
+    """_SOT22_PATH 를 *다른 값*의 임시 파일로 바꿔치기해 함수가 실제로 파일을 읽음을 강제한다.
+
+    상수를 SOT22 와 같은 값으로 하드코딩한 구현(SOT5 이중정의)을 잡는다 — 값 비교만으론 통과하지만
+    이 테스트는 파일 값이 바뀌면 함수 반환도 바뀌어야 통과하므로 하드코딩 뮤턴트를 사살한다.
+    """
+    from tools.multi_position_sourcing import harvest_policy as hp
+
+    fake = tmp_path / "22.json"
+    fake.write_text(
+        json.dumps(
+            {
+                "channels": {
+                    "linkedin": {
+                        "bot_protection": {
+                            "random_delay_between_keywords_ms": {"min": 111, "max": 222},
+                            "short_delay_ms": {"min": 33, "max": 44},
+                            "keyword_limit_per_run": 9,
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(hp, "_SOT22_PATH", fake)
+    hp._bot_protection.cache_clear()
+    try:
+        assert hp.pacing_bounds_ms("between_keywords") == (111, 222)
+        assert hp.pacing_bounds_ms("short") == (33, 44)
+        assert hp.max_keyword_steps() == 9
+        # 지터도 바뀐 경계를 따라야 한다
+        for step in range(50):
+            assert 111 <= hp.deterministic_delay_ms(kind="between_keywords", step=step, seed=5) <= 222
+    finally:
+        hp._bot_protection.cache_clear()  # 원래 SOT 로 복구(다른 테스트 오염 방지)
