@@ -31,10 +31,19 @@
     }
   ],
   "v1": {
-    "author": "codex-rescue (독립 세션)",
-    "verdict": "PENDING",
-    "findings": null
+    "author": "codex-rescue (독립 세션, agentId a96b53e217421be4e)",
+    "verdict": "PASS",
+    "source_jsonl": "tasks/a96b53e217421be4e.output (VERDICT 블록 0·1)",
+    "checks_reproduced": [
+      "1 상수값 — rg 로 901814621569=FY26ClientsPosition 확정(후보 901814621142·AI_Search 901818680208와 구별)",
+      "2 정확히 1회 — 라이브 비중복 status=created calls=1 list_id=901814621569; dry-run calls=0; 경계 confidence=0.55 created",
+      "3 중복 안전 — sourceURL·회사/직무 중복 둘 다 linked create_calls=0(position_registration.py:271-290 에서 create 전 반환)",
+      "4 SOT3 — external_posting_sent/secret_emitted True 경로 없음, ClickUp API/토큰/네트워크 writer 추가 없음",
+      "5 고아 — production 정의는 :51 뿐, 소비는 테스트만, verdict 의 PC-A3 seam 주장 사실",
+      "6 뮤테이션 — 틀린 상수·dedup 반전 둘 다 caught; no-write 변형 pytest 19 passed"
+    ],
+    "findings": "인스코프 결함 0(PASS). 별건: codex 샌드박스에서 요청 pytest 는 read-only tempdir 로 차단 → 변형(19 passed)으로 재현. 코드 무관. 생성자 로컬 verify.sh exit 0(929 passed)."
   },
-  "three_way_agree": "N/A (L2 — V1 PASS 로 충분)",
-  "status": "진행중 — V1(codex) 판정 대기"
+  "three_way_agree": "N/A (L2 — G 자기 mutation 2종 사살 + V1(codex) PASS 로 충분; V2/3자대조는 L3 풀하네스용)",
+  "status": "GREEN — G(mutation 2종 사살) + V1(codex) PASS. verify.sh exit 0(929 passed, 3 xfailed). 배송 준비 완료."
 }
