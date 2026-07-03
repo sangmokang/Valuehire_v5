@@ -82,6 +82,12 @@ def test_years_tenure_fallback_when_no_grad_year() -> None:
     assert compute_years_experience("경력만 있음", emp, today_year=2026) == 5
 
 
+def test_years_tenure_fallback_includes_current_employment() -> None:
+    # 졸업연도 없음 + 현재 재직(end 빈값) → start~오늘 을 근속에 포함(2020~2026 = 6년).
+    emp = (EmploymentTenure(company="X", start_month="2020-01", end_month=""),)
+    assert compute_years_experience("", emp, today_year=2026) == 6
+
+
 def test_years_none_when_no_grad_no_tenure() -> None:
     assert compute_years_experience("", (), today_year=2026) is None
 
