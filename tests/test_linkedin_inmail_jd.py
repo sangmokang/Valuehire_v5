@@ -176,6 +176,34 @@ def test_non_string_jd_list_items_rejected():
         build_linkedin_inmail_jd(**kwargs)
 
 
+def test_none_jd_list_item_rejected():
+    """codex V1 round4 결함 1: 리스트 안 None 이 조용히 빠지면 안 된다 — 명시 거부."""
+    for field in ("jd_responsibilities", "jd_qualifications", "why_consider"):
+        kwargs = golden_kwargs()
+        kwargs[field] = ["정상 항목", None]
+        with pytest.raises(ValueError, match=field):
+            build_linkedin_inmail_jd(**kwargs)
+
+
+def test_language_channel_bad_type_valueerror():
+    """codex V1 round4 결함 2: language/channel 오타입은 TypeError 아닌 ValueError."""
+    for field in ("language", "channel"):
+        for bad in ({"a": 1}, ["x"], 123, None):
+            kwargs = golden_kwargs()
+            kwargs[field] = bad
+            with pytest.raises(ValueError, match=field):
+                build_linkedin_inmail_jd(**kwargs)
+
+
+def test_company_briefing_container_type_enforced():
+    """codex V1 round4 followup: 브리핑 컨테이너가 dict 아니면 ValueError."""
+    for bad in (["one_line"], "문자열", 123):
+        kwargs = golden_kwargs()
+        kwargs["company_briefing"] = bad
+        with pytest.raises(ValueError, match="company_briefing"):
+            build_linkedin_inmail_jd(**kwargs)
+
+
 def test_empty_jd_lists_rejected():
     """codex V1 결함 2: 불릿 없는 헤더만 있는 문구가 조용히 만들어지면 안 된다(fail-closed)."""
     for field in ("jd_responsibilities", "jd_qualifications", "why_consider"):

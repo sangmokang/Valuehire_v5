@@ -54,9 +54,39 @@
       "finding3": "범위 밖(배송된 inmail_precheck 의도된 부분일치 설계) → 이슈 #60 분리"
     },
     "round2": {
+      "verdict": "fail",
+      "target_commit": "7aa14c8",
+      "findings": [
+        "1(blocking). 마커 변형(공백·NBSP·이형선택자 삽입, 전각 별표 치환)이 exact 매칭을 우회",
+        "2(blocking). 브리핑 값이 리스트면 None/repr 이 본문에 유출"
+      ],
+      "finding3_scope_judgment": "타당 — 이름 부분일치는 precheck_inmail(배송된 별도 모듈) 소관, 이슈 #60 분리 인정"
+    },
+    "remediation_round2": {
+      "commit": "9c1b454",
+      "detail": "_contains_unverified: NFKC 접기+Cf/Mn/Cc/공백류 제거 후 핵심어 포함 판정(※기호 불요구). 브리핑 값 str 강제."
+    },
+    "round3": {
+      "verdict": "fail",
+      "author_note": "fresh codex 세션(이전 세션이 재요청 미실행으로 교체)",
+      "findings": [
+        "1(blocking). 미확인 마커가 브리핑 밖 경로(오프너·회사명·타이틀·근무지·JD불릿)로 유출",
+        "2(blocking). position_title 등 문자열 인자에 dict/list/int 가 repr 로 유출",
+        "3(followup). 한자 혼용(미確認)·Mc/Me 결합문자는 고의적 조작 수준 — followup"
+      ]
+    },
+    "remediation_round3": {
+      "commit": "5147b55",
+      "detail": "_clean_text 공통 검문을 전 문자열 경로에 적용(str 강제+비표시 제거+마커 ValueError). Mc/Me 카테고리 접기 추가. 한자 혼용은 수용된 한계(followup)로 기록 — 호출자는 내부 파이프라인.",
+      "self_reattack": "round2 유출 11케이스 전부 차단 확인(leak=False / ValueError)"
+    },
+    "round4": {
       "verdict": "PENDING"
     }
   },
+  "open_assumptions": [
+    "한자 혼용 표기(미確認) 등 고의적 이형 마커는 미검출 — 내부 호출자 위협모델상 followup (V1 round3 severity 판정과 일치)"
+  ],
   "three_way_agree": false,
-  "status": "진행중 — V1 재검증(round2) 대기"
+  "status": "진행중 — V1 최종확인(round4) 대기"
 }

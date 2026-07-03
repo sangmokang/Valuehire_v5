@@ -125,6 +125,8 @@ def _bullets(field: str, items) -> str:
         raise ValueError(f"{field} 는 리스트여야 함(현재 {type(items).__name__})")
     cleaned = []
     for item in items or []:
+        if item is None:  # None 혼입은 조용히 빼지 않고 명시 거부(codex V1 round4)
+            raise ValueError(f"{field} 에 None 항목 포함 — 문자열 불릿만 허용(fail-closed)")
         text = _clean_text(field, item, required=False)
         if text:
             cleaned.append(text)
@@ -159,8 +161,16 @@ def build_linkedin_inmail_jd(
     company = _clean_text("company_name", company_name)
     title = _clean_text("position_title", position_title)
     loc = _clean_text("location", location, required=False)
-    if language not in _VERIFIED_PULL:
-        raise ValueError(f"language 는 {sorted(_VERIFIED_PULL)} 중 하나: '{language}'")
+    if not isinstance(language, str) or language not in _VERIFIED_PULL:
+        raise ValueError(f"language 는 {sorted(_VERIFIED_PULL)} 중 하나: {language!r}")
+    if not isinstance(channel, str):
+        raise ValueError(
+            f"channel 은 문자열이어야 함(현재 {type(channel).__name__}) — fail-closed"
+        )
+    if company_briefing is not None and not isinstance(company_briefing, dict):
+        raise ValueError(
+            f"company_briefing 은 dict 여야 함(현재 {type(company_briefing).__name__}) — fail-closed"
+        )
     unknown = set(company_briefing or {}) - set(BRIEFING_ELEMENT_KEYS)
     if unknown:
         raise ValueError(
