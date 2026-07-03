@@ -224,6 +224,25 @@ def test_reserved_section_header_masquerade_rejected():
         build_linkedin_inmail_jd(**kwargs)
 
 
+def test_reserved_header_unicode_space_variants_rejected():
+    """codex V1 round7 결함: 헤더 안 공백이 NBSP·U+202F·U+2003·U+3000 이면 우회됨.
+    유니코드 공백 전체를 접어서 판정해야 한다."""
+    for space in (" ", " ", " ", "　"):
+        kwargs = golden_kwargs()
+        kwargs["personalized_opener"] = f"[주요{space}업무] 위장"
+        with pytest.raises(ValueError, match="personalized_opener"):
+            build_linkedin_inmail_jd(**kwargs)
+    kwargs = golden_kwargs()
+    kwargs["jd_responsibilities"] = ["[자격 요건] 위장"]
+    with pytest.raises(ValueError, match="jd_responsibilities"):
+        build_linkedin_inmail_jd(**kwargs)
+    kwargs = golden_kwargs()
+    kwargs["company_briefing"] = dict(golden_kwargs()["company_briefing"])
+    kwargs["company_briefing"]["one_line"] = "[근무지 ] 위장"
+    with pytest.raises(ValueError, match="one_line"):
+        build_linkedin_inmail_jd(**kwargs)
+
+
 def test_unicode_line_separator_injection_rejected():
     """자기반증 발견: U+2028(LS)/U+2029(PS)도 splitlines 가 줄바꿈으로 취급 —
     가짜 섹션 주입 가능하므로 Cc 와 동일하게 거부."""

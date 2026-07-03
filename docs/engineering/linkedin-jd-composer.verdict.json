@@ -81,7 +81,34 @@
       "self_reattack": "round2 유출 11케이스 전부 차단 확인(leak=False / ValueError)"
     },
     "round4": {
-      "verdict": "PENDING"
+      "verdict": "fail",
+      "findings": [
+        "1(blocking). JD 리스트 안 None 이 조용히 생략",
+        "2(blocking). language/channel 오타입이 ValueError 아닌 TypeError",
+        "3(followup). 한자 혼용(※未確認) — 수용된 한계",
+        "4(followup). company_briefing 컨테이너 타입 미강제"
+      ],
+      "remediation": "커밋 783a709 — None 항목 명시 거부, language/channel/브리핑 컨테이너 isinstance 검사"
+    },
+    "round5": {
+      "verdict": "fail",
+      "findings": [
+        "1(blocking). 개행·NUL 제어문자 주입으로 가짜 섹션 헤더 생성",
+        "2(followup). 한자 혼용 — 기수용"
+      ],
+      "remediation": "커밋 3cd6e2e — _reject_control(Cc) 전 텍스트 경로 적용. + 자기반증으로 U+2028/U+2029(Zl/Zp) 유출 추가 발견 → 커밋 5352615 봉인"
+    },
+    "round6": {
+      "verdict": "fail",
+      "findings": [
+        "1(blocking). 앞머리 개행이 strip 으로 사라져 예약 섹션 헤더([주요 업무] 등) 위장 가능",
+        "2(followup). 한자 혼용 — 기수용"
+      ],
+      "remediation": "커밋 d0ad0a1 — _reject_reserved_header: 예약 헤더(공백 변형 포함)로 시작하는 입력 전 경로 거부"
+    },
+    "round7": {
+      "verdict": "PENDING",
+      "target_commit": "d0ad0a1"
     }
   },
   "open_assumptions": [

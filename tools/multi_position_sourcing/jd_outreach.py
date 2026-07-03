@@ -114,8 +114,14 @@ _RESERVED_HEADERS: tuple[str, ...] = (
 
 def _reject_reserved_header(field: str, text: str) -> None:
     """예약 섹션 헤더로 시작하는 입력 거부 — 앞머리 개행이 strip 으로 사라진 뒤
-    남는 가짜 헤더(또는 개행 없이 직접 넣은 헤더)가 본문 구조를 위장하는 것 차단."""
-    compact = text.replace(" ", "")
+    남는 가짜 헤더(또는 개행 없이 직접 넣은 헤더)가 본문 구조를 위장하는 것 차단.
+    판정은 NFKC 접기 + 유니코드 공백 전체·비표시 문자 제거 후 — ASCII 공백만 지우면
+    NBSP·U+202F·U+2003·U+3000 삽입으로 우회됨(codex V1 round7)."""
+    folded = unicodedata.normalize("NFKC", text)
+    compact = "".join(
+        ch for ch in folded
+        if not ch.isspace() and unicodedata.category(ch) not in ("Cf", "Mn", "Me")
+    )
     for header in _RESERVED_HEADERS:
         if compact.startswith(header.replace(" ", "")):
             raise ValueError(
