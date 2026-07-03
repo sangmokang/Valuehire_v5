@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import json
+
 from tools.multi_position_sourcing.humansearch_supabase_sync import (
     to_profile_archive_row,
     to_sourcing_result_row,
@@ -68,3 +70,34 @@ def test_s1_config_declares_supabase_persistence() -> None:
     assert "레쥬메 전문" in sb["profile_archives"] and "url" in sb["profile_archives"]
     assert "fit_reason" in sb["sourcing_results"]
     assert sb["mapper"] == "tools/multi_position_sourcing/humansearch_supabase_sync.py"
+
+
+# ── V1(Codex 2026-07-03) 적발 결함 회귀봉인 ──
+def test_s1_v1_broken_briefing_rejected() -> None:
+    """깨진/누락 briefing 은 학력·경력 칸이 비게 됨 → 매칭 행 적재 거부(fail-closed)."""
+    assert to_sourcing_result_row({**LOCAL, "candidate_briefing": "not-json{"}, "t") is None
+    assert to_sourcing_result_row({**LOCAL, "candidate_briefing": "[1,2]"}, "t") is None
+    assert to_sourcing_result_row({**LOCAL, "candidate_briefing": None}, "t") is None
+
+
+def test_s1_v1_bool_score_rejected() -> None:
+    """match_score=True 는 점수 1이 아니라 무효 — bool 거부, 0~100 범위 강제."""
+    assert to_sourcing_result_row({**LOCAL, "match_score": True}, "t") is None
+    assert to_sourcing_result_row({**LOCAL, "match_score": 101}, "t") is None
+    assert to_sourcing_result_row({**LOCAL, "match_score": -1}, "t") is None
+
+
+def test_s1_v1_career_summary_excludes_education_sentences() -> None:
+    """경력 칸(career_summary)에 '학력 신호 양호(...)' 류 학력 문장 금지 — 진짜 경력 근거만."""
+    local = {**LOCAL, "candidate_briefing": json.dumps({
+        "education": "KAIST Master",
+        "why_fit": ["학력 신호 양호(KAIST Master)", "must-have 직결: robot, c++", "nice-to-have: ros"],
+        "why_not": [],
+    }, ensure_ascii=False)}
+    row = to_sourcing_result_row(local, "t")
+    assert "학력" not in row["career_summary"], row["career_summary"]
+    assert "robot" in row["career_summary"]
+    assert "학력" not in row["fit_reason"].split(";")[0]  # 이유 첫 문장도 경력/직무 우선
+
+
+
