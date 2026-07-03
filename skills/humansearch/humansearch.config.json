@@ -123,7 +123,15 @@
     "db_path": "~/.vh-data/ai-search-candidates.db",
     "db_table": "ai_search_candidates",
     "db_upsert_key": "(url, position_id)",
-    "note": "열어본 프로필·검색 리스트는 점수 무관 전부 저장(SOT22 R6) — 스크린샷→텍스트 전환 후 results.json + DB upsert."
+    "note": "열어본 프로필·검색 리스트는 점수 무관 전부 저장(SOT22 R6) — 스크린샷→텍스트 전환 후 results.json + DB upsert.",
+    "supabase": {
+      "enabled": true,
+      "profile_archives": "레쥬메 전문(text_content)+profile url — url 무효/본문 공허는 적재 거부(fail-closed)",
+      "sourcing_results": "포지션별 profile url(value)·학력(education_summary)·경력(career_summary/periods)·점수(match_score)·이유(fit_reason)",
+      "run_fk": "sourcing_results.run_id 는 sourcing_runs 에 run 을 먼저 등록해야 함(FK)",
+      "mapper": "tools/multi_position_sourcing/humansearch_supabase_sync.py",
+      "loader": "scripts/humansearch_supabase_backfill.py (url·(value,position_id) 조회 후 신규만 insert — 멱등)"
+    }
   },
 
   "reporting": {
