@@ -1,0 +1,49 @@
+{
+  "claim_id": "pc-a1-clickup-live-write",
+  "backlog_id": "PC-A1",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "author": "claude (this session)",
+    "claim": "FY26ClientsPosition 목적지 상수(FY26_CLIENTS_POSITION_LIST_ID='901814621569')를 SOT5 단일출처로 도입하고, 라이브 경로(dry_run=False, 비중복, confidence>=0.55)에서 run_position_registration 이 그 목적지로 clickup_create_task 를 정확히 1회 호출함을 통합테스트로 단언. 중복이면 create 0회(코멘트 경로). SOT3 유지(external_posting_sent=False, secret_emitted=False). 실제 ClickUp writer 없음(SOT5 신규 writer 금지).",
+    "changed_files": [
+      "tools/multi_position_sourcing/position_registration.py",
+      "tests/test_position_registration.py",
+      "docs/engineering/pc-a1-clickup-live-write-goal-2026-07-04.md"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "929 passed, 3 xfailed, 5 subtests passed in 6.49s",
+    "red_evidence": "RED 커밋: ImportError: cannot import name 'FY26_CLIENTS_POSITION_LIST_ID' (상수 도입 전 통합테스트 collection 실패).",
+    "mutation_evidence": [
+      "Mutant A (FY26 상수 '901814621569'->'000000000000') -> test_live_create_routes_exactly_once_to_fy26_clients_position FAIL (목적지 리터럴 불일치) — 물림",
+      "Mutant B (dedup 반전 'if duplicate is not None'->'if duplicate is None') -> PC-A1 두 테스트 FAIL (비중복 create 0회·중복 create 발생) — 물림"
+    ],
+    "sot_destination_source": "901814621569 = FY26ClientsPosition — docs/search-access.md:425, .claude/skills/url/SKILL.md:59 (사장님 지정). 코드 내 기존 상수 0건(git grep) → 신규 단일출처.",
+    "orphan_status": "의도된 staged seam — 상수 소비자는 통합테스트(now) + PC-A3 register-position 디스패처(예정). 프로덕션 dry_run.py 는 dry_run=True 로 create 미도달이라 아직 라이브 목적지 미주입. 실제 목적지 실배선은 PC-A3, 실제 ClickUp writer 는 SOT5로 이 조각 밖."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "테스트 클래스명 'Pc A1LiveWrite...'(공백 포함)로 최초 작성",
+      "root_cause": "클래스명에 공백 오타 -> SyntaxError. 자기 검토(파일 재확인) 전 실행하면 collection 실패로 드러남.",
+      "repro": "class Pc A1...(space)",
+      "next_change": "PcA1LiveWriteFy26DestinationTests 로 수정 — 해결."
+    }
+  ],
+  "v1": {
+    "author": "codex-rescue (독립 세션, agentId a96b53e217421be4e)",
+    "verdict": "PASS",
+    "source_jsonl": "tasks/a96b53e217421be4e.output (VERDICT 블록 0·1)",
+    "checks_reproduced": [
+      "1 상수값 — rg 로 901814621569=FY26ClientsPosition 확정(후보 901814621142·AI_Search 901818680208와 구별)",
+      "2 정확히 1회 — 라이브 비중복 status=created calls=1 list_id=901814621569; dry-run calls=0; 경계 confidence=0.55 created",
+      "3 중복 안전 — sourceURL·회사/직무 중복 둘 다 linked create_calls=0(position_registration.py:271-290 에서 create 전 반환)",
+      "4 SOT3 — external_posting_sent/secret_emitted True 경로 없음, ClickUp API/토큰/네트워크 writer 추가 없음",
+      "5 고아 — production 정의는 :51 뿐, 소비는 테스트만, verdict 의 PC-A3 seam 주장 사실",
+      "6 뮤테이션 — 틀린 상수·dedup 반전 둘 다 caught; no-write 변형 pytest 19 passed"
+    ],
+    "findings": "인스코프 결함 0(PASS). 별건: codex 샌드박스에서 요청 pytest 는 read-only tempdir 로 차단 → 변형(19 passed)으로 재현. 코드 무관. 생성자 로컬 verify.sh exit 0(929 passed)."
+  },
+  "three_way_agree": "N/A (L2 — G 자기 mutation 2종 사살 + V1(codex) PASS 로 충분; V2/3자대조는 L3 풀하네스용)",
+  "status": "GREEN — G(mutation 2종 사살) + V1(codex) PASS. verify.sh exit 0(929 passed, 3 xfailed). 배송 준비 완료."
+}

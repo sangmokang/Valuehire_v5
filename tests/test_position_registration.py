@@ -12,6 +12,7 @@ from tools.multi_position_sourcing.request_parser import (
     parse_discord_position_registration_request,
 )
 from tools.multi_position_sourcing.position_registration import (
+    FY26_CLIENTS_POSITION_LIST_ID,
     build_registration_body,
     build_task_title,
     run_position_registration,
@@ -576,6 +577,59 @@ class DestinationListIdTests(unittest.TestCase):
         self.assertEqual(len(create_task.calls), 1)  # type: ignore[attr-defined]
         _title, _body, list_id = create_task.calls[0]  # type: ignore[attr-defined]
         self.assertIsNone(list_id)
+
+
+class PcA1LiveWriteFy26DestinationTests(unittest.TestCase):
+    """PC-A1 — 라이브 경로가 설정된 FY26ClientsPosition 목적지로 정확히 1회 create."""
+
+    def test_live_create_routes_exactly_once_to_fy26_clients_position(self) -> None:
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        create_task = make_clickup_create_task_capturing()
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=make_http_fetch(RICH_WANTED_HTML),
+            clickup_search=make_clickup_search([]),  # 비중복
+            clickup_create_task=create_task,
+            clickup_list_id=FY26_CLIENTS_POSITION_LIST_ID,
+            dry_run=False,
+        )
+        self.assertEqual(outcome.status, "created")
+        self.assertTrue(outcome.is_new_task)
+        # 정확히 1회 — dedup/dry_run 분기에서 2회/0회로 새지 않음.
+        self.assertEqual(len(create_task.calls), 1)  # type: ignore[attr-defined]
+        _title, _body, list_id = create_task.calls[0]  # type: ignore[attr-defined]
+        # 상수→리터럴 SOT 고정(search-access.md:425 FY26ClientsPosition). 오타면 잘못된 리스트에 쓰기.
+        self.assertEqual(list_id, "901814621569")
+        # SOT3 불변식 — ClickUp 인입은 발송 아님.
+        self.assertFalse(outcome.external_posting_sent)
+        self.assertFalse(outcome.secret_emitted)
+
+    def test_duplicate_does_not_write_to_fy26_destination(self) -> None:
+        # 실패경로: 중복이면 create 0회(코멘트 경로) → 목적지에 잘못된 신규 쓰기 없음.
+        parsed = parse_discord_position_registration_request(
+            "포지션 등록 https://www.wanted.co.kr/wd/363433"
+        )
+        existing = [
+            ExistingPositionTask(
+                task_id="EXIST1",
+                task_url="https://app.clickup.com/t/EXIST1",
+                source_url="https://www.wanted.co.kr/wd/363433",
+            )
+        ]
+        create_task = make_clickup_create_task_capturing()
+        outcome = run_position_registration(
+            parsed,
+            http_fetch=make_http_fetch(RICH_WANTED_HTML),
+            clickup_search=make_clickup_search(existing),
+            clickup_create_task=create_task,
+            clickup_create_comment=make_clickup_create_comment("CMT1"),
+            clickup_list_id=FY26_CLIENTS_POSITION_LIST_ID,
+            dry_run=False,
+        )
+        self.assertEqual(outcome.status, "linked")
+        self.assertEqual(len(create_task.calls), 0)  # type: ignore[attr-defined]
 
 
 class SafetyTests(unittest.TestCase):
