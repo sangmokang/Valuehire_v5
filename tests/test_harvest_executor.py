@@ -106,6 +106,46 @@ def test_challenge_not_ready_reauth_stops_empty_with_reason() -> None:
     assert len(runner.calls) == 1
 
 
+def test_challenge_discards_already_collected_cards() -> None:
+    """kw1 이 카드를 찾았어도 kw2 에서 챌린지가 뜨면 빈 반환 — 부분 수집분을 넘기지 않는다.
+
+    세션이 챌린지로 오염됐을 수 있으니 그 아이템 배치는 통째로 버린다(빈 반환+사유). 빈 반환이
+    아니라 부분 카드를 넘기는 회귀를 잡는다.
+    """
+    runner = _FakeRunner(
+        [
+            _result("searched", cards=("early1", "early2")),
+            _result("not_ready", reauth_cause="http_403"),
+        ]
+    )
+    ex = _executor(runner, ("kw1", "kw2"))
+    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")
+
+    out = tuple(asyncio.run(ex(item)))
+
+    assert out == ()  # 부분 수집분(early1/early2)을 넘기지 않는다
+    assert len(ex.stops) == 1
+    assert "http_403" in ex.stops[0].reason
+
+
+def test_pause_site_alone_stops_even_without_reauth_or_error() -> None:
+    """pause_site 는 status/reauth_cause 와 독립된 STOP 트리거다(사람 개입 필요 신호).
+
+    status='not_ready' + reauth_cause='' 라 재인증 분기엔 안 걸려도, pause_site=True 면 STOP.
+    pause_site 감지 분기를 무력화하는 회귀를 잡는다.
+    """
+    runner = _FakeRunner([_result("not_ready", reauth_cause="", pause_site=True)])
+    ex = _executor(runner, ("kw1", "kw2"))
+    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="m1")
+
+    out = tuple(asyncio.run(ex(item)))
+
+    assert out == ()
+    assert len(ex.stops) == 1
+    assert "pause_site" in ex.stops[0].reason
+    assert len(runner.calls) == 1  # 두 번째 키워드 안 두드림
+
+
 def test_pause_site_error_stops_empty_with_reason() -> None:
     runner = _FakeRunner([_result("error", pause_site=True, reason="reauth recovery failed")])
     ex = _executor(runner, ("kw1",))
