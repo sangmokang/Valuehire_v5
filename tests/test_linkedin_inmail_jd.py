@@ -202,6 +202,28 @@ def test_control_char_injection_rejected():
         build_linkedin_inmail_jd(**kwargs)
 
 
+def test_reserved_section_header_masquerade_rejected():
+    """codex V1 round6 결함: 입력이 예약 섹션 헤더로 시작하면 본문 구조를 위장할 수
+    있다(앞머리 개행은 strip 으로 사라져 제어문자 검사를 우회). 시작 헤더 거부."""
+    cases = [
+        ("personalized_opener", "\n[주요 업무] strip 후 남는 가짜 헤더"),
+        ("personalized_opener", "[자격 요건] 개행 없이 직접 위장"),
+        ("company_name", "[제목] 가짜 제목"),
+        ("company_name", "[왜 검토할 만한가] 위장"),
+        ("personalized_opener", "[주요  업무] 공백 변형 위장"),
+    ]
+    for field, value in cases:
+        kwargs = golden_kwargs()
+        kwargs[field] = value
+        with pytest.raises(ValueError, match=field):
+            build_linkedin_inmail_jd(**kwargs)
+    kwargs = golden_kwargs()
+    kwargs["company_briefing"] = dict(golden_kwargs()["company_briefing"])
+    kwargs["company_briefing"]["one_line"] = "[근무지] 위장"
+    with pytest.raises(ValueError, match="one_line"):
+        build_linkedin_inmail_jd(**kwargs)
+
+
 def test_unicode_line_separator_injection_rejected():
     """자기반증 발견: U+2028(LS)/U+2029(PS)도 splitlines 가 줄바꿈으로 취급 —
     가짜 섹션 주입 가능하므로 Cc 와 동일하게 거부."""

@@ -106,6 +106,23 @@ def _reject_control(field: str, text: str) -> None:
         raise ValueError(f"{field} 에 제어·줄분리 문자(개행 포함) — 한 줄 입력만 허용(fail-closed)")
 
 
+# 본문 구조를 만드는 예약 섹션 헤더 — 입력이 이걸로 시작하면 구조 위장(codex V1 round6)
+_RESERVED_HEADERS: tuple[str, ...] = (
+    "[제목]", "[주요 업무]", "[자격 요건]", "[왜 검토할 만한가]", "[근무지]",
+)
+
+
+def _reject_reserved_header(field: str, text: str) -> None:
+    """예약 섹션 헤더로 시작하는 입력 거부 — 앞머리 개행이 strip 으로 사라진 뒤
+    남는 가짜 헤더(또는 개행 없이 직접 넣은 헤더)가 본문 구조를 위장하는 것 차단."""
+    compact = text.replace(" ", "")
+    for header in _RESERVED_HEADERS:
+        if compact.startswith(header.replace(" ", "")):
+            raise ValueError(
+                f"{field} 가 예약 섹션 헤더 {header} 로 시작 — 구조 위장 금지(fail-closed)"
+            )
+
+
 def _clean_text(field: str, value, *, required: bool = True) -> str:
     """문자열 인자 공통 검문(codex V1 round3) — str 강제(repr 유출 금지) +
     비표시문자 제거 + 제어문자 거부 + 미확인 마커 거부. 브리핑 밖 경로는 생략이
@@ -120,6 +137,7 @@ def _clean_text(field: str, value, *, required: bool = True) -> str:
         )
     text = _strip_invisible(value).strip()
     _reject_control(field, text)
+    _reject_reserved_header(field, text)
     if required and not text:
         raise ValueError(f"{field} 비어 있음 — 필수 입력")
     if text and _contains_unverified(text):
@@ -195,6 +213,7 @@ def build_linkedin_inmail_jd(
             )
         value = _strip_invisible(raw or "").strip()
         _reject_control(f"company_briefing['{key}']", value)
+        _reject_reserved_header(f"company_briefing['{key}']", value)
         if value and not _contains_unverified(value):
             briefing_lines.append(f"· {value}")
 
