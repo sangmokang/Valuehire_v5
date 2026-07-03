@@ -1,0 +1,50 @@
+{
+  "claim_id": "role-fit-word-boundary",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude",
+    "claim": "직무 키워드 매칭을 substring→단어경계(keyword_in_text)로 바꿔 java∉javascript·account∉accounting·ai∉email·go∉golang 오탐 제거. 버전숫자(python3·c++17)·심볼접두(.net∈asp.net)·전각(NFKC)은 정탐 유지. role_fit·role_direct·score_profile must_have 3경로 전부 배선.",
+    "changed_files": [
+      "tools/multi_position_sourcing/scoring.py (keyword_in_text 신규 + _role_direct_score + score_profile_for_position must_have 배선)",
+      "tools/multi_position_sourcing/humansearch.py (_role_fit_subscore must/nice 배선)",
+      "tests/test_role_fit_word_boundary.py (24건)",
+      "docs/engineering/role-fit-word-boundary-goal-2026-07-03.md"
+    ],
+    "command": "PYTHONSAFEPATH=1 PYTHONPATH=$WT .venv-playwright/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "artifact": "706 passed, 3 xfailed, 5 subtests passed",
+    "live_evidence": "keyword_in_text 호출부 4곳(고아 0): humansearch.py:205-206(must/nice) · scoring.py:172(role_direct) · scoring.py:207(score_profile must_have). _role_fit_subscore는 score_humansearch(humansearch.py:242)→라이브 러너 humansearch_cdp_run.py:162 배선.",
+    "mutation": "경계매칭→substring 되돌리면 오탐차단 4건 FAIL / must_have 배선 되돌리면 test_score_profile_...uses_boundary FAIL — 둘 다 테스트가 잡음(사살)."
+  },
+  "v1": {
+    "author": "Codex Rescue (fresh 세션)",
+    "agentId": "a4a1fe2f00f1d2875",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/665abe23-e8c0-43f1-9f3f-7882a108738d/tasks/a4a1fe2f00f1d2875.output",
+    "verdict": "fail",
+    "counterexamples_accepted": [
+      "[중] score_profile_for_position(scoring.py:195)가 _contains_any(옛 substring)로 must_have 매칭 — java∈javascript 잔존 유출(배선누락). → keyword_in_text 배선으로 수정, 회귀테스트 추가.",
+      "[중] .net∉asp.net false negative → 심볼접두 경계(왼쪽 경계 생략)로 수정.",
+      "[중] c++∉c++17 false negative → 오른쪽 경계 '문자만 차단(숫자 허용)'로 수정(python3도 함께 복구).",
+      "[경] 전각 ＪＡＶＡ 미매칭 → NFKC 정규화(_fold)로 수정."
+    ],
+    "counterexample_rejected": [
+      "'전체 700 대신 699 passed, 1 failed' — 실패건은 PortalLogin .profile.lock 쓰기 권한(Codex 샌드박스 환경) 문제로 이 변경과 무관. 생성자 로컬에서 706 passed 재현(T)."
+    ],
+    "v1_untested_reproduced_by_generator": "node.js·c#·back-end·machine learning·ci/cd 5건을 생성자가 직접(T) 재현 — 전부 정상(매칭 유지, java/go 정밀 유지). c#∉csharp·node.js∉nodejs는 pre-existing 동의어 갭(범위 밖·별도 synonym 조각)."
+  },
+  "failed_attempts": [
+    { "attempt": "오른쪽 경계 (?![a-z0-9])", "root_cause": "숫자까지 차단해 python∈python3·c++∈c++17 정탐 손실", "repro": "keyword_in_text('c++','c++17')=False", "next_change": "(?![a-z])로 완화 — 문자만 차단, 버전숫자 허용" },
+    { "attempt": "_role_fit_subscore·_role_direct_score만 배선", "root_cause": "score_profile_for_position must_have가 _contains_any(substring) 잔존 — 부분배선(R4 위반)", "repro": "score_profile java∈javascript must-have hit", "next_change": "scoring.py:195 must_have_hits를 keyword_in_text 리스트컴프로 교체 + 회귀테스트" }
+  ],
+  "v2": {
+    "author": "Claude reset (fresh 세션)",
+    "agentId": "aaa7ab9028daa244b",
+    "source_jsonl": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/665abe23-e8c0-43f1-9f3f-7882a108738d/tasks/aaa7ab9028daa244b.output",
+    "verdict": "pass",
+    "independent_repro": "706 passed 재현. keyword_in_text 24케이스 직접 호출: 새 도달가능 오탐 0(go∈go2/c∈c3는 왼쪽경계 살아있어 go∉golang·c∉csharp·r∉director 확인, 문서화 tradeoff·도달 희박). 심볼접두 오탐 없음(.net∉.network·∉dotnet, .net∈asp.net/vb.net). grep로 직무키워드 substring 잔존 0(3경로 전부 keyword_in_text). git diff main: 삭제 assert/skip/xfail 0(순수 추가).",
+    "what_v1_missed": "없음 — V1 4건 지적 모두 HEAD에 반영 확인. react∉reactjs·node∉nodejs 붙여쓴 형 누락은 단어경계 의도된 의미(react∉reactive와 동류)이자 별칭사전 갭(goal §비범위), 오탐보다 덜 해로운 누락이라 회귀 아님으로 판정."
+  },
+  "three_way_agree": true,
+  "status": "게이트4b 통과(G·V1·V2·T 수렴) — 배송대기"
+}
