@@ -25,6 +25,7 @@ from .models import CapturedProfile, Channel, Position, PositionMatch
 from .scoring import (
     HIGH_TIER_SCHOOL_SIGNALS,
     count_short_tenure_hops,
+    keyword_in_text,
 )
 
 # ── 사장님 확정 상수 (config JSON 과 단일 출처로 일치해야 함; H2/H3 가 교차검증) ──
@@ -201,8 +202,8 @@ def _education_subscore(profile: CapturedProfile) -> float:
 
 def _role_fit_subscore(profile: CapturedProfile, position: Position) -> tuple[float, list[str]]:
     text = " ".join([profile.visible_text, profile.ocr_text, " ".join(profile.skills)]).lower()
-    must = [kw for kw in position.must_haves if kw and kw.lower() in text]
-    nice = [kw for kw in position.nice_to_haves if kw and kw.lower() in text]
+    must = [kw for kw in position.must_haves if kw and keyword_in_text(kw, text)]
+    nice = [kw for kw in position.nice_to_haves if kw and keyword_in_text(kw, text)]
     must_ratio = len(must) / max(1, len(position.must_haves))
     nice_ratio = (len(nice) / len(position.nice_to_haves)) if position.nice_to_haves else 0.0
     sub = min(1.0, 0.8 * must_ratio + 0.2 * nice_ratio)
