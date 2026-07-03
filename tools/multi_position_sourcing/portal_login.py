@@ -78,10 +78,35 @@ async def _body_text(page: Any, limit: int = 3000) -> str:
         return ""
 
 
+# SOT26 docs/sot/26-portal-login-spec.json 의 block_detection.unified_regex 와 동일 토큰 집합.
+# 파리티 테스트(test_challenge_detect_parity)가 드리프트를 RED 로 잡는다 — 단일 진실 강제.
+# 특히 RPS 멀티세션 락(multiple sign-ins / Only one session / enterprise-authentication)·authwall·
+# recaptcha·/uas/login·unusual activity 를 반드시 잡아 봇이 STOP(사람 게이트)하게 한다(SOT2).
+_CHALLENGE_TOKENS: tuple[str, ...] = (
+    "captcha",
+    "recaptcha",
+    "보안문자",
+    "자동입력 방지",
+    "checkpoint",
+    "/uas/login",
+    "login-cap",
+    "unusual activity",
+    "verify you",
+    "multiple sign-ins",
+    "Only one session",
+    "enterprise-authentication",
+    "이상 접근",
+    "2단계",
+    "authwall",
+    "challenge",
+    "인증번호",
+    "protechts",
+)
+
+
 def _has_security_challenge(text: str, url: str = "") -> bool:
-    challenge_terms = ("보안문자", "CAPTCHA", "2단계", "인증번호", "이상 접근", "checkpoint", "challenge")
     haystack = f"{text} {url}".lower()
-    return any(term.lower() in haystack for term in challenge_terms)
+    return any(token.lower() in haystack for token in _CHALLENGE_TOKENS)
 
 
 def _result(channel: Channel, *, ready: bool, login: str, note: str = "", url: str = "") -> dict[str, object]:
