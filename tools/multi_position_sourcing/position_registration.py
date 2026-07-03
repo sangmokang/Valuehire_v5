@@ -42,6 +42,15 @@ class ClickUpCreateTask(Protocol):
         ...
 
 
+# 포지션 인입 기본 목적지 — 사장님 지정 FY26ClientsPosition ClickUp 리스트(단일출처·SOT5).
+# 출처: docs/search-access.md:425, .claude/skills/url/SKILL.md:59
+#       (https://app.clickup.com/9018789656/v/li/901814621569).
+# 라이브 경로에서 clickup_list_id 로 주입해 create 목적지로 쓴다(PC-A1). 실제 ClickUp 쓰기
+# 어댑터는 범위 밖(SOT5 신규 writer 금지·SOT3 발송 아님) — 소비자는 통합테스트 + PC-A3
+# 디스패처(예정, seam).
+FY26_CLIENTS_POSITION_LIST_ID: str = "901814621569"
+
+
 def build_task_title(recognition: PostingRecognition) -> str:
     """Return the ClickUp task title ``"{company} - {role}"``.
 
