@@ -42,11 +42,12 @@ InMail 문구 품질 규칙이 전부 "사람(LLM)이 기억해서 지키는 규
   `briefing_below_6` **warning**(보고 후 진행)을 반환해야 한다.
   - 검증: `pytest tests/test_inmail_precheck.py -k briefing -q`
   - counter-AC: warning이 ok=False로 실행을 막으면 §1.5("보고 후 진행") 위반.
-- **AC5 한글 자모 분리·기지 오타(STOP)** — If 본문에 자모 연속(`[ㄱ-ㅣ]{2,}`) 또는 알려진 오타("하니다")가
-  있으면 then STOP.
+- **AC5 한글 자모 분리·기지 오타(STOP)** — If 본문에 한글 자모 단독 출현(`[ㄱ-ㅣ]`, 완성형 정상 문장엔 0회 —
+  codex V1 LOW 지적으로 `{2,}`→단독으로 보수화 확정) 또는 알려진 오타("하니다")가 있으면 then STOP.
   - 검증: `pytest tests/test_inmail_precheck.py -k typo -q`
   - counter-AC: "합니다"·정상 문장을 오탐하면 가짜.
-- **AC6 VERIFIED-PULL 필수(STOP)** — If 본문에 VERIFIED-PULL 마커(무료 이력서 피드백 문구)가 없으면 then STOP.
+- **AC6 VERIFIED-PULL + P.S. CTA 필수(STOP)** — If 본문에 VERIFIED-PULL 마커(무료 이력서 피드백 문구)
+  또는 P.S. 인입 CTA(R21, valuehire.cc)가 없으면 then STOP. (P.S. 검사는 codex V1 MED 지적으로 추가.)
   - 검증: `pytest tests/test_inmail_precheck.py -k verified -q`
   - counter-AC: 영어 본문(resume feedback)을 못 알아보고 STOP 내면 가짜(언어별 마커 필요).
 - **AC7 언어 자동 선택** — Where 프로필 이름·이력이 영문이면 `body_language_for_profile` 은 "en",

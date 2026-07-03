@@ -289,6 +289,73 @@ def test_language_empty_name_falls_back_to_text() -> None:
     assert body_language_for_profile("", visible_text="로보틱스 엔지니어 5년") == "ko"
 
 
+# ── codexv1: codex 1차 적대검증(FAIL 5건) 회귀 봉인 ────────────────
+def test_codexv1_two_char_latin_token_no_false_pass() -> None:
+    """[HIGH] 'et'⊂'Meseret' 우연 포함 일치 fail-open 차단."""
+    assert not greeting_matches_profile("Hi Et,", MESERET)
+    body = _ok_body_ko("Et")
+    result = precheck_inmail(body, profile_name=MESERET, channel="linkedin_rps")
+    assert any("name" in s for s in result.stops)
+
+
+def test_codexv1_two_char_hangul_containment_still_matches() -> None:
+    """한글 2자 이름 포함 일치('민수'⊂'김민수')는 유지 — 과잉 차단 금지."""
+    assert greeting_matches_profile("안녕하세요 민수님,", "김민수")
+
+
+def test_codexv1_whitespace_split_call_request_stops() -> None:
+    """[HIGH] '전 화'·'통 화' 공백 삽입 우회 차단."""
+    body = _ok_body_ko("Meseret") + "\n5분만 전 화 가능하실까요?"
+    result = precheck_inmail(body, profile_name=MESERET, channel="linkedin_rps")
+    assert any("call_request" in s for s in result.stops)
+
+
+def test_codexv1_ps_cta_missing_stops() -> None:
+    """[MED] P.S. 인입 CTA(R21) 부재 → STOP (Movensys 결함 ③ 나머지 절반)."""
+    body = _ok_body_ko("Meseret").replace(PS_CTA, "")
+    result = precheck_inmail(body, profile_name=MESERET, channel="linkedin_rps")
+    assert not result.ok
+    assert any("ps_cta" in s for s in result.stops)
+
+
+def test_codexv1_korean_body_for_english_profile_warns() -> None:
+    """[MED] 영문 프로필 + 한국어 본문 → language_mismatch 경고(보고 후 진행)."""
+    result = precheck_inmail(_ok_body_ko("Meseret"), profile_name=MESERET, channel="linkedin_rps")
+    assert result.ok, "언어 규칙은 STOP 이 아니라 보고(warning)"
+    assert any("language" in w for w in result.warnings)
+
+
+def test_codexv1_english_body_with_korean_greeting_and_ps_no_warning() -> None:
+    """영문 본문 + 한국어 인사말/P.S.(허용 예외)는 경고 없음."""
+    body = "\n".join(
+        [
+            "안녕하세요 Meseret님,",
+            "",
+            "I am Sangmo Kang, a headhunter at Valueconnect, a tech search firm.",
+            "I reviewed your robotics background and one thing stood out to me.",
+            "",
+            "[Role]",
+            "· Develop robotics motion-control software",
+            "",
+            VERIFIED_PULL_EN,
+            "",
+            "Thank you — Sangmo Kang",
+            "",
+            PS_CTA,
+        ]
+    )
+    result = precheck_inmail(body, profile_name=MESERET, channel="linkedin_rps")
+    assert result.ok, result.stops
+    assert not any("language" in w for w in result.warnings)
+
+
+def test_codexv1_single_jamo_stops_spec_locked() -> None:
+    """[LOW] 단독 자모('ㄱ 항목')도 STOP — 문서·코드 합의를 코드 기준(보수)으로 고정."""
+    body = _ok_body_ko("Meseret") + "\nㄱ 항목"
+    result = precheck_inmail(body, profile_name=MESERET, channel="linkedin_rps")
+    assert any("jamo" in s for s in result.stops)
+
+
 # ── cli: SKILL 이 호출하는 실제 진입점 ────────────────────────────
 def test_cli_exit_codes(tmp_path: Path) -> None:
     good = tmp_path / "good.txt"
