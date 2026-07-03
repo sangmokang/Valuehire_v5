@@ -1,0 +1,32 @@
+{
+  "piece": "PC-E1",
+  "slug": "anti-bot-pacing",
+  "title": "봇방지 페이싱 primitive (harvest_policy 결정론 간격·지터·최대단계 캡, SOT22 단일 출처)",
+  "branch": "task/anti-bot-pacing",
+  "date": "2026-07-03",
+  "acceptance_criterion": "harvest_policy 순수함수가 docs/sot/22의 delay 상수(random_delay_between_keywords_ms 20000~60000·short_delay_ms 2000~5000·keyword_limit_per_run)를 읽어 결정론 간격/지터/최대단계 캡을 반환하고, 무한재시도 방지·채널별 간격 경계를 테스트로 단언; verify.sh exit 0.",
+  "implementation": "tools/multi_position_sourcing/harvest_policy.py 확장 — pacing_bounds_ms(SOT22 channels.linkedin.bot_protection 읽기)·deterministic_delay_ms(결정론 지터, hash 비의존 32bit 믹서)·max_keyword_steps(keyword_limit_per_run 캡)·should_continue_pacing(step>=cap 정지)",
+  "tests": "tests/test_anti_bot_pacing.py (10개)",
+  "reuse": "신규 (harvest_policy.py 확장, SOT22 delay 상수 읽기). SOT5 단일 출처 — PC-B5·C3·D2a·F4a 가 재사용 예정 seam.",
+  "gates": {
+    "G_self_mutation": {
+      "verdict": "PASS",
+      "evidence": "자가 뮤테이션 M1~M4 + 하드코딩 뮤턴트 전부 test caught: M1(지터 제거→항상 lo, 2 failed), M2(캡 <→<=, 2 failed), M3(max_keyword_steps 하드코딩 999, 1 failed), M4(bounds min/max 스왑, 4 failed), M5(SOT조회 제거+같은값 하드코딩 → test_bounds_actually_read_from_sot_file_not_hardcoded 가 1 failed)."
+    },
+    "V1_codex": {
+      "verdict": "PASS",
+      "rounds": 3,
+      "evidence": "codex:rescue. 1차 FAIL: 테스트가 'SOT를 실제로 읽는지' 강제 못함 — SOT조회 제거+같은값 하드코딩 뮤턴트가 9개 테스트 생존(SOT5 이중정의 미차단). → _SOT22_PATH monkeypatch 로 다른값(111/222·33/44·9) 임시파일 주입해 함수가 그 값 반환하는지 단언하는 테스트 추가. 2차 환경차단(샌드박스 워크트리 쓰기 불가)→3차 /private/tmp 복사본에서 재현: 하드코딩 뮤턴트 RED((20000,60000)==(111,222) 실패) 확인 + 결정론(PYTHONHASHSEED 0/1 동일 시퀀스) 확인 → PASS."
+    },
+    "V2_reset_claude": {
+      "verdict": "PASS",
+      "evidence": "리셋 Claude(code-reviewer) 6개 확인점 PASS. 결정론(PYTHONHASHSEED 0/12345/99999 3프로세스 동일 시퀀스, _mix 는 hash() 미사용 고정상수 산술), 경계안전(음수 seed/step·극값 모두 [min,max] 안, span<=0 short-circuit), 캡 off-by-one 정확(step<cap), SOT5 단일출처(20000/60000/2000/5000 하드코딩 0건 grep), 테스트 견고, 고아 정당(seam). V1 지적 구멍은 이후 테스트 추가로 봉인(V2 시점엔 미지적, V1이 잡음)."
+    },
+    "T_full_suite": {
+      "verdict": "PASS",
+      "evidence": "verify.sh 인터프리터 .venv/bin/python 로 전체 pytest: 862 passed, 3 xfailed, 5 subtests passed (baseline + 신규 10). 회귀 0."
+    }
+  },
+  "orphan_check": "pacing 함수 4종의 프로덕션 소비자는 아직 없음(harvest_policy·테스트 외 import 0건 grep). SOT5 명시대로 PC-B5·C3·D2a·F4a 가 재사용할 blocking primitive seam. 순수·무상태라 소비자 전 존재 무해.",
+  "residual_risk": "SOT22 는 linkedin.bot_protection 경로만 delay 상수를 갖는다(사람인/잡코리아 portal delay 는 humansearch.config portal_delay_ms 별도) — 본 primitive 는 SOT22 linkedin 값(between_keywords 20-60s·short 2-5s)을 단일출처로 제공. 라이브 루프 배선(seed 주입·delay 적용)은 재사용 조각(PC-B5/C3/D2a/F4a)에서. 하드코딩 이중정의 구멍은 V1 지적으로 monkeypatch 테스트 봉인."
+}
