@@ -99,7 +99,6 @@ _CHALLENGE_TOKENS: tuple[str, ...] = (
     "only one session",
     "enterprise-authentication",
     "/uas/login",
-    "login-cap",
     "protechts",
 )
 
