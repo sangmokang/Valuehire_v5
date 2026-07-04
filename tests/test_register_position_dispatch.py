@@ -118,5 +118,19 @@ class RegisterPositionDispatchTests(unittest.TestCase):
         self.assertFalse(outcome.external_posting_sent)
 
 
+class DispatchWiredIntoDemoTests(unittest.TestCase):
+    """R4 배선 — 디스패처가 dry_run 데모 엔트리에서 실제 호출됨(고아 아님)."""
+
+    def test_dry_run_payload_dispatches_register_position(self) -> None:
+        from tools.multi_position_sourcing.dry_run import build_dry_run_payload
+
+        payload = build_dry_run_payload()
+        demo = payload["sample_register_position_dispatch"]
+        self.assertTrue(demo["dispatched"])
+        self.assertFalse(demo["external_posting_sent"])  # SOT3
+        self.assertFalse(demo["secret_emitted"])
+        self.assertEqual(demo["destination_list_id"], FY26_CLIENTS_POSITION_LIST_ID)
+
+
 if __name__ == "__main__":
     unittest.main()
