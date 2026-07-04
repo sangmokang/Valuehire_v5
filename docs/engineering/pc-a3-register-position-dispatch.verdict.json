@@ -24,10 +24,20 @@
   },
   "failed_attempts": [],
   "v1": {
-    "author": "codex-rescue (독립 세션)",
-    "verdict": "PENDING",
-    "findings": null
+    "author": "fresh Claude 서브에이전트(별도 컨텍스트, agentId a4c0bc13f31dab84a) — Codex 환경상 미실행(sandbox 'Operation not permitted') 대체(매트릭스: 기타→Claude fresh 허용)",
+    "verdict": "PASS",
+    "source_jsonl": "tasks/a4c0bc13f31dab84a.output",
+    "checks_reproduced": [
+      "AUTH 우회 매트릭스 7케이스(미등록 DM·빈 목록·allow_dm=False·guild 없음·allowlist 없음·채널불일치·역할없음) — spy register_position 0회(전부 fail-closed, 게이트 약화 없음)",
+      "정확히 1회 — 인가 정상 1회, url+text 동시도 1회(url 우선)",
+      "SOT3 — 신규파일·dry_run 변경에 send/network/outreach 표면 없음, external_posting_sent/secret_emitted 전 경로 False, dry_run 기본 True",
+      "message construction — 공백-only text→빈 메시지→should_route False→0 디스패치(우회 없음)",
+      "R4 고아 — dry_run.py:125 실호출, build_dry_run_payload()['sample_register_position_dispatch']=dispatched True/external False/dest 901814621569",
+      "뮤테이션 3종(인가검사 제거·명령검사 제거·목적지 변경) 각각 테스트 1개 깸",
+      "순환 import 없음, tests 6 passed, verify.sh exit 0 971 passed"
+    ],
+    "findings": "인스코프 결함 0(PASS). 인가 우회·SOT3 발송 없음 확인 — 생성자 자기 스윕(8케이스 clean)과 독립 재현 일치."
   },
-  "three_way_agree": "N/A (L2 — V1 PASS 로 충분)",
-  "status": "진행중 — V1(codex) 판정 대기"
+  "three_way_agree": "G(자기 mutation 3종 + 인가우회 8케이스 clean) + V1(fresh Claude 독립, 동일 결과 PASS) 수렴. Codex는 환경상 실행 불가라 fresh Claude 로 대체(별 컨텍스트·원본대화 미공유 독립성 성립). L2 기준 충족.",
+  "status": "GREEN — G + V1(독립) PASS, 인가 우회 없음·SOT3 유지·고아 해소(dry_run 실배선). verify.sh exit 0(971 passed, 4 xfailed). 배송 준비 완료."
 }
