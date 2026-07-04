@@ -95,6 +95,42 @@ def _resolve(value: object) -> object:
     )
 
 
+def _record_success_and_save(
+    found: tuple[object, ...],
+    *,
+    save_rail: SaveRail,
+    base: dict,
+) -> tuple[int, int, dict]:
+    """found 를 무조건 저장 시도하고 (saved_here, dropped_here, log_record) 를 돌려준다.
+
+    sync ``run_harvest_cycle`` 과 async ``arun_harvest_cycle`` 이 공유(SOT5 단일출처) — 두 사이클이
+    로그/저장/fail-closed 의미론에서 드리프트하지 않도록 여기 한 곳에서만 정의한다.
+    """
+    saved_here = 0
+    save_error = ""
+    for profile in found:
+        try:
+            save_rail(profile)
+        except Exception as exc:
+            save_error = f"{type(exc).__name__}: archiver save failed"
+            break
+        saved_here += 1
+
+    if save_error:
+        dropped_here = len(found) - saved_here
+        record = make_reservoir_log_record(
+            **base, in_count=len(found), out_count=saved_here,
+            dropped_count=dropped_here, status="fail", fail_reason=save_error,
+        )
+        return saved_here, dropped_here, record
+
+    record = make_reservoir_log_record(
+        **base, in_count=len(found), out_count=len(found),
+        dropped_count=0, status="ok",
+    )
+    return saved_here, 0, record
+
+
 def run_harvest_cycle(
     queue: Iterable[HarvestItem],
     *,
@@ -154,37 +190,105 @@ def run_harvest_cycle(
             )
             continue
 
-        # 발견 프로필을 무조건 저장(차감0). save_rail(아카이버 쓰기)이 터져도 fail-closed —
-        # 예외를 새지 않고 빠진 건수+이유를 로그로 남긴다(조용한 실패 금지).
-        saved_here = 0
-        save_error = ""
-        for profile in found:
-            try:
-                save_rail(profile)
-            except Exception as exc:
-                save_error = f"{type(exc).__name__}: archiver save failed"
-                break
-            saved_here += 1
-
+        saved_here, dropped_here, record = _record_success_and_save(
+            found, save_rail=save_rail, base=base,
+        )
         saved_profiles += saved_here
-        if save_error:
-            dropped_here = len(found) - saved_here
-            dropped += dropped_here
+        dropped += dropped_here
+        records.append(record)
+        if record["status"] == "ok":
+            searched.append((item.segment_id, item.channel))
+
+    for record in records:
+        validate_reservoir_log_record(record)
+        if log_root is not None:
+            append_reservoir_log(record, root=log_root, today=today)
+
+    return HarvestCycleSummary(
+        searched=tuple(searched),
+        saved_profiles=saved_profiles,
+        dropped=dropped,
+        stopped_reasons=tuple(stopped),
+        log_records=tuple(records),
+    )
+
+
+async def _aresolve(value: object) -> object:
+    """arun_harvest_cycle 용 — execute_item 결과가 코루틴이면 직접 await, 아니면 그대로.
+
+    ``_resolve``(sync) 와 달리 실행중 루프 걱정이 없다(우리 자체가 이미 async). 이래서
+    BUG-HARVEST-ASYNC 를 구조적으로 우회한다 — sync 판처럼 ``asyncio.run`` 을 호출하지 않는다.
+    """
+    if asyncio.iscoroutine(value):
+        return await value
+    return value
+
+
+async def arun_harvest_cycle(
+    queue: Iterable[HarvestItem],
+    *,
+    execute_item: ExecuteHarvestItem,
+    save_rail: SaveRail,
+    run_id: str,
+    today: str,
+    owner_activity_detected: bool = False,
+    log_root: object | None = None,
+) -> HarvestCycleSummary:
+    """``run_harvest_cycle`` 의 async 판(PC-D2b) — 실행중 이벤트루프 안에서도 async execute_item 을
+    직접 await 한다(BUG-HARVEST-ASYNC 우회, ``test_harvest_resolve_loop.py`` 의 sync 케이스와 대비).
+
+    로그/저장/fail-closed 의미론은 ``_record_success_and_save`` 로 sync 판과 공유(SOT5 단일출처,
+    드리프트 방지). R4 owner-activity skip 과 execute_item 예외 fail-closed 는 sync 판과 동일하다.
+    """
+    ts = utc_now_iso()
+    searched: list[tuple[str, str]] = []
+    saved_profiles = 0
+    dropped = 0
+    stopped: list[str] = []
+    records: list[dict] = []
+
+    for item in queue:
+        base = dict(
+            ts=ts,
+            run_id=run_id,
+            machine=item.machine,
+            segment_id=item.segment_id,
+            site=item.channel,
+            line="harvest",
+        )
+
+        if worker_should_yield(owner_activity_detected=owner_activity_detected):
+            reason = "owner activity detected (R4 yield)"
             records.append(
                 make_reservoir_log_record(
-                    **base, in_count=len(found), out_count=saved_here,
-                    dropped_count=dropped_here, status="fail", fail_reason=save_error,
+                    **base, in_count=0, out_count=0, dropped_count=0,
+                    status="skip", fail_reason=reason,
+                )
+            )
+            if reason not in stopped:
+                stopped.append(reason)
+            continue
+
+        try:
+            found = tuple(await _aresolve(execute_item(item)))
+        except Exception as exc:  # fail-closed: 조용히 넘기지 않는다.
+            reason = f"{type(exc).__name__}: harvest search failed"
+            records.append(
+                make_reservoir_log_record(
+                    **base, in_count=0, out_count=0, dropped_count=0,
+                    status="fail", fail_reason=reason,
                 )
             )
             continue
 
-        searched.append((item.segment_id, item.channel))
-        records.append(
-            make_reservoir_log_record(
-                **base, in_count=len(found), out_count=len(found),
-                dropped_count=0, status="ok",
-            )
+        saved_here, dropped_here, record = _record_success_and_save(
+            found, save_rail=save_rail, base=base,
         )
+        saved_profiles += saved_here
+        dropped += dropped_here
+        records.append(record)
+        if record["status"] == "ok":
+            searched.append((item.segment_id, item.channel))
 
     for record in records:
         validate_reservoir_log_record(record)

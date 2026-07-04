@@ -313,6 +313,10 @@ class AsyncHarvestCycleParityTests(unittest.TestCase):
         self.assertEqual(len(saved), 5)
         self.assertEqual(summary.saved_profiles, 5)
         self.assertEqual(summary.dropped, 0)
+        # ok 인 항목만 searched 에 기록(fail 이 섞였을 때 오탐 방지 회귀).
+        self.assertEqual(
+            set(summary.searched), {("it_ai_data", "saramin"), ("it_ai_data", "jobkorea")}
+        )
         for rec in summary.log_records:
             validate_reservoir_log_record(rec)
             self.assertEqual(rec["line"], "harvest")
@@ -355,6 +359,7 @@ class AsyncHarvestCycleParityTests(unittest.TestCase):
 
         summary = asyncio.run(run())
         self.assertEqual(summary.saved_profiles, 0)
+        self.assertEqual(summary.searched, ())  # fail 은 searched 에 기록되면 안 된다
         fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
         self.assertTrue(fail_recs)
         for r in fail_recs:
@@ -386,6 +391,8 @@ class AsyncHarvestCycleParityTests(unittest.TestCase):
         summary = asyncio.run(run())
         fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
         self.assertTrue(fail_recs)
+        # saramin(1번째 아이템)만 저장 실패 → fail. jobkorea(2번째)는 성공 → searched 에 그것만.
+        self.assertEqual(summary.searched, (("it_ai_data", "jobkorea"),))
         for r in fail_recs:
             self.assertTrue(r["fail_reason"])
             self.assertGreater(r["dropped_count"], 0)
@@ -412,8 +419,9 @@ class AsyncHarvestCycleParityTests(unittest.TestCase):
             )
 
         summary = asyncio.run(outer())
-        self.assertEqual(summary.saved_profiles, 2)
-        self.assertEqual(saved, ["prof-a", "prof-b"])
+        # queue = ("it_ai_data" × 2 사이트[사람인·잡코리아]) → execute_item 2회 × 2건 = 4건.
+        self.assertEqual(summary.saved_profiles, 4)
+        self.assertEqual(saved, ["prof-a", "prof-b", "prof-a", "prof-b"])
 
 
 if __name__ == "__main__":
