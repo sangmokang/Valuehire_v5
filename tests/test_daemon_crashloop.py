@@ -7,7 +7,9 @@ REPO_DIR 이 Desktop 하드코딩이었던 시절에는:
 이 테스트는 셸 스크립트 실제 동작(subprocess)과 plist 실제 내용을 직접 관측한다 —
 파이썬으로 로직을 재구현해 단언하지 않는다(구현 베끼기 회피).
 """
+import os
 import plistlib
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -29,6 +31,7 @@ def test_invalid_repo_dir_does_not_crash_exit_immediately():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
     try:
         time.sleep(1.2)
@@ -37,7 +40,9 @@ def test_invalid_repo_dir_does_not_crash_exit_immediately():
             "crash-exit 버그가 재발했습니다."
         )
     finally:
-        proc.kill()
+        # sleep(30) 자식이 stderr 파이프를 물고 있어 zsh 부모만 kill 하면 communicate()가
+        # 자식 종료까지 블록된다 — 프로세스 그룹 전체를 죽여야 파이프가 닫힌다.
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         _, stderr = proc.communicate(timeout=5)
         assert "REPO_DIR" in stderr
         assert "ERROR" in stderr.upper()
