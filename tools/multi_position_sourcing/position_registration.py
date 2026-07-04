@@ -109,7 +109,7 @@ def build_registration_body(recognition: PostingRecognition) -> str:
 # 부정 lookahead 로 제외한다. 나머지 마커는 현실 JD 에서 오탐 위험이 낮아 단순 포함으로 둔다.
 _EMPLOYMENT_TYPE_PATTERNS: tuple[tuple["re.Pattern[str]", str], ...] = (
     (re.compile(r"계약직(?!무)"), "계약직"),
-    (re.compile(r"기간제(?!한)"), "기간제"),
+    (re.compile(r"기간제(?![한도])"), "기간제"),
     (re.compile(r"파견"), "파견"),
     (re.compile(r"도급"), "도급"),
     (re.compile(r"인턴"), "인턴"),

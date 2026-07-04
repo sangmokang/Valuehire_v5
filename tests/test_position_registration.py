@@ -676,7 +676,12 @@ class PositionCustomFieldsTests(unittest.TestCase):
 
     def test_employment_no_false_positive_on_compound_words(self) -> None:
         # codex V1 결함1: 부분문자열 오탐 — '기간제한'·'계약직무'는 고용형태 언급 아님 → 정규직.
-        for jd in ("지원 기간제한 없음", "계약직무 경험 우대", "계약 직접 관리 업무"):
+        for jd in (
+            "지원 기간제한 없음",
+            "기간제도 운영 경험",
+            "계약직무 경험 우대",
+            "계약 직접 관리 업무",
+        ):
             with self.subTest(jd=jd):
                 self.assertEqual(
                     build_position_custom_fields(self._rec(jd_text=jd))["employment_type"],
