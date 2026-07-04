@@ -5,7 +5,11 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .access import discord_dm_routing_guard, load_authorized_discord_users
+from .access import (
+    DiscordAuthorizedUser,
+    discord_dm_routing_guard,
+    load_authorized_discord_users,
+)
 from .clickup_activity import format_clickup_activity_comment
 from .dedup import canonical_profile_url
 from .discord_briefing import format_discord_candidate_briefing
@@ -25,7 +29,11 @@ from .models import QueueItem, utc_now_iso
 from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
 from .portal_worker import DEFAULT_PROFILE_ROOT
 from .posting_models import ExistingPositionTask, FetchResult
-from .position_registration import run_position_registration
+from .position_registration import (
+    FY26_CLIENTS_POSITION_LIST_ID,
+    run_position_registration,
+)
+from .register_position_dispatch import dispatch_register_position
 from .queue_runner import run_queue_cycle
 from .rps_switch import rps_in_use
 from .request_parser import (
@@ -94,6 +102,39 @@ def _ordered_unique_channels(keyword_plan) -> tuple[str, ...]:
         if session.channel not in seen:
             seen.append(session.channel)
     return tuple(seen)
+
+
+def _sample_register_position_dispatch_demo() -> dict[str, object]:
+    """PC-A3 end-to-end 데모 — 인가 DM register-position 인보케이션을 등록 흐름으로 디스패치.
+
+    dry_run=True 라 부작용/발송 없음(SOT3). A-레인(A0 목적지 seam→A1 FY26 배선→A2a 필드→A3 디스패치)이
+    데모 엔트리에서 실제로 도달함을 증명한다(고아 아님·R4). 자립형(외부 파일 비의존)."""
+    demo_user = DiscordAuthorizedUser(
+        name="Owner", alias="owner", email="", discord_id="834330913469890570"
+    )
+    invocation = DiscordInvocation(
+        user_id=demo_user.discord_id,
+        channel_id="",
+        command_name="register-position",
+        is_dm=True,
+        invocation_kind="slash",
+        guild_id="",
+        member_role_ids=(),
+        options={"url": "https://www.wanted.co.kr/wd/363433"},
+    )
+    outcome = dispatch_register_position(
+        invocation,
+        authorized_users=[demo_user],
+        config=DiscordAccessConfig(allow_dm=True),
+        dry_run=True,
+    )
+    return {
+        "dispatched": outcome is not None,
+        "status": outcome.status if outcome is not None else "not_dispatched",
+        "external_posting_sent": bool(outcome is not None and outcome.external_posting_sent),
+        "secret_emitted": bool(outcome is not None and outcome.secret_emitted),
+        "destination_list_id": FY26_CLIENTS_POSITION_LIST_ID,
+    }
 
 
 def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, object]:
@@ -188,6 +229,7 @@ def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, o
         "sample_position_registration_execution": asdict(
             _sample_position_registration_outcome()
         ),
+        "sample_register_position_dispatch": _sample_register_position_dispatch_demo(),
         "sample_discord_position_registration_routing": {
             "registration": asdict(
                 parse_discord_position_registration_request(
