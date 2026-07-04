@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 from pathlib import Path
@@ -33,6 +34,7 @@ from tools.multi_position_sourcing.harvest_policy import (
 )
 from tools.multi_position_sourcing.harvest_runner import (
     HarvestItem,
+    arun_harvest_cycle,
     build_harvest_queue,
     run_harvest_cycle,
 )
@@ -242,6 +244,7 @@ class HarvestQueueTests(unittest.TestCase):
             today="2026-06-12",
         )
         self.assertEqual(summary.saved_profiles, 0)
+        self.assertEqual(summary.searched, ())  # fail 은 searched 에 기록되면 안 된다(sync 도 동일)
         fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
         self.assertTrue(fail_recs)
         for r in fail_recs:
@@ -271,6 +274,9 @@ class HarvestQueueTests(unittest.TestCase):
         )
         fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
         self.assertTrue(fail_recs)
+        # saramin(1번째 아이템)만 저장 실패 → fail. jobkorea(2번째)는 성공 → searched 에 그것만
+        # (fail 항목이 searched 로 새는 회귀 방지, sync 판 — V2 적대검증 지적 봉인).
+        self.assertEqual(summary.searched, (("it_ai_data", "jobkorea"),))
         for r in fail_recs:
             self.assertTrue(r["fail_reason"])
             self.assertGreater(r["dropped_count"], 0)  # 빠진 건수를 반드시 남긴다
@@ -278,6 +284,148 @@ class HarvestQueueTests(unittest.TestCase):
         self.assertGreater(summary.dropped, 0)
         # 모든 경계에 로그 1줄(아이템 수만큼) — 저장 실패해도 로그 누락 없음.
         self.assertEqual(len(summary.log_records), len(queue))
+
+
+# ----------------------------------------------------------------------------
+# PC-D2b — arun_harvest_cycle 은 sync run_harvest_cycle 과 의미론이 드리프트하면 안 된다
+# (로그/저장/fail-closed 공유 헬퍼 단일출처, SOT5). 같은 시나리오를 async 경로로 반복.
+# ----------------------------------------------------------------------------
+class AsyncHarvestCycleParityTests(unittest.TestCase):
+    def test_arun_harvest_cycle_saves_every_found_profile_unconditionally(self) -> None:
+        active = ("macmini",)
+        queue = build_harvest_queue(("it_ai_data",), machines=active)
+        found = {
+            ("it_ai_data", "saramin"): ("p1", "p2", "p3"),
+            ("it_ai_data", "jobkorea"): ("p4", "p5"),
+        }
+
+        async def execute_item(item: HarvestItem):
+            return found[(item.segment_id, item.channel)]
+
+        saved: list[str] = []
+
+        async def run():
+            return await arun_harvest_cycle(
+                queue,
+                execute_item=execute_item,
+                save_rail=saved.append,
+                run_id="arun-1",
+                today="2026-07-04",
+            )
+
+        summary = asyncio.run(run())
+        self.assertEqual(len(saved), 5)
+        self.assertEqual(summary.saved_profiles, 5)
+        self.assertEqual(summary.dropped, 0)
+        # ok 인 항목만 searched 에 기록(fail 이 섞였을 때 오탐 방지 회귀).
+        self.assertEqual(
+            set(summary.searched), {("it_ai_data", "saramin"), ("it_ai_data", "jobkorea")}
+        )
+        for rec in summary.log_records:
+            validate_reservoir_log_record(rec)
+            self.assertEqual(rec["line"], "harvest")
+            self.assertEqual(rec["run_id"], "arun-1")
+
+    def test_arun_harvest_cycle_skips_when_owner_activity(self) -> None:
+        queue = build_harvest_queue(("it_ai_data",), machines=("macbook",))
+
+        async def execute_item(item):  # pragma: no cover
+            raise AssertionError("must not search while owner present (R4)")
+
+        async def run():
+            return await arun_harvest_cycle(
+                queue,
+                execute_item=execute_item,
+                save_rail=lambda p: None,
+                run_id="arun-2",
+                today="2026-07-04",
+                owner_activity_detected=True,
+            )
+
+        summary = asyncio.run(run())
+        self.assertEqual(summary.saved_profiles, 0)
+        self.assertTrue(all(r["status"] == "skip" for r in summary.log_records))
+
+    def test_arun_harvest_cycle_fail_closed_on_execute_item_exception(self) -> None:
+        queue = build_harvest_queue(("it_ai_data",), machines=("macmini",))
+
+        async def execute_item(item):
+            raise RuntimeError("portal selector failed")
+
+        async def run():
+            return await arun_harvest_cycle(
+                queue,
+                execute_item=execute_item,
+                save_rail=lambda p: None,
+                run_id="arun-3",
+                today="2026-07-04",
+            )
+
+        summary = asyncio.run(run())
+        self.assertEqual(summary.saved_profiles, 0)
+        self.assertEqual(summary.searched, ())  # fail 은 searched 에 기록되면 안 된다
+        fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
+        self.assertTrue(fail_recs)
+        for r in fail_recs:
+            self.assertTrue(r["fail_reason"])
+            validate_reservoir_log_record(r)
+
+    def test_arun_harvest_cycle_fail_closed_when_save_rail_raises(self) -> None:
+        queue = build_harvest_queue(("it_ai_data",), machines=("macmini",))
+
+        async def execute_item(item):
+            return ("p1", "p2", "p3")
+
+        calls = {"n": 0}
+
+        def save_rail(profile):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("archiver write failed")
+
+        async def run():
+            return await arun_harvest_cycle(
+                queue,
+                execute_item=execute_item,
+                save_rail=save_rail,
+                run_id="arun-4",
+                today="2026-07-04",
+            )
+
+        summary = asyncio.run(run())
+        fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
+        self.assertTrue(fail_recs)
+        # saramin(1번째 아이템)만 저장 실패 → fail. jobkorea(2번째)는 성공 → searched 에 그것만.
+        self.assertEqual(summary.searched, (("it_ai_data", "jobkorea"),))
+        for r in fail_recs:
+            self.assertTrue(r["fail_reason"])
+            self.assertGreater(r["dropped_count"], 0)
+            validate_reservoir_log_record(r)
+        self.assertGreater(summary.dropped, 0)
+        self.assertEqual(len(summary.log_records), len(queue))
+
+    def test_arun_harvest_cycle_awaits_async_executor_within_running_loop(self) -> None:
+        """이게 sync run_harvest_cycle 과의 핵심 차이(BUG-HARVEST-ASYNC 우회)."""
+        queue = build_harvest_queue(("it_ai_data",), machines=("macmini",))
+
+        async def execute_item(item):
+            return ("prof-a", "prof-b")
+
+        saved: list[str] = []
+
+        async def outer():
+            return await arun_harvest_cycle(
+                queue,
+                execute_item=execute_item,
+                save_rail=saved.append,
+                run_id="arun-5",
+                today="2026-07-04",
+            )
+
+        summary = asyncio.run(outer())
+        # queue = ("it_ai_data" × 2 사이트[사람인·잡코리아]) → execute_item 2회 × 2건 = 4건.
+        self.assertEqual(summary.saved_profiles, 4)
+        self.assertEqual(saved, ["prof-a", "prof-b", "prof-a", "prof-b"])
 
 
 if __name__ == "__main__":
