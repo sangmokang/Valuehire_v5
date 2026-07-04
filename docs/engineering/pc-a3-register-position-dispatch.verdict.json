@@ -1,0 +1,33 @@
+{
+  "claim_id": "pc-a3-register-position-dispatch",
+  "backlog_id": "PC-A3",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "author": "claude (this session)",
+    "claim": "dispatch_register_position 이 인가 통과한 register-position 인보케이션을 등록 흐름으로 정확히 1회 디스패치(route_discord_invocation 인가 재사용 → parse_discord_position_registration_request → run_position_registration, 목적지 FY26ClientsPosition 기본). external_posting_sent=False·secret_emitted=False 유지(SOT3, 발송 없음). 미인가/타명령/무포지션은 디스패치 안 함(None). 기존 3모듈 조합만(신규 로직 없음·SOT5). dry_run 데모에 배선해 고아 아님(R4).",
+    "changed_files": [
+      "tools/multi_position_sourcing/register_position_dispatch.py (신규)",
+      "tools/multi_position_sourcing/dry_run.py (데모 배선)",
+      "tests/test_register_position_dispatch.py (신규)"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "970 passed, 4 xfailed, 14 subtests passed exit 0",
+    "red_evidence": "RED 커밋: ModuleNotFoundError: No module named 'tools.multi_position_sourcing.register_position_dispatch'.",
+    "mutation_evidence": [
+      "Mutant A (인가검사 'if not decision.allowed: return None' 제거) -> test_unauthorized_user_does_not_dispatch FAIL — 물림(인가 우회 차단됨)",
+      "Mutant B (명령검사 제거) -> test_wrong_command_does_not_dispatch FAIL — 물림",
+      "Mutant C (목적지 기본 FY26->'000') -> test_authorized...exactly_once FAIL — 물림"
+    ],
+    "live_evidence": "고아 아님 — dispatch_register_position 호출부 grep: dry_run.py:125(build_dry_run_payload). 데모 실행값: {dispatched:true, status:skipped(데모에 fetcher 없음), external_posting_sent:false, secret_emitted:false, destination_list_id:901814621569}. 라이브 Discord 봇 리스너는 저장소에 아직 없음 — dry_run 이 현 유일 라우팅 엔트리."
+  },
+  "failed_attempts": [],
+  "v1": {
+    "author": "codex-rescue (독립 세션)",
+    "verdict": "PENDING",
+    "findings": null
+  },
+  "three_way_agree": "N/A (L2 — V1 PASS 로 충분)",
+  "status": "진행중 — V1(codex) 판정 대기"
+}
