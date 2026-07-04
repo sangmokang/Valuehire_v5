@@ -19,6 +19,7 @@ artifacts/
 # .claude 는 스킬·커맨드 정본만 추적 — 개인 설정·런타임 상태는 제외 (2026-07-03 사장님 지시)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/skills/**/.omc/
 logs/
 .playwright-mcp/
 captures/
