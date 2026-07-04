@@ -9,6 +9,7 @@ REPO_DIR 이 Desktop 하드코딩이었던 시절에는:
 """
 import os
 import plistlib
+import shutil
 import signal
 import stat
 import subprocess
@@ -22,11 +23,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "valuehire-search-loop.sh"
 PLIST = REPO_ROOT / "scripts" / "launchd" / "com.valuehire.search-runner.plist"
 
+ZSH = shutil.which("zsh")
+requires_zsh = pytest.mark.skipif(
+    ZSH is None, reason="이 launchd 데몬 스크립트는 macOS zsh 전용 — zsh 없는 환경(예: Linux CI)에서는 skip"
+)
 
+
+@requires_zsh
 def test_invalid_repo_dir_does_not_crash_exit_immediately():
     """무효 REPO_DIR 을 줘도 즉시 crash-exit 하지 않아야 한다 (fail-soft)."""
     proc = subprocess.Popen(
-        ["/bin/zsh", str(SCRIPT)],
+        [ZSH, str(SCRIPT)],
         env={
             "VALUEHIRE_REPO_DIR": "/nonexistent/path/for/pc-k6-test",
             "VALUEHIRE_SEARCH_RETRY_BACKOFF_SECONDS": "30",
@@ -52,6 +59,7 @@ def test_invalid_repo_dir_does_not_crash_exit_immediately():
         assert "ERROR" in stderr.upper()
 
 
+@requires_zsh
 def test_invalid_repo_dir_retry_honors_backoff_interval():
     """RETRY_BACKOFF_SECONDS 를 무시한 busy-retry(무한 즉시재시도)가 아님을 확인한다.
 
@@ -61,7 +69,7 @@ def test_invalid_repo_dir_retry_honors_backoff_interval():
     """
     backoff = 1
     proc = subprocess.Popen(
-        ["/bin/zsh", str(SCRIPT)],
+        [ZSH, str(SCRIPT)],
         env={
             "VALUEHIRE_REPO_DIR": "/nonexistent/path/for/pc-k6-test",
             "VALUEHIRE_SEARCH_RETRY_BACKOFF_SECONDS": str(backoff),
@@ -86,6 +94,7 @@ def test_invalid_repo_dir_retry_honors_backoff_interval():
     )
 
 
+@requires_zsh
 def test_artifact_dir_prepare_failure_fails_soft_not_silently():
     """V1(Codex) 지적: REPO_DIR 은 유효해도 ARTIFACT_DIR/LOG_DIR 준비(mkdir)나
     cd 자체가 실패하면(예: 권한 문제) `set -e` 없이 조용히 다음 명령으로 넘어가
@@ -97,7 +106,7 @@ def test_artifact_dir_prepare_failure_fails_soft_not_silently():
     os.chmod(readonly_parent, stat.S_IRUSR | stat.S_IXUSR)  # r-x, 쓰기 불가
     try:
         proc = subprocess.Popen(
-            ["/bin/zsh", str(SCRIPT)],
+            [ZSH, str(SCRIPT)],
             env={
                 "VALUEHIRE_REPO_DIR": str(REPO_ROOT),
                 "VALUEHIRE_ARTIFACT_DIR": f"{readonly_parent}/artifacts",
@@ -131,10 +140,11 @@ def test_no_desktop_literal_in_search_loop_script():
     assert "Desktop/Valuehire_v5" not in content
 
 
+@requires_zsh
 def test_repo_dir_self_derives_to_actual_checkout():
     """REPO_DIR 미지정 시 스크립트 자기 위치 기반으로 실제 repo 를 가리켜야 한다."""
     proc = subprocess.run(
-        ["/bin/zsh", str(SCRIPT)],
+        [ZSH, str(SCRIPT)],
         env={
             "VALUEHIRE_SEARCH_LOOP_PRINT_REPO_DIR": "1",
             "PATH": "/usr/bin:/bin",
@@ -168,4 +178,12 @@ def test_plist_has_no_desktop_literal_and_program_path_exists():
 
     program_args = data["ProgramArguments"]
     script_path = next(a for a in program_args if a.endswith(".sh"))
-    assert Path(script_path).exists(), f"ProgramArguments 스크립트가 실존하지 않음: {script_path}"
+    # plist 의 절대경로는 실제 배포 머신 기준이라 CI 체크아웃 경로·워크트리 경로와 다를 수
+    # 있고, 병합 전에는 그 절대경로의 실제 파일이 아직 이전 버전일 수도 있다(머신 상태이지
+    # 이 커밋의 코드가 아님) — 그래서 절대경로 존재/내용 대조에는 의존하지 않는다.
+    # 구조적으로 scripts/valuehire-search-loop.sh 를 가리키고, 그 스크립트가 이 레포에
+    # 실존하는지만 검증한다.
+    assert script_path.endswith("scripts/valuehire-search-loop.sh"), (
+        f"ProgramArguments 가 기대한 스크립트를 가리키지 않음: {script_path}"
+    )
+    assert SCRIPT.exists(), f"레포에 스크립트가 실존하지 않음: {SCRIPT}"
