@@ -16,6 +16,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "valuehire-search-loop.sh"
 PLIST = REPO_ROOT / "scripts" / "launchd" / "com.valuehire.search-runner.plist"
@@ -88,7 +90,10 @@ def test_artifact_dir_prepare_failure_fails_soft_not_silently():
     """V1(Codex) 지적: REPO_DIR 은 유효해도 ARTIFACT_DIR/LOG_DIR 준비(mkdir)나
     cd 자체가 실패하면(예: 권한 문제) `set -e` 없이 조용히 다음 명령으로 넘어가
     잘못된 경로에서 계속 도는 회귀가 있었다 — fail-soft 로그로 걸러야 한다."""
-    readonly_parent = tempfile.mkdtemp(prefix="pc-k6-readonly-")
+    try:
+        readonly_parent = tempfile.mkdtemp(prefix="pc-k6-readonly-")
+    except OSError as exc:
+        pytest.skip(f"이 환경엔 쓰기 가능한 임시 디렉터리가 없음(제한된 샌드박스): {exc}")
     os.chmod(readonly_parent, stat.S_IRUSR | stat.S_IXUSR)  # r-x, 쓰기 불가
     try:
         proc = subprocess.Popen(
