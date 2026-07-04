@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Callable, Optional, Protocol, Sequence
 
 from tools.multi_position_sourcing.posting_extractor import extract_posting
@@ -25,6 +27,10 @@ ImageDownloader = Callable[[tuple[str, ...], str], tuple[str, ...]]
 VisionAnalyzer = Callable[[tuple[str, ...]], VisionAnalysis]
 ClickUpSearch = Callable[[PostingRecognition], Sequence[ExistingPositionTask]]
 ClickUpCreateComment = Callable[[str, str], str]
+# 근무지 유추 어댑터 — (company, jd_text) -> 근무지 문자열. 프로덕션은 WebSearch 로 회사
+# 본사/근무지를 유추하는 얇은 읽기전용 어댑터(발송 아님·SOT3), 테스트는 페이크 리졸버 주입.
+# 순수 매퍼(build_position_custom_fields)는 이 리졸버를 통해서만 네트워크에 닿는다(부작용 격리).
+WorkLocationResolver = Callable[[str, str], str]
 
 
 class ClickUpCreateTask(Protocol):
@@ -95,6 +101,82 @@ def build_registration_body(recognition: PostingRecognition) -> str:
             lines.append(f"- {path}")
 
     return "\n".join(lines)
+
+
+# 명시적 비정규 고용형태 마커 — jd_text 에 있으면 그 유형, 하나도 없으면 "정규직"(사장님 규칙).
+# 순서 = 우선순위(먼저 매칭된 것 채택). "비정규"는 구체 유형 불명이라 마지막.
+# 부분문자열 오탐 차단(codex V1): '계약직무'(직무)·'기간제한'(제한)은 고용형태 언급이 아니므로
+# 부정 lookahead 로 제외한다. 나머지 마커는 현실 JD 에서 오탐 위험이 낮아 단순 포함으로 둔다.
+_EMPLOYMENT_TYPE_PATTERNS: tuple[tuple["re.Pattern[str]", str], ...] = (
+    (re.compile(r"계약직(?!무)"), "계약직"),
+    (re.compile(r"기간제(?![한도])"), "기간제"),
+    (re.compile(r"파견"), "파견"),
+    (re.compile(r"도급"), "도급"),
+    (re.compile(r"인턴"), "인턴"),
+    (re.compile(r"프리랜서"), "프리랜서"),
+    (re.compile(r"아르바이트|알바"), "아르바이트"),
+    (re.compile(r"위촉"), "위촉"),
+    (re.compile(r"비정규"), "비정규직"),
+)
+
+_WORK_LOCATION_UNKNOWN = "미상"
+
+
+def _derive_employment_type(jd_text: str) -> str:
+    """JD 본문에서 고용형태를 파생 — 명시적 비정규 마커가 있으면 그 유형, 없으면 "정규직".
+
+    사장님 규칙(2026-07-04): JD에 고용형태 언급이 전혀 없으면 무조건 정규직. 순수 파생(네트워크 없음).
+
+    정규화: 제로폭/포맷 문자(category Cf)를 매칭 전에 제거해 '계​약직' 같은 삽입 우회를 막는다.
+    단 공백은 collapse 하지 않는다 — '계약 직접'→'계약직접' 같은 새 오탐이 생기기 때문(codex V1 결함1과
+    같은 실수 방지). 공백 난독('계 약 직')은 이 조각에서 열어둔다(정규직 기본, 사람 검수 backstop·SOT3).
+    """
+    text = "".join(ch for ch in (jd_text or "") if unicodedata.category(ch) != "Cf")
+    for pattern, label in _EMPLOYMENT_TYPE_PATTERNS:
+        if pattern.search(text):
+            return label
+    return "정규직"
+
+
+def build_position_custom_fields(
+    recognition: PostingRecognition,
+    *,
+    location_resolver: Optional[WorkLocationResolver] = None,
+    segment: str = "",
+) -> dict[str, str]:
+    """포지션 등록 커스텀필드 산출 — 회사·직무·segment·원본URL·고용형태·근무지 (순수).
+
+    - 회사·직무·원본URL: recognition 필드에서 그대로(양끝 공백 제거).
+    - 고용형태: jd_text 에서 파생, 언급 없으면 "정규직"(사장님 규칙).
+    - 근무지: 주입한 location_resolver(웹서치 어댑터)로 유추. 리졸버 없음/공허/예외 → "미상"
+      (fail-closed — 임의 값 지어내지 않고, 근무지 유추 실패가 등록 전체를 깨지 않게 격리).
+    - segment: status(segment) 값. 이 조각에선 선택 주입(빈 기본) — 13 status→segment 전면
+      매핑은 범위 밖(SOT5, segments.py 재사용은 후속).
+    - 연봉(salary_raw)은 포지션 등록 본문 밖(사장님 결정) — 여기서 명명하지 않는다.
+    """
+    company = (recognition.company or "").strip()
+    role = (recognition.role or "").strip()
+    source_url = (recognition.source_url or "").strip()
+    employment_type = _derive_employment_type(recognition.jd_text or "")
+
+    work_location = ""
+    if location_resolver is not None:
+        try:
+            work_location = (location_resolver(company, recognition.jd_text or "") or "").strip()
+        except Exception:
+            # 근무지 유추 실패(웹서치 down 등)는 fail-closed — 등록을 깨지 않고 "미상".
+            work_location = ""
+    if not work_location:
+        work_location = _WORK_LOCATION_UNKNOWN
+
+    return {
+        "company": company,
+        "role": role,
+        "segment": segment,
+        "source_url": source_url,
+        "employment_type": employment_type,
+        "work_location": work_location,
+    }
 
 
 def _skipped(reason: str, *, dry_run: bool, recognition: Optional[PostingRecognition] = None) -> RegistrationOutcome:

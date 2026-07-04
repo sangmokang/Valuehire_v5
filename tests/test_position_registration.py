@@ -13,6 +13,7 @@ from tools.multi_position_sourcing.request_parser import (
 )
 from tools.multi_position_sourcing.position_registration import (
     FY26_CLIENTS_POSITION_LIST_ID,
+    build_position_custom_fields,
     build_registration_body,
     build_task_title,
     run_position_registration,
@@ -630,6 +631,121 @@ class PcA1LiveWriteFy26DestinationTests(unittest.TestCase):
         )
         self.assertEqual(outcome.status, "linked")
         self.assertEqual(len(create_task.calls), 0)  # type: ignore[attr-defined]
+
+
+class PositionCustomFieldsTests(unittest.TestCase):
+    """PC-A2a — 등록 커스텀필드 매퍼(순수). 고용형태 정규직 기본 + 근무지 주입 리졸버."""
+
+    def _rec(self, **kw):
+        from tools.multi_position_sourcing.posting_models import PostingRecognition
+
+        base = dict(
+            is_job_posting=True,
+            source_url="https://www.wanted.co.kr/wd/363433",
+            recognition_mode="text",
+            company="Acme",
+            role="Backend Engineer",
+            jd_text="",
+        )
+        base.update(kw)
+        return PostingRecognition(**base)
+
+    def test_basic_fields_mapped_from_recognition(self) -> None:
+        fields = build_position_custom_fields(self._rec(jd_text="백엔드 채용"))
+        self.assertEqual(fields["company"], "Acme")
+        self.assertEqual(fields["role"], "Backend Engineer")
+        self.assertEqual(fields["source_url"], "https://www.wanted.co.kr/wd/363433")
+
+    def test_employment_type_defaults_to_regular_when_unmentioned(self) -> None:
+        # 사장님 규칙: JD에 고용형태 언급이 없으면 무조건 정규직.
+        fields = build_position_custom_fields(self._rec(jd_text="주요업무: 백엔드 API 설계·운영"))
+        self.assertEqual(fields["employment_type"], "정규직")
+
+    def test_employment_type_detects_explicit_markers(self) -> None:
+        cases = {
+            "계약직 6개월": "계약직",
+            "인턴 채용": "인턴",
+            "파견 근무": "파견",
+            "프리랜서 협업": "프리랜서",
+            "기간제 근로": "기간제",
+        }
+        for jd, expected in cases.items():
+            with self.subTest(jd=jd):
+                fields = build_position_custom_fields(self._rec(jd_text=jd))
+                self.assertEqual(fields["employment_type"], expected)
+
+    def test_employment_no_false_positive_on_compound_words(self) -> None:
+        # codex V1 결함1: 부분문자열 오탐 — '기간제한'·'계약직무'는 고용형태 언급 아님 → 정규직.
+        for jd in (
+            "지원 기간제한 없음",
+            "기간제도 운영 경험",
+            "계약직무 경험 우대",
+            "계약 직접 관리 업무",
+        ):
+            with self.subTest(jd=jd):
+                self.assertEqual(
+                    build_position_custom_fields(self._rec(jd_text=jd))["employment_type"],
+                    "정규직",
+                )
+
+    def test_employment_zero_width_still_detected(self) -> None:
+        # codex V1 결함2a: 제로폭 삽입 우회 — strip 후 계약직 정탐.
+        self.assertEqual(
+            build_position_custom_fields(self._rec(jd_text="고용형태: 계​약직"))[
+                "employment_type"
+            ],
+            "계약직",
+        )
+
+    @unittest.expectedFailure
+    def test_employment_whitespace_obfuscation_known_open(self) -> None:
+        # codex V1 결함2b(알려진 미해결): '계 약 직' 공백 난독. 공백 collapse 로 풀면 '계약 직접'→
+        # '계약직접' 오탐이 더 나빠지므로 이 조각에선 열어둔다(정규직 기본, 사람 검수 backstop·SOT3).
+        self.assertEqual(
+            build_position_custom_fields(self._rec(jd_text="고용형태: 계 약 직"))[
+                "employment_type"
+            ],
+            "계약직",
+        )
+
+    def test_work_location_from_injected_resolver(self) -> None:
+        # 근무지는 웹서치 리졸버(주입)로 유추 — 매퍼는 순수, 검색은 주입 어댑터.
+        fields = build_position_custom_fields(
+            self._rec(), location_resolver=lambda company, jd: "서울 강남"
+        )
+        self.assertEqual(fields["work_location"], "서울 강남")
+
+    def test_work_location_fail_closed_to_unknown(self) -> None:
+        # 리졸버 없음/공허/예외 → "미상"(임의값 지어내지 않음, fail-closed).
+        self.assertEqual(build_position_custom_fields(self._rec())["work_location"], "미상")
+        self.assertEqual(
+            build_position_custom_fields(
+                self._rec(), location_resolver=lambda company, jd: "  "
+            )["work_location"],
+            "미상",
+        )
+
+        def boom(company: str, jd: str) -> str:
+            raise RuntimeError("web search down")
+
+        self.assertEqual(
+            build_position_custom_fields(self._rec(), location_resolver=boom)["work_location"],
+            "미상",
+        )
+
+    def test_segment_optional_passthrough(self) -> None:
+        # status(segment)는 이 조각에서 선택 주입(빈 기본). 13 status→segment 전면해결은 밖.
+        self.assertEqual(build_position_custom_fields(self._rec())["segment"], "")
+        self.assertEqual(
+            build_position_custom_fields(self._rec(), segment="engineering")["segment"],
+            "engineering",
+        )
+
+    def test_no_salary_field(self) -> None:
+        # SOT5: 연봉(salary_raw)은 포지션 등록 본문 밖(사장님 결정) — 명명 충돌 제거.
+        fields = build_position_custom_fields(self._rec())
+        self.assertNotIn("salary_raw", fields)
+        self.assertNotIn("salary", fields)
 
 
 class SafetyTests(unittest.TestCase):

@@ -1,0 +1,47 @@
+{
+  "claim_id": "pc-a2a-position-customfields",
+  "backlog_id": "PC-A2a",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "author": "claude (this session)",
+    "claim": "build_position_custom_fields(recognition, *, location_resolver=None, segment='') 순수 매퍼가 회사·직무·segment·원본URL·고용형태·근무지 커스텀필드를 산출. 고용형태는 jd_text 파생(비정규 마커 없으면 '정규직', 사장님 규칙). 근무지는 주입형 WorkLocationResolver(웹서치 어댑터)로 유추하되 리졸버 없음/공허/예외 → '미상' fail-closed. segment 선택 주입(빈 기본). salary_raw 명명 없음(SOT5). 부작용 없음(순수).",
+    "changed_files": [
+      "tools/multi_position_sourcing/position_registration.py",
+      "tests/test_position_registration.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "938 passed, 4 xfailed, 14 subtests passed (V1 수정 반영 후) exit 0",
+    "red_evidence": "RED 커밋: ImportError: cannot import name 'build_position_custom_fields' (매퍼 도입 전 collection 실패).",
+    "mutation_evidence": [
+      "Mutant A (고용형태 기본 '정규직'->'계약직') -> test_employment_type_defaults_to_regular_when_unmentioned FAIL — 물림",
+      "Mutant B (근무지 fail-closed 제거, 빈값 유지) -> test_work_location_fail_closed_to_unknown FAIL — 물림",
+      "Mutant C (마커매칭 반전 'in'->'not in') -> test_employment_type_detects_explicit_markers 6 subtests FAIL — 물림"
+    ],
+    "design_decisions_from_owner": "2026-07-04 사장님: (1) 고용형태 = JD 언급 없으면 무조건 정규직. (2) 근무지 = 웹서치 유추(단 순수 매퍼 밖 주입 어댑터). 반영 완료.",
+    "orphan_status": "의도된 staged seam — build_position_custom_fields 소비자는 통합테스트(now) + PC-A2b(부모-자식 payload)·PC-A3(디스패처)·실제 ClickUp write(예정). 실제 WebSearch 근무지 어댑터도 후속(읽기전용·SOT3). 현재 프로덕션 write 경로 미배선(A-레인 seam)."
+  },
+  "failed_attempts": [],
+  "v1": {
+    "author": "codex-rescue (독립 세션, agentId a4dd1520628617d8f, Codex job task-mr5ltj7b-mfjcx1)",
+    "verdict": "FAIL",
+    "source_jsonl": "tasks/a4dd1520628617d8f.output + codex_a2a_result.txt",
+    "note_codex_model_blocked": "Codex CLI 모델은 이 샌드박스에서 'failed to initialize in-process app-server client: Operation not permitted'로 모델 verdict 미생성. 대신 forwarder가 직접 python 재현으로 결함 제시 → 내가 T로 독립 재현 확인(아래).",
+    "findings": [
+      "결함1(real, in-scope): 고용형태 부분문자열 오탐 — 'if marker in text'가 '기간제한'(제한)→기간제, '계약직무'(직무)→계약직 로 오분류. 고용형태 언급 없는데 비정규로 새어 사장님 규칙(언급없음→정규직) 위반. 내 재현 일치.",
+      "결함2(real, in-scope): 우회 미탐 — '계\\u200b약직'(제로폭)·'계 약 직'(공백) → 정규직으로 놓침.",
+      "PASS 확인된 것: 정규직 명시·비정규직·정규직전환형계약직·리졸버 None/공허/예외→미상·키집합·salary 없음·recognition 불변·고아(테스트만 소비) — 모두 정상."
+    ],
+    "my_independent_repro": "PYTHONPATH=. .venv/bin/python -c 로 _derive_employment_type 직접 호출: '지원 기간제한 없음'→기간제, '계약직무 경험 우대'→계약직, '계\\u200b약직'→정규직 재현(V1 일치)."
+  },
+  "post_v1_fixes": {
+    "결함1_부분문자열오탐": "regex 부정 lookahead — 계약직(?!무)·기간제(?![한도]). RED(2 subtests)→GREEN. Mutant E(lookahead 제거) caught.",
+    "결함2a_제로폭": "매칭 전 category Cf 제거(strip). RED→GREEN. Mutant D(strip 제거) caught.",
+    "결함2b_공백난독_미해결": "'계 약 직'은 열어둠(xfail test_employment_whitespace_obfuscation_known_open). 이유: 공백 collapse 로 풀면 '계약 직접'→'계약직접' 새 오탐이 생겨 더 나빠짐(결함1과 동류). 정규직 기본 + 사람 검수(SOT3) backstop.",
+    "proactive_추가발견": "자기적대 스윕에서 '기간제도'(제도) 추가 오탐 발견 → (?![한도])로 봉인·테스트 추가.",
+    "known_limitations": "부정문('도급 아님'·'위촉 아님')은 negation 파싱 필요 — 별개 클래스, 이 조각 밖(현실 JD 희소 + 사람검수). 매처는 best-effort, 최종 목적지는 사람이 검토하는 ClickUp 필드(SOT3)."
+  },
+  "three_way_agree": "V1 FAIL → 결함 T 독립재현 → 수정(RED→GREEN + mutation) → 재검증 exit 0. Codex 모델은 환경상 재-attack 불가(sandbox block) — 대신 G 자기적대 스윕으로 추가 오탐까지 선제 봉인. L2 기준 충족.",
+  "status": "GREEN — G(mutation 5종: A~C + D 제로폭 + E lookahead 사살) + V1 결함2건 재현·수정·봉인 + 자기적대 추가 1건 봉인. verify.sh exit 0(938 passed, 4 xfailed). 배송 준비 완료."
+}
