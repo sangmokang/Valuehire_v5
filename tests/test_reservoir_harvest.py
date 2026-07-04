@@ -244,6 +244,7 @@ class HarvestQueueTests(unittest.TestCase):
             today="2026-06-12",
         )
         self.assertEqual(summary.saved_profiles, 0)
+        self.assertEqual(summary.searched, ())  # fail 은 searched 에 기록되면 안 된다(sync 도 동일)
         fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
         self.assertTrue(fail_recs)
         for r in fail_recs:
@@ -273,6 +274,9 @@ class HarvestQueueTests(unittest.TestCase):
         )
         fail_recs = [r for r in summary.log_records if r["status"] == "fail"]
         self.assertTrue(fail_recs)
+        # saramin(1번째 아이템)만 저장 실패 → fail. jobkorea(2번째)는 성공 → searched 에 그것만
+        # (fail 항목이 searched 로 새는 회귀 방지, sync 판 — V2 적대검증 지적 봉인).
+        self.assertEqual(summary.searched, (("it_ai_data", "jobkorea"),))
         for r in fail_recs:
             self.assertTrue(r["fail_reason"])
             self.assertGreater(r["dropped_count"], 0)  # 빠진 건수를 반드시 남긴다
