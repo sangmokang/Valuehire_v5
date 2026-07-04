@@ -1,0 +1,72 @@
+{
+  "claim_id": "reservoir-harvest-driver",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal_doc": "docs/engineering/reservoir-harvest-driver-goal-2026-07-04.md",
+  "backlog_ref": "docs/engineering/valuehire-pipeline-consolidation-backlog-2026-07-01.json#PC-D2b",
+  "generator": {
+    "claim": "PC-D2b 상시 Harvest 드라이버(라이브 사이클 경로) 구현 완료. harvest_runner.arun_harvest_cycle(async, BUG-HARVEST-ASYNC 우회) + harvest_driver.py(resolve_repo_dir/decide_tick/drive_cycle_once/main CLI) 신규. 로그/저장/fail-closed 는 _record_success_and_save 로 sync/async 단일출처 공유.",
+    "changed_files": [
+      "tools/multi_position_sourcing/harvest_runner.py",
+      "tools/multi_position_sourcing/harvest_driver.py",
+      "tests/test_harvest_driver.py",
+      "tests/test_reservoir_harvest.py",
+      "docs/engineering/reservoir-harvest-driver-goal-2026-07-04.md"
+    ],
+    "command": "cd /Users/kangsangmo/Valuehire_v5-reservoir-harvest-driver && PYTHONSAFEPATH=1 PYTHONPATH=. /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "artifact": "954 passed, 3 xfailed, 5 subtests passed (baseline before this task: 929 passed, 3 xfailed)",
+    "self_mutation": [
+      {"target": "decide_tick 반전(run=True/False 스왑)", "result": "caught — 12/20 parametrized grid 케이스 실패"},
+      {"target": "CLI 기본 owner-check 무력화(항상 skip)", "result": "caught — test_main_default_owner_check_on_yields_when_detected 실패"},
+      {"target": "resolve_repo_dir() parents[2]→parents[1] 얕은경로", "result": "caught — test_resolve_repo_dir_is_current_checkout 실패"},
+      {"target": "arun_harvest_cycle 의 'status==ok 만 searched' 게이트 제거", "result": "초기 caught 안 됨(async 전용 assertion 부재) → 테스트 보강 후 caught"}
+    ],
+    "live_evidence": "이 조각은 CLI 진입점 자체가 엔트리(harvest_driver.main, __main__ 가드). 프로덕션 launchd 배선(valuehire-search-loop.sh 교체)은 goal 문서 비범위(PC-K6) — grep 결과 harvest_driver 참조는 자기자신+goal문서뿐, 고아 아니라 명시적 staged seam."
+  },
+  "v1": {
+    "verdict": "PASS",
+    "tool": "Codex (codex:codex-rescue, fresh session)",
+    "agentId": "ae829dc3e974ab659",
+    "source_output": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/9cb9d6ec-2bf8-4299-86e6-2a0acf1b3521/tasks/ae829dc3e974ab659.output",
+    "commit_checked": "11a6372 (V2 수정 커밋 a4b1673 이전 — 독립 실행, 재확인 불필요한 별개 결함)",
+    "repro": "전체 스위트 953 passed/1 failed/3 xfailed(샌드박스 profile-lock 무관 실패, VALUEHIRE_PORTAL_PROFILE_ROOT 재지정 후 954 passed/3 xfailed 재현) + PC-D2b 포커스 스위트 60 passed. mutation 3종(CLI owner-check 반전·sync R4 반전·async R4 반전) 전부 caught.",
+    "findings": "결함 없음. sync/async 의미론 일치, CLI 기본 owner-check ON, resolve_repo_dir 파일위치파생만, decide_tick=not compute_yield_decision 델리게이션 확인, 배선상태(staged seam, PC-K6 비범위) 확인.",
+    "worktree_side_effect": "원본 워크트리 미변경 확인(clone/copy 로 독립 작업, 종료 시 git status --short 로 clean 재확인)"
+  },
+  "v2": {
+    "verdict": "FAIL → 수정 후 재검증 PASS",
+    "tool": "Claude reset subagent (general-purpose, no prior context)",
+    "agentId": "ab75412c22b7c5f74",
+    "source_output": "/private/tmp/claude-501/-Users-kangsangmo-Valuehire-v5/9cb9d6ec-2bf8-4299-86e6-2a0acf1b3521/tasks/ab75412c22b7c5f74.output",
+    "what_v1_missed": "V1(Codex)은 sync run_harvest_cycle 의 'status==ok 만 searched 에 기록' 게이트를 직접 뮤테이션하지 않았다(async 판만 확인) — V2 가 sync 판을 별도로 뮤테이션해 966개 전체 스위트가 그 뮤턴트를 못 잡는 것을 발견.",
+    "confirmed_finding": "tools/multi_position_sourcing/harvest_runner.py, run_harvest_cycle(sync) 의 `if record[\"status\"] == \"ok\": searched.append(...)` — 무조건 append 로 뮤테이션해도 954 passed 그대로(생존). 원인: 새 회귀단언(tests/test_reservoir_harvest.py 316-318, 362, 395)이 AsyncHarvestCycleParityTests 에만 추가되고 기존 sync 테스트(233행·253행)엔 summary.searched 단언이 전혀 없었음.",
+    "independent_repro": "mutate sync 'if status==ok' → always-append, PYTHONPATH=. pytest tests/ -q → 954 passed 그대로(미검출) 재현 확인 후 원복(git diff clean).",
+    "fix_applied": "commit a4b1673 — test_harvest_cycle_fail_closed_records_drop_and_reason 에 summary.searched==() 단언, test_harvest_cycle_fail_closed_when_save_rail_raises 에 summary.searched==(('it_ai_data','jobkorea'),) 단언 추가(sync 판, async 와 대칭).",
+    "post_fix_repro": "동일 뮤턴트 재적용 → test_harvest_cycle_fail_closed_when_save_rail_raises 실패(AssertionError, tuple 불일치) 확인 → caught. 원복 후 전체 954 passed, 3 xfailed 복귀."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "arun_harvest_cycle 을 sync run_harvest_cycle 복붙으로 작성",
+      "root_cause": "복붙 시 로그/저장/fail-closed 로직이 두 곳에 중복되어 향후 드리프트 위험(goal 문서 스스로 이 위험을 '적대검증 정조준'에 명시)",
+      "repro": "N/A — 작성 전에 goal 문서 자체가 이 위험을 지적해 선제 대응(구현 전 회수)",
+      "next_change": "_record_success_and_save 헬퍼로 저장/로그 로직을 추출해 sync/async 양쪽이 공유하도록 리팩터 — SOT5 단일출처"
+    },
+    {
+      "attempt": "V2 사후 검증에서 sync searched 게이트 뮤턴트 미검출 발견",
+      "root_cause": "새 회귀단언을 async 전용 테스트 클래스에만 추가하고 대칭적으로 기존 sync 테스트에는 추가하지 않음(비대칭 커버리지)",
+      "repro": "sync 'if status==ok' 뮤테이션 → 954 passed 그대로 (검출 안 됨)",
+      "next_change": "기존 sync 테스트 2곳에 동일한 summary.searched 단언 추가(비대칭 해소) — commit a4b1673"
+    }
+  ],
+  "three_way_agreement_table": [
+    {"axis": "sync/async 의미론 일치(_record_success_and_save 공유)", "G": "PASS", "V1": "PASS", "V2": "PASS(수정 후)"},
+    {"axis": "CLI 기본 owner-check ON(--skip-owner-check 없으면)", "G": "PASS", "V1": "PASS", "V2": "PASS"},
+    {"axis": "resolve_repo_dir 파일위치파생만(env/HOME/Desktop 미참조)", "G": "PASS", "V1": "PASS", "V2": "PASS"},
+    {"axis": "decide_tick == not compute_yield_decision(단일출처)", "G": "PASS", "V1": "PASS", "V2": "PASS"},
+    {"axis": "sync searched 게이트 회귀테스트 존재", "G": "최초 없음(고아 assertion)", "V1": "미점검(async만 확인)", "V2": "FAIL 적발→수정 요구"},
+    {"axis": "고아/배선(harvest_driver 는 staged seam, PC-K6 가 launchd 배선)", "G": "PASS(goal문서 명시)", "V1": "PASS(grep 재확인)", "V2": "미점검(범위밖)"}
+  ],
+  "three_way_agree": true,
+  "status": "GREEN — 배송 대기(push→PR→merge)"
+}
