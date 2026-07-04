@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Callable, Optional, Protocol, Sequence
 
 from tools.multi_position_sourcing.posting_extractor import extract_posting
@@ -103,17 +105,18 @@ def build_registration_body(recognition: PostingRecognition) -> str:
 
 # 명시적 비정규 고용형태 마커 — jd_text 에 있으면 그 유형, 하나도 없으면 "정규직"(사장님 규칙).
 # 순서 = 우선순위(먼저 매칭된 것 채택). "비정규"는 구체 유형 불명이라 마지막.
-_EMPLOYMENT_TYPE_MARKERS: tuple[tuple[str, str], ...] = (
-    ("계약직", "계약직"),
-    ("기간제", "기간제"),
-    ("파견", "파견"),
-    ("도급", "도급"),
-    ("인턴", "인턴"),
-    ("프리랜서", "프리랜서"),
-    ("아르바이트", "아르바이트"),
-    ("알바", "아르바이트"),
-    ("위촉", "위촉"),
-    ("비정규", "비정규직"),
+# 부분문자열 오탐 차단(codex V1): '계약직무'(직무)·'기간제한'(제한)은 고용형태 언급이 아니므로
+# 부정 lookahead 로 제외한다. 나머지 마커는 현실 JD 에서 오탐 위험이 낮아 단순 포함으로 둔다.
+_EMPLOYMENT_TYPE_PATTERNS: tuple[tuple["re.Pattern[str]", str], ...] = (
+    (re.compile(r"계약직(?!무)"), "계약직"),
+    (re.compile(r"기간제(?!한)"), "기간제"),
+    (re.compile(r"파견"), "파견"),
+    (re.compile(r"도급"), "도급"),
+    (re.compile(r"인턴"), "인턴"),
+    (re.compile(r"프리랜서"), "프리랜서"),
+    (re.compile(r"아르바이트|알바"), "아르바이트"),
+    (re.compile(r"위촉"), "위촉"),
+    (re.compile(r"비정규"), "비정규직"),
 )
 
 _WORK_LOCATION_UNKNOWN = "미상"
@@ -123,10 +126,14 @@ def _derive_employment_type(jd_text: str) -> str:
     """JD 본문에서 고용형태를 파생 — 명시적 비정규 마커가 있으면 그 유형, 없으면 "정규직".
 
     사장님 규칙(2026-07-04): JD에 고용형태 언급이 전혀 없으면 무조건 정규직. 순수 파생(네트워크 없음).
+
+    정규화: 제로폭/포맷 문자(category Cf)를 매칭 전에 제거해 '계​약직' 같은 삽입 우회를 막는다.
+    단 공백은 collapse 하지 않는다 — '계약 직접'→'계약직접' 같은 새 오탐이 생기기 때문(codex V1 결함1과
+    같은 실수 방지). 공백 난독('계 약 직')은 이 조각에서 열어둔다(정규직 기본, 사람 검수 backstop·SOT3).
     """
-    text = jd_text or ""
-    for marker, label in _EMPLOYMENT_TYPE_MARKERS:
-        if marker in text:
+    text = "".join(ch for ch in (jd_text or "") if unicodedata.category(ch) != "Cf")
+    for pattern, label in _EMPLOYMENT_TYPE_PATTERNS:
+        if pattern.search(text):
             return label
     return "정규직"
 

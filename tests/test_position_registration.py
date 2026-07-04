@@ -674,6 +674,35 @@ class PositionCustomFieldsTests(unittest.TestCase):
                 fields = build_position_custom_fields(self._rec(jd_text=jd))
                 self.assertEqual(fields["employment_type"], expected)
 
+    def test_employment_no_false_positive_on_compound_words(self) -> None:
+        # codex V1 결함1: 부분문자열 오탐 — '기간제한'·'계약직무'는 고용형태 언급 아님 → 정규직.
+        for jd in ("지원 기간제한 없음", "계약직무 경험 우대", "계약 직접 관리 업무"):
+            with self.subTest(jd=jd):
+                self.assertEqual(
+                    build_position_custom_fields(self._rec(jd_text=jd))["employment_type"],
+                    "정규직",
+                )
+
+    def test_employment_zero_width_still_detected(self) -> None:
+        # codex V1 결함2a: 제로폭 삽입 우회 — strip 후 계약직 정탐.
+        self.assertEqual(
+            build_position_custom_fields(self._rec(jd_text="고용형태: 계​약직"))[
+                "employment_type"
+            ],
+            "계약직",
+        )
+
+    @unittest.expectedFailure
+    def test_employment_whitespace_obfuscation_known_open(self) -> None:
+        # codex V1 결함2b(알려진 미해결): '계 약 직' 공백 난독. 공백 collapse 로 풀면 '계약 직접'→
+        # '계약직접' 오탐이 더 나빠지므로 이 조각에선 열어둔다(정규직 기본, 사람 검수 backstop·SOT3).
+        self.assertEqual(
+            build_position_custom_fields(self._rec(jd_text="고용형태: 계 약 직"))[
+                "employment_type"
+            ],
+            "계약직",
+        )
+
     def test_work_location_from_injected_resolver(self) -> None:
         # 근무지는 웹서치 리졸버(주입)로 유추 — 매퍼는 순수, 검색은 주입 어댑터.
         fields = build_position_custom_fields(
