@@ -10,6 +10,8 @@
 - `tools/multi_position_sourcing/position_registration.py:57` — FY26ClientsPosition 리스트 ID 단일 상수는 `FY26_CLIENTS_POSITION_LIST_ID`다.
 - `tools/multi_position_sourcing/position_registration.py:296`-`399` — 등록 결과 타입은 `RegistrationOutcome`; 모든 등록 경로는 `external_posting_sent=False`, `secret_emitted=False`를 유지한다.
 - `tools/multi_position_sourcing/register_position_dispatch.py:37`-`45` — 기존 디스패처는 파서가 먹는 `"포지션 등록"` 메시지를 조립한다.
+- `docs/engineering/pc-a1-clickup-live-write.verdict.json:8` — 실제 ClickUp writer 없이 계약형 페이크로 목적지 배선만 검증된 상태다.
+- ClickUp 공식 문서(2026-07-05 확인): Create Task는 `POST https://api.clickup.com/api/v2/list/{list_id}/task`, Create Task Comment는 `POST https://api.clickup.com/api/v2/task/{task_id}/comment`, Get Tasks는 `GET https://api.clickup.com/api/v2/list/{list_id}/task`다.
 
 ## 근본 원인
 
@@ -21,6 +23,7 @@
 2. PI-2: `enqueue_position_followups(outcome, ...)`는 성공한 `RegistrationOutcome`에 대해 `url_presetting`, `jd_set_build` 두 작업만 큐에 기록한다. 같은 포지션을 2회 넣어도 큐는 2건이다. 실패/스킵 결과는 큐에 넣지 않는다.
 3. PI-3: `run_scheduled_position_intake(...)`는 고정 Gmail 검색 쿼리를 MCP 어댑터에 넘긴다. 자동 허용 또는 메시지별 승인 전에는 dry-run preview만 만들고 큐에 넣지 않는다. 승인 후에만 등록 결과로 후속 큐를 만든다.
 4. 후속 큐 소화는 사장님 크롬 점유 또는 채널 차단 신호에서 실행자 호출 0회로 멈춘다. 실제 `/url`/`jd builder` 실행은 주입형 executor에 맡기고, 자동 send 작업은 만들지 않는다.
+5. ClickUp REST 어댑터는 기존 `ClickUpCreateTask`/`ClickUpCreateComment`/`ClickUpSearch` 계약에 주입 가능해야 한다. 토큰은 환경변수에서만 읽고, Authorization 헤더에 raw token을 싣되 로그/예외/산출물에 노출하지 않는다. 테스트는 가짜 requester로 endpoint/body/header를 단언하고 실제 네트워크 write는 하지 않는다.
 
 ## 입력/출력 계약
 
@@ -29,11 +32,14 @@
 - 후속 큐 항목: `position_key`, `task`, `status`, `task_id`, `task_url`, `clickup_list_id`, `created_at`, `updated_at`, `dry_run`.
 - 후속 작업 task 값: `url_presetting | jd_set_build`만 허용한다.
 - 승인 상태 전이: `ignored` → `approval_required`(dry-run only) → `registered`(approved/auto) → `queued` → `done|blocked`.
+- ClickUp 어댑터 입력: `token: str`, `list_id: str`, `title: str`, `body: str`, `task_id: str`.
+- ClickUp 어댑터 출력: `create_task(title, body, list_id) -> (task_id, task_url)`, `create_comment(task_id, body) -> comment_id`, `search_existing_positions(recognition, list_id) -> tuple[ExistingPositionTask, ...]`.
 
 ## 비범위
 
 - Gmail OAuth 데몬 신규 구현.
 - 실제 Gmail 읽기, 실제 ClickUp 쓰기, 실제 `/url`/`jd builder` 실행.
+- 실제 ClickUp API 호출 실행. 이 조각은 어댑터 계약과 dry-run/가짜 requester 검증까지만 한다.
 - Discord/메일/LinkedIn/포털 발송 자동 클릭.
 - 기존 등록 파서 확장 또는 임의 포털 URL 등록 파서 확장(PC-A4 범위).
 
@@ -41,6 +47,7 @@
 
 - `make red-ledger`
 - focused: `.venv/bin/python -m pytest tests/test_position_intake_pipeline.py -q` (fallback: `python3 -m pytest ...`)
+- focused adapter: `python -m pytest tests/test_clickup_adapter.py -q`
 - full: `./verify.sh`
 
 ## SOT 체크리스트
