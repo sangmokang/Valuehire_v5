@@ -6,11 +6,19 @@ from pathlib import Path
 from typing import Any
 
 from .position_followups import (
+    build_followup_execution_request,
     enqueue_position_followups,
     load_followup_queue,
     write_followup_queue,
 )
 from .position_intake_email import build_registration_message_from_email
+from .position_intake_state import (
+    add_message_id,
+    load_intake_state,
+    message_id_in_state,
+    remove_message_id,
+    write_intake_state,
+)
 from .position_registration import (
     FY26_CLIENTS_POSITION_LIST_ID,
     RegistrationOutcome,
@@ -61,6 +69,7 @@ def run_position_intake_tick(
     emails: Iterable[IntakeEmail],
     register_position: RegisterPosition = run_position_registration,
     queue_path: str | Path | None = None,
+    state_path: str | Path | None = None,
     approved_message_ids: Sequence[str] = (),
     auto_registration_allowed: bool = False,
     owner_activity_detected: bool = False,
@@ -83,19 +92,49 @@ def run_position_intake_tick(
     deps = dict(registration_deps or {})
     events: list[dict[str, object]] = []
     enqueued_count = 0
+    state = load_intake_state(state_path) if state_path is not None else None
+    state_dirty = False
 
     for email in emails:
+        if state is not None and message_id_in_state(
+            state, "processed_message_ids", email.message_id
+        ):
+            events.append({"message_id": email.message_id, "status": "already_processed"})
+            continue
+
         registration_message = build_registration_message_from_email(email.subject, email.body)
         if not registration_message:
             events.append({"message_id": email.message_id, "status": "ignored", "reason": "not_position_email"})
+            if state is not None:
+                state_dirty = add_message_id(
+                    state, "processed_message_ids", email.message_id
+                ) or state_dirty
             continue
 
         parse_result = parse_discord_position_registration_request(registration_message)
         if not parse_result.should_route_to_registration:
             events.append({"message_id": email.message_id, "status": "ignored", "reason": parse_result.reason})
+            if state is not None:
+                state_dirty = add_message_id(
+                    state, "processed_message_ids", email.message_id
+                ) or state_dirty
             continue
 
         can_register = auto_registration_allowed or email.message_id in approved
+        if (
+            state is not None
+            and not can_register
+            and message_id_in_state(state, "pending_approval_message_ids", email.message_id)
+        ):
+            events.append(
+                {
+                    "message_id": email.message_id,
+                    "status": "approval_pending",
+                    "dry_run": True,
+                }
+            )
+            continue
+
         if not can_register:
             preview = _call_register(
                 register_position,
@@ -111,6 +150,10 @@ def run_position_intake_tick(
                     "dry_run": True,
                 }
             )
+            if state is not None:
+                state_dirty = add_message_id(
+                    state, "pending_approval_message_ids", email.message_id
+                ) or state_dirty
             continue
 
         outcome = _call_register(
@@ -132,7 +175,16 @@ def run_position_intake_tick(
                 "dry_run": False,
             }
         )
+        if state is not None and outcome.status in {"created", "linked"} and not outcome.dry_run:
+            state_dirty = add_message_id(
+                state, "processed_message_ids", email.message_id
+            ) or state_dirty
+            state_dirty = remove_message_id(
+                state, "pending_approval_message_ids", email.message_id
+            ) or state_dirty
 
+    if state is not None and state_dirty:
+        write_intake_state(state, state_path)
     return {"status": "ok", "events": events, "enqueued_count": enqueued_count}
 
 
@@ -141,6 +193,7 @@ def run_scheduled_position_intake(
     search_threads: SearchThreads,
     register_position: RegisterPosition = run_position_registration,
     queue_path: str | Path | None = None,
+    state_path: str | Path | None = None,
     approved_message_ids: Sequence[str] = (),
     auto_registration_allowed: bool = False,
     owner_activity_detected: bool = False,
@@ -158,6 +211,7 @@ def run_scheduled_position_intake(
         emails=emails,
         register_position=register_position,
         queue_path=queue_path,
+        state_path=state_path,
         approved_message_ids=approved_message_ids,
         auto_registration_allowed=auto_registration_allowed,
         owner_activity_detected=owner_activity_detected,
@@ -196,7 +250,7 @@ def drain_position_followups(
         if item.get("status") != "pending":
             continue
         try:
-            result = execute_followup(dict(item))
+            result = execute_followup(build_followup_execution_request(dict(item)))
         except Exception as exc:
             item["status"] = "blocked"
             item["blocked_reason"] = str(exc)

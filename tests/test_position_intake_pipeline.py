@@ -331,6 +331,104 @@ class PositionIntakeRunnerTests(unittest.TestCase):
         self.assertEqual(result["executed_count"], 0)
         self.assertEqual([item["status"] for item in queue], ["blocked", "pending"])
 
+    def test_intake_state_suppresses_repeated_pending_and_processed_mail(self) -> None:
+        from tools.multi_position_sourcing.position_followups import load_followup_queue
+        from tools.multi_position_sourcing.position_intake_runner import (
+            IntakeEmail,
+            run_position_intake_tick,
+        )
+        from tools.multi_position_sourcing.position_intake_state import load_intake_state
+
+        register_calls: list[bool] = []
+
+        def register_position(_parse_result, **kwargs):
+            register_calls.append(kwargs["dry_run"])
+            return RegistrationOutcome(
+                status="created",
+                is_new_task=True,
+                reason="created",
+                task_id="86state",
+                task_url="https://app.clickup.com/t/86state",
+                dry_run=kwargs["dry_run"],
+            )
+
+        email = IntakeEmail(message_id="msg-state", subject="JD 공유", body=LONG_JD_BODY)
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "state.json"
+            queue_path = Path(tmp) / "followups.json"
+
+            first = run_position_intake_tick(
+                emails=(email,),
+                register_position=register_position,
+                queue_path=queue_path,
+                state_path=state_path,
+            )
+            second = run_position_intake_tick(
+                emails=(email,),
+                register_position=register_position,
+                queue_path=queue_path,
+                state_path=state_path,
+            )
+            approved = run_position_intake_tick(
+                emails=(email,),
+                register_position=register_position,
+                queue_path=queue_path,
+                state_path=state_path,
+                approved_message_ids=("msg-state",),
+                now_iso="2026-07-05T00:04:00Z",
+            )
+            fourth = run_position_intake_tick(
+                emails=(email,),
+                register_position=register_position,
+                queue_path=queue_path,
+                state_path=state_path,
+                approved_message_ids=("msg-state",),
+            )
+            state = load_intake_state(state_path)
+            queue = load_followup_queue(queue_path)
+
+        self.assertEqual(register_calls, [True, False])
+        self.assertEqual(first["events"][0]["status"], "approval_required")
+        self.assertEqual(second["events"][0]["status"], "approval_pending")
+        self.assertEqual(approved["events"][0]["status"], "registered")
+        self.assertEqual(fourth["events"][0]["status"], "already_processed")
+        self.assertEqual(state["processed_message_ids"], ["msg-state"])
+        self.assertEqual(state["pending_approval_message_ids"], [])
+        self.assertEqual(len(queue), 2)
+
+    def test_followup_drain_builds_url_and_jd_builder_commands_without_send(self) -> None:
+        from tools.multi_position_sourcing.position_followups import enqueue_position_followups
+        from tools.multi_position_sourcing.position_intake_runner import drain_position_followups
+
+        with tempfile.TemporaryDirectory() as tmp:
+            queue_path = Path(tmp) / "followups.json"
+            enqueue_position_followups(
+                RegistrationOutcome(
+                    status="created",
+                    is_new_task=True,
+                    reason="created",
+                    task_id="86commands",
+                    task_url="https://app.clickup.com/t/86commands",
+                    dry_run=False,
+                ),
+                queue_path=queue_path,
+            )
+            requests: list[dict[str, object]] = []
+
+            result = drain_position_followups(
+                queue_path=queue_path,
+                execute_followup=lambda request: requests.append(request) or {"ok": True},
+            )
+
+        self.assertEqual(result["executed_count"], 2)
+        self.assertEqual([request["prompt"] for request in requests], [
+            "/url https://app.clickup.com/t/86commands",
+            "jd builder https://app.clickup.com/t/86commands",
+        ])
+        self.assertEqual({request["send_allowed"] for request in requests}, {False})
+        self.assertNotIn("send_clicked", json.dumps(requests, ensure_ascii=False).lower())
+        self.assertNotIn("outreach", json.dumps(requests, ensure_ascii=False).lower())
+
     def test_dry_run_payload_wires_position_intake_pipeline_demo(self) -> None:
         from tools.multi_position_sourcing.dry_run import build_dry_run_payload
 
@@ -338,6 +436,10 @@ class PositionIntakeRunnerTests(unittest.TestCase):
         demo = payload["sample_position_intake_pipeline"]
 
         self.assertEqual(demo["queued_tasks"], ["url_presetting", "jd_set_build"])
+        self.assertEqual(demo["followup_prompts"], [
+            "/url https://app.clickup.com/t/86sampleintake",
+            "jd builder https://app.clickup.com/t/86sampleintake",
+        ])
         self.assertEqual(demo["send_tasks"], [])
         self.assertEqual(demo["result"]["enqueued_count"], 2)
         self.assertEqual(demo["register_calls"][0]["dry_run"], False)

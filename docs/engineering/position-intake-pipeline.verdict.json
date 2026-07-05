@@ -4,11 +4,12 @@
   "risk": "L2 local code, L3 live Gmail/ClickUp/push boundary explicitly gated",
   "generator": {
     "author": "Codex",
-    "claim": "PI-1~PI-3 local contract implemented: customer email text -> existing registration parser message, successful non-dry-run RegistrationOutcome -> idempotent url_presetting + jd_set_build queue, scheduled Gmail-MCP adapter boundary with owner approval/auto-allow gate, followup drain with owner/block fail-closed gates, and a ClickUp REST adapter that plugs into the existing ClickUpCreateTask/ClickUpCreateComment/ClickUpSearch contracts. No Gmail OAuth daemon, no live ClickUp write executed, no /url/JD-builder execution, no send.",
+    "claim": "PI-1~PI-3 local contract implemented: customer email text -> existing registration parser message, successful non-dry-run RegistrationOutcome -> idempotent url_presetting + jd_set_build queue, scheduled Gmail-MCP adapter boundary with owner approval/auto-allow gate, intake state for pending/processed Gmail ids, followup drain with owner/block fail-closed gates, explicit /url and jd builder execution-request prompts, and a ClickUp REST adapter that plugs into the existing ClickUpCreateTask/ClickUpCreateComment/ClickUpSearch contracts. No Gmail OAuth daemon, no live ClickUp write executed, no /url/JD-builder execution, no send.",
     "changed_files": [
       "tools/multi_position_sourcing/position_intake_email.py",
       "tools/multi_position_sourcing/position_followups.py",
       "tools/multi_position_sourcing/position_intake_runner.py",
+      "tools/multi_position_sourcing/position_intake_state.py",
       "tools/multi_position_sourcing/clickup_adapter.py",
       "tools/multi_position_sourcing/dry_run.py",
       "tests/test_position_intake_pipeline.py",
@@ -16,6 +17,7 @@
       "docs/engineering/position-intake-pipeline-goal-2026-07-05.md"
     ],
     "red_evidence": "python -m pytest tests/test_position_intake_pipeline.py -q -> 9 failed, ModuleNotFoundError for position_intake_email/position_followups/position_intake_runner.",
+    "red_evidence_v3": "python -m pytest tests/test_position_intake_pipeline.py -q -> 2 failed: ModuleNotFoundError for position_intake_state and KeyError 'prompt' in followup drain request.",
     "green_evidence": [
       "python -m pytest tests/test_position_intake_pipeline.py -q -> 12 passed in 0.06s",
       "python -m pytest tests/test_position_intake_pipeline.py tests/test_position_registration.py tests/test_register_position_dispatch.py -q -> 46 passed, 1 xfailed, 9 subtests passed in 0.08s",
@@ -23,10 +25,18 @@
       "./verify.sh -> 989 passed, 4 xfailed, 14 subtests passed, pytest exit=0",
       "python -m pytest tests/test_clickup_adapter.py -q -> 7 passed in 0.04s",
       "python -m pytest tests/test_clickup_adapter.py tests/test_position_intake_pipeline.py tests/test_position_registration.py tests/test_register_position_dispatch.py -q -> 53 passed, 1 xfailed, 9 subtests passed in 0.09s",
-      "./verify.sh -> 996 passed, 4 xfailed, 14 subtests passed, pytest exit=0"
+      "./verify.sh -> 996 passed, 4 xfailed, 14 subtests passed, pytest exit=0",
+      "python -m pytest tests/test_position_intake_pipeline.py -q -> 14 passed in 0.05s",
+      "python -m pytest tests/test_position_intake_pipeline.py tests/test_clickup_adapter.py tests/test_position_registration.py tests/test_register_position_dispatch.py -q -> 55 passed, 1 xfailed, 9 subtests passed in 0.10s",
+      "python -m tools.multi_position_sourcing.dry_run --no-llm-boolean --output artifacts/multi_position_sourcing/position-intake-dry-run.json && python -m json.tool artifacts/multi_position_sourcing/position-intake-dry-run.json >/dev/null -> exit 0",
+      "./verify.sh -> 998 passed, 4 xfailed, 14 subtests passed, pytest exit=0"
     ],
     "dry_run_sample": {
       "queued_tasks": ["url_presetting", "jd_set_build"],
+      "followup_prompts": [
+        "/url https://app.clickup.com/t/86sampleintake",
+        "jd builder https://app.clickup.com/t/86sampleintake"
+      ],
       "send_tasks": [],
       "destination_list_id": "901814621569"
     },
@@ -108,9 +118,38 @@
       }
     ]
   },
+  "self_adversarial_v3": {
+    "author": "Codex self-review; Claude skipped per owner instruction/no token",
+    "verdict": "PASS for repeated Gmail id suppression and explicit followup prompt contract",
+    "attacks": [
+      {
+        "risk": "same unapproved Gmail message could dry-run preview and DM-request every scheduled tick",
+        "test_added": "test_intake_state_suppresses_repeated_pending_and_processed_mail",
+        "fix": "state_path enables pending_approval_message_ids; later unapproved ticks return approval_pending without calling register_position",
+        "status": "covered"
+      },
+      {
+        "risk": "same approved Gmail message could be registered repeatedly on future ticks",
+        "test_added": "test_intake_state_suppresses_repeated_pending_and_processed_mail",
+        "fix": "successful created/linked registration records processed_message_ids and future ticks return already_processed",
+        "status": "covered"
+      },
+      {
+        "risk": "followup executor had an ambiguous dict and might not invoke the intended skill",
+        "test_added": "test_followup_drain_builds_url_and_jd_builder_commands_without_send",
+        "fix": "build_followup_execution_request maps url_presetting to /url <task> and jd_set_build to jd builder <task>",
+        "status": "covered"
+      },
+      {
+        "risk": "followup command builder could accidentally create a send/outreach action",
+        "evidence": "execution requests set send_allowed=false; dry-run sample has send_tasks=[] and prompts only /url + jd builder",
+        "status": "covered"
+      }
+    ]
+  },
   "limits": [
     "PI-3 live acceptance was not executed: no real Gmail polling, no real ClickUp task creation, no real /url or JD-builder run. ClickUp REST adapter is implemented and locally verified, but actual API calls remain L3/live external writes requiring owner approval, token configuration, and a test email.",
     "The existing registration parser is intentionally reused and not extended; arbitrary non-Wanted/non-ClickUp posting URL registration remains PC-A4 scope."
   ],
-  "status": "GREEN_LOCAL_CONTRACT_WITH_CLICKUP_ADAPTER"
+  "status": "GREEN_LOCAL_CONTRACT_WITH_CLICKUP_ADAPTER_STATE_AND_FOLLOWUP_PROMPTS"
 }

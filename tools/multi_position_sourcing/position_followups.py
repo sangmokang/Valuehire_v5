@@ -113,3 +113,30 @@ def enqueue_position_followups(
     )
     write_followup_queue(ordered, queue_path)
     return tuple(enqueued)
+
+
+def build_followup_execution_request(item: dict[str, object]) -> dict[str, object]:
+    """Translate a queued followup into the exact skill prompt to execute.
+
+    The request is still inert data. The caller supplies the executor that invokes
+    /url or JD-builder, so tests and dry-runs never perform portal work.
+    """
+    task = str(item.get("task") or "").strip()
+    if task not in FOLLOWUP_TASKS:
+        raise ValueError(f"unknown position followup task: {task or '(empty)'}")
+
+    task_url = str(item.get("task_url") or "").strip()
+    task_id = str(item.get("task_id") or "").strip()
+    target = task_url or task_id
+    if not target:
+        raise ValueError("position followup requires task_url or task_id")
+
+    prompt = f"/url {target}" if task == "url_presetting" else f"jd builder {target}"
+    return {
+        **item,
+        "prompt": prompt,
+        "skill": "/url" if task == "url_presetting" else "jd builder",
+        "send_allowed": False,
+        "clickup_task_id": task_id,
+        "clickup_task_url": task_url,
+    }

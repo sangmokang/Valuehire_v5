@@ -29,7 +29,7 @@ from .llm_keywords import LLMClient, claude_keyword_client, inject_channel_searc
 from .models import QueueItem, utc_now_iso
 from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
 from .portal_worker import DEFAULT_PROFILE_ROOT
-from .position_followups import load_followup_queue
+from .position_followups import build_followup_execution_request, load_followup_queue
 from .position_intake_runner import IntakeEmail, run_position_intake_tick
 from .posting_models import ExistingPositionTask, FetchResult, RegistrationOutcome
 from .position_registration import (
@@ -200,6 +200,9 @@ def _sample_position_intake_pipeline_demo() -> dict[str, object]:
         "result": result,
         "register_calls": register_calls,
         "queued_tasks": [item["task"] for item in queue],
+        "followup_prompts": [
+            build_followup_execution_request(item)["prompt"] for item in queue
+        ],
         "send_tasks": [item["task"] for item in queue if "send" in str(item.get("task", "")).lower()],
         "destination_list_id": FY26_CLIENTS_POSITION_LIST_ID,
     }
