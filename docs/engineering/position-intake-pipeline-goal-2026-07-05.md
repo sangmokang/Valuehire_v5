@@ -12,6 +12,7 @@
 - `tools/multi_position_sourcing/register_position_dispatch.py:37`-`45` — 기존 디스패처는 파서가 먹는 `"포지션 등록"` 메시지를 조립한다.
 - `docs/engineering/pc-a1-clickup-live-write.verdict.json:8` — 실제 ClickUp writer 없이 계약형 페이크로 목적지 배선만 검증된 상태다.
 - `/Users/kangsangmo/Desktop/valuehire_v4/tools/gmail-recommendation-clickup-sync/run.mjs:216`-`235` — 기존 Gmail 동기화는 처리한 message id를 state에 남겨 같은 메일 반복 처리를 막는다. 단 자체 Gmail OAuth 방식이라 이번 구현에는 재사용하지 않는다.
+- `tools/multi_position_sourcing/harvest_driver.py:13`-`18` — 기존 상시 드라이버는 launchd/스케줄러가 부를 CLI를 두고, fake/live 실행자 종류를 출력에 명시해 라이브인 척하지 않는다.
 - ClickUp 공식 문서(2026-07-05 확인): Create Task는 `POST https://api.clickup.com/api/v2/list/{list_id}/task`, Create Task Comment는 `POST https://api.clickup.com/api/v2/task/{task_id}/comment`, Get Tasks는 `GET https://api.clickup.com/api/v2/list/{list_id}/task`다.
 
 ## 근본 원인
@@ -25,7 +26,9 @@
 3. PI-3: `run_scheduled_position_intake(...)`는 고정 Gmail 검색 쿼리를 MCP 어댑터에 넘긴다. 자동 허용 또는 메시지별 승인 전에는 dry-run preview만 만들고 큐에 넣지 않는다. 승인 후에만 등록 결과로 후속 큐를 만든다.
 4. PI-3 상태 저장: `state_path`를 명시한 정기 루틴은 `pending_approval_message_ids`와 `processed_message_ids`를 기록한다. 승인 대기 중인 같은 메일은 dry-run preview를 반복하지 않고, 등록 완료된 같은 메일은 재등록하지 않는다.
 5. 후속 큐 소화는 사장님 크롬 점유 또는 채널 차단 신호에서 실행자 호출 0회로 멈춘다. 실행자에는 `prompt="/url <ClickUp task>"` 또는 `prompt="jd builder <ClickUp task>"`, `send_allowed=False` 요청만 넘기고, 자동 send 작업은 만들지 않는다.
-6. ClickUp REST 어댑터는 기존 `ClickUpCreateTask`/`ClickUpCreateComment`/`ClickUpSearch` 계약에 주입 가능해야 한다. 토큰은 환경변수에서만 읽고, Authorization 헤더에 raw token을 싣되 로그/예외/산출물에 노출하지 않는다. 테스트는 가짜 requester로 endpoint/body/header를 단언하고 실제 네트워크 write는 하지 않는다.
+6. PI-3 한 턴 루틴: `run_position_intake_routine_once(...)`는 owner/blocked 신호를 먼저 확인하고, 통과할 때만 Gmail MCP 어댑터 → 등록 게이트 → 후속 큐 drain 순서로 돈다. owner activity 때는 Gmail/후속 executor 호출이 0회다.
+7. 스케줄러용 로컬 CLI: `python -m tools.multi_position_sourcing.position_intake_runner --executor fake ...`는 JSON 이메일 입력으로 한 턴을 실행하고 결과 JSON에 executor 종류, 고정 Gmail 쿼리, followup prompts를 남긴다. `--executor live`는 L3 어댑터 주입 전에는 exit 2로 차단한다.
+8. ClickUp REST 어댑터는 기존 `ClickUpCreateTask`/`ClickUpCreateComment`/`ClickUpSearch` 계약에 주입 가능해야 한다. 토큰은 환경변수에서만 읽고, Authorization 헤더에 raw token을 싣되 로그/예외/산출물에 노출하지 않는다. 테스트는 가짜 requester로 endpoint/body/header를 단언하고 실제 네트워크 write는 하지 않는다.
 
 ## 입력/출력 계약
 
@@ -36,6 +39,8 @@
 - 승인 상태 전이: `ignored` → `approval_required`(dry-run only) → `registered`(approved/auto) → `queued` → `done|blocked`.
 - 인입 상태 파일: `version`, `processed_message_ids`, `pending_approval_message_ids`. 기본 경로는 `~/.vh-search-results/position_intake/state.json`이나, 러너는 `state_path`를 명시한 경우에만 상태를 쓴다.
 - 후속 실행 요청: 기존 큐 필드 + `prompt`, `skill`, `send_allowed=False`, `clickup_task_id`, `clickup_task_url`.
+- 루틴 출력: `status`, `gmail_query`, `email_count`, `intake`, `drain`, `followup_prompts`.
+- CLI 입력: `--executor fake|live`, `--emails-json`, `--queue-path`, `--state-path`, `--approved-message-id`, `--auto-registration-allowed`, `--skip-owner-check`, `--output`.
 - ClickUp 어댑터 입력: `token: str`, `list_id: str`, `title: str`, `body: str`, `task_id: str`.
 - ClickUp 어댑터 출력: `create_task(title, body, list_id) -> (task_id, task_url)`, `create_comment(task_id, body) -> comment_id`, `search_existing_positions(recognition, list_id) -> tuple[ExistingPositionTask, ...]`.
 
@@ -52,6 +57,7 @@
 - `make red-ledger`
 - focused: `.venv/bin/python -m pytest tests/test_position_intake_pipeline.py -q` (fallback: `python3 -m pytest ...`)
 - focused adapter: `python -m pytest tests/test_clickup_adapter.py -q`
+- CLI smoke: `python -m tools.multi_position_sourcing.position_intake_runner --executor fake --emails-json <json> --queue-path <path> --state-path <path> --approved-message-id <id> --output <json> --skip-owner-check`
 - full: `./verify.sh`
 
 ## SOT 체크리스트

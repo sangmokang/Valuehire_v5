@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import argparse
+import json
+import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +22,7 @@ from .position_intake_state import (
     remove_message_id,
     write_intake_state,
 )
+from .owner_activity import detect_owner_activity_snapshot
 from .position_registration import (
     FY26_CLIENTS_POSITION_LIST_ID,
     RegistrationOutcome,
@@ -264,3 +268,201 @@ def drain_position_followups(
 
     write_followup_queue(queue, queue_path)
     return {"yielded": False, "blocked": False, "executed_count": executed_count}
+
+
+def run_position_intake_routine_once(
+    *,
+    search_threads: SearchThreads,
+    execute_followup: ExecuteFollowup,
+    register_position: RegisterPosition = run_position_registration,
+    queue_path: str | Path | None = None,
+    state_path: str | Path | None = None,
+    approved_message_ids: Sequence[str] = (),
+    auto_registration_allowed: bool = False,
+    owner_activity_detected: bool = False,
+    blocked: bool = False,
+    now_iso: str = "",
+    registration_deps: dict[str, object] | None = None,
+    drain_max_items: int | None = None,
+) -> dict[str, object]:
+    """Run one scheduler tick: Gmail adapter -> registration gate -> followup drain.
+
+    This is the routine boundary a cron/cloud routine can call. The actual Gmail
+    MCP, ClickUp writer, and /url/JD-builder executors are still injected so this
+    function is locally testable and cannot perform live work by itself.
+    """
+    if owner_activity_detected:
+        return {
+            "status": "yielded",
+            "reason": "owner_activity_detected",
+            "intake": None,
+            "drain": None,
+            "followup_prompts": [],
+        }
+    if blocked:
+        return {
+            "status": "blocked",
+            "reason": "blocked_signal",
+            "intake": None,
+            "drain": None,
+            "followup_prompts": [],
+        }
+
+    intake = run_scheduled_position_intake(
+        search_threads=search_threads,
+        register_position=register_position,
+        queue_path=queue_path,
+        state_path=state_path,
+        approved_message_ids=approved_message_ids,
+        auto_registration_allowed=auto_registration_allowed,
+        owner_activity_detected=False,
+        blocked=False,
+        now_iso=now_iso,
+        registration_deps=registration_deps,
+    )
+
+    followup_requests: list[dict[str, object]] = []
+
+    def _recording_executor(request: dict[str, object]) -> object:
+        followup_requests.append(dict(request))
+        return execute_followup(request)
+
+    drain = drain_position_followups(
+        queue_path=queue_path,
+        execute_followup=_recording_executor,
+        owner_activity_detected=False,
+        blocked=False,
+        now_iso=now_iso,
+        max_items=drain_max_items,
+    )
+    return {
+        "status": "ok",
+        "gmail_query": GMAIL_POSITION_INTAKE_QUERY,
+        "email_count": intake.get("email_count", 0),
+        "intake": intake,
+        "drain": drain,
+        "followup_prompts": [
+            str(request.get("prompt") or "") for request in followup_requests
+        ],
+    }
+
+
+def _load_emails_json(path: str | Path) -> tuple[IntakeEmail, ...]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    records = payload.get("emails") if isinstance(payload, dict) else payload
+    if not isinstance(records, list):
+        raise ValueError("emails JSON must be a list or {'emails': [...]}")
+    emails: list[IntakeEmail] = []
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise ValueError(f"email record #{index} must be an object")
+        message_id = str(record.get("message_id") or record.get("id") or "").strip()
+        if not message_id:
+            raise ValueError(f"email record #{index} missing message_id")
+        emails.append(
+            IntakeEmail(
+                message_id=message_id,
+                subject=str(record.get("subject") or ""),
+                body=str(record.get("body") or record.get("bodyText") or ""),
+                from_email=str(record.get("from_email") or record.get("from") or ""),
+                received_at=str(record.get("received_at") or ""),
+            )
+        )
+    return tuple(emails)
+
+
+def _fake_register_position(
+    _parse_result: PositionRegistrationRequestParseResult, **kwargs: object
+) -> RegistrationOutcome:
+    dry_run = bool(kwargs.get("dry_run"))
+    task_id = "" if dry_run else "86fakeintake"
+    task_url = "" if dry_run else "https://app.clickup.com/t/86fakeintake"
+    return RegistrationOutcome(
+        status="created",
+        is_new_task=True,
+        reason="fake local position task" if not dry_run else "fake local preview",
+        task_id=task_id,
+        task_url=task_url,
+        dry_run=dry_run,
+        external_posting_sent=False,
+        secret_emitted=False,
+    )
+
+
+def _fake_execute_followup(request: dict[str, object]) -> dict[str, object]:
+    return {
+        "ok": True,
+        "prompt": str(request.get("prompt") or ""),
+        "send_allowed": False,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="position_intake_runner")
+    parser.add_argument("--executor", choices=("fake", "live"), required=True)
+    parser.add_argument("--emails-json", default="")
+    parser.add_argument("--queue-path", default=None)
+    parser.add_argument("--state-path", default=None)
+    parser.add_argument("--approved-message-id", action="append", default=[])
+    parser.add_argument("--auto-registration-allowed", action="store_true")
+    parser.add_argument("--skip-owner-check", action="store_true")
+    parser.add_argument("--now", default="")
+    parser.add_argument("--output", default=None)
+    args = parser.parse_args(argv)
+
+    if args.executor == "live":
+        print(
+            json.dumps(
+                {
+                    "error": "live adapters are L3 and must be injected by an approved routine",
+                    "executor": "live",
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    if not args.emails_json:
+        print(json.dumps({"error": "--emails-json required"}, ensure_ascii=False), file=sys.stderr)
+        return 2
+
+    try:
+        emails = _load_emails_json(args.emails_json)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        return 2
+
+    if args.skip_owner_check:
+        owner_activity_detected = False
+    else:
+        owner_activity_detected = detect_owner_activity_snapshot().owner_activity_detected
+
+    def _search_threads(_query: str) -> tuple[IntakeEmail, ...]:
+        return emails
+
+    result = run_position_intake_routine_once(
+        search_threads=_search_threads,
+        register_position=_fake_register_position,
+        execute_followup=_fake_execute_followup,
+        queue_path=args.queue_path,
+        state_path=args.state_path,
+        approved_message_ids=tuple(args.approved_message_id),
+        auto_registration_allowed=bool(args.auto_registration_allowed),
+        owner_activity_detected=owner_activity_detected,
+        now_iso=args.now,
+    )
+    output = {
+        "executor": args.executor,
+        "owner_activity_detected": owner_activity_detected,
+        **result,
+    }
+    text = json.dumps(output, ensure_ascii=False)
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8")
+    print(text)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

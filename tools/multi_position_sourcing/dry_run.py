@@ -29,8 +29,8 @@ from .llm_keywords import LLMClient, claude_keyword_client, inject_channel_searc
 from .models import QueueItem, utc_now_iso
 from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
 from .portal_worker import DEFAULT_PROFILE_ROOT
-from .position_followups import build_followup_execution_request, load_followup_queue
-from .position_intake_runner import IntakeEmail, run_position_intake_tick
+from .position_followups import load_followup_queue
+from .position_intake_runner import IntakeEmail, run_position_intake_routine_once
 from .posting_models import ExistingPositionTask, FetchResult, RegistrationOutcome
 from .position_registration import (
     FY26_CLIENTS_POSITION_LIST_ID,
@@ -180,16 +180,16 @@ def _sample_position_intake_pipeline_demo() -> dict[str, object]:
 
     with tempfile.TemporaryDirectory() as tmp:
         queue_path = Path(tmp) / "followups.json"
-        result = run_position_intake_tick(
-            emails=(
-                IntakeEmail(
-                    message_id="sample-position-email",
-                    subject="신규 포지션 JD 공유",
-                    body=_SAMPLE_POSITION_INTAKE_EMAIL_BODY,
-                    from_email="client@example.com",
-                ),
-            ),
+        email = IntakeEmail(
+            message_id="sample-position-email",
+            subject="신규 포지션 JD 공유",
+            body=_SAMPLE_POSITION_INTAKE_EMAIL_BODY,
+            from_email="client@example.com",
+        )
+        result = run_position_intake_routine_once(
+            search_threads=lambda _query: (email,),
             register_position=_fixture_register_position,
+            execute_followup=lambda request: {"ok": True, "prompt": request["prompt"]},
             queue_path=queue_path,
             approved_message_ids=("sample-position-email",),
             now_iso="2026-07-05T00:00:00Z",
@@ -197,12 +197,12 @@ def _sample_position_intake_pipeline_demo() -> dict[str, object]:
         queue = load_followup_queue(queue_path)
 
     return {
-        "result": result,
+        "routine_status": result["status"],
+        "result": result["intake"],
+        "drain": result["drain"],
         "register_calls": register_calls,
         "queued_tasks": [item["task"] for item in queue],
-        "followup_prompts": [
-            build_followup_execution_request(item)["prompt"] for item in queue
-        ],
+        "followup_prompts": result["followup_prompts"],
         "send_tasks": [item["task"] for item in queue if "send" in str(item.get("task", "")).lower()],
         "destination_list_id": FY26_CLIENTS_POSITION_LIST_ID,
     }

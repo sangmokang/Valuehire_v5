@@ -4,7 +4,7 @@
   "risk": "L2 local code, L3 live Gmail/ClickUp/push boundary explicitly gated",
   "generator": {
     "author": "Codex",
-    "claim": "PI-1~PI-3 local contract implemented: customer email text -> existing registration parser message, successful non-dry-run RegistrationOutcome -> idempotent url_presetting + jd_set_build queue, scheduled Gmail-MCP adapter boundary with owner approval/auto-allow gate, intake state for pending/processed Gmail ids, followup drain with owner/block fail-closed gates, explicit /url and jd builder execution-request prompts, and a ClickUp REST adapter that plugs into the existing ClickUpCreateTask/ClickUpCreateComment/ClickUpSearch contracts. No Gmail OAuth daemon, no live ClickUp write executed, no /url/JD-builder execution, no send.",
+    "claim": "PI-1~PI-3 local contract implemented: customer email text -> existing registration parser message, successful non-dry-run RegistrationOutcome -> idempotent url_presetting + jd_set_build queue, scheduled Gmail-MCP adapter boundary with owner approval/auto-allow gate, intake state for pending/processed Gmail ids, one-turn routine boundary, fake JSON CLI smoke path for schedulers, followup drain with owner/block fail-closed gates, explicit /url and jd builder execution-request prompts, and a ClickUp REST adapter that plugs into the existing ClickUpCreateTask/ClickUpCreateComment/ClickUpSearch contracts. No Gmail OAuth daemon, no live ClickUp write executed, no /url/JD-builder execution, no send.",
     "changed_files": [
       "tools/multi_position_sourcing/position_intake_email.py",
       "tools/multi_position_sourcing/position_followups.py",
@@ -18,6 +18,7 @@
     ],
     "red_evidence": "python -m pytest tests/test_position_intake_pipeline.py -q -> 9 failed, ModuleNotFoundError for position_intake_email/position_followups/position_intake_runner.",
     "red_evidence_v3": "python -m pytest tests/test_position_intake_pipeline.py -q -> 2 failed: ModuleNotFoundError for position_intake_state and KeyError 'prompt' in followup drain request.",
+    "red_evidence_v4": "python -m pytest tests/test_position_intake_pipeline.py -q -> 4 failed: ImportError for run_position_intake_routine_once and main.",
     "green_evidence": [
       "python -m pytest tests/test_position_intake_pipeline.py -q -> 12 passed in 0.06s",
       "python -m pytest tests/test_position_intake_pipeline.py tests/test_position_registration.py tests/test_register_position_dispatch.py -q -> 46 passed, 1 xfailed, 9 subtests passed in 0.08s",
@@ -29,16 +30,32 @@
       "python -m pytest tests/test_position_intake_pipeline.py -q -> 14 passed in 0.05s",
       "python -m pytest tests/test_position_intake_pipeline.py tests/test_clickup_adapter.py tests/test_position_registration.py tests/test_register_position_dispatch.py -q -> 55 passed, 1 xfailed, 9 subtests passed in 0.10s",
       "python -m tools.multi_position_sourcing.dry_run --no-llm-boolean --output artifacts/multi_position_sourcing/position-intake-dry-run.json && python -m json.tool artifacts/multi_position_sourcing/position-intake-dry-run.json >/dev/null -> exit 0",
-      "./verify.sh -> 998 passed, 4 xfailed, 14 subtests passed, pytest exit=0"
+      "./verify.sh -> 998 passed, 4 xfailed, 14 subtests passed, pytest exit=0",
+      "python -m pytest tests/test_position_intake_pipeline.py -q -> 18 passed in 0.06s",
+      "python -m pytest tests/test_position_intake_pipeline.py tests/test_clickup_adapter.py tests/test_position_registration.py tests/test_register_position_dispatch.py tests/test_harvest_driver.py -q -> 79 passed, 1 xfailed, 9 subtests passed in 0.24s",
+      "python -m tools.multi_position_sourcing.position_intake_runner --executor fake --emails-json artifacts/multi_position_sourcing/position-intake-cli-emails.json --queue-path artifacts/multi_position_sourcing/position-intake-cli-followups.json --state-path artifacts/multi_position_sourcing/position-intake-cli-state.json --approved-message-id msg-cli-smoke --output artifacts/multi_position_sourcing/position-intake-cli-output.json --skip-owner-check && python -m json.tool artifacts/multi_position_sourcing/position-intake-cli-output.json >/dev/null -> exit 0",
+      "./verify.sh -> 1002 passed, 4 xfailed, 14 subtests passed, pytest exit=0"
     ],
     "dry_run_sample": {
+      "routine_status": "ok",
       "queued_tasks": ["url_presetting", "jd_set_build"],
       "followup_prompts": [
         "/url https://app.clickup.com/t/86sampleintake",
         "jd builder https://app.clickup.com/t/86sampleintake"
       ],
+      "drain_executed_count": 2,
       "send_tasks": [],
       "destination_list_id": "901814621569"
+    },
+    "cli_smoke_sample": {
+      "executor": "fake",
+      "status": "ok",
+      "email_count": 1,
+      "drain_executed_count": 2,
+      "followup_prompts": [
+        "/url https://app.clickup.com/t/86fakeintake",
+        "jd builder https://app.clickup.com/t/86fakeintake"
+      ]
     },
     "clickup_adapter_contract": {
       "create_task": "POST /api/v2/list/{list_id}/task, payload name/description/notify_all=false",
@@ -147,9 +164,38 @@
       }
     ]
   },
+  "self_adversarial_v4": {
+    "author": "Codex self-review; Claude skipped per owner instruction/no token",
+    "verdict": "PASS for one-turn routine and local scheduler CLI; live adapters remain intentionally blocked",
+    "attacks": [
+      {
+        "risk": "PI-3 could remain three loose helper functions rather than one scheduler tick",
+        "test_added": "test_routine_one_turn_searches_registers_then_drains_followups",
+        "fix": "run_position_intake_routine_once composes Gmail adapter -> registration -> drain and returns followup_prompts",
+        "status": "covered"
+      },
+      {
+        "risk": "owner activity gate could still allow Gmail or followup adapter calls",
+        "test_added": "test_routine_owner_activity_yields_before_gmail_or_followup_adapters",
+        "fix": "routine pre-gates owner_activity_detected/blocked before calling adapters",
+        "status": "covered"
+      },
+      {
+        "risk": "scheduler entrypoint could be absent or pretend to run live adapters locally",
+        "test_added": "test_position_intake_cli_fake_json_smoke_exit_zero and test_position_intake_cli_live_mode_is_explicitly_blocked_locally",
+        "fix": "position_intake_runner.main supports --executor fake JSON smoke and returns exit 2 for --executor live without approved injected adapters",
+        "status": "covered"
+      },
+      {
+        "risk": "dry-run artifact might not exercise the one-turn routine",
+        "evidence": "sample_position_intake_pipeline now reports routine_status=ok, drain.executed_count=2, followup_prompts only /url and jd builder",
+        "status": "covered"
+      }
+    ]
+  },
   "limits": [
     "PI-3 live acceptance was not executed: no real Gmail polling, no real ClickUp task creation, no real /url or JD-builder run. ClickUp REST adapter is implemented and locally verified, but actual API calls remain L3/live external writes requiring owner approval, token configuration, and a test email.",
     "The existing registration parser is intentionally reused and not extended; arbitrary non-Wanted/non-ClickUp posting URL registration remains PC-A4 scope."
   ],
-  "status": "GREEN_LOCAL_CONTRACT_WITH_CLICKUP_ADAPTER_STATE_AND_FOLLOWUP_PROMPTS"
+  "status": "GREEN_LOCAL_CONTRACT_WITH_CLICKUP_ADAPTER_STATE_ROUTINE_AND_CLI"
 }

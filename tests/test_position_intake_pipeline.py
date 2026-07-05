@@ -429,17 +429,137 @@ class PositionIntakeRunnerTests(unittest.TestCase):
         self.assertNotIn("send_clicked", json.dumps(requests, ensure_ascii=False).lower())
         self.assertNotIn("outreach", json.dumps(requests, ensure_ascii=False).lower())
 
+    def test_routine_one_turn_searches_registers_then_drains_followups(self) -> None:
+        from tools.multi_position_sourcing.position_intake_runner import (
+            GMAIL_POSITION_INTAKE_QUERY,
+            IntakeEmail,
+            run_position_intake_routine_once,
+        )
+
+        seen_queries: list[str] = []
+        register_calls: list[bool] = []
+
+        def search_threads(query: str):
+            seen_queries.append(query)
+            return (IntakeEmail(message_id="msg-routine", subject="JD 공유", body=LONG_JD_BODY),)
+
+        def register_position(_parse_result, **kwargs):
+            register_calls.append(kwargs["dry_run"])
+            return RegistrationOutcome(
+                status="created",
+                is_new_task=True,
+                reason="created",
+                task_id="86routine",
+                task_url="https://app.clickup.com/t/86routine",
+                dry_run=kwargs["dry_run"],
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_position_intake_routine_once(
+                search_threads=search_threads,
+                register_position=register_position,
+                execute_followup=lambda request: {"ok": True, "prompt": request["prompt"]},
+                queue_path=Path(tmp) / "followups.json",
+                state_path=Path(tmp) / "state.json",
+                approved_message_ids=("msg-routine",),
+                now_iso="2026-07-05T00:05:00Z",
+            )
+
+        self.assertEqual(seen_queries, [GMAIL_POSITION_INTAKE_QUERY])
+        self.assertEqual(register_calls, [False])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intake"]["enqueued_count"], 2)
+        self.assertEqual(result["drain"]["executed_count"], 2)
+        self.assertEqual(result["followup_prompts"], [
+            "/url https://app.clickup.com/t/86routine",
+            "jd builder https://app.clickup.com/t/86routine",
+        ])
+
+    def test_routine_owner_activity_yields_before_gmail_or_followup_adapters(self) -> None:
+        from tools.multi_position_sourcing.position_intake_runner import (
+            run_position_intake_routine_once,
+        )
+
+        search_calls: list[str] = []
+        followup_calls: list[dict[str, object]] = []
+
+        result = run_position_intake_routine_once(
+            search_threads=lambda query: search_calls.append(query) or (),
+            execute_followup=lambda request: followup_calls.append(request),
+            owner_activity_detected=True,
+        )
+
+        self.assertEqual(result["status"], "yielded")
+        self.assertEqual(search_calls, [])
+        self.assertEqual(followup_calls, [])
+
+    def test_position_intake_cli_fake_json_smoke_exit_zero(self) -> None:
+        from tools.multi_position_sourcing.position_intake_runner import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            emails_path = root / "emails.json"
+            output_path = root / "out.json"
+            emails_path.write_text(
+                json.dumps(
+                    {
+                        "emails": [
+                            {
+                                "message_id": "msg-cli",
+                                "subject": "JD 공유",
+                                "body": LONG_JD_BODY,
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            rc = main(
+                [
+                    "--executor", "fake",
+                    "--emails-json", str(emails_path),
+                    "--queue-path", str(root / "followups.json"),
+                    "--state-path", str(root / "state.json"),
+                    "--approved-message-id", "msg-cli",
+                    "--output", str(output_path),
+                    "--skip-owner-check",
+                ]
+            )
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["executor"], "fake")
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["intake"]["email_count"], 1)
+        self.assertEqual(payload["drain"]["executed_count"], 2)
+        self.assertEqual(payload["followup_prompts"], [
+            "/url https://app.clickup.com/t/86fakeintake",
+            "jd builder https://app.clickup.com/t/86fakeintake",
+        ])
+        self.assertNotIn("send_clicked", json.dumps(payload, ensure_ascii=False).lower())
+
+    def test_position_intake_cli_live_mode_is_explicitly_blocked_locally(self) -> None:
+        from tools.multi_position_sourcing.position_intake_runner import main
+
+        rc = main(["--executor", "live", "--emails-json", "unused.json"])
+
+        self.assertEqual(rc, 2)
+
     def test_dry_run_payload_wires_position_intake_pipeline_demo(self) -> None:
         from tools.multi_position_sourcing.dry_run import build_dry_run_payload
 
         payload = build_dry_run_payload()
         demo = payload["sample_position_intake_pipeline"]
 
+        self.assertEqual(demo["routine_status"], "ok")
         self.assertEqual(demo["queued_tasks"], ["url_presetting", "jd_set_build"])
         self.assertEqual(demo["followup_prompts"], [
             "/url https://app.clickup.com/t/86sampleintake",
             "jd builder https://app.clickup.com/t/86sampleintake",
         ])
+        self.assertEqual(demo["drain"]["executed_count"], 2)
         self.assertEqual(demo["send_tasks"], [])
         self.assertEqual(demo["result"]["enqueued_count"], 2)
         self.assertEqual(demo["register_calls"][0]["dry_run"], False)
