@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
@@ -28,7 +29,9 @@ from .llm_keywords import LLMClient, claude_keyword_client, inject_channel_searc
 from .models import QueueItem, utc_now_iso
 from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
 from .portal_worker import DEFAULT_PROFILE_ROOT
-from .posting_models import ExistingPositionTask, FetchResult
+from .position_followups import load_followup_queue
+from .position_intake_runner import IntakeEmail, run_position_intake_tick
+from .posting_models import ExistingPositionTask, FetchResult, RegistrationOutcome
 from .position_registration import (
     FY26_CLIENTS_POSITION_LIST_ID,
     run_position_registration,
@@ -62,6 +65,20 @@ _SAMPLE_REGISTRATION_HTML = """<!doctype html>
   <p>대규모 트래픽 처리 경험, 채용 포지션 관련 도메인 이해.</p>
 </body>
 </html>"""
+
+_SAMPLE_POSITION_INTAKE_EMAIL_BODY = """시니어 백엔드 엔지니어
+회사소개
+밸류커넥트는 B2B 채용 자동화를 만드는 회사입니다.
+주요업무
+- 백엔드 API 설계 및 운영
+- 검색 파이프라인 데이터 모델링
+자격요건
+- Python 5년 이상
+- 분산 시스템 운영 경험
+우대사항
+- Kubernetes 경험
+채용 포지션 JD입니다.
+"""
 
 
 def _sample_position_registration_outcome() -> object:
@@ -133,6 +150,57 @@ def _sample_register_position_dispatch_demo() -> dict[str, object]:
         "status": outcome.status if outcome is not None else "not_dispatched",
         "external_posting_sent": bool(outcome is not None and outcome.external_posting_sent),
         "secret_emitted": bool(outcome is not None and outcome.secret_emitted),
+        "destination_list_id": FY26_CLIENTS_POSITION_LIST_ID,
+    }
+
+
+def _sample_position_intake_pipeline_demo() -> dict[str, object]:
+    """PI-1~PI-3 로컬 계약 데모 — 메일 인입→승인 등록→후속 큐 2건.
+
+    임시 큐와 페이크 등록 함수만 사용한다. Gmail/ClickUp/포털/발송 side effect 없음.
+    """
+    register_calls: list[dict[str, object]] = []
+
+    def _fixture_register_position(parse_result, **kwargs) -> RegistrationOutcome:
+        register_calls.append(
+            {
+                "input_kind": parse_result.input_kind,
+                "dry_run": kwargs.get("dry_run"),
+                "clickup_list_id": kwargs.get("clickup_list_id"),
+            }
+        )
+        return RegistrationOutcome(
+            status="created",
+            is_new_task=True,
+            reason="sample position task created",
+            task_id="86sampleintake",
+            task_url="https://app.clickup.com/t/86sampleintake",
+            dry_run=bool(kwargs.get("dry_run")),
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        queue_path = Path(tmp) / "followups.json"
+        result = run_position_intake_tick(
+            emails=(
+                IntakeEmail(
+                    message_id="sample-position-email",
+                    subject="신규 포지션 JD 공유",
+                    body=_SAMPLE_POSITION_INTAKE_EMAIL_BODY,
+                    from_email="client@example.com",
+                ),
+            ),
+            register_position=_fixture_register_position,
+            queue_path=queue_path,
+            approved_message_ids=("sample-position-email",),
+            now_iso="2026-07-05T00:00:00Z",
+        )
+        queue = load_followup_queue(queue_path)
+
+    return {
+        "result": result,
+        "register_calls": register_calls,
+        "queued_tasks": [item["task"] for item in queue],
+        "send_tasks": [item["task"] for item in queue if "send" in str(item.get("task", "")).lower()],
         "destination_list_id": FY26_CLIENTS_POSITION_LIST_ID,
     }
 
@@ -230,6 +298,7 @@ def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, o
             _sample_position_registration_outcome()
         ),
         "sample_register_position_dispatch": _sample_register_position_dispatch_demo(),
+        "sample_position_intake_pipeline": _sample_position_intake_pipeline_demo(),
         "sample_discord_position_registration_routing": {
             "registration": asdict(
                 parse_discord_position_registration_request(

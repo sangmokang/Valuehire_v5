@@ -1,0 +1,70 @@
+{
+  "claim_id": "position-intake-pipeline",
+  "mode": "code-change",
+  "risk": "L2 local code, L3 live Gmail/ClickUp/push boundary explicitly gated",
+  "generator": {
+    "author": "Codex",
+    "claim": "PI-1~PI-3 local contract implemented: customer email text -> existing registration parser message, successful non-dry-run RegistrationOutcome -> idempotent url_presetting + jd_set_build queue, scheduled Gmail-MCP adapter boundary with owner approval/auto-allow gate, and followup drain with owner/block fail-closed gates. No Gmail OAuth daemon, no live ClickUp write, no /url/JD-builder execution, no send.",
+    "changed_files": [
+      "tools/multi_position_sourcing/position_intake_email.py",
+      "tools/multi_position_sourcing/position_followups.py",
+      "tools/multi_position_sourcing/position_intake_runner.py",
+      "tools/multi_position_sourcing/dry_run.py",
+      "tests/test_position_intake_pipeline.py",
+      "docs/engineering/position-intake-pipeline-goal-2026-07-05.md"
+    ],
+    "red_evidence": "python -m pytest tests/test_position_intake_pipeline.py -q -> 9 failed, ModuleNotFoundError for position_intake_email/position_followups/position_intake_runner.",
+    "green_evidence": [
+      "python -m pytest tests/test_position_intake_pipeline.py -q -> 12 passed in 0.06s",
+      "python -m pytest tests/test_position_intake_pipeline.py tests/test_position_registration.py tests/test_register_position_dispatch.py -q -> 46 passed, 1 xfailed, 9 subtests passed in 0.08s",
+      "python -m tools.multi_position_sourcing.dry_run --no-llm-boolean --output artifacts/multi_position_sourcing/position-intake-dry-run.json && python -m json.tool artifacts/multi_position_sourcing/position-intake-dry-run.json >/dev/null -> exit 0",
+      "./verify.sh -> 989 passed, 4 xfailed, 14 subtests passed, pytest exit=0"
+    ],
+    "dry_run_sample": {
+      "queued_tasks": ["url_presetting", "jd_set_build"],
+      "send_tasks": [],
+      "destination_list_id": "901814621569"
+    }
+  },
+  "self_adversarial_v1": {
+    "author": "Codex self-review; Claude skipped per owner instruction/no token",
+    "verdict": "PASS after two hardening fixes",
+    "attacks": [
+      {
+        "risk": "dry-run preview could enqueue followups if a fake/adapter returned task_id",
+        "test_added": "test_dry_run_registration_does_not_create_followups_even_with_task_id",
+        "fix": "_should_enqueue now requires not outcome.dry_run",
+        "status": "killed"
+      },
+      {
+        "risk": "followup executor block on /url could still continue into jd_set_build in same turn",
+        "test_added": "test_followup_drain_stops_after_executor_block",
+        "fix": "drain_position_followups marks first blocked item and breaks",
+        "status": "killed"
+      },
+      {
+        "risk": "task order could run JD builder before /url",
+        "test": "test_followup_drain_executes_pending_items_through_injected_executor",
+        "fix": "queue sort uses FOLLOWUP_TASKS order",
+        "status": "killed"
+      },
+      {
+        "risk": "approval gate bypass",
+        "test": "test_scheduled_tick_uses_fixed_gmail_query_and_requires_approval",
+        "evidence": "unapproved message calls register_position dry_run=True and enqueues 0",
+        "status": "covered"
+      },
+      {
+        "risk": "send/outreach side effect introduced",
+        "grep": "rg -n \"Valuehire_v4|valuehire_v4|send\\(|send_|outreach_clicked|post_discord|urllib.request|requests\\.|httpx|Gmail API|OAuth\" new files",
+        "evidence": "only doc/test strings for no Gmail API/no OAuth/send_tasks=[]; no network or send call sites",
+        "status": "covered"
+      }
+    ]
+  },
+  "limits": [
+    "PI-3 live acceptance was not executed: no real Gmail polling, no real ClickUp task creation, no real /url or JD-builder run. Those are L3/live external writes or portal actions and remain behind owner approval plus injected adapters.",
+    "The existing registration parser is intentionally reused and not extended; arbitrary non-Wanted/non-ClickUp posting URL registration remains PC-A4 scope."
+  ],
+  "status": "GREEN_LOCAL_CONTRACT"
+}
