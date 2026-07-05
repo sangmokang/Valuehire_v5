@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>서치 스킬 3형제 가이드 — /url · /aisearch · /humansearch</title>
+<style>
+  :root{
+    --bg:#f7f5f1; --card:#ffffff; --ink:#1f2328; --sub:#5c6470;
+    --url:#2f6fdd; --human:#1f9d63; --ai:#c2571f;
+    --line:#e5e1d8; --accent:#12314f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171c; --card:#1e232b; --ink:#e8eaee; --sub:#9aa3af; --line:#333a45; --accent:#cfe0f5; }
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:-apple-system,"Apple SD Gothic Neo","Pretendard","Noto Sans KR",sans-serif;
+       background:var(--bg); color:var(--ink); line-height:1.65; padding:2.5rem 1.25rem 4rem;}
+  main{max-width:880px; margin:0 auto;}
+  h1{font-size:1.7rem; margin-bottom:.4rem; color:var(--accent);}
+  .date{color:var(--sub); font-size:.9rem; margin-bottom:2rem;}
+  h2{font-size:1.2rem; margin:2.4rem 0 .9rem; padding-left:.7rem; border-left:4px solid var(--accent);}
+  p{margin-bottom:.8rem;}
+  .oneliner{background:var(--card); border:1px solid var(--line); border-radius:12px;
+            padding:1.1rem 1.3rem; font-size:1.12rem; font-weight:700; text-align:center;}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; margin:1.2rem 0;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:1.1rem 1.2rem;}
+  .card h3{font-size:1.05rem; margin-bottom:.5rem;}
+  .card.url h3{color:var(--url);} .card.human h3{color:var(--human);} .card.ai h3{color:var(--ai);}
+  .card .tag{display:inline-block; font-size:.78rem; font-weight:700; padding:.1rem .55rem;
+             border-radius:999px; margin-bottom:.55rem; color:#fff;}
+  .card.url .tag{background:var(--url);} .card.human .tag{background:var(--human);} .card.ai .tag{background:var(--ai);}
+  .card ul{padding-left:1.1rem; font-size:.93rem;}
+  .card li{margin-bottom:.3rem;}
+  .card .no{color:var(--sub); font-size:.86rem; margin-top:.5rem;}
+  .flow{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:1.2rem 1.3rem; margin:1rem 0;}
+  .flow .step{display:flex; align-items:flex-start; gap:.8rem; margin-bottom:.9rem;}
+  .flow .step:last-child{margin-bottom:0;}
+  .flow .n{flex:0 0 1.9rem; height:1.9rem; border-radius:50%; background:var(--accent); color:var(--bg);
+           display:flex; align-items:center; justify-content:center; font-weight:700; font-size:.95rem;}
+  .flow code, td code, li code{background:rgba(127,127,127,.14); padding:.08rem .4rem; border-radius:5px;
+       font-family:"SF Mono",Menlo,monospace; font-size:.88em;}
+  table{width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line);
+        border-radius:12px; overflow:hidden; font-size:.94rem;}
+  .tbl-wrap{overflow-x:auto; margin:1rem 0;}
+  th,td{padding:.65rem .8rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:top;}
+  th{background:rgba(127,127,127,.08); font-size:.88rem;}
+  tr:last-child td{border-bottom:none;}
+  .warn{background:var(--card); border:1px solid var(--line); border-left:4px solid #c2571f;
+        border-radius:10px; padding:.9rem 1.1rem; margin:.7rem 0; font-size:.93rem;}
+  .idea{background:var(--card); border:1px solid var(--line); border-left:4px solid var(--human);
+        border-radius:10px; padding:.9rem 1.1rem; margin:.7rem 0; font-size:.93rem;}
+  .foot{margin-top:2.5rem; color:var(--sub); font-size:.84rem; border-top:1px solid var(--line); padding-top:1rem;}
+</style>
+</head>
+<body>
+<main>
+  <h1>서치 스킬 3형제 가이드</h1>
+  <div class="date">/url · /aisearch · /humansearch — 역할 분담과 가장 간소한 사용법 · 2026-07-05</div>
+
+  <div class="oneliner">"/url 은 밥상 차리기, /humansearch 는 밥 먹기, /aisearch 는 장보기부터 풀코스."</div>
+
+  <h2>1. 세 스킬의 역할 (딱 갈라서)</h2>
+  <div class="cards">
+    <div class="card url">
+      <span class="tag">준비</span>
+      <h3>/url</h3>
+      <ul>
+        <li>링크드인(RPS) 검색을 <b>미리 걸어둔다</b></li>
+        <li>JD에서 검색식 3단(정밀·표준·확장) 생성</li>
+        <li>라이브 검색 링크 1개 + 레시피를 ClickUp 포지션 댓글에 저장</li>
+        <li>인자 없이 치면 살아있는 포지션 <b>전수</b> 세팅</li>
+      </ul>
+      <div class="no">후보 열람·채점·발송은 안 함 · 링크드인 전용</div>
+    </div>
+    <div class="card human">
+      <span class="tag">수확</span>
+      <h3>/humansearch</h3>
+      <ul>
+        <li>걸어둔 검색결과(RPS·사람인·잡코리아)를 <b>순회·채점</b></li>
+        <li>합격 70점+ 후보를 ClickUp FY26AI_Search 에 등록</li>
+        <li>전부 저장 + 사장님 DM 보고</li>
+        <li>요청 시 1등 후보 개인화 제안문까지</li>
+      </ul>
+      <div class="no">검색어 생성·필터 입력은 안 함 · 발송(Send)은 절대 자동 안 누름</div>
+    </div>
+    <div class="card ai">
+      <span class="tag">풀코스</span>
+      <h3>/aisearch</h3>
+      <ul>
+        <li>JD 분석 → 키워드 5축 전략</li>
+        <li><b>사람인·잡코리아·링크드인 3사 병렬</b> 검색</li>
+        <li>적합도 평가 → 표준 후보 리스트(링크·점수·이유·요약)</li>
+      </ul>
+      <div class="no">포지션 입력 없이는 시작 안 함 · 무겁다(전방위용) · 발송 자동 금지</div>
+    </div>
+  </div>
+  <p>핵심 경계: <b>검색을 "만드는" 건 /url(링크드인)과 /aisearch(3사), 검색을 "소비하는" 건 /humansearch.</b></p>
+
+  <h2>2. 권장 흐름 — 링크드인 기본 루틴 (가장 간소)</h2>
+  <div class="flow">
+    <div class="step"><div class="n">1</div><div><b><code>/url</code></b> — 포지션이 새로 들어오거나 주 1회. 살아있는 포지션 전부 링크드인 검색을 미리 세팅해 ClickUp 에 저장. (밤에 돌려도 됨)</div></div>
+    <div class="step"><div class="n">2</div><div><b><code>/humansearch 회사, 역할</code></b> — 후보가 필요한 순간 포지션 이름만 부른다. 순회·채점·등록·DM 보고까지 한 턴.</div></div>
+    <div class="step"><div class="n">3</div><div><b>사장님이 직접 발송</b> — 제안·InMail 의 "보내기"는 항상 사람 손 (모든 스킬 공통 철칙).</div></div>
+  </div>
+  <p>준비(비싼 작업)와 수확(빠른 작업)이 분리돼 있어서, 필요한 순간엔 <b>한 마디</b>면 됩니다. 사람인·잡코리아까지 봐야 하면 그때 /aisearch 를 부릅니다.</p>
+
+  <h2>3. 외울 것 3마디</h2>
+  <div class="tbl-wrap"><table>
+    <tr><th>상황</th><th>한 마디</th><th>결과</th></tr>
+    <tr><td>포지션 새로 들어옴 / 주 1회</td><td><code>/url</code></td><td>전 포지션 링크드인 검색 사전 세팅 → ClickUp 저장</td></tr>
+    <tr><td>이 포지션 후보 보고 싶다</td><td><code>/humansearch 코드잇 백엔드</code></td><td>70점+ 후보 ClickUp 등록 + DM 보고</td></tr>
+    <tr><td>3사 전부 훑어야 한다</td><td><code>/aisearch &lt;포지션&gt; 잡코리아도 같이</code></td><td>사람인·잡코리아·링크드인 병렬 풀 서치</td></tr>
+  </table></div>
+
+  <h2>4. 주의할 점 (지금 구조의 한계)</h2>
+  <div class="warn"><b>링크드인 검색 겹침 주의</b> — /aisearch 도 링크드인 검색을 만들 수 있는데, RPS 는 프로젝트당 라이브 검색이 1개뿐이라 /url 이 걸어둔 검색을 덮을 수 있습니다. → <b>링크드인은 /url→/humansearch 라인으로 통일</b>, /aisearch 는 사람인·잡코리아 위주로 쓰는 걸 권장.</div>
+  <div class="warn"><b>/url 은 링크드인 전용</b> — 사람인·잡코리아용 "미리 걸어두기"는 아직 없습니다. 그 두 채널의 검색 생성은 /aisearch 몫.</div>
+  <div class="warn"><b>검색 단계(tier) 전환은 수동</b> — 정밀→표준→확장 전환은 ClickUp 댓글의 검색식을 복사해 붙여넣는 방식(링크드인 구조상 URL 여러 개 저장 불가).</div>
+  <div class="warn"><b>등록 전 3중 확인 생략 금지</b> — 영문 학교명 보정 → 하드제외(프리랜서·잦은 이직) 재적용 → 프로필 링크 원본 복붙. /humansearch 에 명문화돼 있음.</div>
+
+  <h2>5. 의견 (제안)</h2>
+  <div class="idea"><b>역할 고정</b> — "포지션 오면 /url, 후보 필요하면 /humansearch"를 기본 루틴으로, /aisearch 는 "3사 전방위·새 키워드 전략" 전용으로 좁혀 쓰면 세 스킬이 겹치지 않고 각자 최대 효용을 냅니다.</div>
+  <div class="idea"><b>한 마디 라우팅(향후)</b> — "서치 코드잇 백엔드" 한 마디로: 준비돼 있으면 /humansearch, 없으면 /url 먼저 자동, "3사" 단어 있으면 /aisearch. 스킬 트리거 조정으로 가능 — 원하시면 별도 작업으로 진행합니다.</div>
+
+  <div class="foot">
+    근거 정본: .claude/skills/url/SKILL.md · .claude/skills/aisearch/SKILL.md · .claude/skills/humansearch/SKILL.md · docs/sot/25 —
+    md 버전: docs/engineering/skill-trio-url-aisearch-humansearch-guide-2026-07-05.md
+  </div>
+</main>
+</body>
+</html>
