@@ -45,6 +45,10 @@ class PortalTabGuardTests(unittest.TestCase):
             "PORTAL_CHROME": str(self.fake_chrome),
             "PORTAL_LOG_DIR": str(self.tmp / "logs"),
             "PORTAL_BOOT_WAIT": "1",
+            # 실환경 프로필과 격리 — 가드(pgrep --user-data-dir=…)가 진짜 포털 크롬을 잡지 않게.
+            "SARAMIN_PROFILE": str(self.tmp / "prof_saramin"),
+            "JOBKOREA_PROFILE": str(self.tmp / "prof_jobkorea"),
+            "LINKEDIN_PROFILE": str(self.tmp / "prof_linkedin"),
             **TEST_PORTS,
         }
 
