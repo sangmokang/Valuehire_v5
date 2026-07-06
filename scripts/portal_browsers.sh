@@ -29,9 +29,9 @@ SARAMIN_PORT="${SARAMIN_PORT:-9223}"
 JOBKOREA_PORT="${JOBKOREA_PORT:-9224}"
 LINKEDIN_PORT="${LINKEDIN_PORT:-9225}"   # 9222는 다른 크롬과 충돌나서 깨끗한 포트 사용
 
-SARAMIN_PROFILE="$HOME/.valuehire/portal_profiles/saramin/default"
-JOBKOREA_PROFILE="$HOME/.valuehire/portal_profiles/jobkorea/default"
-LINKEDIN_PROFILE="$HOME/.valuehire/cdp_profiles/linkedin"
+SARAMIN_PROFILE="${SARAMIN_PROFILE:-$HOME/.valuehire/portal_profiles/saramin/default}"
+JOBKOREA_PROFILE="${JOBKOREA_PROFILE:-$HOME/.valuehire/portal_profiles/jobkorea/default}"
+LINKEDIN_PROFILE="${LINKEDIN_PROFILE:-$HOME/.valuehire/cdp_profiles/linkedin}"
 
 # 로그인 프로필을 재사용하므로 검색 페이지로 직접 이동한다(미로그인 시 포털이 로그인으로 보냄).
 SARAMIN_URL="https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
@@ -61,6 +61,12 @@ start_one() {
     echo "  [$name] 이미 :$port 에서 실행 중 — 건너뜀"
     return 0
   fi
+  # 탭 증식 가드(issue #71): 같은 프로필의 크롬 프로세스가 이미 살아 있으면(기동 중·절전 직후 등
+  # CDP만 잠깐 무응답) 바이너리를 다시 실행하지 않는다 — 재실행하면 기존 인스턴스에 새 탭만 쌓인다.
+  if pgrep -f -- "--user-data-dir=$profile" >/dev/null 2>&1; then
+    echo "  [$name] ⚠️ 크롬 프로세스는 살아있는데 CDP :$port 무응답 — 재실행하지 않음(탭 증식 방지). 계속 무응답이면 'restart'."
+    return 0
+  fi
   if [[ ! -d "$profile" ]]; then
     echo "  [$name] ⚠️ 프로필 폴더 없음: $profile (로그인 후 자동 생성됨)"
     mkdir -p "$profile"
@@ -85,10 +91,11 @@ cmd_start() {
     # shellcheck disable=SC2086
     set -- $row; start_one "$1" "$2" "$3" "$4"
   done
-  echo "⏳ 기동 확인(최대 20초)…"
+  local boot_wait="${PORTAL_BOOT_WAIT:-20}"
+  echo "⏳ 기동 확인(최대 ${boot_wait}초)…"
   for row in "${CHANNELS[@]}"; do
     set -- $row; local name="$1" port="$2" n=0
-    until cdp_alive "$port" || [[ $n -ge 20 ]]; do sleep 1; n=$((n+1)); done
+    until cdp_alive "$port" || [[ $n -ge $boot_wait ]]; do sleep 1; n=$((n+1)); done
     if cdp_alive "$port"; then echo "  ✅ $name :$port 응답"; else echo "  ❌ $name :$port 무응답 — 로그 확인"; fi
   done
   echo "✔ 완료. 'health'로 로그인 상태를 확인하고, 안 된 채널은 그 창에서 직접 로그인하세요."
