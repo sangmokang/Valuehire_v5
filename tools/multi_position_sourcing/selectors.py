@@ -33,6 +33,17 @@ DEFAULT_SELECTOR_MAP: dict[str, dict[str, tuple[SelectorCandidate, ...]]] = {
             SelectorCandidate("label", 'button:has-text("검색")', "visible text fallback"),
             SelectorCandidate("class", ".search_panel .btn_search", "class fallback"),
         ),
+        # SOT28 자동발송 — 이직 제안 모달(사람인 SKILL §10.1~10.5 라이브 절차의 코드화)
+        "offer_comment_input": (
+            SelectorCandidate("name", 'textarea[name="jobOffer.offerComment"]', "제안 본문① — execCommand insertText 로만 주입(R10)"),
+        ),
+        "offer_charge_work_input": (
+            SelectorCandidate("name", 'textarea[name="jobOffer.chargeWork"]', "제안 본문②(입사 후 업무) — insertText 주입"),
+        ),
+        "offer_send_button": (
+            SelectorCandidate("label", 'button:has-text("제안 발송")', "SOT28 게이트(evaluate_send allowed) 통과 시에만 클릭"),
+            SelectorCandidate("label", 'button:has-text("발송")', "라벨 축약 fallback — 게이트 통과 시에만 클릭"),
+        ),
     },
     "jobkorea": {
         "keyword_input": (
@@ -52,15 +63,31 @@ DEFAULT_SELECTOR_MAP: dict[str, dict[str, tuple[SelectorCandidate, ...]]] = {
             SelectorCandidate("class", ".btnSearchFilter", "observed detailed search button"),
             SelectorCandidate("label", 'button:has-text("검색")', "visible text fallback"),
         ),
+        # SOT28 자동발송 — 포지션 제안 흐름(잡코리아 SKILL §16 프로즈 절차의 코드화)
+        "offer_preview_button": (
+            SelectorCandidate("label", 'button:has-text("미리보기")', "제안 미리보기(miribogi) 열기"),
+            SelectorCandidate("class", ".btn-preview", "미리보기 class fallback"),
+        ),
+        "offer_send_button": (
+            SelectorCandidate("label", 'button:has-text("제안보내기")', "SOT28 게이트(evaluate_send allowed) 통과 시에만 클릭"),
+            SelectorCandidate("label", 'button:has-text("제안 보내기")', "띄어쓰기 변형 fallback — 게이트 통과 시에만 클릭"),
+        ),
     },
     "linkedin_rps": {
         "profile_url": (
             SelectorCandidate("label", 'a[href*="/talent/profile/"]', "RPS candidate profile links only"),
             SelectorCandidate("data-test", '[data-test-profile-link]', "data-test fallback if available"),
         ),
-        "inmail_send_button_forbidden": (
-            SelectorCandidate("label", 'button:has-text("Send InMail")', "forbidden outreach control; must never click"),
-            SelectorCandidate("label", 'button:has-text("보내기")', "forbidden localized outreach control"),
+        # SOT28 (2026-07-07 사장님 지시): 종전 forbidden 셀렉터를 게이트 조건부 실행 셀렉터로 전환.
+        # evaluate_send(allowed=True) 없이 이 버튼을 클릭하는 코드는 여전히 게이트 위반이다.
+        "inmail_body_input": (
+            SelectorCandidate("label", 'div[contenteditable="true"][aria-label*="message"]', "InMail 본문 컴포저 — insertText 주입"),
+            SelectorCandidate("class", ".msg-form__contenteditable", "컴포저 class fallback"),
+        ),
+        "inmail_send_button": (
+            SelectorCandidate("label", 'button:has-text("Send InMail")', "SOT28 게이트(evaluate_send allowed) 통과 시에만 클릭"),
+            SelectorCandidate("label", 'button:has-text("Send")', "라벨 축약 fallback — 게이트 통과 시에만 클릭"),
+            SelectorCandidate("label", 'button:has-text("보내기")', "한국어 UI fallback — 게이트 통과 시에만 클릭"),
         ),
     },
 }

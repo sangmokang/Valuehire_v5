@@ -1,0 +1,35 @@
+{
+  "sot": 28,
+  "version": 1,
+  "title": "3사 제안 자동발송 정책 (사람인·잡코리아·링크드인)",
+  "approved_by": "사장님 명시 지시 2026-07-07 — '세곳에서 모두 자동발송을 하도록 기능 구현해줘'",
+  "supersedes": [
+    "CLAUDE.md SOT 불변식 3 (전면 수동) — 조건부 개정: 아래 게이트 전부 통과 시에만 자동",
+    "docs/sot/22-talent-search-filters.md:45 / .json INV3 선언 — 게이트 통과 발송에 한해 supersede",
+    "docs/sot/24-position-jd-sot.json send_policy — 게이트 통과 발송에 한해 supersede",
+    "docs/sot/25-ai-search-execution-process INV3·G_send — 게이트 통과 발송에 한해 supersede",
+    "docs/sot/26-portal-login-spec.json INV4 — 게이트 통과 발송에 한해 supersede"
+  ],
+  "invariants": [
+    "게이트 하나라도 미통과면 발송하지 않는다 (fail-closed — 점수 없음=차단, 정책 파일 오염=차단)",
+    "발송 코드 경로는 evaluate_send 단일 관문을 거친다 — 우회 클릭 금지",
+    "모든 라이브 발송은 원장(ledger)에 기록한다 — 본문은 sha256 해시만(원문 비저장)",
+    "dry-run 이 기본값 — 라이브는 --live 명시 opt-in",
+    "킬스위치 env 가 존재하면 값과 무관하게 전 채널 정지"
+  ],
+  "kill_switch_env": "VALUEHIRE_SEND_KILL_SWITCH",
+  "dry_run_default": true,
+  "dedupe_window_days": 90,
+  "gate": {
+    "min_score": 85,
+    "require_precheck_pass": true,
+    "hard_exclusions_block": true
+  },
+  "channels": {
+    "saramin": { "enabled": true, "daily_cap": 20, "cdp_http": "http://127.0.0.1:9223" },
+    "jobkorea": { "enabled": true, "daily_cap": 20, "cdp_http": "http://127.0.0.1:9224" },
+    "linkedin_rps": { "enabled": true, "daily_cap": 15, "cdp_http": "http://127.0.0.1:9225" }
+  },
+  "body_sot": "skills/humansearch/references/inmail-golden-sample.md (v2) + inmail-sent-sample-2026-07-02.md (실발송 검증본)",
+  "notes": "발송 성공 후처리(Discord·칸반·activity log)와 크레딧 잔량·24h 재접촉 잠금 기계판정은 후속 SOT."
+}

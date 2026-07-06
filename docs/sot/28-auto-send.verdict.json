@@ -1,0 +1,76 @@
+{
+  "claim_id": "auto-send-3channel-v1",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal_doc": "docs/engineering/auto-send-3channel-goal-2026-07-07.md",
+  "generator": {
+    "author": "Claude Fable 5 (main session, worktree auto-send-3ch)",
+    "claim": "SOT28 게이트(evaluate_send 단일 관문)·2단계 원장(pending→live)·3사 발송 러너(dry-run 기본)를 구현, 기존 봉인(CLAUDE.md 불변식 3·selectors forbidden·keywords)은 사장님 2026-07-07 명시 지시로 조건부 개정",
+    "changed_files": [
+      "docs/sot/28-auto-send-policy.json",
+      "tools/multi_position_sourcing/auto_send.py",
+      "tools/multi_position_sourcing/auto_send_runner.py",
+      "tools/multi_position_sourcing/selectors.py",
+      "tools/multi_position_sourcing/keywords.py",
+      "tests/test_auto_send.py",
+      "CLAUDE.md",
+      "scripts/portal_browsers.sh",
+      "skills/humansearch/references/inmail-sent-sample-2026-07-02.md",
+      "docs/engineering/auto-send-3channel-goal-2026-07-07.md"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "1064 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "runner CLI dry-run 스모크: allowed→exit 0(planned_steps 출력), 84점→exit 3(score_below_min), 킬스위치→exit 3. 라이브 --live 1건은 실제 후보·크레딧 소모라 미실행 — '수동 판정 필요'",
+    "mutation_evidence": "수동 mutant 2건(점수 게이트 제거→1 failed, dry-run 카운트 오염→2 failed) 테스트가 포착 후 원복"
+  },
+  "v1": {
+    "author": "fresh Claude subagent a1bba4e77c2d121c6 (Codex CLI 'Operation not permitted' — 메모리 승인 대체)",
+    "verdict": "fail",
+    "source_jsonl": "~/.claude/projects/-Users-kangsangmo-Valuehire-v5--claude-worktrees-auto-send-3ch/859c14e5-71cc-462d-9e2f-97330d3442a2/subagents/agent-a1bba4e77c2d121c6.jsonl",
+    "agentId": "a1bba4e77c2d121c6",
+    "counterexamples_summary": [
+      "critical: score=NaN 이 게이트 통과(nan<85=False) — 재현됨",
+      "major: bool 이 isinstance(int) 통과(min_score=true→1) — 재현됨",
+      "major: 원장 파일락 부재 → 동시 실행 이중발송(TOCTOU)",
+      "major: 클릭 후 예외 시 원장 미기록 → 재실행 이중발송",
+      "major: pages[0] 임의 탭 + includes 라벨 매칭 → 엉뚱한 버튼 클릭 위험",
+      "major: precheck 자가신고 플래그 — 종이 게이트",
+      "minor: score str/body None TypeError 크래시, 원장 오염 크래시, _execute_live 직접 호출 가능, cdp_http 무검증"
+    ]
+  },
+  "fix_after_v1": {
+    "commit": "V1 반례 전부 수정: _strict_int(bool 봉인)·score_invalid(NaN/float/str)·SendLedger.lock(flock)·pending 2단계 기록·_pick_page 도메인 검증·라벨 정확일치 매칭+guard_body·게이트가 precheck_inmail 직접 실행·LedgerCorruptError 차단 사유 승격·cdp_http 127.0.0.1 강제·_execute_live 가 allowed SendDecision 요구",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "1064 passed, 4 xfailed, 14 subtests passed"
+  },
+  "v2": {
+    "author": "fresh Claude subagent aaea865becc98265f (리셋 컨텍스트 — goal+verdict 만 읽음)",
+    "verdict": "pass",
+    "source_jsonl": "~/.claude/projects/-Users-kangsangmo-Valuehire-v5--claude-worktrees-auto-send-3ch/859c14e5-71cc-462d-9e2f-97330d3442a2/subagents/agent-aaea865becc98265f.jsonl",
+    "agentId": "aaea865becc98265f",
+    "fix_verification": "V1 반례 7묶음 전부 최신 코드에서 재현 시도 → 전부 차단(now_blocked=true). macOS flock 동시 4프로세스 실검증. ./verify.sh exit 0 재실행.",
+    "new_holes_minor": [
+      "_pick_page 부분문자열 매칭 → hostname 파싱으로 수정 완료(테스트 추가)",
+      "daily cap pending+live 이중 계산 → candidate_key 접기로 수정 완료(테스트 추가)",
+      "SendDecision(allowed=True) 위조 가능 — Python 언어 한계, 원장·잠금·게이트 단일 호출 관례로 완화(문서화)"
+    ]
+  },
+  "failed_attempts": [
+    {
+      "attempt": "mutation 후 git checkout 으로 원복",
+      "root_cause": "auto_send.py 가 아직 untracked 라 checkout 불가 — mutant 2개가 파일에 겹쳐 남음",
+      "repro": "git checkout -- <untracked> → 'did not match any file(s) known to git'",
+      "next_change": "untracked 파일 mutation 은 Edit 로 명시 원복(수행 완료) — 이후 mutation 은 커밋 후에만"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "게이트 전부 통과 — 남은 것: --live 실발송 1건 수동 판정(실후보·크레딧 소모라 다음 실전 턴)",
+  "fix_after_v2": {
+    "commit": "_pick_page hostname 정확/서브도메인 일치, sent_count_on 후보 접기, fill 길이 검증",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "1066 passed, 4 xfailed, 14 subtests passed"
+  }
+}
