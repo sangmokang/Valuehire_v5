@@ -78,7 +78,9 @@ def portal_keywords_for_family(
         },
         "linkedin_rps": {
             "profile_url_must_match": "/talent/profile/",
-            "allow_inmail_send": False,
+            # SOT28(2026-07-07 사장님 지시): 무조건 금지 → 게이트 조건부 허용.
+            # 실제 허용 판정은 auto_send.evaluate_send 단일 관문 — 이 값만으로 발송하지 않는다.
+            "allow_inmail_send": "sot28_gated",
             "export_requires_gate": "RPS_EXPORT_ALLOW_WRITE",
         },
         "public_web": {
