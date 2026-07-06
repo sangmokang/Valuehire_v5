@@ -27,3 +27,6 @@ node_modules/
 nohup.out
 scratchpad/
 _codex_mutant_run_rps_manual_switch/
+
+# git worktree 작업방 (커밋 금지)
+worktrees/

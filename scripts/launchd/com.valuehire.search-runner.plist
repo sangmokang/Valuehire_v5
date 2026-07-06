@@ -22,6 +22,8 @@
     <string>/Users/kangsangmo/Valuehire_v5</string>
     <key>VALUEHIRE_SEARCH_INTERVAL_SECONDS</key>
     <string>900</string>
+    <key>PATH</key>
+    <string>/Users/kangsangmo/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
   <key>RunAtLoad</key>
