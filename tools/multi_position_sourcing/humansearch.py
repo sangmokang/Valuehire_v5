@@ -16,6 +16,7 @@ import json
 import re
 import unicodedata
 import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,96 @@ _URL_SAFE_SCHEMES = {"http", "https"}
 def load_humansearch_config() -> dict[str, Any]:
     """스킬 설정 JSON 로드(단일 출처). 코드 상수와의 일치는 테스트가 강제한다."""
     return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+
+
+# ── PC-C2: 전수조사 결과수 판단 트리(순수함수, 채널별 밴드) ──────────────────
+# 밴드 경계·상한은 docs/sot/22 result_count_decision_tree 에서 채널별로 읽는다(SOT5 단일출처).
+# PC-C3b(라이브 전수 순회)가 이 결정을 소비한다 — 채널마다 재구현·하드코딩 금지.
+_SOT22_PATH = (
+    Path(__file__).resolve().parents[2] / "docs" / "sot" / "22-talent-search-filters.json"
+)
+
+_BAND_RANGE_RE = re.compile(r"^(\d+)_to_(\d+)$")
+_BAND_PLUS_RE = re.compile(r"^(\d+)_plus$")
+
+
+@dataclass(frozen=True)
+class TraversalPlan:
+    """result_count 밴드 결정 — 라이브 전수 순회(PC-C3b)가 소비한다.
+
+    action: "abort"(포기) | "full"(GOLD 전수, limit=None) | "top_n"(상위 N만) | "add_condition"(조건추가).
+    limit:  top_n 이면 N, 그 외엔 None. band: 매칭된 SOT22 밴드 키(관측용). channel: 판단 채널.
+    """
+
+    action: str
+    limit: int | None
+    band: str
+    channel: str
+
+
+def _classify_band_action(prose: str) -> tuple[str, int | None]:
+    """SOT22 밴드 서술 → (action, limit). 해석 불가 서술은 fail-closed(ValueError).
+
+    ⚠️ 순서 중요: 300_plus/200_plus 서술은 "AND 추가 후에도 초과면 포기"라 '추가'와 '포기'를 둘 다
+    담는다 — '추가'(add_condition)를 '포기'보다 먼저 판정해야 조건추가 밴드가 abort 로 오분류되지 않는다.
+    """
+    top = re.search(r"상위\s*(\d+)", prose)
+    if top:
+        return "top_n", int(top.group(1))
+    if "추가" in prose:
+        return "add_condition", None
+    if "전수" in prose:
+        return "full", None
+    if "포기" in prose:
+        return "abort", None
+    raise ValueError(f"SOT22 밴드 서술을 해석할 수 없음(fail-closed): {prose!r}")
+
+
+def _decision_tree_for(channel: str) -> dict:
+    """SOT22 의 channels[channel].result_count_decision_tree(단일출처). 없으면 fail-closed."""
+    data = json.loads(_SOT22_PATH.read_text(encoding="utf-8"))
+    try:
+        tree = data["channels"][channel]["result_count_decision_tree"]
+    except (KeyError, TypeError):
+        raise ValueError(f"SOT22 에 채널 result_count_decision_tree 없음: {channel!r}")
+    if not isinstance(tree, dict):
+        raise ValueError(f"SOT22 {channel} result_count_decision_tree 형식 오류")
+    return tree
+
+
+def plan_result_count_traversal(channel: str, result_count: int) -> TraversalPlan:
+    """검색 결과수를 SOT22 채널별 밴드에 대입해 전수/부분/포기/조건추가를 결정한다(순수함수).
+
+    밴드 경계·상한은 docs/sot/22 에서 채널별로 읽는다 — 하드코딩 이중정의 금지(SOT5). RPS 상한(60)을
+    사람인/잡코리아(80)에 복사하면 61~80 GOLD 가 잘린다. 미지원 채널·음수·해석불가 밴드는 조용히
+    넘기지 않고 ValueError(fail-closed).
+    """
+    if result_count < 0:
+        raise ValueError(f"result_count 는 음수일 수 없음: {result_count}")
+
+    tree = _decision_tree_for(channel)
+
+    # (lo, hi, key): "A_to_B"=[A,B], "N_plus"=[N,inf). 메타 키(_source·read_via·note 등)는 무시.
+    bands: list[tuple[int, float, str]] = []
+    for key in tree:
+        m = _BAND_RANGE_RE.match(key)
+        if m:
+            bands.append((int(m.group(1)), float(m.group(2)), key))
+            continue
+        p = _BAND_PLUS_RE.match(key)
+        if p:
+            bands.append((int(p.group(1)), float("inf"), key))
+
+    if not bands:
+        raise ValueError(f"SOT22 {channel} 밴드가 비었음(fail-closed)")
+
+    # lo 오름차순 첫 매칭 → 경계 중첩(예: [81,300] 과 [300,inf))에서 좁은(낮은 lo) 밴드 우선(결정론).
+    for lo, hi, key in sorted(bands, key=lambda b: b[0]):
+        if lo <= result_count <= hi:
+            action, limit = _classify_band_action(tree[key])
+            return TraversalPlan(action=action, limit=limit, band=key, channel=channel)
+
+    raise ValueError(f"result_count={result_count} 가 {channel} 밴드에 없음(fail-closed)")
 
 
 def is_valid_profile_url(url: Any) -> bool:
