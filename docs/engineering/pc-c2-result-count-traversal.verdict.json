@@ -1,0 +1,32 @@
+{
+  "claim_id": "pc-c2-result-count-traversal",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "plan_result_count_traversal(channel, result_count)->TraversalPlan 이 docs/sot/22 result_count_decision_tree 를 채널별로 읽어 SOT22 와 일치하는 전수/부분/포기/조건추가 결정을 반환한다(순수함수, SOT5 단일출처). 사람인/잡코리아 5~80 전수·81~300 상위40·300+ 조건추가 / RPS 5~60 전수·61~200 상위20·200+ 조건추가, 0~4 포기, 미지원채널·음수·해석불가 fail-closed.",
+    "changed_files": [
+      "tools/multi_position_sourcing/humansearch.py",
+      "tests/test_result_count_traversal.py",
+      "docs/engineering/pc-c2-result-count-traversal-goal-2026-07-07.md"
+    ],
+    "command": "PYTHONSAFEPATH=1 PYTHONPATH=<worktree> .venv/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "test_result": "1017 passed, 4 xfailed, 14 subtests passed",
+    "unit_test_result": "tests/test_result_count_traversal.py 38 passed",
+    "red_evidence": "RED 커밋 ff4582e — ImportError: cannot import name 'TraversalPlan' (구현 전). GREEN 커밋 707a785.",
+    "mutation_evidence": [
+      {"mutant": "M1 서술해석 '포기'를 '추가'보다 먼저", "result": "7 failed (test_boundary_off_by_one_saramin/linkedin 등) — caught"},
+      {"mutant": "M2 경계 lo<= -> lo<", "result": "11 failed (경계 케이스) — caught"},
+      {"mutant": "M3 _decision_tree_for 채널무시 linkedin 트리 고정(RPS 밴드 전채널 복사=SOT5 위반)", "result": "15 failed (test_saramin_jobkorea_61_to_80·SOT조회) — caught"}
+    ],
+    "live_evidence": "staged seam — 소비자 PC-C3b(라이브 전수 순회) 예정. C2 는 순수함수라 라이브 배선은 비범위(C3b). 고아 아님(C3b goal 문서에 소비 명시).",
+    "orphan_note": "grep plan_result_count_traversal → 정의+테스트뿐(의도된 seam). 프로덕션 소비는 C3b."
+  },
+  "v1": { "author": "codex", "verdict": "pending", "counterexample": "", "repro": "", "source_jsonl": "", "agentId": "" },
+  "v2": { "author": "claude-reset", "verdict": "pending", "what_v1_missed": "", "independent_repro": "" },
+  "failed_attempts": [
+    {"attempt": "뮤테이션 검증을 GREEN 커밋 전에 실행", "root_cause": "구현이 uncommitted 라 git restore 가 구현 전체를 되돌려 M2 미실행", "repro": "git restore <impl> → ImportError", "next_change": "GREEN 을 먼저 커밋(707a785) 후 뮤테이션은 restore-safe 하게 재실행 — M2/M3 정상 수행"}
+  ],
+  "three_way_agree": false,
+  "status": "진행중"
+}
