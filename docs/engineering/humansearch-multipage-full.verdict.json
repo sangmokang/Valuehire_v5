@@ -1,0 +1,95 @@
+{
+  "claim_id": "humansearch-multipage-full",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal_doc": "docs/engineering/humansearch-multipage-full-goal-2026-07-07.md",
+  "generator": {
+    "author": "Codex",
+    "claim": "PC-C3b: humansearch_cdp_run consumes plan_result_count_traversal, removes the cards[:max_profiles] hard cap, traverses LinkedIn RPS pages by start offsets, and reuses deterministic_delay_ms for page pacing.",
+    "changed_files": [
+      "docs/engineering/humansearch-multipage-full-goal-2026-07-07.md",
+      "docs/engineering/humansearch-multipage-full.verdict.json",
+      "tests/test_humansearch_multipage_full.py",
+      "tools/multi_position_sourcing/humansearch_cdp_run.py"
+    ],
+    "red_evidence": {
+      "commit": "a94cd9c",
+      "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-multipage-full /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-humansearch-multipage-full/tests/test_humansearch_multipage_full.py -q",
+      "exit_code": 1,
+      "output": "5 failed: iter_planned_cards missing and main did not call the planned traversal path"
+    },
+    "green_evidence": {
+      "commit": "8d6e4df",
+      "focused_command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-multipage-full /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-humansearch-multipage-full/tests/test_humansearch_multipage_full.py -q",
+      "focused_exit_code": 0,
+      "focused_output": "9 passed in 0.06s",
+      "related_command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-multipage-full /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/test_humansearch_multipage_full.py tests/test_result_count_traversal.py tests/test_humansearch_preflight.py tests/test_humansearch_runner_hardexclude.py -q",
+      "related_exit_code": 0,
+      "related_output": "79 passed in 0.11s",
+      "full_command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-multipage-full /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-humansearch-multipage-full/tests/ -q",
+      "full_exit_code": 0,
+      "full_output": "1075 passed, 4 xfailed, 14 subtests passed in 23.22s"
+    },
+    "wiring_evidence": {
+      "file_lines": [
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:208 helper calls plan_result_count_traversal(channel, result_count)",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:239-241 helper calls deterministic_delay_ms(kind='short', step=..., seed=...)",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:370-380 main reads result_count and calls iter_planned_cards",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:383 main iterates cards without cards[:max_profiles]"
+      ],
+      "static_check": "main_calls_preflight_before_iter=True; main_reads_count_before_iter=True; helper_consumes_plan=True; legacy_slice_removed=True; pacing_reused=True"
+    }
+  },
+  "v1": {
+    "author": "Codex self-adversarial mutation pass",
+    "claude_status": "skipped_by_user_instruction_no_budget; claude binary exists at /Users/kangsangmo/.local/bin/claude but was not called",
+    "mutations": [
+      {
+        "mutation": "Change add_condition handling from return [] to unsupported action path",
+        "command": "pytest tests/test_humansearch_multipage_full.py -q",
+        "exit_code": 1,
+        "caught_by": "test_abort_and_add_condition_do_not_collect",
+        "failure": "ValueError: unsupported traversal action: 'add_condition'"
+      },
+      {
+        "mutation": "Change top_n target from plan.limit to result_count",
+        "command": "pytest tests/test_humansearch_multipage_full.py -q",
+        "exit_code": 1,
+        "caught_by": "test_top_n_traversal_stops_at_limit_without_fetching_extra_page",
+        "failure": "len(cards) == 61, expected 20"
+      }
+    ],
+    "verdict": "PASS"
+  },
+  "v2": {
+    "author": "Codex reset-style static and contract recheck",
+    "checks": [
+      "No production code occurrence of cards[:max_profiles] remains.",
+      "main calls assert_live_or_abort before iter_planned_cards.",
+      "main calls read_result_count before iter_planned_cards.",
+      "iter_planned_cards consumes the PC-C2 plan_result_count_traversal function.",
+      "Page-to-page pacing reuses deterministic_delay_ms instead of fixed constants.",
+      "Diff touches no auto_send, outreach, launchd, git push, PR, or live send path."
+    ],
+    "command": "python static source-order check + rg changed files",
+    "exit_code": 0,
+    "verdict": "PASS"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "Initial apply_patch wrote goal/test into main worktree instead of task worktree",
+      "root_cause": "apply_patch defaulted to the session cwd; worktree path was not explicit",
+      "repro": "focused pytest in /Users/kangsangmo/Valuehire_v5-humansearch-multipage-full reported file not found",
+      "fix": "Deleted the accidental main files and re-added them with absolute worktree paths"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "LOCAL_PASS_EXTERNAL_SHIP_BLOCKED",
+  "blocked_l3_actions": [
+    "git push",
+    "GitHub PR creation",
+    "GitHub PR merge",
+    "live portal execution",
+    "launchd start/load"
+  ]
+}
