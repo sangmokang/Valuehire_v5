@@ -1,0 +1,53 @@
+{
+  "claim_id": "pc-c2-result-count-traversal",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "plan_result_count_traversal(channel, result_count)->TraversalPlan 이 docs/sot/22 result_count_decision_tree 를 채널별로 읽어 SOT22 와 일치하는 전수/부분/포기/조건추가 결정을 반환한다(순수함수, SOT5 단일출처). 사람인/잡코리아 5~80 전수·81~300 상위40·300+ 조건추가 / RPS 5~60 전수·61~200 상위20·200+ 조건추가, 0~4 포기, 비-int·음수·미지원채널·해석불가 fail-closed(ValueError).",
+    "changed_files": [
+      "tools/multi_position_sourcing/humansearch.py",
+      "tests/test_result_count_traversal.py",
+      "docs/engineering/pc-c2-result-count-traversal-goal-2026-07-07.md"
+    ],
+    "command": "PYTHONSAFEPATH=1 PYTHONPATH=<worktree> .venv/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "test_result": "1025 passed, 4 xfailed, 14 subtests passed",
+    "unit_test_result": "tests/test_result_count_traversal.py 46 passed",
+    "red_evidence": "RED 커밋 ff4582e — ImportError: cannot import name 'TraversalPlan'. GREEN 707a785. V1 수정 a946c34.",
+    "mutation_evidence": [
+      {"mutant": "M1 서술해석 '포기'를 '추가'보다 먼저", "result": "7 failed — caught"},
+      {"mutant": "M2 경계 lo<= -> lo<", "result": "11 failed — caught"},
+      {"mutant": "M3 _decision_tree_for 채널무시 linkedin 고정(RPS 밴드 전채널 복사=SOT5 위반)", "result": "15 failed (사람인 61~80 잘림 적발) — caught"},
+      {"mutant": "M4 타입가드 제거", "result": "8 failed (test_non_int_result_count_raises_valueerror) — caught"}
+    ],
+    "live_evidence": "staged seam — 소비자 PC-C3b(라이브 전수 순회) 예정. 순수함수라 라이브 배선은 C3b 비범위. 고아 아님(C3b goal 문서에 소비 명시).",
+    "orphan_note": "grep plan_result_count_traversal → 정의+테스트뿐(의도된 seam)."
+  },
+  "v1": {
+    "author": "codex",
+    "verdict": "fail->fixed",
+    "counterexample": "①float 10.5 를 10 처럼 조용히 통과(계약은 int) ②str '10'·None 이 TypeError 던짐(계약은 fail-closed ValueError) ③트리에 미해석 밴드키가 유효키와 섞이면 조용히 무시(단 미매칭 값은 여전히 ValueError fail-closed — fail-open 아님, 저위험 triage)",
+    "repro": "plan_result_count_traversal('saramin', 10.5) -> full(오류 아님); ('saramin','10') -> TypeError",
+    "fix": "type(result_count) is not int -> ValueError (a946c34). 회귀 8케이스(10.5·3.0·'10'·None·True·False·list·5.0). 재현: 수정 후 10.5·'10'·None·True 전부 ValueError OK.",
+    "boundary_verdict": "경계·300/200 tie-break·서술파싱·SOT22 조회·결정성은 정상(PASS)",
+    "source_jsonl": "tasks/a1e47d07ed8f36f8b.output",
+    "agentId": "a1e47d07ed8f36f8b",
+    "triage_defect3": "미해석 밴드키 무시는 메타키(_source·read_via·note) 건너뛰기와 동일 경로 — 오타 밴드도 스킵되나 그 범위 값은 '밴드에 없음' ValueError 로 fail-closed(fail-open 아님). 메타/오타 구분 불가라 현행 유지, 문서화."
+  },
+  "v2": {
+    "author": "claude-reset",
+    "verdict": "pass",
+    "independent_repro": "SOT22 json 을 직접 파싱해 경계값(4,5,60,61,80,81,200,201,300,301)×3채널 결정을 재도출→함수 출력과 전건 일치. 38 passed.",
+    "edge_inputs": "True/False -> abort(0_to_4, bool=int 취급; ※V1 수정 후엔 ValueError 로 강화됨). 채널 'Saramin'/'SARAMIN'/' saramin'/'saramin ' -> ValueError(fail-closed).",
+    "sot5_proof": "SOT22 사본 변조(saramin 전수상한 80->40): saramin 50 -> top_n(변경 반영), 20 -> full. 하드코딩 아님 입증.",
+    "new_mutants": "Mutant A(top_n regex 하드코딩 99) -> 7 failed caught. Mutant F(hi <= -> <) -> 13 failed caught. Mutant E(음수가드 삭제) -> 38 passed 이나 behavior 상 saramin -1 여전히 ValueError(밴드 미매칭 fall-through) — 관측동작 동일, 결함 아님.",
+    "what_v1_missed": "V2 는 bool/casing/SOT5 를 깊게 봤으나 float/str/None 타입 fail-closed 는 V1 이 잡음 — 상보적."
+  },
+  "failed_attempts": [
+    {"attempt": "뮤테이션을 GREEN 커밋 전에 실행(1차)", "root_cause": "구현 uncommitted → git restore 가 구현 전체 되돌림 → M2 미실행", "repro": "git restore <impl> → ImportError", "next_change": "GREEN 707a785 먼저 커밋 후 restore-safe 재실행"},
+    {"attempt": "타입가드 수정을 커밋 전 뮤테이션(2차)", "root_cause": "동일 — 수정 uncommitted → git restore 가 타입가드 되돌림 → 8 failed", "repro": "git restore <impl> → test_non_int 8 failed", "next_change": "수정 a946c34 즉시 커밋 후 진행. 교훈: 뮤테이션 전 반드시 커밋."}
+  ],
+  "three_way_agree": true,
+  "convergence_note": "V1(FAIL) 실결함 3건 중 1·2 는 수정·회귀봉인(a946c34), 3 은 fail-closed 유지 triage. V2(PASS) 경계·SOT5 독립재현. T 1025 passed. V1 반례가 회귀테스트로 기계봉인되어 재현 시 RED — 수렴.",
+  "status": "GREEN"
+}
