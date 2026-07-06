@@ -110,6 +110,14 @@ def test_negative_count_raises() -> None:
         plan_result_count_traversal("saramin", -1)
 
 
+# ── V1(Codex) 적대검증 회귀: 비-int 은 fail-closed ValueError(TypeError·조용한 통과 금지) ──
+@pytest.mark.parametrize("bad", [10.5, 3.0, "10", None, True, False, [10], 5.0])
+def test_non_int_result_count_raises_valueerror(bad) -> None:
+    """float(10.5 가 10 처럼 조용히 통과)·str/None(TypeError)·bool 모두 ValueError 로 fail-closed."""
+    with pytest.raises(ValueError):
+        plan_result_count_traversal("saramin", bad)
+
+
 # ── ⭐ SOT5: 실제로 SOT22 를 읽는가(하드코딩 뮤턴트 생존 차단) ───────────
 def test_reads_bands_from_sot22_not_hardcoded(monkeypatch, tmp_path) -> None:
     """SOT22 를 변형해 밴드를 바꾸면 결정도 바뀌어야 한다(하드코딩이면 안 바뀜)."""

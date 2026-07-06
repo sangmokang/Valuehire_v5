@@ -156,6 +156,12 @@ def plan_result_count_traversal(channel: str, result_count: int) -> TraversalPla
     사람인/잡코리아(80)에 복사하면 61~80 GOLD 가 잘린다. 미지원 채널·음수·해석불가 밴드는 조용히
     넘기지 않고 ValueError(fail-closed).
     """
+    # 타입 fail-closed: int 만 허용. float(10.5)·str("10")·None·bool 은 거부(ValueError, TypeError 아님).
+    # bool 은 int 서브클래스라 type() 로 명시 거부한다(True 를 1명으로 오취급 방지). V1(Codex) 적대검증 회귀.
+    if type(result_count) is not int:
+        raise ValueError(
+            f"result_count 는 int 여야 함(fail-closed): {type(result_count).__name__}={result_count!r}"
+        )
     if result_count < 0:
         raise ValueError(f"result_count 는 음수일 수 없음: {result_count}")
 
