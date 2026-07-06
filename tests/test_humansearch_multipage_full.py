@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tools.multi_position_sourcing import humansearch_cdp_run as hcr
 
 
@@ -109,7 +111,8 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hcr.cdp, "find_page_by_url", lambda _needle: {"targetId": "t1"})
     monkeypatch.setattr(hcr.cdp, "new_tab", lambda _url: {"targetId": "new"})
     monkeypatch.setattr(hcr.cdp, "attach", lambda _target: tab)
-    monkeypatch.setattr(hcr, "collect_cards", lambda _tab, _start: [])
+    monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start: None)
+    monkeypatch.setattr(hcr, "extract_cards_from_current_page", lambda _tab: [])
     monkeypatch.setattr(hcr, "assert_live_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "read_result_count", lambda _tab: 60, raising=False)
 
@@ -140,3 +143,20 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
     assert calls[0]["channel"] == "linkedin"
     assert processed == [card["url"] for card in _cards(0, 3)]
     assert tab.closed is True
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("60 results", 60),
+        ("3.9K+ results", 3900),
+        ("총 42명", 42),
+    ],
+)
+def test_parse_result_count_supported_formats(raw: str, expected: int) -> None:
+    assert hcr._parse_result_count(raw) == expected
+
+
+def test_parse_result_count_fails_closed_on_missing_number() -> None:
+    with pytest.raises(ValueError):
+        hcr._parse_result_count("Loading results")
