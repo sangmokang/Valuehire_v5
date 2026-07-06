@@ -203,14 +203,17 @@ class SendLedger:
         return parsed
 
     def sent_count_on(self, channel: str, date: dt.date) -> int:
-        """해당 날짜(UTC)·채널의 발송 수 — pending+live 를 센다, dry-run 은 제외."""
-        return sum(
-            1
+        """해당 날짜(UTC)·채널의 발송 수 — pending+live 를 세되 같은 후보의
+        pending→live 2단계 기록은 1건으로 접는다(상한 2배속 소모 방지, V2 minor 2).
+        dry-run 은 제외."""
+        keys = {
+            r.get("candidate_key")
             for r in self.records()
             if r.get("mode") in _COUNTED_MODES
             and r.get("channel") == channel
             and self._sent_at(r).date() == date
-        )
+        }
+        return len(keys)
 
     def already_sent(
         self,

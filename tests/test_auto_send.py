@@ -328,6 +328,30 @@ def test_pick_page_matches_channel_domain_only() -> None:
         _pick_page(pages, "gmail")
 
 
+def test_pick_page_rejects_lookalike_urls() -> None:
+    """V2 minor 1: 부분문자열 매칭 금지 — hostname 정확/서브도메인 일치만 인정."""
+    lookalikes = [
+        {"type": "page", "url": "https://evil.example/?next=https://www.linkedin.com/"},
+        {"type": "page", "url": "https://linkedin.com.evil.example/talent"},
+        {"type": "page", "url": "https://notlinkedin.com/talent"},
+    ]
+    with pytest.raises(RuntimeError):
+        _pick_page(lookalikes, "linkedin_rps")
+    real = lookalikes + [{"type": "page", "url": "https://www.linkedin.com/talent/inbox"}]
+    assert _pick_page(real, "linkedin_rps")["url"].endswith("/talent/inbox")
+
+
+def test_sent_count_folds_pending_live_pair(tmp_path: Path) -> None:
+    """V2 minor 2: pending→live 2단계 기록은 같은 후보 1건 — 상한 2배속 소모 방지."""
+    ledger = _ledger(tmp_path)
+    for mode in ("pending", "live"):
+        ledger.append(
+            candidate_key="https://x/one", channel="saramin",
+            position_id="P-1", body="b", mode=mode, sent_at=NOW,
+        )
+    assert ledger.sent_count_on("saramin", NOW.date()) == 1
+
+
 # ── 배선: SOT 개정 + runner 경로 ─────────────────────────────
 def test_claude_md_references_sot28() -> None:
     text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")

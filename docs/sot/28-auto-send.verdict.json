@@ -46,8 +46,16 @@
     "output": "1064 passed, 4 xfailed, 14 subtests passed"
   },
   "v2": {
-    "author": "(리셋 컨텍스트 재검증 — 실행 후 기록)",
-    "verdict": null
+    "author": "fresh Claude subagent aaea865becc98265f (리셋 컨텍스트 — goal+verdict 만 읽음)",
+    "verdict": "pass",
+    "source_jsonl": "~/.claude/projects/-Users-kangsangmo-Valuehire-v5--claude-worktrees-auto-send-3ch/859c14e5-71cc-462d-9e2f-97330d3442a2/subagents/agent-aaea865becc98265f.jsonl",
+    "agentId": "aaea865becc98265f",
+    "fix_verification": "V1 반례 7묶음 전부 최신 코드에서 재현 시도 → 전부 차단(now_blocked=true). macOS flock 동시 4프로세스 실검증. ./verify.sh exit 0 재실행.",
+    "new_holes_minor": [
+      "_pick_page 부분문자열 매칭 → hostname 파싱으로 수정 완료(테스트 추가)",
+      "daily cap pending+live 이중 계산 → candidate_key 접기로 수정 완료(테스트 추가)",
+      "SendDecision(allowed=True) 위조 가능 — Python 언어 한계, 원장·잠금·게이트 단일 호출 관례로 완화(문서화)"
+    ]
   },
   "failed_attempts": [
     {
@@ -57,6 +65,12 @@
       "next_change": "untracked 파일 mutation 은 Edit 로 명시 원복(수행 완료) — 이후 mutation 은 커밋 후에만"
     }
   ],
-  "three_way_agree": false,
-  "status": "진행중 — V2 대기, 라이브 1건 수동 판정 필요"
+  "three_way_agree": true,
+  "status": "게이트 전부 통과 — 남은 것: --live 실발송 1건 수동 판정(실후보·크레딧 소모라 다음 실전 턴)",
+  "fix_after_v2": {
+    "commit": "_pick_page hostname 정확/서브도메인 일치, sent_count_on 후보 접기, fill 길이 검증",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "1066 passed, 4 xfailed, 14 subtests passed"
+  }
 }

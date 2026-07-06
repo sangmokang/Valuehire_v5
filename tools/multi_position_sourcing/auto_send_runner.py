@@ -66,15 +66,21 @@ def _load_request(path: Path) -> SendRequest:
 
 
 def _pick_page(pages: list[dict], channel: str) -> dict:
-    """채널 도메인과 일치하는 page 타깃만 선택 — pages[0] 임의 선택 금지(V1 반례 5)."""
+    """채널 도메인과 일치하는 page 타깃만 선택 — pages[0] 임의 선택 금지(V1 반례 5).
+
+    hostname 을 파싱해 정확 일치/서브도메인만 인정 — 부분문자열 매칭이
+    lookalike/redirect URL(?next=https://linkedin.com)을 오인하는 것 차단(V2 minor 1).
+    """
+    from urllib.parse import urlparse
+
     domain = CHANNEL_DOMAINS.get(channel)
     if domain is None:
         raise AutoSendPolicyError(f"channel_unknown: {channel!r}")
     for page in pages:
         if page.get("type") != "page":
             continue
-        url = page.get("url", "")
-        if f"//{domain}" in url or f".{domain}" in url or url.startswith(f"https://{domain}"):
+        host = urlparse(page.get("url", "")).hostname or ""
+        if host == domain or host.endswith("." + domain):
             return page
     raise RuntimeError(
         f"no_channel_tab: {channel} 디버그 크롬에 {domain} 탭 없음 — 상류가 제안 화면을 먼저 열어야 함"
@@ -116,6 +122,13 @@ def _execute_live(request: SendRequest, policy: dict, decision: SendDecision) ->
             executed.append({"step": step.selector_purpose, "result": result})
             if not (isinstance(result, dict) and result.get("ok")):
                 raise RuntimeError(f"step_failed: {step.selector_purpose} — {result}")
+            if step.action == "fill":
+                # 주입 결과 길이 검증 — filled=0 인데 ok 로 넘어가는 것 차단(V2 권고)
+                expected = min(100, len(value or ""))
+                if int(result.get("filled", 0)) < expected:
+                    raise RuntimeError(
+                        f"fill_too_short: {step.selector_purpose} filled={result.get('filled')} < {expected}"
+                    )
             time.sleep(1.2)  # 사람 속도(SOT 불변식 2 — 봇처럼 굴지 않는다)
         return {"executed": executed}
     finally:
