@@ -5,10 +5,12 @@
       --request-json request.json [--live] [--ledger PATH] [--policy PATH]
 
 - request.json = SendRequest 필드 그대로(candidate_key, candidate_name, channel,
-  position_id, body, score, hard_exclude_flags, precheck_passed).
+  position_id, body, score, hard_exclude_flags). 검문(precheck)은 게이트가 직접 실행.
 - 기본은 dry-run: 게이트 판정 + 발송 단계 계획만 출력, 브라우저 무접촉.
 - --live: 게이트 allowed 일 때만 채널 디버그 크롬(사람인9223/잡코리아9224/링크드인9225)의
-  현재 열린 제안/컴포저 화면에 본문을 주입하고 발송 버튼을 클릭, 원장(live) 기록.
+  "해당 채널 도메인 탭"에 본문을 주입하고 발송 버튼을 클릭.
+- 원장 2단계: 잠금 안에서 판정+pending 선기록 → 클릭 성공 확정 시 live 기록.
+  클릭 결과 불명(예외)이어도 pending 이 남아 같은 후보 재발송이 차단된다(수동 확인 게이트).
 - 발송 흐름 전제: 제안 모달/컴포저는 상류(소싱 스킬)가 열어둔 상태에서 마지막
   주입+클릭만 담당한다(포털 점유·양보는 상류 R4 가드가 담당).
 
@@ -25,6 +27,7 @@ from pathlib import Path
 
 from .auto_send import (
     AutoSendPolicyError,
+    SendDecision,
     SendLedger,
     SendRequest,
     evaluate_send,
@@ -40,6 +43,13 @@ DEFAULT_LEDGER_PATH = Path(
     )
 )
 
+# 채널별 허용 도메인 — 엉뚱한 탭(V1 반례 5)에 클릭하는 것을 차단
+CHANNEL_DOMAINS: dict[str, str] = {
+    "saramin": "saramin.co.kr",
+    "jobkorea": "jobkorea.co.kr",
+    "linkedin_rps": "linkedin.com",
+}
+
 
 def _load_request(path: Path) -> SendRequest:
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -52,7 +62,22 @@ def _load_request(path: Path) -> SendRequest:
         score=data.get("score"),
         score_breakdown=data.get("score_breakdown"),
         hard_exclude_flags=tuple(data.get("hard_exclude_flags", ())),
-        precheck_passed=bool(data.get("precheck_passed", False)),
+    )
+
+
+def _pick_page(pages: list[dict], channel: str) -> dict:
+    """채널 도메인과 일치하는 page 타깃만 선택 — pages[0] 임의 선택 금지(V1 반례 5)."""
+    domain = CHANNEL_DOMAINS.get(channel)
+    if domain is None:
+        raise AutoSendPolicyError(f"channel_unknown: {channel!r}")
+    for page in pages:
+        if page.get("type") != "page":
+            continue
+        url = page.get("url", "")
+        if f"//{domain}" in url or f".{domain}" in url or url.startswith(f"https://{domain}"):
+            return page
+    raise RuntimeError(
+        f"no_channel_tab: {channel} 디버그 크롬에 {domain} 탭 없음 — 상류가 제안 화면을 먼저 열어야 함"
     )
 
 
@@ -60,18 +85,22 @@ def _selector_js_candidates(site: str, purpose: str) -> list[str]:
     return [c.selector for c in DEFAULT_SELECTOR_MAP[site][purpose]]
 
 
-def _execute_live(request: SendRequest, policy: dict) -> dict:
-    """열린 제안/컴포저 화면에 본문 주입 + 발송 클릭 (raw CDP, 채널 전용 포트)."""
+def _execute_live(request: SendRequest, policy: dict, decision: SendDecision) -> dict:
+    """열린 제안/컴포저 화면에 본문 주입 + 발송 클릭 (raw CDP, 채널 전용 포트).
+
+    구조적 강제: allowed=True 인 SendDecision 없이는 호출 자체가 실패한다(우회 금지).
+    """
+    if not isinstance(decision, SendDecision) or not decision.allowed:
+        raise AutoSendPolicyError("gate_not_passed: evaluate_send allowed=True 없이 라이브 발송 금지")
+
     from . import raw_cdp
 
     cdp_http = policy["channels"][request.channel].get("cdp_http")
     if cdp_http:
         os.environ["CDP_HTTP"] = cdp_http
 
-    pages = [p for p in raw_cdp.list_pages() if p.get("type") == "page"]
-    if not pages:
-        raise RuntimeError(f"no_open_page: {request.channel} 디버그 크롬에 열린 탭 없음")
-    tab = raw_cdp.attach(pages[0])
+    page = _pick_page(raw_cdp.list_pages(), request.channel)
+    tab = raw_cdp.attach(page)
     executed: list[dict] = []
     try:
         tab.send("Page.bringToFront")
@@ -82,6 +111,7 @@ def _execute_live(request: SendRequest, policy: dict) -> dict:
                 "candidates": json.dumps(candidates, ensure_ascii=False),
                 "action": json.dumps(step.action),
                 "value": json.dumps(value, ensure_ascii=False),
+                "guard": json.dumps(bool(step.guard_body)),
             })
             executed.append({"step": step.selector_purpose, "result": result})
             if not (isinstance(result, dict) and result.get("ok")):
@@ -92,17 +122,19 @@ def _execute_live(request: SendRequest, policy: dict) -> dict:
         tab.close()
 
 
-# :has-text 는 CSS 표준이 아니므로 라벨 후보는 텍스트 스캔으로 처리한다.
+# 버튼 라벨은 trim 후 '정확 일치'만 인정 — includes 매칭이 "Send feedback" 같은
+# 엉뚱한 버튼을 잡는 것 차단(V1 반례 5). :has-text 는 CSS 표준이 아니므로 직접 스캔.
 _STEP_JS = """
 (() => {
   const candidates = %(candidates)s;
   const action = %(action)s;
   const value = %(value)s;
+  const guard = %(guard)s;
   const byLabel = (sel) => {
     const m = sel.match(/^([a-z]+):has-text\\("(.+)"\\)$/);
     if (!m) return null;
     return [...document.querySelectorAll(m[1])].find(
-      (el) => el.textContent && el.textContent.trim().includes(m[2]) && !el.disabled
+      (el) => el.textContent && el.textContent.trim() === m[2] && !el.disabled
     ) || null;
   };
   let el = null, used = null;
@@ -116,6 +148,11 @@ _STEP_JS = """
     document.execCommand('selectAll', false, null);
     document.execCommand('insertText', false, value);
     return { ok: true, used, filled: (el.value || el.textContent || '').length };
+  }
+  if (guard) {
+    const bodies = [...document.querySelectorAll('textarea, [contenteditable="true"]')];
+    const filled = bodies.some((b) => ((b.value || b.textContent || '').trim().length >= 100));
+    if (!filled) return { ok: false, error: 'guard_body_empty: 본문 100자 미만 — 빈 발송 차단' };
   }
   el.scrollIntoView({ block: 'center' });
   el.click();
@@ -135,27 +172,38 @@ def main(argv: list[str] | None = None) -> int:
     try:
         policy = load_policy(args.policy)
         request = _load_request(Path(args.request_json))
-    except (AutoSendPolicyError, OSError, KeyError, json.JSONDecodeError) as exc:
+    except (AutoSendPolicyError, OSError, KeyError, json.JSONDecodeError, TypeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         return 2
 
     ledger = SendLedger(Path(args.ledger) if args.ledger else DEFAULT_LEDGER_PATH)
-    decision = evaluate_send(request, policy, ledger)
-    if not decision.allowed:
-        print(json.dumps(
-            {"ok": False, "blocked": True, "reasons": list(decision.reasons)},
-            ensure_ascii=False,
-        ))
-        return 3
+
+    # 판정과 선기록을 한 잠금 안에서 — 동시 실행 이중발송(TOCTOU) 차단(V1 반례 3)
+    with ledger.lock():
+        decision = evaluate_send(request, policy, ledger)
+        if not decision.allowed:
+            print(json.dumps(
+                {"ok": False, "blocked": True, "reasons": list(decision.reasons)},
+                ensure_ascii=False,
+            ))
+            return 3
+        mode = "live" if args.live else "dry_run"
+        if mode == "live":
+            # pending 선기록 — 클릭 결과가 불명이어도 재발송이 차단되게(V1 반례 4)
+            ledger.append(
+                candidate_key=request.candidate_key, channel=request.channel,
+                position_id=request.position_id, body=request.body, mode="pending",
+            )
+        else:
+            ledger.append(
+                candidate_key=request.candidate_key, channel=request.channel,
+                position_id=request.position_id, body=request.body, mode="dry_run",
+            )
 
     steps = [
         {"action": s.action, "selector": s.selector_purpose} for s in plan_send_steps(request.channel)
     ]
     if not args.live:
-        ledger.append(
-            candidate_key=request.candidate_key, channel=request.channel,
-            position_id=request.position_id, body=request.body, mode="dry_run",
-        )
         print(json.dumps(
             {"ok": True, "mode": "dry_run", "allowed": True, "planned_steps": steps},
             ensure_ascii=False,
@@ -163,9 +211,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        outcome = _execute_live(request, policy)
-    except Exception as exc:  # 실행 실패는 원장에 남기지 않는다(발송 미확정)
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        outcome = _execute_live(request, policy, decision)
+    except Exception as exc:
+        print(json.dumps(
+            {
+                "ok": False,
+                "error": str(exc),
+                "note": "pending 원장 기록이 남아 같은 후보 재발송은 차단됨 — 실제 발송 여부 수동 확인 필요",
+            },
+            ensure_ascii=False,
+        ))
         return 2
     ledger.append(
         candidate_key=request.candidate_key, channel=request.channel,
