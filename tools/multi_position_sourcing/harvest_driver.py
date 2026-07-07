@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,11 +28,14 @@ from typing import Any
 from .harvest_executor import HarvestSearchExecutor
 from .harvest_policy import deterministic_delay_ms, sites_for_machine
 from .harvest_runner import HarvestItem, arun_harvest_cycle, build_harvest_queue
+from .models import Channel
 from .owner_activity import (
     DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS,
     compute_yield_decision,
     detect_owner_activity_snapshot,
 )
+
+_UNSET = object()
 
 
 def resolve_repo_dir() -> Path:
@@ -143,18 +147,138 @@ def _load_keywords_for_segment(path: str):
     return keywords_for_segment
 
 
-def _build_live_execute_item(keywords_json: str):
-    keywords_for_segment = _load_keywords_for_segment(keywords_json)
+def build_guarded_runner(
+    channel: Channel,
+    *,
+    worker_id: str = "default",
+    profile_root: str | Path | None = None,
+    chrome_cdp_endpoint: str | None = None,
+    chrome_cdp_endpoints: Mapping[Channel, str] | None = None,
+    headless: bool = False,
+    no_sleep: bool = False,
+    worker_cls: Any | None = None,
+    runner_cls: Any | None = None,
+    encryptor: Any | None = None,
+    snapshot_store: Any | None = None,
+    event_store: Any | None = None,
+    snapshot_validator: Callable[[Mapping[str, object]], Any] | None = None,
+    ready_check_factory: Callable[[Channel], Any] | None = None,
+    credential_provider: Any | None = None,
+    auto_relogin: Any | None = None,
+    discord_notifier: Any | None = None,
+    pacing_policies: Mapping[Channel, Any] | None = None,
+    rng: Any | None = None,
+    sleep: Any = _UNSET,
+) -> Any:
+    """Build a channel-bound guarded portal runner without starting a browser.
 
-    def _runner_for_channel(channel):
-        # 라이브 포털 러너 팩토리 배선은 이 조각 범위 밖(PC-F4b/K6). 인자 검증까지만 여기서 완결.
-        raise RuntimeError(
-            "live portal runner factory 미배선(PC-F4b/K6 몫) — --executor live 는 "
-            "인자 검증까지만 이 조각의 범위다."
-        )
+    The returned runner owns no launchd state and does not touch Chrome until its
+    first ``run_keyword_search`` call. Tests inject fakes for the heavy stores and
+    worker; production defaults mirror ``portal_live_check.run_live_search``.
+    """
+
+    from .portal_login import ready_check_for_channel
+    from .portal_runtime import GuardedPortalSearchRunner
+    from .portal_worker import (
+        DEFAULT_PROFILE_ROOT,
+        PortalWorker,
+        PortalWorkerConfig,
+        resolve_chrome_cdp_endpoint,
+    )
+
+    worker_cls = worker_cls or PortalWorker
+    runner_cls = runner_cls or GuardedPortalSearchRunner
+    ready_check_factory = ready_check_factory or ready_check_for_channel
+
+    endpoint = (chrome_cdp_endpoints or {}).get(channel) or chrome_cdp_endpoint
+    worker_config = PortalWorkerConfig(
+        channel=channel,
+        worker_id=worker_id,
+        profile_root=profile_root or DEFAULT_PROFILE_ROOT,
+        mode="headed" if channel == "linkedin_rps" or not headless else "headless",
+        chrome_cdp_endpoint=resolve_chrome_cdp_endpoint(endpoint),
+    )
+    worker = worker_cls(worker_config)
+    ready_check = ready_check_factory(channel)
+
+    if encryptor is None:
+        from .portal_snapshot import MacKeychainSessionKeyProvider, OpenSslSessionEncryptor
+
+        encryptor = OpenSslSessionEncryptor(MacKeychainSessionKeyProvider())
+
+    if snapshot_store is None or event_store is None:
+        from .portal_live_check import supabase_config_from_env
+
+        supabase_config = supabase_config_from_env()
+        if snapshot_store is None:
+            from .portal_snapshot import SupabaseSessionSnapshotStore
+
+            snapshot_store = SupabaseSessionSnapshotStore(supabase_config)
+        if event_store is None:
+            from .portal_ops import SupabaseReauthEventStore
+
+            event_store = SupabaseReauthEventStore(supabase_config)
+
+    if credential_provider is None or auto_relogin is None:
+        from .portal_autologin import auto_relogin_portal
+        from .portal_live_check import PROTECTED_PORTAL_CHANNELS
+        from .portal_recovery import MacKeychainPortalCredentialProvider
+
+        if channel in PROTECTED_PORTAL_CHANNELS:
+            credential_provider = credential_provider or MacKeychainPortalCredentialProvider()
+            auto_relogin = auto_relogin or auto_relogin_portal
+
+    if discord_notifier is None:
+        from .portal_live_check import discord_webhook_from_env
+        from .portal_ops import DiscordWebhookNotifier
+
+        webhook_url = discord_webhook_from_env()
+        if webhook_url:
+            discord_notifier = DiscordWebhookNotifier(webhook_url)
+
+    if snapshot_validator is None:
+        from .portal_snapshot import validate_snapshot_by_reinjection
+
+        async def snapshot_validator(state: Mapping[str, object]) -> bool:
+            playwright = getattr(worker, "_playwright", None)
+            if playwright is None:
+                return False
+            return await validate_snapshot_by_reinjection(
+                playwright=playwright,
+                site=channel,
+                state=state,
+                ready_check=ready_check,
+                browser=worker.browser if channel == "linkedin_rps" else None,
+            )
+
+    sleep_fn = (None if no_sleep else asyncio.sleep) if sleep is _UNSET else sleep
+
+    return runner_cls(
+        worker=worker,
+        encryptor=encryptor,
+        snapshot_store=snapshot_store,
+        event_store=event_store,
+        snapshot_validator=snapshot_validator,
+        ready_check=ready_check,
+        credential_provider=credential_provider,
+        auto_relogin=auto_relogin,
+        discord_notifier=discord_notifier,
+        pacing_policies=pacing_policies,
+        rng=rng,
+        sleep=sleep_fn,
+    )
+
+
+def _build_live_execute_item(
+    keywords_json: str,
+    *,
+    runner_for_channel: Callable[[Channel], Any] | None = None,
+):
+    keywords_for_segment = _load_keywords_for_segment(keywords_json)
+    runner_for_channel = runner_for_channel or build_guarded_runner
 
     return HarvestSearchExecutor(
-        runner_for_channel=_runner_for_channel,
+        runner_for_channel=runner_for_channel,
         keywords_for_segment=keywords_for_segment,
     )
 

@@ -158,6 +158,7 @@ def test_search_loop_live_flag_builds_harvest_driver_command(tmp_path) -> None:
     assert "--run-id live-test" in command
     assert "--today 2026-07-07" in command
     assert f"--keywords-json {keywords_json}" in command
+    assert "--skip-owner-check" not in command
     assert "tools.multi_position_sourcing.dry_run" not in command
 
 
@@ -173,6 +174,7 @@ def test_search_loop_fake_one_shot_smoke_writes_fake_executor_json(tmp_path) -> 
             "VALUEHIRE_LOG_DIR": str(log_dir),
             "VALUEHIRE_SEARCH_EXECUTOR": "fake",
             "VALUEHIRE_SEARCH_LOOP_ONCE": "1",
+            "VALUEHIRE_SEARCH_SKIP_OWNER_CHECK": "1",
             "VALUEHIRE_PYTHON_BIN": sys.executable,
             "VALUEHIRE_SEARCH_SEGMENTS": "it_ai_data",
             "VALUEHIRE_SEARCH_MACHINE": "macmini",
