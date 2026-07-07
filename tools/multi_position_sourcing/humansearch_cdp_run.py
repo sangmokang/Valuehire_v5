@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import sys
@@ -18,7 +19,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.multi_position_sourcing import raw_cdp as cdp
-from tools.multi_position_sourcing.humansearch import hard_exclude_reason, score_humansearch
+from tools.multi_position_sourcing.harvest_policy import deterministic_delay_ms
+from tools.multi_position_sourcing.humansearch import (
+    hard_exclude_reason,
+    plan_result_count_traversal,
+    score_humansearch,
+)
 from tools.multi_position_sourcing.scoring import tenure_months
 from tools.multi_position_sourcing.humansearch_preflight import assert_live_or_abort
 from tools.multi_position_sourcing.models import (
@@ -34,6 +40,8 @@ SEARCH_URL_BASE = (
     "&searchRequestId=7db88134-b564-4010-9180-562ee16d6770"
     "&uiOrigin=FACET_SEARCH"
 )
+
+PAGE_SIZE = 25
 
 OUT_DIR = Path.home() / ".vh-search-results" / "linkedin_rps" / date.today().isoformat() / "ax-sales-lead"
 LOG = OUT_DIR / "run.log"
@@ -112,8 +120,15 @@ def build_tenures(dates: list[dict]) -> tuple[EmploymentTenure, ...]:
     return tuple(out)
 
 
-def collect_cards(tab, start: int) -> list[dict]:
-    tab.navigate(SEARCH_URL_BASE + f"&start={start}", wait_ms=7000)
+def _search_url(start: int) -> str:
+    return SEARCH_URL_BASE + f"&start={start}"
+
+
+def navigate_results_page(tab, start: int) -> None:
+    tab.navigate(_search_url(start), wait_ms=7000)
+
+
+def extract_cards_from_current_page(tab) -> list[dict]:
     # lazy-load: 결과 리스트를 천천히 스크롤
     for _ in range(8):
         tab.eval("window.scrollBy(0, 900)")
@@ -132,6 +147,99 @@ def collect_cards(tab, start: int) -> list[dict]:
       return out;
     })()""")
     return cards or []
+
+
+def collect_cards(tab, start: int) -> list[dict]:
+    navigate_results_page(tab, start)
+    return extract_cards_from_current_page(tab)
+
+
+_RESULT_COUNT_RE = re.compile(
+    r"(\d[\d,.]*)([KkMm])?\+?\s*(?:results?|명|개)",
+    re.IGNORECASE,
+)
+
+
+def _parse_result_count(raw: str) -> int:
+    m = _RESULT_COUNT_RE.search(raw or "")
+    if not m:
+        raise ValueError(f"검색 결과수를 읽지 못함(fail-closed): {raw!r}")
+    number = m.group(1).replace(",", "")
+    suffix = (m.group(2) or "").lower()
+    value = float(number)
+    if suffix == "k":
+        value *= 1000
+    elif suffix == "m":
+        value *= 1_000_000
+    return int(math.ceil(value))
+
+
+def read_result_count(tab) -> int:
+    raw = tab.eval(
+        r"""(() => {
+          const t = document.body ? document.body.innerText : '';
+          const m = t.match(/(\d[\d,.]*)([KM])?\+?\s*(?:results?|명|개)/i);
+          return m ? m[0] : '';
+        })()"""
+    )
+    return _parse_result_count(str(raw or ""))
+
+
+def iter_planned_cards(
+    tab,
+    *,
+    result_count: int,
+    channel: str = "linkedin",
+    start: int = 0,
+    page_size: int = PAGE_SIZE,
+    pacing_seed: int = 0,
+    first_page_cards: list[dict] | None = None,
+) -> list[dict]:
+    """Collect search cards according to the SOT22 traversal plan.
+
+    PC-C2 owns the result-count decision. This runner only consumes the plan and
+    pages through LinkedIn RPS offsets.
+    """
+    if type(start) is not int or start < 0:
+        raise ValueError(f"start must be a non-negative int: {start!r}")
+    if type(page_size) is not int or page_size <= 0:
+        raise ValueError(f"page_size must be a positive int: {page_size!r}")
+
+    plan = plan_result_count_traversal(channel, result_count)
+    if plan.action in {"abort", "add_condition"}:
+        return []
+    if plan.action == "top_n":
+        target = int(plan.limit or 0)
+    elif plan.action == "full":
+        target = max(0, result_count - start)
+    else:
+        raise ValueError(f"unsupported traversal action: {plan.action!r}")
+    if target <= 0:
+        return []
+
+    max_pages = max(1, math.ceil(target / page_size) + 1)
+    out: list[dict] = []
+    seen_urls: set[str] = set()
+    for page_index in range(max_pages):
+        offset = start + (page_index * page_size)
+        page = first_page_cards if page_index == 0 and first_page_cards is not None else collect_cards(tab, offset)
+        if not page:
+            break
+        for card in page:
+            url = card.get("url") if isinstance(card, dict) else None
+            if isinstance(url, str) and url:
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
+            out.append(card)
+            if len(out) >= target:
+                break
+        if len(out) >= target or len(page) < page_size:
+            break
+        if page_index < max_pages - 1:
+            delay_ms = deterministic_delay_ms(kind="short", step=page_index + 1, seed=pacing_seed)
+            time.sleep(delay_ms / 1000)
+    return out[:target]
 
 
 def _clean(s: str) -> str:
@@ -253,16 +361,26 @@ def main(max_profiles: int = 25, start: int = 0) -> None:
     if not t:
         t = cdp.new_tab("about:blank")
     tab = cdp.attach(t)
-    log(f"=== humansearch CDP run | start={start} max={max_profiles} ===")
+    log(f"=== humansearch CDP run | start={start} ===")
 
-    cards = collect_cards(tab, start)
+    navigate_results_page(tab, start)
     # fail-closed 라이브 게이트 (docs/sot/27): 검색이 살아있는 상태가 아니면(세션 만료/세션충돌/
     # 캡차/로그인 리다이렉트/결과 미렌더) 여기서 PreflightError 로 즉시 중단 — 수집/채점을
     # 시작조차 하지 않는다. 봇처럼 같은 네비게이션을 반복하지 않는다(SOT22 R2).
     assert_live_or_abort(tab)
-    log(f"collected {len(cards)} cards on page start={start}")
+    result_count = read_result_count(tab)
+    first_page_cards = extract_cards_from_current_page(tab)
+    cards = iter_planned_cards(
+        tab,
+        result_count=result_count,
+        channel="linkedin",
+        start=start,
+        pacing_seed=result_count + start,
+        first_page_cards=first_page_cards,
+    )
+    log(f"planned traversal result_count={result_count} collected={len(cards)} start={start}")
     all_rows: list[dict] = []
-    for i, card in enumerate(cards[:max_profiles], 1):
+    for i, card in enumerate(cards, 1):
         try:
             r = process_profile(tab, card, i)
             hx = r.get("hard_exclude")
@@ -275,7 +393,7 @@ def main(max_profiles: int = 25, start: int = 0) -> None:
         # 러너면 하드제외(PC-C3a): results.json 은 하드제외 뺀 것만(프리랜서·단기이직·전문대 0건).
         (OUT_DIR / "results.json").write_text(
             json.dumps(collect_results(all_rows), ensure_ascii=False, indent=2))
-        if i < len(cards[:max_profiles]):
+        if i < len(cards):
             human_delay()
     tab.close()
     results = collect_results(all_rows)
