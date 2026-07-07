@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import time
 import urllib.request
 from typing import Any
@@ -16,11 +17,25 @@ from typing import Any
 # 없는 환경(CI)에서 테스트할 수 없다 → 연결 시점으로 지연 import 한다.
 
 
-CDP_HTTP = "http://localhost:9222"
+_CDP_DEFAULT = "http://localhost:9222"
+# 하위호환: 예전처럼 raw_cdp.CDP_HTTP 상수를 참조/대입하던 코드를 위해 이름은 남긴다.
+# 실제 붙는 엔드포인트는 _cdp_base() 가 호출 시점에 결정한다(아래).
+CDP_HTTP = _CDP_DEFAULT
+
+
+def _cdp_base() -> str:
+    """붙을 CDP HTTP 엔드포인트를 호출 시점에 결정한다.
+
+    포트를 못박지 않는다 — 크롬이 표준 포트가 아닌 곳(예: 링크드인 9338)에 떠도
+    CDP_HTTP env(예: `portal_browsers.sh cdp linkedin` 결과)로 그 엔드포인트에 붙는다.
+    env 미설정 시 예전 기본값(9222)로 폴백. import 시점이 아닌 호출 시점에 읽으므로
+    auto_send_runner 처럼 import 뒤 늦게 env 를 set 하는 패턴도 살아난다.
+    """
+    return os.environ.get("CDP_HTTP") or CDP_HTTP or _CDP_DEFAULT
 
 
 def _http_get(path: str) -> Any:
-    with urllib.request.urlopen(CDP_HTTP + path, timeout=10) as r:
+    with urllib.request.urlopen(_cdp_base() + path, timeout=10) as r:
         return json.loads(r.read().decode())
 
 
@@ -30,7 +45,7 @@ def list_pages() -> list[dict]:
 
 def new_tab(url: str = "about:blank") -> dict:
     # PUT /json/new?{url}
-    req = urllib.request.Request(CDP_HTTP + "/json/new?" + url, method="PUT")
+    req = urllib.request.Request(_cdp_base() + "/json/new?" + url, method="PUT")
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode())
 

@@ -1,0 +1,51 @@
+{
+  "claim_id": "cdp-port-discovery-2026-07-08",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "링크드인 CDP 포트 하드코딩(9225) 제거: portal_browsers.sh cdp <채널> 가 프로필로 살아있는 크롬의 실제 포트를 찾고, raw_cdp 가 CDP_HTTP env 를 호출시점에 읽어 그 엔드포인트로 붙는다. humansearch 스킬에 배선.",
+    "changed_files": [
+      "scripts/portal_browsers.sh",
+      "tools/multi_position_sourcing/raw_cdp.py",
+      "skills/humansearch/SKILL.md",
+      "tests/test_portal_cdp_discovery.py",
+      "docs/engineering/cdp-port-discovery-goal-2026-07-08.md"
+    ],
+    "command": "../Valuehire_v5/.venv/bin/python -m pytest tests/test_portal_cdp_discovery.py -q",
+    "exit_code": 0,
+    "artifact": "4 passed in 1.19s",
+    "live_evidence": "bash scripts/portal_browsers.sh cdp linkedin -> http://127.0.0.1:9338 (실제 살아있는 크롬), saramin->9223, jobkorea->9224. 배선 grep: SKILL.md:56 export CDP_HTTP=$(portal_browsers.sh cdp linkedin) -> cmd_cdp(pb.sh:148,case:188) -> raw_cdp._cdp_base()(raw_cdp.py:34, 사용 38/48)",
+    "mutation_evidence": "cmd_cdp 를 설정포트 못박기로 변조 -> test_cdp_discovers_actual_running_port_over_config FAIL(AssertionError 3 != 0). 되돌리면 4 passed. 가짜GREEN 아님.",
+    "regression": "verify.sh 1114 passed, 4 xfailed, exit 0"
+  },
+  "red_evidence": "구현 전 pytest -> cdp 서브커맨드 없어 exit 2, _cdp_base 없어 raw_cdp env 테스트 실패. 구현 후 4 passed.",
+  "regression": "test_portal_tab_guard.py 2 passed; humansearch 테스트 94 passed/3 xfailed; test_humansearch_skill.py 84 passed.",
+  "v1": {
+    "verdict": "fail",
+    "author": "fresh Claude subagent (general-purpose, agentId a651eea0c90dc1bdc)",
+    "source_jsonl": "tasks/a651eea0c90dc1bdc.output",
+    "counterexample_1_BUG": "cmd_cdp 의 grep -F -- \"--user-data-dir=$profile\" 경계 없음 → /linkedin 이 /linkedin2 에도 매칭. 두 fake 크롬(linkedin:29001, linkedin2:29002) 재현 시 head -1 이 ps 순서 따라 엉뚱한 포트 채택 가능. cdp_alive 도 못 거름(둘 다 크롬).",
+    "counterexample_2_ROBUSTNESS": "신규 테스트 flaky — fake_chrome 포트 하드코딩(19338 등) + TCPServer allow_reuse_address 미설정 → 재실행 시 TIME_WAIT EADDRINUSE. gate4 재실행 결정성 위반.",
+    "sound_parts": "부분배선 없음: _cdp_base() 호출시점 env 읽기, auto_send_runner 늦은 os.environ set 경로, attach 가 webSocketDebuggerUrl(같은 /json, 실제 포트) 사용해 ws 포트 일치, stale raw_cdp.CDP_HTTP 대입 호출부 없음, 회귀 116 passed/3 xfailed."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "cmd_cdp: grep -F 로 --user-data-dir=<profile> 접두 매칭",
+      "root_cause": "경계 앵커 부재 → /linkedin 이 /linkedin2 에 오탐(V1 재현)",
+      "repro": "두 fake 크롬 linkedin/linkedin2 띄우고 grep -F 실행 → 둘 다 매칭",
+      "next_change": "양옆 공백 경계 case 매칭(*\" --user-data-dir=$profile \"*)으로 정확일치만 채택. 회귀 테스트 test_cdp_ignores_prefix_overlapping_profile 추가."
+    },
+    {
+      "attempt": "테스트: fake_chrome 포트 하드코딩(19338) + TCPServer 기본 bind",
+      "root_cause": "TIME_WAIT + allow_reuse_address=False → 재실행 EADDRINUSE(V1 재현)",
+      "repro": "for i in 1 2 3; do pytest tests/test_portal_cdp_discovery.py; done → RUN2/3 실패",
+      "next_change": "_free_port() OS 할당 포트 + fake_chrome allow_reuse_address=True. 3회 연속 5 passed 확인."
+    }
+  ],
+  "resolution": {
+    "both_fixed": true,
+    "evidence": "3회 연속 pytest tests/test_portal_cdp_discovery.py → 매회 5 passed. 신규 회귀 test_cdp_ignores_prefix_overlapping_profile(linkedin2 먼저 띄워도 linkedin 포트만 채택) 통과. 실측 cdp linkedin→9338/saramin→9223/jobkorea→9224 exit0. bash -n syntax OK."
+  },
+  "three_way_agree": false,
+  "status": "V1 결함 2개 수정 완료·T 재현·verify 1114 passed exit0 (L2 통과)"
+}
