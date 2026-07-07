@@ -1,0 +1,121 @@
+{
+  "schema": "valuehire-verdict/v1",
+  "slug": "pc-f4b-live-resident-daemon",
+  "generated_at": "2026-07-07T12:11:04Z",
+  "commit": "5f783b9bf60d72cc5256f791594cad8a4871f58f",
+  "mode": "code-change",
+  "risk": "L3",
+  "scope": "PART 1 기계검증만: live runner factory + loop executor flag wiring. PART 2 실 로그인/실 playwright/launchd load는 수동 판정 필요.",
+  "sot_read": [
+    "CLAUDE.md",
+    "docs/harness.md",
+    "Makefile",
+    "package.json",
+    "docs/engineering/codex-handoff-pipeline-2026-07-07.md",
+    "docs/engineering/pc-f4b-live-resident-daemon-goal-2026-07-07.md",
+    "docs/sot/26-portal-login-spec.json",
+    "docs/sot/28-auto-send-policy.json",
+    "tools/multi_position_sourcing/browser_policy.json"
+  ],
+  "files_changed": [
+    "tools/multi_position_sourcing/harvest_driver.py",
+    "scripts/valuehire-search-loop.sh",
+    "tests/test_live_resident_daemon.py",
+    "docs/engineering/pc-f4b-live-resident-daemon.verdict.json"
+  ],
+  "claim": {
+    "machine_part": "harvest_driver.build_guarded_runner(channel, ...)가 GuardedPortalSearchRunner를 지연 조립하고, _build_live_execute_item가 RuntimeError 스텁 대신 runner_for_channel을 HarvestSearchExecutor에 연결한다. valuehire-search-loop.sh는 기본 dry_run을 유지하고 VALUEHIRE_SEARCH_EXECUTOR=fake|live일 때만 harvest_driver를 호출한다.",
+    "manual_part": "실 로그인된 3사 브라우저 접속, 실제 카드 수확, 사장님 크롬 점유 중 양보/자동재개, launchd load/start는 자동 실행하지 않았고 수동 체크 전까지 실운영 완료로 보지 않는다."
+  },
+  "generator": {
+    "red": {
+      "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-live-resident-daemon /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-live-resident-daemon/tests/test_live_resident_daemon.py -q",
+      "exit_code": 1,
+      "result": "5 failed: build_guarded_runner missing, _build_live_execute_item runner_for_channel kw missing, loop print/one-shot modes absent"
+    },
+    "green": [
+      {
+        "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-live-resident-daemon /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-live-resident-daemon/tests/test_live_resident_daemon.py -q",
+        "exit_code": 0,
+        "result": "5 passed in 5.75s"
+      },
+      {
+        "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-live-resident-daemon /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/test_live_resident_daemon.py tests/test_harvest_driver.py tests/test_daemon_crashloop.py tests/test_harvest_executor.py -q",
+        "exit_code": 0,
+        "result": "43 passed in 7.07s"
+      },
+      {
+        "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-live-resident-daemon /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-live-resident-daemon/tests/ -q",
+        "exit_code": 0,
+        "result": "1102 passed, 4 xfailed, 14 subtests passed in 36.23s"
+      }
+    ],
+    "smoke": {
+      "command": "VALUEHIRE_SEARCH_EXECUTOR=fake VALUEHIRE_SEARCH_LOOP_ONCE=1 VALUEHIRE_SEARCH_SKIP_OWNER_CHECK=1 VALUEHIRE_PYTHON_BIN=/Users/kangsangmo/Valuehire_v5/.venv/bin/python /bin/zsh scripts/valuehire-search-loop.sh",
+      "exit_code": 0,
+      "result": "JSON executor=fake, searched=[it_ai_data/saramin,it_ai_data/jobkorea], cycle ok",
+      "artifact": "/tmp/valuehire-f4b-smoke.Byt1oq/artifacts/harvest-fake-latest.json",
+      "artifact_sha256": "5a86ed0f09f0a2c1772bfdd5aa95da153bdc510abcd173bd462cc6f1374faaa2"
+    }
+  },
+  "mutation_evidence": [
+    {
+      "mutant": "harvest_driver._build_live_execute_item ignores injected runner_for_channel and always uses build_guarded_runner",
+      "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-live-resident-daemon /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/test_live_resident_daemon.py::test_build_live_execute_item_uses_injected_runner_factory -q",
+      "expected": "FAIL",
+      "actual": "FAIL: RuntimeError SUPABASE_URL or VALUEHIRE_SUPABASE_URL is required, proving the test catches lost injection"
+    },
+    {
+      "mutant": "scripts/valuehire-search-loop.sh default executor changed from dry_run to live",
+      "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-live-resident-daemon /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/test_live_resident_daemon.py::test_search_loop_default_command_stays_non_live -q",
+      "expected": "FAIL",
+      "actual": "FAIL: VALUEHIRE_SEARCH_KEYWORDS_JSON is required when VALUEHIRE_SEARCH_EXECUTOR=live, proving the default-safe-mode test catches accidental live opt-in"
+    }
+  ],
+  "wiring_evidence": [
+    {
+      "check": "stub/dead-path grep",
+      "command": "rg -n \"live portal runner factory 미배선|RuntimeError\\(|Desktop/Valuehire_v5\" tools/multi_position_sourcing/harvest_driver.py scripts/valuehire-search-loop.sh",
+      "exit_code": 1,
+      "result": "no matches in target files"
+    },
+    {
+      "check": "loop default remains non-live",
+      "command": "VALUEHIRE_SEARCH_LOOP_PRINT_COMMAND=1 /bin/zsh scripts/valuehire-search-loop.sh",
+      "exit_code": 0,
+      "result": "/usr/bin/python3 -m tools.multi_position_sourcing.dry_run --output .../dry-run-latest.json"
+    },
+    {
+      "check": "explicit live assembles harvest_driver command",
+      "command": "VALUEHIRE_SEARCH_EXECUTOR=live VALUEHIRE_SEARCH_KEYWORDS_JSON=/tmp/valuehire-keywords.json VALUEHIRE_SEARCH_LOOP_PRINT_COMMAND=1 /bin/zsh scripts/valuehire-search-loop.sh",
+      "exit_code": 0,
+      "result": "/usr/bin/python3 -m tools.multi_position_sourcing.harvest_driver --executor live --segments it_ai_data --machine macmini --run-id live-evidence --today 2026-07-07 --log-root ... --output .../harvest-live-latest.json --keywords-json /tmp/valuehire-keywords.json"
+    }
+  ],
+  "v1": {
+    "generator": "Codex self-adversarial mutation",
+    "status": "PASS",
+    "notes": "Two targeted mutants were killed and reverted before final tests."
+  },
+  "v2": {
+    "generator": "Codex fresh self-review, no Claude",
+    "status": "PASS_WITH_LIMITS",
+    "notes": "Claude was not called because the user explicitly said there is no Claude budget. Manual code trace checked plist/sh/python path, default non-live behavior, live opt-in, owner-check default not skipped, RuntimeError stub removal, and no target-file Desktop literal."
+  },
+  "failed_attempts": [
+    {
+      "symptom": "fake one-shot loop smoke timed out during GREEN because default owner-check entered real OS activity detection",
+      "root_cause": "The test needed a side-effect-free smoke path while production default must keep owner-check ON.",
+      "fix": "Added explicit VALUEHIRE_SEARCH_SKIP_OWNER_CHECK env support for fake/manual smoke only and asserted explicit live command does not include --skip-owner-check by default."
+    }
+  ],
+  "manual_residual_risk": [
+    "3사 디버그 크롬(실 포트/로그인 상태) 확인 필요",
+    "harvest_driver --executor live --keywords-json <실키워드> 수동 1회 실행 필요",
+    "실행 중 사장님 크롬 점유 시 양보 후 자동재개 확인 필요",
+    "launchd load/start는 사장님 수동 1회 필요",
+    "발송/제안 버튼 자동 클릭 없음은 실운영 화면에서 별도 확인 필요"
+  ],
+  "three_way_agree": true,
+  "status": "GREEN_PART_1_ONLY_MANUAL_PART_2_REQUIRED"
+}
