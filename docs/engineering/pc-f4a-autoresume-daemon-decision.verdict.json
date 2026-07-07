@@ -1,0 +1,66 @@
+{
+  "claim_id": "pc-f4a-autoresume-daemon-decision",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal": "docs/engineering/pc-f4a-autoresume-daemon-decision-goal-2026-07-07.md",
+  "generator": {
+    "author": "Claude (Fable 5, 2026-07-07 세션)",
+    "claim": "decide_resume/ResumeDecision — 다중 tick yield→resume 전이 + PC-E1 anti-bot 간격 합성 순수함수. 재개판단은 decide_tick(PC-F1) 단일출처, 간격은 deterministic_delay_ms(PC-E1) 단일출처. 인수기준 1~6 전부 기계 단언.",
+    "changed_files": [
+      "tools/multi_position_sourcing/harvest_driver.py",
+      "tests/test_autoresume_decision.py"
+    ],
+    "red_commit": "87387fb (ImportError: cannot import name 'ResumeDecision' — 기대 동작 부재 증명)",
+    "green_commit": "dfecdc7 + V1/V2 지적 봉인 테스트 2개 추가 커밋",
+    "command": "PYTHONSAFEPATH=1 PYTHONPATH=<worktree> .venv/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "test_result": "신규 12개 포함 전체 GREEN (초판 1076 passed·4 xfailed, 봉인 추가 후 재실행 — 최종 숫자 PR 본문 기록)",
+    "mutation_evidence": [
+      {"mutant": "G-M1 delay 상수화(delay_ms=3000)", "result": "3 failed — 사살"},
+      {"mutant": "G-M2 decide_tick 우회(if frontmost_is_chrome)", "result": "2 failed — 사살"},
+      {"mutant": "G-M3 step 지터 무시(step=0)", "result": "2 failed — 사살"},
+      {"mutant": "G-M4 fail-closed 반전(resume=True)", "result": "4 failed — 사살"},
+      {"mutant": "V1-M1/V2-SURV-1 idle_threshold_seconds 미전달", "result": "봉인 테스트 추가 후 재적용 → 1 failed — 사살(test_custom_idle_threshold_is_forwarded_to_decide_tick)"},
+      {"mutant": "V2-SURV-2 pacing_kind 하드코딩 'short'", "result": "봉인 테스트 추가 후 재적용 → 1 failed — 사살(test_custom_pacing_kind_is_forwarded_to_pc_e1)"}
+    ],
+    "live_evidence": "staged seam — 소비자는 PC-F4b 상주 데몬(goal 명시). 고아 아님: goal §적대검증 정조준에 '소비 PC-F4b' 선언."
+  },
+  "v1": {
+    "author": "fresh Claude subagent (Codex CLI 대체 — codex app-server exit 1 + 'pytest model not supported' 400, MEMORY 규칙 'Codex 막히면 fresh Claude V1' 적용)",
+    "verdict": "FAIL(조건부) → 조건 충족으로 PASS 전환",
+    "counterexample": "생존 뮤턴트 M1: decide_tick 호출에서 idle_threshold_seconds 전달 제거해도 10 passed. 관측 오동작 — 소비자가 임계 600초를 줘도 기본 180초로 판단해 손 뗀 지 5분 만에 조기 재개(SOT 불변식② 약화 방향).",
+    "repro": "harvest_driver.py decide_tick 호출에서 idle_threshold_seconds= 줄 삭제 → pytest tests/test_autoresume_decision.py -q → (봉인 전) 10 passed / (봉인 후) 1 failed",
+    "attack_log_summary": "공격 12건 — 경계(179.9/180.0)·오입력(음수 ticks·거대 seed)·pacing_kind 오타·NaN·SOT 드리프트 2종·뮤턴트 5종(4 사살, M1 생존→봉인 후 사살)·테스트 품질 대조",
+    "pass_condition": "임계 전달 테스트 추가 + M1 재적용 시 실패 확인 — 2026-07-07 충족(1 failed, 11 passed)",
+    "source_transcript": "tasks/af5421316f5d29571.output (fresh Claude V1)"
+  },
+  "v2": {
+    "author": "Claude reset 세션 (goal+코드만 읽음, 원본 대화 미공유)",
+    "verdict": "PASS(조건부 — 잔여리스크 명기 조건)",
+    "what_v1_missed": "SURV-2: pacing_kind 를 'short' 로 하드코딩해도 생존(기본값과 동일해 현행 테스트 무감지) — between_keywords 대역(20~60초, short 2~5초와 비중첩) 테스트로 봉인, 재적용 시 1 failed 확인. verify.sh 워크트리 직접 실행 시 python3 폴백으로 test_daemon_crashloop 2건 간헐 타이밍 플레이크(F4a 무관, .venv 전체 스위트는 GREEN).",
+    "independent_repro": "뮤테이션 4건 독립 적용→테스트→git checkout 복원 전 건 실측(A 사살, B=SURV-1 생존→봉인, C=SURV-2 생존→봉인, D 사살). goal 인수기준 1~7 전 건 대조 충족, SOT 불변식 위반 0(0ms 즉시 재개 경로 없음 — SOT22 min 2000ms).",
+    "source_transcript": "tasks/ae3d728cf6bb4eddf.output"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "Codex CLI 를 V1 으로 사용(2회)",
+      "root_cause": "1회차: 프롬프트 내 '-m pytest' 토큰이 codex CLI 모델 플래그로 오인(400 'pytest model is not supported'). 2회차: codex app-server exit 1 크래시(알려진 환경 이슈).",
+      "repro": "tasks/ace155d782cbc7300.output, tasks/bggdfv6r3.output",
+      "next_change": "MEMORY 규칙대로 fresh Claude 서브에이전트로 V1 대체(매트릭스 허용), 대체 사실 장부 명기."
+    },
+    {
+      "attempt": "초판 테스트 10개로 게이트 통과 시도",
+      "root_cause": "테스트가 비기본 kwargs(idle_threshold_seconds, pacing_kind)를 한 번도 안 넣어 파라미터 전달 생략 뮤턴트 2종이 생존 — happy-default 만 검증한 커버리지 갭.",
+      "repro": "V1/V2 본문 참조(뮤턴트 재적용 시 10 passed)",
+      "next_change": "전달 검증 테스트 2개 추가(임계 30/60 이중 단언 + between_keywords 비중첩 대역 단언) → 두 뮤턴트 재적용 각각 1 failed 로 사살 확인."
+    }
+  ],
+  "residual_risks": [
+    "decide_resume 소비자 미배선(의도된 seam) — PC-F4b 가 소비. F4b 전까지 프로덕션 미호출.",
+    "pacing_kind 오타는 재개 경로에서만 ValueError(양보 경로는 delay 미계산이라 침묵 통과) — 계약 위반 아님, F4b 소비 시 재개 경로가 반드시 지나므로 조기 발화.",
+    "워크트리 ./verify.sh 직접 실행 시 python3 폴백으로 test_daemon_crashloop 2건 간헐 타이밍 플레이크(F4a 무관) — .venv 인터프리터 전체 스위트는 GREEN.",
+    "PC-F2 depends_on 은 과선언(goal 분석) — 실 데몬 소비 의존은 F4b."
+  ],
+  "three_way_agree": true,
+  "status": "GREEN(기계검증분) — 실 상주 데몬 자동재개 관측은 PC-F4b 수동 verdict 몫"
+}

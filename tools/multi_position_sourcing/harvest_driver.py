@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .harvest_executor import HarvestSearchExecutor
-from .harvest_policy import sites_for_machine
+from .harvest_policy import deterministic_delay_ms, sites_for_machine
 from .harvest_runner import HarvestItem, arun_harvest_cycle, build_harvest_queue
 from .owner_activity import (
     DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS,
@@ -62,6 +62,47 @@ def decide_tick(
     if should_yield:
         return TickDecision(run=False, reason="owner activity detected (R4 yield)")
     return TickDecision(run=True, reason="owner idle — resume live cycle")
+
+
+@dataclass(frozen=True)
+class ResumeDecision:
+    """양보 구간 뒤 이번 tick 에 재개할지 + 재개 시 삽입할 anti-bot 간격(ms) + 사유 (PC-F4a).
+
+    goal: docs/engineering/pc-f4a-autoresume-daemon-decision-goal-2026-07-07.md
+    """
+
+    resume: bool
+    delay_ms: int  # resume=False 면 0. resume=True 면 PC-E1 deterministic_delay_ms 결과.
+    reason: str
+
+
+def decide_resume(
+    *,
+    frontmost_is_chrome: bool,
+    os_idle_seconds: float | None,
+    ticks_yielded: int,
+    seed: int,
+    idle_threshold_seconds: float = DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS,
+    pacing_kind: str = "short",
+) -> ResumeDecision:
+    """PC-F1 ``decide_tick`` 으로 재개여부 판단(재구현 금지) → 재개면 PC-E1 간격 합성.
+
+    - resume == decide_tick(...).run — 양보/재개 판단의 단일 출처(SOT R4 자동재개).
+    - resume=True 면 delay_ms = deterministic_delay_ms(kind, step=ticks_yielded, seed) —
+      손 떼자마자 0ms 로 두드리지 않고(SOT2 봇 금지), ticks_yielded 를 step 으로 써
+      매 재개가 같은 간격이 되지 않게 흩는다(고정 간격 = 봇 신호).
+    - resume=False 면 delay_ms=0, 사유는 decide_tick 사유 그대로(양보).
+    - 소비자는 PC-F4b 상주 데몬(staged seam) — 이 조각은 순수 결정만.
+    """
+    tick = decide_tick(
+        frontmost_is_chrome=frontmost_is_chrome,
+        os_idle_seconds=os_idle_seconds,
+        idle_threshold_seconds=idle_threshold_seconds,
+    )
+    if not tick.run:
+        return ResumeDecision(resume=False, delay_ms=0, reason=tick.reason)
+    delay_ms = deterministic_delay_ms(kind=pacing_kind, step=ticks_yielded, seed=seed)
+    return ResumeDecision(resume=True, delay_ms=delay_ms, reason=tick.reason)
 
 
 async def drive_cycle_once(
