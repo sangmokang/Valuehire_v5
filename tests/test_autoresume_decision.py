@@ -153,6 +153,41 @@ def test_resume_matches_decide_tick_over_full_grid() -> None:
                 assert decision.delay_ms == 0
 
 
+def test_custom_idle_threshold_is_forwarded_to_decide_tick() -> None:
+    """V1 생존 뮤턴트(M1: idle_threshold_seconds 미전달) 사살 — 소비자(F4b)가 임계를
+    조정하면 그 값으로 판단해야 한다. idle 50 은 임계 30 기준 재개, 임계 60 기준 양보."""
+    d_lo = decide_resume(
+        frontmost_is_chrome=False, os_idle_seconds=50.0, ticks_yielded=1, seed=1,
+        idle_threshold_seconds=30.0,
+    )
+    assert d_lo.resume is True
+    assert d_lo.delay_ms > 0
+    d_hi = decide_resume(
+        frontmost_is_chrome=False, os_idle_seconds=50.0, ticks_yielded=1, seed=1,
+        idle_threshold_seconds=60.0,
+    )
+    assert d_hi.resume is False
+    assert d_hi.delay_ms == 0
+    # 단일출처 대조 — decide_tick 에 같은 임계를 줬을 때와 일치
+    assert d_lo.resume == decide_tick(
+        frontmost_is_chrome=False, os_idle_seconds=50.0, idle_threshold_seconds=30.0
+    ).run
+
+
+def test_custom_pacing_kind_is_forwarded_to_pc_e1() -> None:
+    """V2 생존 뮤턴트(SURV-2: pacing_kind 하드코딩) 사살 — between_keywords 대역
+    (SOT22 20~60초)은 short(2~5초)와 겹치지 않아 하드코딩이면 경계 단언이 깨진다."""
+    decision = decide_resume(
+        frontmost_is_chrome=False, os_idle_seconds=999.0, ticks_yielded=2, seed=9,
+        pacing_kind="between_keywords",
+    )
+    assert decision.delay_ms == deterministic_delay_ms(kind="between_keywords", step=2, seed=9)
+    lo, hi = pacing_bounds_ms("between_keywords")
+    assert lo <= decision.delay_ms <= hi
+    short_lo, short_hi = pacing_bounds_ms("short")
+    assert not (short_lo <= decision.delay_ms <= short_hi)
+
+
 # ----------------------------------------------------------------------------
 # 5. 페이크 실행자 호출횟수 경계 — 양보 K tick 0회 → 재개 1 tick 정확히 seg×site 회
 # ----------------------------------------------------------------------------
