@@ -3647,9 +3647,9 @@ def main() -> None:
 
     init_credentials = subparsers.add_parser(
         "init-portal-credentials",
-        help="Import Saramin/Jobkorea env credentials into Mac Keychain without printing secrets.",
+        help="Import Saramin/Jobkorea/LinkedIn RPS env credentials into Mac Keychain without printing secrets.",
     )
-    init_credentials.add_argument("--channels", default="saramin,jobkorea", type=_parse_channels)
+    init_credentials.add_argument("--channels", default="saramin,jobkorea,linkedin_rps", type=_parse_channels)
     init_credentials.add_argument("--output", default="artifacts/portal_credentials_init_latest.json")
 
     init_discord = subparsers.add_parser(

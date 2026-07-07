@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "updated_at": "2026-06-25",
   "title": "포털 로그인 빠른 진입 스펙 (raw CDP 단일탭 · 로그인판정 · 차단탐지 · 선제 일괄 로그인)",
-  "verified_live": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차 0), 링크드인 멀티세션 락·login-cap 사람 게이트 실측",
+  "verified_live": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차 0), 2026-06-09/07-07 링크드인도 시크릿 저장소 자동로그인 대상임을 재확정. 캡차·2FA·멀티세션 락만 보안 경계로 STOP.",
   "replaces_dead_refs": [
     "docs/sot/10-auto-login.md (스킬이 로그인 SOT로 참조하나 파일 부재)",
     "tools/saramin-bulk-register-from-jobkorea/auto-login.mjs (부재)",
@@ -17,7 +17,7 @@
   ],
   "invariants": [
     "INV1: 3사 자동 로그인을 막지 않는다. 세션 만료 시 저장된 자격증명(.env.local)으로 자동 재로그인 (CLAUDE.md 불변식 1).",
-    "INV2: 캡차·2FA·봇차단·멀티세션 락 감지 시 그 채널 즉시 STOP. 자동 우회·연속 재시도 금지 — 사람 게이트 (불변식 2/INV4 of 25).",
+    "INV2: 3사 모두 시크릿 저장소/기존 세션으로 자동 로그인한다. 캡차·2FA·봇차단·멀티세션 락 감지 시에만 그 채널 즉시 STOP. 자동 우회·연속 재시도 금지.",
     "INV3: 로그인된 9222 크롬을 kill/close 하지 않는다. 새 브라우저를 띄우지 않고 기존 세션에 attach (memory keep-logged-in-browser-alive).",
     "INV4: 발송('보내기'/Send/제안발송)은 로그인 흐름과 무관하게 절대 자동 금지.",
     "INV5: connectOverCDP 전체 attach 금지(탭 과다 시 hang). raw CDP 단일탭만 사용."
@@ -58,12 +58,12 @@
     },
     "linkedin": {
       "logged_in_if": "talent/search 또는 feed가 login-cap/enterprise-authentication 리다이렉트 없이 로드",
-      "logged_out_if": "/uas/login-cap (캡차 로그인) 또는 enterprise-authentication/sessions(멀티세션) 리다이렉트"
+      "logged_out_if": "/uas/login-cap 또는 일반 로그인 화면. enterprise-authentication/sessions는 멀티세션 락"
     }
   },
   "block_detection": {
-    "unified_regex": "captcha|recaptcha|보안문자|자동입력 방지|checkpoint|/uas/login|login-cap|unusual activity|verify you|multiple sign-ins|Only one session|enterprise-authentication|이상 접근|2단계|authwall|challenge|인증번호|protechts",
-    "on_match": "그 채널 status=BLOCKED. 자동 우회·재시도 금지. 사람 게이트로 보고 후 폴링(25 stage2 양보·재개).",
+    "unified_regex": "captcha|recaptcha|보안문자|자동입력 방지|checkpoint|unusual activity|verify you|multiple sign-ins|Only one session|enterprise-authentication|이상 접근|2단계|authwall|challenge|인증번호",
+    "on_match": "그 채널 status=BLOCKED. 자동 우회·재시도 금지. 단 /uas/login-cap·li.protechts iframe 단독 신호는 차단으로 보지 않고 저장 자격증명 자동 로그인을 1회 시도한다.",
     "false_positive_guard": "정규식이 페이지 일반 텍스트(예: '개인정보처리방침')와 우연히 매치될 수 있음 → BLOCKED 판정 전 스크린샷으로 실제 캡차/락 화면인지 1회 교차확인(2026-06-25 잡코리아 captcha 오탐 사례).",
     "linkedin_multi_session": "enterprise-authentication/sessions + 'multiple sign-ins/Only one session allowed' = RPS 단일세션 락(다른 PC 사용 중). '계속'을 자동으로 누르면 사장님 다른 PC 세션이 끊김 → 절대 자동 클릭 금지. 사람 결정(scripts/rps_switch.sh on/off) 후 재개."
   },
@@ -102,12 +102,12 @@
     "linkedin": {
       "talent_pool_url": "https://www.linkedin.com/talent/search",
       "tab_match_re": "linkedin\\.com\\/talent",
-      "creds": "9222 사장님 세션 의존. 평문 ID/PW 자동 로그인 금지(2FA·계정잠금).",
+      "creds": "시크릿 저장소(.env.local import → macOS Keychain valuehire.portal_credentials)의 LINKEDIN_USERNAME/LINKEDIN_PASSWORD 또는 LINKEDIN_RPS_* 로 자동 로그인. 평문 하드코딩·로그 출력 금지.",
       "human_gates": [
-        "login-cap 캡차 = 사장님 수동 로그인",
-        "멀티세션 락 = scripts/rps_switch.sh + 사장님 결정"
+        "실제 캡차·2FA·checkpoint = 자동 우회 금지, STOP 후 안전 보고",
+        "멀티세션 락 = scripts/rps_switch.sh 상태 확인 후 기존 세션을 강제 종료하지 않음"
       ],
-      "verified": "2026-06-25 login-cap·멀티세션 둘 다 사람 게이트로 해소 후 talent/search 진입"
+      "verified": "2026-06-09 docs/search-access.md + qa-linkedin-autologin-sot: LinkedIn RPS 자동 로그인 금지 재도입은 SOT 위반. 2026-07-07 login-cap/protechts 단독 차단 금지로 재정렬."
     }
   },
   "preflight_batch_login": {
@@ -116,7 +116,7 @@
       "1. 대상 채널 목록 확정(사람인+잡코리아+링크드인 등 전방위)",
       "2. 각 채널 talent-pool 탭 attach → login_state_check 실행",
       "3. logged_out 채널 수집",
-      "4. 사람인·잡코리아 = creds 자동 로그인(raw CDP). 링크드인 = block_detection 걸리면 사람 게이트로 보고",
+      "4. 사람인·잡코리아·링크드인 = creds 자동 로그인(raw CDP/공식 로그인폼). 실제 캡차·2FA·멀티세션 락이면 STOP",
       "5. 모든 대상 채널 logged_in 확인 후에야 등록/검색 단계 진입"
     ],
     "integration": "docs/sot/25 stage 1(점유·캡차 게이트)에 'login_state + 일괄 로그인' 추가. 등록(/position)·검색 전에 완료."

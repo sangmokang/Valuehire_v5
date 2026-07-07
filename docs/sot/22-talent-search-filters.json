@@ -304,8 +304,8 @@
       "bot_protection": {
         "random_delay_between_keywords_ms": { "min": 20000, "max": 60000, "note": "RPS는 일반보다 민감. 키워드 간 20~60초 랜덤 필수" },
         "short_delay_ms": { "min": 2000, "max": 5000 },
-        "blocked_page_regex": "/checkpoint|authwall|login|captcha|challenge|uas\\/login/i",
-        "on_block": "즉시 break + 수동 로그인 안내. 자동 우회 금지(S4 경계)",
+        "blocked_page_regex": "/checkpoint|authwall|captcha|challenge|enterprise-authentication/i",
+        "on_block": "실제 보안 챌린지·멀티세션이면 즉시 break + 자동 우회 금지. 단 login/uas/login-cap 단독 리다이렉트는 자동 로그인 경로로 처리.",
         "max_candidates_default": 10,
         "keyword_limit_per_run": 3
       },
@@ -327,9 +327,16 @@
         "result_profile_links": { "primary": "a[href*=\"/profile/\"], a[href*=\"/talent/hire/\"]", "fallback": "a[href*=\"/in/\"] (혼합 화면, /linkedin\\.com\\/in\\/[^/]+\\/?$/ 필터)", "card_container": "a.closest('[data-entity-urn], li, [class*=\"result\"], [class*=\"card\"]')", "name_in_card": "[class*=\"name\"], [class*=\"title\"], h3, h4", "title_in_card": "[class*=\"subtitle\"], [class*=\"position\"], [class*=\"headline\"]" }
       },
       "filters": {
-        "primary_method": "자연어 검색이 RPS의 1급 방식(좌측 패널 폼 필터 아님). location 필터를 자연어/파라미터로 부여",
+        "primary_method": "키워드(Boolean)는 검색박스, 지역·연차는 좌측 필터 패널 — 둘 다 필수. 자연어만으로 지역/연차를 때우지 않는다.",
+        "left_panel_required": {
+          "_owner_directive": "2026-07-07 사장님 명시: '좌측 Show filters 열어서 South Korea 세팅하고 연차값도 좌측 패널에 넣어야지' — RPS 검색 시 좌측 필터 패널 사용은 필수 스펙.",
+          "open": "결과/검색 화면 좌측 'Show filters' 버튼 클릭으로 패널 오픈 (텍스트/aria-label 매칭, id 금지)",
+          "locations": "Locations 필터 입력창에 타이핑 후 드롭다운에서 'South Korea' 제안 선택 — 자유 텍스트만 두고 끝내기 금지",
+          "years_of_experience": "'Years of experience'를 좌측 패널에서 설정 — JD 경력 요건 ±1~2년 버퍼(예: 5년+ → 최소 4년, 범위형이면 4~12년 또는 최근접 브래킷)",
+          "after_apply": "필터 적용 후 3~5초 대기 → 결과수 재판독 → 결과수 판단 트리 진행"
+        },
         "education": "data-test-education-school 텍스트 수집 후 후처리(클라이언트 측) 필터로 학교 거름",
-        "left_panel_note": "RPS 좌측 필터 패널(years of experience 등) 정밀 CSS 셀렉터는 라이브 DOM 덤프로 확정(SOT23 evidence-first)"
+        "left_panel_note": "RPS 좌측 필터 패널 정밀 CSS 셀렉터는 라이브 DOM 덤프로 확정(SOT23 evidence-first). 버튼·입력은 보이는 텍스트/aria-label/data-test 매칭만(React useId)."
       },
       "result_count_decision_tree": {
         "_source": "linkedin SKILL §S-1(813)",

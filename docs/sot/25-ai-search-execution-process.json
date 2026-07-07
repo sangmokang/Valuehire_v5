@@ -1,15 +1,17 @@
 {
   "$schema_note": "AI Search 실행 프로세스 표준 (spec-driven). 사장님 지시(2026-06-25): '니가 체크해서 니가 실행해. 이 과정 프로세스로 스펙 드리븐으로 JSON으로 표준화해서 붙여.' 이 파일이 AI Search 한 턴의 단계·게이트·통과조건을 기계가 읽는 단일 명세다. 사람용 입구는 같은 폴더 25-ai-search-execution-process.md.",
   "id": "25-ai-search-execution-process",
-  "version": "1.0.0",
-  "updated_at": "2026-06-25",
-  "title": "AI Search 실행 프로세스 표준 (preflight→게이트→양보/재개→검색→평가→출력)",
+  "version": "1.1.0",
+  "updated_at": "2026-07-07",
+  "title": "AI Search 실행 프로세스 표준 (preflight→게이트→양보/재개→검색→평가→출력→FY26AI_Search 등록)",
   "source_of_truth": [
     "/Users/kangsangmo/.codex/skills/ai-search/SKILL.md (현재 Codex 실행 스킬)",
     "docs/sot/22-talent-search-filters.json (채널 필터 SSOT)",
     "docs/sot/24-position-jd-sot.json (JD 평가기준 SSOT)",
     "docs/sot/26-portal-login-spec.json (로그인·차단·raw CDP SSOT)",
     "tools/multi_position_sourcing/models.py PositionMatch (후보 출력 타입)",
+    "tools/multi_position_sourcing/humansearch_register.py (FY26AI_Search 등록 계약)",
+    "skills/humansearch/humansearch.config.json (humansearch 등록·저장 SSOT)",
     "CLAUDE.md SOT 불변식 1~5"
   ],
   "depends_on": [
@@ -18,7 +20,9 @@
     "docs/sot/26-portal-login-spec.json",
     "/Users/kangsangmo/.codex/skills/ai-search/references/spec-procedure.md",
     "/Users/kangsangmo/.codex/skills/ai-search/references/code-map.md",
-    "tools/multi_position_sourcing/models.py"
+    "tools/multi_position_sourcing/models.py",
+    "tools/multi_position_sourcing/humansearch_register.py",
+    "skills/humansearch/humansearch.config.json"
   ],
   "output_contract": {
     "description": "후보 출력 계약. 별도 repo-local contract 파일을 참조하지 않고 이 SOT와 PositionMatch 타입으로 고정한다.",
@@ -30,6 +34,23 @@
       "profile_summary": "tools.multi_position_sourcing.models.PositionMatch.profile_summary"
     },
     "fail_closed_rule": "필수 4필드 중 하나라도 없으면 Discord/ClickUp/portal 기록·발송 대상으로 올리지 않는다."
+  },
+  "clickup_registration_contract": {
+    "description": "AI Search와 Humansearch 결과를 ClickUp 칸반에 남길 때의 단일 계약. ClickUp 쓰기는 L3라 사장님 명시 승인 전까지 dry-run/계획만 허용하지만, 승인 후에도 이 계약을 약화할 수 없다.",
+    "applies_to": ["ai_search", "humansearch"],
+    "list_id": "901818680208",
+    "list_name": "FY26AI_Search",
+    "list_url": "https://app.clickup.com/9018789656/v/li/901818680208",
+    "structure": "position_parent_task + candidate_subtasks",
+    "kanban_record_required": true,
+    "target_list_required": true,
+    "duplicate_check_required": true,
+    "duplicate_scope": ["position_parent_task", "candidate_profile_url_subtask"],
+    "profile_save_evidence_required": true,
+    "profile_save_evidence_fields": ["screenshot", "screenshot_path", "evidence_paths", "archive_path", "saved_profile_path", "profile_archive_id", "sourcing_result_id", "db_row_id", "supabase_profile_archive_id"],
+    "candidate_subtask_required_fields": ["profile_url", "score", "why_fit", "profile_summary", "saved_profile_evidence"],
+    "write_gate": "ClickUp create/update/comment 는 L3 외부 쓰기 — 사장님 현재 턴 명시 승인 전까지 dry-run. 단 duplicate check/read 는 등록 전 필수 회수 단계.",
+    "fail_closed_on": ["wrong_list_id", "duplicate_check_missing", "profile_save_evidence_missing", "invalid_profile_url", "missing_profile_url", "missing_required_output_field"]
   },
   "invariants": [
     "INV1: 3사 자동 로그인을 막지 않는다 (CLAUDE.md 불변식 1).",
@@ -44,7 +65,8 @@
     "INV10 (G-SPEC-FIRST·NO-IMPROV): 행동 전 그 단계 SOT 실행경로를 읽고, 가리키는 코드/파일이 실제 존재하는지 확인. 부재(죽은 참조)·스펙 공백이면 즉흥 금지 → STOP·보고·사장님께 길 선택 요청 (linkedin-search-engine.mjs·auto-login.mjs 부재 사고).",
     "INV11 (G-SCOPE): 사장님이 시킨 것만 한다. 채널·단계 임의 추가, 직렬↔병렬 임의 변경 금지(INV7 준수). 각 단계 status(done/blocked/pending)를 수시 보고.",
     "INV12 (G-CLAIM): 보고 전 출력계약(candidate-output-contract: profile_url 풀URL 등) 충족 검사. 미충족 항목은 정직 표기, '됐다/연락 가능'이라 말하지 않는다 (residx를 profile_url로 보고한 사고).",
-    "INV13 (G-HALT·G-CTX): 사장님이 의심·불만 신호('스펙대로','제멋대로','이거 맞아?','된다고?')를 내면 즉시 행동 중단→스펙 재정렬 후 한 줄 확인하고 재개. 세션이 길어지면 기억 의존 말고 핵심 스펙을 다시 grep해 재확인."
+    "INV13 (G-HALT·G-CTX): 사장님이 의심·불만 신호('스펙대로','제멋대로','이거 맞아?','된다고?')를 내면 즉시 행동 중단→스펙 재정렬 후 한 줄 확인하고 재개. 세션이 길어지면 기억 의존 말고 핵심 스펙을 다시 grep해 재확인.",
+    "INV14 (G-FY26AI-SEARCH-CLICKUP): AI Search/Humansearch 결과를 ClickUp에 기록할 때는 반드시 FY26AI_Search list 901818680208에 부모 Task+후보 Subtask 구조로 남긴다. 생성 전 부모 Task와 후보 profile_url 중복검사를 수행하고, 프로필 저장 증거가 없는 후보는 등록하지 않는다."
   ],
   "stop_conditions": {
     "_doc": "기계가 셀 수 있는 실행 규율(INV9~INV13). 글로만 적으면 또 어기므로 카운터·키워드로 강제.",
@@ -77,9 +99,9 @@
       "name": "점유·캡차 게이트 (자동 판정)",
       "actions": [
         "CDP 탭 목록 조회: curl -s -m3 http://127.0.0.1:9222/json",
-        "캡차/차단/멀티세션 감지 정규식(docs/sot/26 block_detection.unified_regex): captcha|recaptcha|login-cap|protechts|checkpoint|/uas/login|보안문자|자동입력 방지|multiple sign-ins|Only one session|enterprise-authentication|unusual activity|2단계",
+        "캡차/차단/멀티세션 감지 정규식(docs/sot/26 block_detection.unified_regex): captcha|recaptcha|checkpoint|보안문자|자동입력 방지|multiple sign-ins|Only one session|enterprise-authentication|unusual activity|2단계. /uas/login-cap·li.protechts 단독 신호는 자동 로그인 대상이지 BLOCKED 근거가 아니다.",
         "채널별 캡차/멀티세션 흔적이 있으면 해당 채널 status=BLOCKED (INV4). 단 스크린샷 1회 교차확인(일반 텍스트 오탐 방지).",
-        "★ 로그인 상태 선제 일괄 점검(docs/sot/26 preflight_batch_login): 대상 전 채널 talent-pool 탭 attach→login_state_check. 로그아웃 채널은 등록/검색 전에 모아서 자동 로그인(사람인·잡코리아 raw CDP creds, 링크드인은 BLOCKED면 사람 게이트). 채널별로 흐름 중간에 따로 로그인하지 않는다(RC5 재발 금지).",
+        "★ 로그인 상태 선제 일괄 점검(docs/sot/26 preflight_batch_login): 대상 전 채널 talent-pool 탭 attach→login_state_check. 로그아웃 채널은 등록/검색 전에 모아서 자동 로그인(사람인·잡코리아·링크드인 모두 시크릿 저장소 creds). 채널별로 흐름 중간에 따로 로그인하지 않는다(RC5 재발 금지).",
         "사장님 점유 판정: 활성/최근 활동 탭 존재 또는 사람이 만지는 신호 → status=OCCUPIED (INV2)."
       ],
       "decision_tree": {
@@ -169,6 +191,7 @@
       "name": "표준 출력 (candidate-output-contract)",
       "actions": [
         "후보 JSON 필수 4필드 = output_contract.required_fields(profile_url, score, why_fit, profile_summary). 하나라도 없으면 전송/기록 보류.",
+        "ClickUp 기록이 범위에 있으면 clickup_registration_contract 적용: FY26AI_Search list 901818680208, 부모 Task+후보 Subtask, 부모/후보 profile_url 중복검사 선행, 프로필 저장 증거 필수.",
         "디스코드 후보 리스트 기본 채널 = #ai_search (VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL).",
         "디스코드 전송은 UA 헤더 필수(없으면 Cloudflare 403)."
       ],
@@ -192,6 +215,7 @@
       "name": "결과 보고 (4단계 표준)",
       "actions": [
         "채널별 후보 저장 인원 수 (✅ saramin: N / jobkorea: N / linkedin: N).",
+        "ClickUp 등록 상태: FY26AI_Search 부모 Task URL, 후보 Subtask 생성/중복 skip 수, 또는 dry-run/blocked 사유.",
         "LinkedIn/RPS JD 템플릿 상태 + 증거 경로.",
         "다음 추천 키워드(검색전략 상위).",
         "handoff 산출물 경로(Markdown/JSON).",
@@ -204,7 +228,8 @@
   "gates": {
     "G_send": "발송 단계는 사람 컨펌 전까지 절대 자동 실행 금지 (INV3).",
     "G_captcha": "BLOCKED 채널은 캡차 해소 전까지 진입·retry 금지 (INV4).",
-    "G_occupied": "OCCUPIED 동안 자동화 액션 0, 해제 시 자동 재개 (INV2)."
+    "G_occupied": "OCCUPIED 동안 자동화 액션 0, 해제 시 자동 재개 (INV2).",
+    "G_clickup_registration": "ClickUp 등록은 FY26AI_Search list 901818680208 고정. 부모 Task와 후보 profile_url 중복검사 + 프로필 저장 증거 확인 후에만 create/update/comment. 누락 시 fail-closed."
   },
   "self_check": [
     "채널을 직무로 갈랐는가? → 위반 (INV5)",
@@ -216,6 +241,7 @@
     "죽은 참조·스펙 공백에 즉흥 시도했는가? → INV10 위반",
     "시키지 않은 채널/단계를 임의로 했거나 직렬↔병렬을 바꿨는가? → INV11 위반",
     "출력계약 미충족인데 '됐다/연락가능'이라 보고했는가? → INV12 위반",
-    "사장님 불만 신호 후에도 행동을 계속했는가? → INV13 위반"
+    "사장님 불만 신호 후에도 행동을 계속했는가? → INV13 위반",
+    "FY26AI_Search 외 리스트/Activity-only 로 남겼거나, 중복검사·프로필 저장 증거 없이 Task/Subtask 를 만들었는가? → INV14 위반"
   ]
 }

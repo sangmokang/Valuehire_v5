@@ -258,7 +258,6 @@ New files:
 - `scripts/valuehire-search-loop.sh`
 - `scripts/valuehire-search-healthcheck.sh`
 - `scripts/launchd/com.valuehire.search-runner.plist`
-- `docs/ai-search/search-ops-machine-discord-runbook-2026-06-08.md`
 - `tests/test_multi_position_sourcing.py`
 
 Dry-run command:

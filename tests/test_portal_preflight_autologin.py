@@ -1,10 +1,8 @@
-"""Coverage for the saramin/jobkorea preflight auto-login path.
+"""Coverage for the protected-portal preflight auto-login path.
 
 These tests assert the new behavior:
 - the session preflight submits macOS Keychain credentials automatically (no human
-  password entry) for saramin / jobkorea only,
-- LinkedIn RPS never reads or submits stored credentials and instead uses headed
-  Chrome plus human intervention,
+  password entry) for saramin / jobkorea / LinkedIn RPS,
 - a captcha / 2FA / checkpoint is never bypassed (auto-login stops and hands off to a human),
 - credential resolution never leaks secret values into the result payload.
 
@@ -37,8 +35,7 @@ class ResolvePortalCredentialsTests(unittest.TestCase):
         self.assertEqual(resolve_portal_credentials("saramin", env), ("valueconnect", "s-secret"))
         # jobkorea has no per-portal key here -> falls back to the shared JOB_PORTAL_* pair
         self.assertEqual(resolve_portal_credentials("jobkorea", env), ("valueconnect", "shared-secret"))
-        # LinkedIn RPS env keys are resolved for credential import/preflight, but
-        # runtime auto-login is still policy-gated elsewhere.
+        # LinkedIn RPS env keys are resolved for credential import/preflight.
         self.assertEqual(resolve_portal_credentials("linkedin_rps", env), ("x", "y"))
         # public_web has no credential keys at all
         self.assertIsNone(resolve_portal_credentials("public_web", env))

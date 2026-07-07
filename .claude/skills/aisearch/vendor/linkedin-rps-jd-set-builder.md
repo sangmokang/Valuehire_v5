@@ -16,7 +16,7 @@ description: LinkedIn Recruiter(RPS)에서 한 포지션의 InMail 본문(개요
 | R0 | **Send 버튼 절대 자동 click 금지 — Save template 까지만** | InMail 발송 = 차감 + 후보자 노출. 되돌릴 수 없는 액션. 사장님 수동 발송 게이트(2026-05-23 명시) |
 | R1 | **AI Touch up auto-draft 무시 — "Got it" 또는 X 닫기** | "Touch up failed. This feature is only available in English" 영문 한정 + 한국어 톤 망가짐. 사장님 영어 안내 X 닫음 |
 | R2 | **본문 총 1,899자 이내 (한국어 + 영어 문자수 합)** | LinkedIn InMail 실무 한도. UI counter는 1,900까지 보이지만 direct composer는 공백/제어문자 차이와 변수 검증 때문에 1,899를 hard cap으로 둔다. 풍성한 본문은 1,800~1,899자를 목표로 하되 모든 길이는 근거 있는 JD/회사 맥락으로 채운다. |
-| R3 | **자격증명·세션은 사장님 chrome(:9222) 세션 의존** | LinkedIn 별도 로그인 자동화 금지(2FA·계정 잠금 위험). SKILL 평문 ID/PW 금지 |
+| R3 | **세션 우선 + 시크릿 자동 로그인** | 사장님 chrome(:9222) 세션에 우선 붙고, 로그아웃이면 시크릿 저장소 자동 로그인을 1회 시도한다. 평문 하드코딩·로그 출력 금지, 캡차·2FA·checkpoint 우회 금지 |
 | R4 | **사람 개입 시 자동화 즉시 정지** | 사장님이 chrome 만지거나 "내가 할께" 신호 → 모든 자동화 action 0. 메모리 `[[feedback_human_intervention_pause]]` |
 | R5 | **봇 검출(캡차/차단/2FA) 즉시 STOP** | 재시도 금지 — RPS 계정 잠금 위험. 디스코드 `OPS_INCIDENTS` 알림 후 사장님 수동 풀이 |
 | R6 | **회사 리서치는 AI 생성 — 사장님 검토 전 발송 금지** | `[[project_jd_set_builder_2026_05_22]]` — 매출/투자/연혁 hallucination 위험. 본문 저장 후 사장님 1차 검토 필수 |
@@ -491,8 +491,8 @@ await supabase.from('jd_sets').upsert({
 
 | 신호 | 행동 |
 |------|------|
-| URL `/checkpoint/`, `/captcha`, `/uas/login` 리다이렉트 | `LinkedInBlockedError` STOP + Discord `OPS_INCIDENTS` 알림 |
-| 2FA 코드 요청 화면 노출 | 즉시 STOP — 사장님 수동 풀이 (R3) |
+| URL `/checkpoint/`, `/captcha` 또는 실제 captcha/checkpoint 화면 | `LinkedInBlockedError` STOP + Discord `OPS_INCIDENTS` 알림 |
+| 2FA 코드 요청 화면 노출 | 즉시 STOP — 자동 우회 금지 |
 | "Free to InMail" 가 "1 InMail" 로 표시 (차감 안내) | 발송 차감 위험 — 사장님께 라이선스 확인 요청 + STOP |
 | Send 버튼 비활성화 (수신자 거부) | 발송 자체 불가 — Save template 만 진행 |
 | Save template popover 미노출 (3초 wait 후도) | DOM selector 변경 가능성 — selector dump 후 사장님께 보고 |
@@ -806,7 +806,7 @@ bulk 완료 후 사장님이 수동으로:
 - **LinkedIn Recruiter(RPS) 검색 화면**에서 매 시나리오를 실행한다. (JD 템플릿 저장과 별개 흐름)
 - **봇 탐지 민감도**: 사람인·잡코리아보다 훨씬 높음 → 딜레이 20~60초 (랜덤)
 - **캡차·차단 감지 즉시 STOP** (R5) — 재시도 절대 금지, 디스코드 `OPS_INCIDENTS` 알림
-- **R3 준수**: 사장님 Chrome (:9222) 세션만 사용. 별도 로그인 자동화 금지
+- **R3 준수**: 사장님 Chrome (:9222) 세션 우선. 로그아웃이면 시크릿 저장소 자동 로그인 1회 시도. 캡차·2FA·checkpoint 우회 금지
 - **R4 준수**: 사장님이 Chrome 개입 시 즉시 자동화 정지
 - 시나리오 수를 사람인·잡코리아보다 줄여(8개 내외) 봇 탐지 위험 최소화
 

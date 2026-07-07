@@ -13,6 +13,10 @@ SARAMIN_CORPORATE_LOGIN_URL = (
     "https%3A%2F%2Fwww.saramin.co.kr%2Fzf_user%2Fmemcom%2Ftalent-pool%2Fmain%2Fsearch"
 )
 JOBKOREA_LOGIN_URL = "https://www.jobkorea.co.kr/Login/Login_Tot.asp"
+LINKEDIN_RPS_LOGIN_URL = (
+    "https://www.linkedin.com/uas/login?"
+    "session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ftalent%2Fhome&source_app=tsweb"
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +72,29 @@ AUTO_LOGIN_SELECTORS: dict[Channel, AutoLoginSelectors] = {
             'a:has-text("로그인")',
         ),
     ),
+    "linkedin_rps": AutoLoginSelectors(
+        username=(
+            "#username",
+            "#session_key",
+            'input[name="session_key"]',
+            'input[name="login"]',
+            'input[type="email"]',
+            'input[type="text"]',
+        ),
+        password=(
+            "#password",
+            "#session_password",
+            'input[name="session_password"]',
+            'input[name="password"]',
+            'input[type="password"]',
+        ),
+        submit=(
+            'button[type="submit"]',
+            'button:has-text("Sign in")',
+            'button:has-text("로그인")',
+            ".btn__primary--large",
+        ),
+    ),
 }
 
 
@@ -76,6 +103,8 @@ def login_url_for_channel(site: Channel) -> str:
         return SARAMIN_CORPORATE_LOGIN_URL
     if site == "jobkorea":
         return JOBKOREA_LOGIN_URL
+    if site == "linkedin_rps":
+        return LINKEDIN_RPS_LOGIN_URL
     raise ValueError(f"automatic login is not configured for {site}")
 
 

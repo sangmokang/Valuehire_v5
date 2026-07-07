@@ -1,7 +1,7 @@
-"""Harness Gate 2 — PC-F3 로그인 게이트 보안챌린지 감지에 RPS 세션락·authwall·URL 블록 신호 추가.
+"""Harness Gate 2 — PC-F3 로그인 게이트 보안챌린지 감지에 RPS 세션락·authwall 신호 추가.
 
 현행 `_has_security_challenge`는 7토큰만 봐서 RPS 멀티세션 락(multiple sign-ins/only one session/
-enterprise-authentication)·authwall·/uas/login 을 못 잡는다 → 봇이 STOP 못 하고 계속 두드림(SOT2).
+enterprise-authentication)·authwall 을 못 잡는다 → 봇이 STOP 못 하고 계속 두드림(SOT2).
 SOT26:163 이 콕 집은 이 신호들을 추가한다. 단 후보 텍스트에 흔한 SOT26 토큰(recaptcha·보안문자 OCR·
 unusual activity 등)은 raw abort 오탐 위험이라 제외 — _CHALLENGE_TOKENS ⊆ SOT26(완전일치 아님).
 각 단언은 "일부러 깨면 RED, 실제면 GREEN".
@@ -18,7 +18,7 @@ from tools.multi_position_sourcing.portal_login import _CHALLENGE_TOKENS, _has_s
 _REPO = Path(__file__).resolve().parents[1]
 
 
-# ── 신규: RPS 세션락·authwall·URL 블록 신호 탐지(현행 7토큰이 못 잡던 것) ──
+# ── 신규: RPS 세션락·authwall 신호 탐지(현행 7토큰이 못 잡던 것) ──
 @pytest.mark.parametrize(
     "text",
     [
@@ -26,8 +26,6 @@ _REPO = Path(__file__).resolve().parents[1]
         "multiple sign-ins detected on this account",
         "enterprise-authentication/sessions redirect",
         "LinkedIn authwall blocking access",
-        "redirected to /uas/login-cap page",         # /uas/login + login-cap
-        "protechts anti-bot page",
     ],
 )
 def test_detects_session_lock_and_block_signals(text):
@@ -44,12 +42,21 @@ def test_keeps_existing_tokens(text):
 
 
 def test_url_field_also_checked():
-    assert _has_security_challenge("", url="https://www.linkedin.com/uas/login-cap") is True
+    assert _has_security_challenge("", url="https://www.linkedin.com/enterprise-authentication/sessions") is True
 
 
-@pytest.mark.parametrize("text", ["환영합니다 대시보드", "검색 결과 128건", "normal profile page content"])
-def test_no_false_positive_on_benign(text):
-    assert _has_security_challenge(text) is False
+@pytest.mark.parametrize(
+    ("text", "url"),
+    [
+        ("환영합니다 대시보드", ""),
+        ("검색 결과 128건", ""),
+        ("normal profile page content", ""),
+        ("LinkedIn login page", "https://www.linkedin.com/uas/login-cap?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ftalent%2Fhome"),
+        ("li.protechts frame loaded", "https://li.protechts.net/"),
+    ],
+)
+def test_no_false_positive_on_benign(text, url):
+    assert _has_security_challenge(text, url=url) is False
 
 
 @pytest.mark.parametrize(

@@ -84,7 +84,10 @@ async def _body_text(page: Any, limit: int = 3000) -> str:
 # SOT26 토큰(recaptcha·보안문자·자동입력 방지·unusual activity·verify you)을 raw abort 트리거로 쓰면
 # 정상 로그인/검색을 오탐해 막는다. → 후보 텍스트에 **나타나지 않는 명확한** 신호만 쓴다:
 #   · 기존 캡차/보안 토큰(보안문자·captcha·2단계·인증번호·이상 접근·checkpoint·challenge)
-#   · 신규(SOT26:163 지시): RPS 멀티세션 락 + authwall + URL 블록 마커(/uas/login·login-cap·protechts).
+#   · RPS 멀티세션 락 + authwall.
+# Plain LinkedIn login URLs and the li.protechts iframe are not hard blocks by
+# themselves; the runner still submits stored credentials once and stops only if a
+# real captcha / 2FA / checkpoint / session-lock challenge is visible.
 # _CHALLENGE_TOKENS ⊆ SOT26 는 파리티 테스트로 강제(드리프트/오탈자 차단), 완전 일치는 요구하지 않는다.
 _CHALLENGE_TOKENS: tuple[str, ...] = (
     "보안문자",
@@ -98,8 +101,6 @@ _CHALLENGE_TOKENS: tuple[str, ...] = (
     "multiple sign-ins",
     "only one session",
     "enterprise-authentication",
-    "/uas/login",
-    "protechts",
 )
 
 

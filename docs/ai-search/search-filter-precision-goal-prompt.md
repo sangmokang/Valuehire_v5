@@ -10,7 +10,7 @@ Context:
 - 포지션 스펙(JD)에서 다음을 추출해 검색 스펙으로 만든다: 직무(타이틀 동의어), 업종/도메인, 연차, 지역, 타겟 출신사, 제외 조건.
 - 한국어와 영어 키워드를 둘 다 사용해 한쪽 언어로만 검색해 놓치는 인재가 없게 한다.
 - 현재 구현은 키워드 1개만 넣고 연차·학력·지역·업종 facet을 적용하지 않으며, 결과카드 셀렉터도 라이브 DOM과 일부 불일치한다.
-- SOT: docs/search-access.md, docs/ai-search/browser-control-methods-comparison-2026-06-09.md, docs/ai-search/portal-search-runbook-2026-06-15.md
+- SOT: docs/search-access.md, docs/sot/26-portal-login-spec.json, docs/ai-search/portal-search-runbook-2026-06-15.md
 
 공통 원칙 (전 채널):
 1. 검색 실행 전, 화면에 남아있는 기존 AND/OR/NOT 키워드 값을 **모두 초기화(clear)** 한다. 이전 검색의 잔여 필터가 결과를 오염시키지 않게 한다.

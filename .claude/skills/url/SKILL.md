@@ -50,7 +50,7 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 ## 🖥️ 브라우저 드라이버
 - **검색어 입력·필터 클릭·"Start a keyword search" 실행 = claude-in-chrome 확장 실제입력**(합성입력 안 먹음).
 - **결과 URL·DOM 수확 = raw CDP 단일탭 OK**(`tools/multi_position_sourcing/raw_cdp.py`, `suppress_origin=True`). 수확 직전 `Page.bringToFront`.
-- 사장님 :9222 세션에 붙는다. 별도 로그인 자동화 금지(R3).
+- 사장님 :9222 세션에 우선 붙고, 로그아웃이면 `docs/search-access.md`/SOT26 기준으로 LinkedIn RPS도 시크릿 저장소 자동 로그인을 1회 시도한다. 캡차·2FA·checkpoint·멀티세션 락 우회만 금지.
 
 ---
 

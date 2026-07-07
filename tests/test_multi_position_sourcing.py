@@ -1159,7 +1159,6 @@ class MultiPositionSourcingTests(unittest.TestCase):
     def test_portal_runbooks_forbid_scheduled_readiness_heartbeats(self) -> None:
         paths = (
             Path("docs/ai-search/portal-browser-runbook-2026-06-08.md"),
-            Path("docs/ai-search/search-ops-machine-discord-runbook-2026-06-08.md"),
             Path("docs/ai-search/multi-position-sourcing-layer-2026-06-08.md"),
         )
         combined = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
@@ -10720,14 +10719,18 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(preflight.password_found)
         self.assertTrue(preflight.submit_found)
 
-    async def test_login_selector_preflight_refuses_unconfigured_channel(self) -> None:
+    async def test_login_selector_preflight_supports_linkedin_rps(self) -> None:
         page = FakeAutoLoginPage(
             available_selectors={"#username", "#password", 'button[type="submit"]'},
             submit_selectors={'button[type="submit"]'},
             ready_url="https://www.linkedin.com/talent/home",
         )
-        with self.assertRaises(ValueError):
-            await login_selector_preflight(page, "linkedin_rps")
+        preflight = await login_selector_preflight(page, "linkedin_rps")
+        self.assertFalse(preflight.drifted)
+        self.assertEqual(preflight.missing_roles, ())
+        self.assertTrue(preflight.username_found)
+        self.assertTrue(preflight.password_found)
+        self.assertTrue(preflight.submit_found)
 
     async def test_saramin_auto_relogin_fills_keychain_credentials_and_revalidates(self) -> None:
         page = FakeAutoLoginPage(
@@ -10803,19 +10806,23 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.filled, [])
         self.assertTrue(page.closed)
 
-    async def test_auto_relogin_refuses_linkedin(self) -> None:
-        with self.assertRaises(ValueError):
-            await auto_relogin_portal(
-                FakeAutoLoginContext(
-                    FakeAutoLoginPage(
-                        available_selectors={"#username", "#password", 'button[type="submit"]'},
-                        submit_selectors={'button[type="submit"]'},
-                        ready_url="https://www.linkedin.com/talent/home",
-                    )
-                ),
-                "linkedin_rps",
-                PortalCredentials(username="valueconnect", password="password-secret"),
-            )
+    async def test_linkedin_auto_relogin_fills_keychain_credentials_and_revalidates(self) -> None:
+        page = FakeAutoLoginPage(
+            available_selectors={"#username", "#password", 'button[type="submit"]'},
+            submit_selectors={'button[type="submit"]'},
+            ready_url="https://www.linkedin.com/talent/home",
+        )
+        context = FakeAutoLoginContext(page)
+        credentials = PortalCredentials(username="linkedin-user", password="linkedin-secret")
+
+        recovered = await auto_relogin_portal(context, "linkedin_rps", credentials)
+
+        self.assertTrue(recovered)
+        self.assertIn(("#username", "linkedin-user"), page.filled)
+        self.assertIn(("#password", "linkedin-secret"), page.filled)
+        self.assertEqual(page.clicked, ['button[type="submit"]'])
+        self.assertGreaterEqual(len(page.goto_calls), 2)
+        self.assertTrue(page.closed)
 
     async def test_auto_relogin_refuses_unconfigured_channel(self) -> None:
         # public_web has no login form/credentials and must still raise.
