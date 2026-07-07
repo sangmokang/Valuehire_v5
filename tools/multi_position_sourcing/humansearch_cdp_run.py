@@ -19,19 +19,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.multi_position_sourcing import raw_cdp as cdp
-from tools.multi_position_sourcing.harvest_policy import deterministic_delay_ms
+from tools.multi_position_sourcing.harvest_policy import deterministic_delay_ms, worker_should_yield
 from tools.multi_position_sourcing.humansearch import (
     hard_exclude_reason,
     plan_result_count_traversal,
     score_humansearch,
 )
 from tools.multi_position_sourcing.scoring import tenure_months
+from tools.multi_position_sourcing.humansearch_preflight import PreflightError
+from tools.multi_position_sourcing.humansearch_preflight import assert_not_blocked_or_abort
 from tools.multi_position_sourcing.humansearch_preflight import assert_live_or_abort
 from tools.multi_position_sourcing.models import (
     CapturedProfile,
     EmploymentTenure,
     Position,
 )
+from tools.multi_position_sourcing.owner_activity import detect_owner_activity_snapshot
 
 SEARCH_URL_BASE = (
     "https://www.linkedin.com/talent/search?"
@@ -300,6 +303,53 @@ def collect_results(rows: Iterable[dict]) -> list[dict]:
     return [row for row in rows if not row.get("hard_exclude")]
 
 
+def owner_snapshot_should_yield(snapshot) -> bool:
+    """R4 owner-activity bridge: consume PC-F1 only through worker_should_yield."""
+    return worker_should_yield(
+        owner_activity_detected=bool(getattr(snapshot, "owner_activity_detected", True))
+    )
+
+
+def _write_results(rows: list[dict]) -> None:
+    (OUT_DIR / "results.json").write_text(
+        json.dumps(collect_results(rows), ensure_ascii=False, indent=2)
+    )
+
+
+def process_cards_with_r4(
+    tab,
+    cards: list[dict],
+    *,
+    owner_snapshot=detect_owner_activity_snapshot,
+    live_check=assert_not_blocked_or_abort,
+) -> list[dict]:
+    """Open cards while respecting owner Chrome yield and mid-run preflight STOP."""
+    all_rows: list[dict] = []
+    for i, card in enumerate(cards, 1):
+        snapshot = owner_snapshot() if callable(owner_snapshot) else owner_snapshot
+        if owner_snapshot_should_yield(snapshot):
+            log("R4 yield — owner Chrome activity detected; stopping profile traversal")
+            break
+        try:
+            r = process_profile(tab, card, i)
+            hx = r.get("hard_exclude")
+            tag = "⛔HX  " if hx else ("✅PASS" if r["score"] >= 70 else "  ")
+            log(f"{tag} #{i:02d} {r['name']!r} score={r['score']} otw={r['otw']} edu={r['education'][:30]!r}"
+                + (f" hard_exclude={hx}" if hx else ""))
+            all_rows.append(r)
+            _write_results(all_rows)
+            live_check(tab)
+        except PreflightError as e:
+            log(f"R4 STOP — live preflight failed during traversal: {e}")
+            break
+        except Exception as e:
+            log(f"  #{i} ERROR {card.get('name')}: {e}")
+            _write_results(all_rows)
+        if i < len(cards):
+            human_delay()
+    return all_rows
+
+
 def process_profile(tab, card: dict, idx: int) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     tab.navigate(card["url"], wait_ms=8000)
@@ -355,7 +405,7 @@ def process_profile(tab, card: dict, idx: int) -> dict:
     }
 
 
-def main(max_profiles: int = 25, start: int = 0) -> None:
+def main(max_profiles: int = 25, start: int = 0, *, owner_snapshot=detect_owner_activity_snapshot) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     t = cdp.find_page_by_url("searchContextId=8d792952") or cdp.find_page_by_url("linkedin.com/talent/search")
     if not t:
@@ -379,27 +429,17 @@ def main(max_profiles: int = 25, start: int = 0) -> None:
         first_page_cards=first_page_cards,
     )
     log(f"planned traversal result_count={result_count} collected={len(cards)} start={start}")
-    all_rows: list[dict] = []
-    for i, card in enumerate(cards, 1):
-        try:
-            r = process_profile(tab, card, i)
-            hx = r.get("hard_exclude")
-            tag = "⛔HX  " if hx else ("✅PASS" if r["score"] >= 70 else "  ")
-            log(f"{tag} #{i:02d} {r['name']!r} score={r['score']} otw={r['otw']} edu={r['education'][:30]!r}"
-                + (f" hard_exclude={hx}" if hx else ""))
-            all_rows.append(r)
-        except Exception as e:
-            log(f"  #{i} ERROR {card.get('name')}: {e}")
-        # 러너면 하드제외(PC-C3a): results.json 은 하드제외 뺀 것만(프리랜서·단기이직·전문대 0건).
-        (OUT_DIR / "results.json").write_text(
-            json.dumps(collect_results(all_rows), ensure_ascii=False, indent=2))
-        if i < len(cards):
-            human_delay()
+    all_rows = process_cards_with_r4(
+        tab,
+        cards,
+        owner_snapshot=owner_snapshot,
+        live_check=assert_not_blocked_or_abort,
+    )
     tab.close()
     results = collect_results(all_rows)
     excluded = [r for r in all_rows if r.get("hard_exclude")]
     passers = [r for r in results if r["score"] >= 70]
-    log(f"=== DONE: {len(all_rows)} opened, {len(excluded)} hard-excluded, "
+    log(f"=== DONE: {len(results) + len(excluded)} opened, {len(excluded)} hard-excluded, "
         f"{len(results)} scored, {len(passers)} passers(>=70) ===")
 
 

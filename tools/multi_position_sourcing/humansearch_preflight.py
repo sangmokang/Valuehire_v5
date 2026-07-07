@@ -113,6 +113,36 @@ def evaluate_search_preflight(probe: dict[str, Any]) -> dict[str, Any]:
     return {"ok": ok, "checks": checks, "reasons": reasons, "card_count": card_count}
 
 
+def evaluate_blocking_preflight(probe: dict[str, Any]) -> dict[str, Any]:
+    """page 상태 probe → captcha/session/login block 여부만 판정.
+
+    검색 결과 페이지가 아닌 프로필 페이지에서도 순회 도중 블록을 잡기 위한 보조 판정이다. 토큰과
+    이유 문구는 검색 preflight 와 같은 단일 출처 상수를 사용한다.
+    """
+    url = _coerce_str(probe.get("url")).lower()
+    card_count = _coerce_int(probe.get("card_count"))
+    multiple_signins = bool(probe.get("multiple_signins"))
+    captcha = bool(probe.get("captcha"))
+
+    no_login_redirect = not any(m in url for m in _LOGIN_REDIRECT_MARKERS)
+    no_session_conflict = (not multiple_signins) and (_SESSION_CONFLICT_URL not in url)
+    no_captcha = not captcha
+
+    checks = {
+        "no_login_redirect": no_login_redirect,
+        "no_session_conflict": no_session_conflict,
+        "no_captcha": no_captcha,
+    }
+    reasons: list[str] = []
+    if not no_login_redirect:
+        reasons.append("로그인/인증 페이지로 리다이렉트 — 계정 로그인 상태가 아님")
+    if not no_session_conflict:
+        reasons.append("다른 기기 동시 로그인(세션 충돌) 감지 — 한쪽 세션 정리 필요")
+    if not no_captcha:
+        reasons.append("캡차/보안 체크포인트 감지 — 자동 우회 금지, 사람 개입 필요")
+    return {"ok": all(checks.values()), "checks": checks, "reasons": reasons, "card_count": card_count}
+
+
 def build_probe_js() -> str:
     """라이브 수집 탭에서 page 상태 probe 를 만드는 JS(IIFE). tab.eval(returnByValue) 용."""
     return r"""(() => {
@@ -152,6 +182,17 @@ def assert_live_or_abort(tab: Any) -> dict[str, Any]:
     if not isinstance(probe, dict):
         probe = {}
     decision = evaluate_search_preflight(probe)
+    if not decision["ok"]:
+        raise PreflightError(decision)
+    return decision
+
+
+def assert_not_blocked_or_abort(tab: Any) -> dict[str, Any]:
+    """순회 도중 프로필 페이지에서도 쓸 수 있는 block-only fail-closed 게이트."""
+    probe = tab.eval(build_probe_js())
+    if not isinstance(probe, dict):
+        probe = {}
+    decision = evaluate_blocking_preflight(probe)
     if not decision["ok"]:
         raise PreflightError(decision)
     return decision

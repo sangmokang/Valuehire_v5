@@ -1,0 +1,111 @@
+{
+  "claim_id": "humansearch-r4-wiring",
+  "mode": "code-change",
+  "risk": "L3",
+  "base": "task/humansearch-multipage-full",
+  "goal_doc": "docs/engineering/humansearch-r4-wiring-goal-2026-07-07.md",
+  "generator": {
+    "author": "Codex",
+    "claim": "PC-F2: humansearch_cdp_run now checks owner activity before every profile open, stops on R4 yield, preserves partial results, and performs block-only preflight checks during profile traversal without reintroducing the old max-profile slice.",
+    "changed_files": [
+      "docs/engineering/humansearch-r4-wiring-goal-2026-07-07.md",
+      "docs/engineering/humansearch-r4-wiring.verdict.json",
+      "tests/test_humansearch_r4_wiring.py",
+      "tests/test_humansearch_multipage_full.py",
+      "tests/test_humansearch_preflight.py",
+      "tools/multi_position_sourcing/humansearch_cdp_run.py",
+      "tools/multi_position_sourcing/humansearch_preflight.py"
+    ],
+    "red_evidence": {
+      "commit": "d241b63",
+      "command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-r4-wiring /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-humansearch-r4-wiring/tests/test_humansearch_r4_wiring.py -q",
+      "exit_code": 1,
+      "output": "6 failed, 1 passed: owner_snapshot_should_yield and process_cards_with_r4 were missing, and main did not pass owner_snapshot into the loop"
+    },
+    "green_evidence": {
+      "commit": "30a605e",
+      "focused_command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-r4-wiring /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-humansearch-r4-wiring/tests/test_humansearch_r4_wiring.py -q",
+      "focused_exit_code": 0,
+      "focused_output": "7 passed in 1.13s",
+      "related_command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-r4-wiring /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest tests/test_humansearch_r4_wiring.py tests/test_humansearch_multipage_full.py tests/test_owner_activity.py tests/test_humansearch_preflight.py -q",
+      "related_exit_code": 0,
+      "related_output": "47 passed in 0.68s",
+      "full_command": "PYTHONSAFEPATH=1 PYTHONPATH=/Users/kangsangmo/Valuehire_v5-humansearch-r4-wiring /Users/kangsangmo/Valuehire_v5/.venv/bin/python -m pytest /Users/kangsangmo/Valuehire_v5-humansearch-r4-wiring/tests/ -q",
+      "full_exit_code": 0,
+      "full_output": "1085 passed, 4 xfailed, 14 subtests passed in 73.14s"
+    },
+    "wiring_evidence": {
+      "file_lines": [
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:22 imports worker_should_yield",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:36 imports detect_owner_activity_snapshot",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:305 owner_snapshot_should_yield consumes snapshot only through worker_should_yield",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:318 process_cards_with_r4 owns the per-profile loop",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:329 checks R4 before process_profile",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:340 calls live_check after profile processing",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:407 main accepts injectable owner_snapshot",
+        "tools/multi_position_sourcing/humansearch_cdp_run.py:431 main calls process_cards_with_r4",
+        "tools/multi_position_sourcing/humansearch_preflight.py adds evaluate_blocking_preflight/assert_not_blocked_or_abort for profile-page-safe mid-run checks"
+      ],
+      "static_check": "imports_worker_should_yield=True; imports_owner_snapshot=True; main_accepts_owner_snapshot=True; main_calls_r4_loop=True; r4_before_process_profile=True; midrun_block_check_after_profile=True; legacy_slice_removed=True"
+    }
+  },
+  "v1": {
+    "author": "Codex self-adversarial mutation pass",
+    "claude_status": "skipped_by_user_instruction_no_budget; claude binary exists at /Users/kangsangmo/.local/bin/claude but was not called",
+    "mutations": [
+      {
+        "mutation": "Disable owner yield gate with if False and owner_snapshot_should_yield(snapshot)",
+        "command": "pytest tests/test_humansearch_r4_wiring.py -q",
+        "exit_code": 1,
+        "caught_by": [
+          "test_owner_activity_before_first_profile_opens_zero",
+          "test_owner_activity_after_one_profile_preserves_partial_results"
+        ],
+        "failure": "profiles were opened despite owner_activity_detected=True"
+      },
+      {
+        "mutation": "Disable mid-run live_check(tab)",
+        "command": "pytest tests/test_humansearch_r4_wiring.py -q",
+        "exit_code": 1,
+        "caught_by": "test_mid_run_preflight_error_stops_without_opening_remaining",
+        "failure": "all remaining cards were opened instead of stopping after PreflightError"
+      }
+    ],
+    "verdict": "PASS"
+  },
+  "v2": {
+    "author": "Codex reset-style static and contract recheck",
+    "checks": [
+      "The owner check occurs before process_profile in the per-profile loop.",
+      "The runner uses worker_should_yield instead of reimplementing Chrome/idle rules.",
+      "main injects owner_snapshot into process_cards_with_r4.",
+      "The old cards[:max_profiles] slice is absent.",
+      "Mid-run block check uses a profile-page-safe preflight helper; full search-result preflight remains start-only.",
+      "Diff touches no send, auto_send, launchd, GitHub push, or live execution path."
+    ],
+    "command": "python static source-order check + rg changed files",
+    "exit_code": 0,
+    "verdict": "PASS"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "Initial implementation called assert_live_or_abort after process_profile",
+      "root_cause": "assert_live_or_abort requires search-result cards and result-count text, but process_profile leaves the tab on a profile page",
+      "fix": "Added evaluate_blocking_preflight/assert_not_blocked_or_abort in humansearch_preflight.py and used it for mid-run profile-page checks"
+    },
+    {
+      "attempt": "Focused test initially hung on human_delay",
+      "root_cause": "Unit tests invoked process_cards_with_r4 without replacing the production 20-45s delay",
+      "fix": "Added an autouse fixture that replaces human_delay with a no-op for R4 tests"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "LOCAL_PASS_EXTERNAL_SHIP_BLOCKED",
+  "blocked_l3_actions": [
+    "git push",
+    "GitHub PR creation",
+    "GitHub PR merge",
+    "live portal execution",
+    "launchd start/load"
+  ]
+}
