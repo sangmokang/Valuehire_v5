@@ -141,6 +141,43 @@ cmd_health() {
   return 0
 }
 
+# 채널 CDP 엔드포인트 해석 — 포트를 못박지 않는다.
+# 그 프로필로 "실제 살아있는 크롬"의 remote-debugging-port 를 찾아 http://127.0.0.1:<실제포트> 출력.
+# 이유(2026-07-08 실사고): 링크드인이 설정 9225 아닌 9338 로 떠 있어 도구가 죽은 포트로 붙음.
+# raw_cdp 는 CDP_HTTP env 로 이 값을 받으므로:  export CDP_HTTP="$(portal_browsers.sh cdp linkedin)"
+cmd_cdp() {
+  local want="${1:-}"
+  [[ -n "$want" ]] || { echo "사용법: $0 cdp {saramin|jobkorea|linkedin}" >&2; exit 2; }
+  for row in "${CHANNELS[@]}"; do
+    # shellcheck disable=SC2086
+    set -- $row; local name="$1" port="$2" profile="$3"
+    [[ "$name" == "$want" ]] || continue
+    # 1) 이 프로필(--user-data-dir)로 살아있는 크롬 프로세스에서 실제 포트 추출(가장 견고).
+    #    ⚠️ 경계 앵커 필수 — grep -F 접두 매칭은 /linkedin 이 /linkedin2 에도 걸려(V1 지적)
+    #    엉뚱한 브라우저 포트를 잡을 수 있다. 인자값이 정확히 일치할 때만 채택한다.
+    #    (--user-data-dir=<profile> 는 항상 공백으로 구분된 한 인자 → 양옆 공백 경계로 판별.)
+    local live_port=""
+    local _cmd
+    while IFS= read -r _cmd; do
+      case " $_cmd " in
+        *" --user-data-dir=$profile "*)
+          live_port="$(printf '%s\n' "$_cmd" | grep -oE 'remote-debugging-port=[0-9]+' | head -1 | cut -d= -f2)"
+          [[ -n "$live_port" ]] && break ;;
+      esac
+    done < <(ps ax -o command= 2>/dev/null)
+    # 2) 실제 포트가 있고 CDP 가 응답하면 그걸 쓴다. 없으면 설정 포트로 한 번 더 확인(표준 폴백).
+    local try
+    for try in "$live_port" "$port"; do
+      [[ -n "$try" ]] || continue
+      if cdp_alive "$try"; then echo "http://127.0.0.1:$try"; return 0; fi
+    done
+    # 3) 살아있는 크롬 없음 → 재실행/추정 금지(사람 로그인·캡차 게이트 존중, 봇행동 금지).
+    echo "❌ $name CDP 없음 — 프로필로 살아있는 크롬이 없습니다. 'start' 후 그 창에서 직접 로그인/캡차 처리." >&2
+    exit 3
+  done
+  echo "❌ 알 수 없는 채널: $want (saramin|jobkorea|linkedin)" >&2; exit 2
+}
+
 cmd_stop() {
   echo "■ 디버그 크롬 종료…"
   for row in "${CHANNELS[@]}"; do
@@ -156,8 +193,9 @@ cmd_stop() {
 case "${1:-}" in
   start)   cmd_start ;;
   status)  cmd_status ;;
+  cdp)     cmd_cdp "${2:-}" ;;
   health)  cmd_health ;;
   stop)    cmd_stop ;;
   restart) cmd_stop; sleep 2; cmd_start ;;
-  *) echo "사용법: $0 {start|status|health|stop|restart}"; exit 2 ;;
+  *) echo "사용법: $0 {start|status|cdp <채널>|health|stop|restart}"; exit 2 ;;
 esac
