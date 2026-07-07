@@ -23,7 +23,7 @@ def process_cards_with_r4(
     cards: list[dict],
     *,
     owner_snapshot=detect_owner_activity_snapshot,
-    live_check=assert_live_or_abort,
+    live_check=assert_not_blocked_or_abort,
 ) -> list[dict]: ...
 
 def main(max_profiles: int = 25, start: int = 0, *, owner_snapshot=detect_owner_activity_snapshot) -> None: ...
@@ -37,6 +37,7 @@ Input shape:
 Output/state:
 - If `worker_should_yield(owner_activity_detected=snapshot.owner_activity_detected)` is true before a profile, stop before calling `process_profile`.
 - If `live_check(tab)` raises `PreflightError` after a profile, save rows collected so far and stop without opening remaining cards.
+- Start-of-run checking remains `assert_live_or_abort(tab)` because the tab is on a search page. Mid-run checking uses `assert_not_blocked_or_abort(tab)` because after `process_profile` the tab is on a profile page, where a full search-results preflight would falsely fail on missing result cards.
 - Results are written through the existing `collect_results` filter after every processed profile and again at the end.
 - No send/outreach/browser-login/launchd behavior is changed.
 
@@ -68,4 +69,5 @@ Output/state:
 - `docs/harness.md`: RED -> GREEN, real tests, adversarial verification.
 - `docs/sot/22-talent-search-filters.json`: stop on captcha/block; no bot retry.
 - `docs/sot/27-humansearch-browsing-preflight.json`: reuse `assert_live_or_abort`.
+- `docs/sot/27-humansearch-browsing-preflight.json`: reuse preflight block tokens; full search-result preflight only on search pages.
 - `docs/sot/28-auto-send-policy.json`: no send path touched.

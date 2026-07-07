@@ -10,8 +10,10 @@ import pytest
 
 from tools.multi_position_sourcing.humansearch_preflight import (
     PreflightError,
+    assert_not_blocked_or_abort,
     assert_live_or_abort,
     build_probe_js,
+    evaluate_blocking_preflight,
     evaluate_search_preflight,
 )
 
@@ -138,6 +140,48 @@ def test_assert_live_or_abort_returns_decision_on_live():
     tab = _FakeTab(_live_probe())
     d = assert_live_or_abort(tab)
     assert d["ok"] is True
+
+
+def test_blocking_preflight_allows_normal_profile_page_without_results():
+    d = evaluate_blocking_preflight(
+        {
+            "url": "https://www.linkedin.com/talent/profile/abc",
+            "card_count": 0,
+            "results_text": "",
+            "logged_in_account": "",
+            "multiple_signins": False,
+            "captcha": False,
+        }
+    )
+    assert d["ok"] is True
+
+
+def test_blocking_preflight_stops_captcha_on_profile_page():
+    d = evaluate_blocking_preflight(
+        {
+            "url": "https://www.linkedin.com/talent/profile/abc",
+            "card_count": 0,
+            "results_text": "",
+            "multiple_signins": False,
+            "captcha": True,
+        }
+    )
+    assert d["ok"] is False
+    assert d["checks"]["no_captcha"] is False
+
+
+def test_assert_not_blocked_or_abort_raises_on_session_lock():
+    tab = _FakeTab(
+        {
+            "url": "https://www.linkedin.com/enterprise-authentication/sessions",
+            "card_count": 0,
+            "results_text": "",
+            "multiple_signins": True,
+            "captcha": False,
+        }
+    )
+    with pytest.raises(PreflightError):
+        assert_not_blocked_or_abort(tab)
 
 
 def test_runner_wires_the_gate_no_orphan():

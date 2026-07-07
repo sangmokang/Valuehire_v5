@@ -136,7 +136,7 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hcr, "process_profile", fake_process)
     monkeypatch.setattr(hcr, "human_delay", lambda: None)
 
-    hcr.main()
+    hcr.main(owner_snapshot=lambda: type("Snapshot", (), {"owner_activity_detected": False})())
 
     assert calls
     assert calls[0]["result_count"] == 60

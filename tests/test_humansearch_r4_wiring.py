@@ -48,6 +48,11 @@ def _row(card: dict, idx: int) -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def no_human_delay(monkeypatch) -> None:
+    monkeypatch.setattr(hcr, "human_delay", lambda: None)
+
+
 def test_worker_should_yield_matches_owner_detector_grid() -> None:
     for frontmost_is_chrome in (True, False):
         for idle in (None, 0.0, 179.9, 180.0, 300.0):
@@ -186,7 +191,7 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
 
     def fake_process_cards(_tab, cards, *, owner_snapshot, live_check):
         calls.append(owner_snapshot)
-        assert live_check is hcr.assert_live_or_abort
+        assert live_check is hcr.assert_not_blocked_or_abort
         return [_row(card, idx) for idx, card in enumerate(cards, 1)]
 
     monkeypatch.setattr(hcr, "process_cards_with_r4", fake_process_cards)
