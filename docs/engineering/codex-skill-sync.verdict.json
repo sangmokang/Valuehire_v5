@@ -1,0 +1,45 @@
+{
+  "claim_id": "codex-skill-sync-01",
+  "mode": "mixed",
+  "risk": "L2",
+  "generator": {
+    "claim": "Claude 저작 스킬 45개를 ~/.codex/skills 로 미러링하는 재실행 동기화 도구. .system/dot 보존, 별칭 skip, 충돌=먼저-온-소스, full/partial 분류.",
+    "changed_files": [
+      "tools/codex_skill_sync/sync.py",
+      "tools/codex_skill_sync/__init__.py",
+      "tools/codex_skill_sync/README.md",
+      "tests/test_codex_skill_sync.py",
+      "Makefile",
+      "docs/engineering/codex-skill-sync-goal-2026-07-07.md"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "artifact": "verify: pytest exit=0 — 1109 passed, 4 xfailed, 14 subtests passed",
+    "self_mutant": "별칭 skip(if name in ADAPTED_ALIASES) 을 False 로 무력화 → test_adapted_aliases_are_skipped_by_default FAIL (테스트가 뭄)",
+    "dry_run_evidence": "python -m tools.codex_skill_sync.sync --dry-run → 복사 41(full 32/partial 9) + 별칭 skip 3 + 충돌 1(humansearch) = 45 전부 반영"
+  },
+  "v1": {
+    "author": "Codex (codex:codex-rescue, fresh)",
+    "verdict": "fail",
+    "counterexample": "소스 스킬 폴더 안 자기참조 심볼릭 링크(loop→.) → shutil.copytree(symlinks=False)가 무한 재귀 → OSError 'Too many levels of symbolic links' 로 전체 동기화 크래시",
+    "repro": "src/loopskill/SKILL.md + (loop -> .) 심볼릭링크 후 sync_skills([src],dest) → 크래시 (내가 직접 재현 확인)",
+    "source_jsonl": "/Users/kangsangmo/.claude/projects/-Users-kangsangmo-Valuehire-v5/b05e17a3-3f44-43ee-88fb-cf4dff5eab02/tool-results/bd8thyeh4.txt",
+    "agentId": "a998e01240bb812b3",
+    "independently_reproduced_by_generator": true
+  },
+  "failed_attempts": [
+    {
+      "attempt": "1차 구현: shutil.copytree(src,dst, ignore=_IGNORE) — 기본 symlinks=False",
+      "root_cause": "심볼릭 링크를 따라가(dereference) 자기참조 링크에서 무한 재귀 → 한 스킬의 나쁜 링크가 전체 동기화를 죽임",
+      "repro": "pytest tests/test_codex_skill_sync.py::test_source_symlink_loop_does_not_crash (수정 전 FAIL)",
+      "next_change": "_ignore 콜백으로 모든 심볼릭 링크를 복사 대상에서 제외 → 따라가지도, dest 로 옮기지도 않음(Codex 쪽 재폭발 차단). 실 스킬 폴더 링크 0개라 손실 없음."
+    }
+  ],
+  "T": {
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "result": "1109 passed, 4 xfailed"
+  },
+  "three_way_agree": "G+V1+T (L2 — V2 리셋 재검증은 L3에서 요구)",
+  "status": "GREEN"
+}

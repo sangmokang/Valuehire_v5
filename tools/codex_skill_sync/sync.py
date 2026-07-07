@@ -31,9 +31,22 @@ CLAUDE_ONLY_MARKERS = (
 )
 
 # 복사에서 제외할 잡음
-_IGNORE = shutil.ignore_patterns(
+_IGNORE_PATTERNS = shutil.ignore_patterns(
     ".git", "node_modules", "__pycache__", ".pytest_cache", "*.pyc"
 )
+
+
+def _ignore(dirpath, names):
+    """잡음 글롭 + 모든 심볼릭 링크를 복사 대상에서 제외.
+
+    심볼릭 링크(특히 자기참조 loop→.)를 dest 로 옮기면 Codex 가 그 폴더를 훑을 때
+    무한 재귀로 터질 수 있다. 실제 스킬 폴더엔 링크가 없으므로 제외해도 손실 없음.
+    """
+    ignored = set(_IGNORE_PATTERNS(dirpath, names))
+    for n in names:
+        if os.path.islink(os.path.join(dirpath, n)):
+            ignored.add(n)
+    return ignored
 
 
 def _classify(skill_md: Path) -> str:
@@ -46,10 +59,15 @@ def _classify(skill_md: Path) -> str:
 
 
 def _mirror(src_dir: Path, dst_dir: Path) -> None:
-    """dst_dir 를 src_dir 로 깨끗이 미러(재실행 시 stale 제거). dst_dir 하위만 건드림."""
+    """dst_dir 를 src_dir 로 깨끗이 미러(재실행 시 stale 제거). dst_dir 하위만 건드림.
+
+    _ignore 가 심볼릭 링크를 전부 제외하므로 링크를 따라가지 않는다
+    (자기참조 loop→. 를 따라가다 무한재귀로 전체 동기화가 죽는 것도, 그 링크를 dest 로
+    옮겨 Codex 쪽에서 터지는 것도 막음 — V1 결함).
+    """
     if dst_dir.exists():
         shutil.rmtree(dst_dir)
-    shutil.copytree(src_dir, dst_dir, ignore=_IGNORE)
+    shutil.copytree(src_dir, dst_dir, ignore=_ignore)
 
 
 def sync_skills(

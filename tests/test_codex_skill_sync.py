@@ -141,3 +141,20 @@ def test_missing_source_is_tolerated(tmp_path):
     dest = tmp_path / "codex"
     res = sync_skills([tmp_path / "does-not-exist"], dest)
     assert res["copied"] == []
+
+
+def test_source_symlink_loop_does_not_crash(tmp_path):
+    """V1(Codex) counterexample: 자기참조 심볼릭 링크가 있어도 크래시하면 안 됨.
+
+    한 스킬 폴더의 나쁜 링크 하나 때문에 전체 동기화가 통째로 죽으면 안 된다.
+    """
+    src = tmp_path / "claude"
+    dest = tmp_path / "codex"
+    skill = _make_skill(src, "loopskill")
+    (skill / "loop").symlink_to(".", target_is_directory=True)
+    res = sync_skills([src], dest)  # must not raise
+    assert "loopskill" in res["copied"]
+    assert (dest / "loopskill" / "SKILL.md").is_file()
+    # 링크 자체를 dest 로 옮기지 않는다(옮기면 Codex 가 그 폴더를 훑을 때 같은 무한루프에 빠짐)
+    assert not (dest / "loopskill" / "loop").exists()
+    assert not (dest / "loopskill" / "loop" / "loop").exists()
