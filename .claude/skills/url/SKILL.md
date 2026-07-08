@@ -50,6 +50,7 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 ## 🖥️ 브라우저 드라이버
 - **검색어 입력·필터 클릭·"Start a keyword search" 실행 = claude-in-chrome 확장 실제입력**(합성입력 안 먹음).
 - **결과 URL·DOM 수확 = raw CDP 단일탭 OK**(`tools/multi_position_sourcing/raw_cdp.py`, `suppress_origin=True`). 수확 직전 `Page.bringToFront`.
+- **🔴 점유 배지**: raw CDP 로 붙기 전에 `export VH_BUSY_TASK=/url`(Codex 면 `VH_BUSY_AGENT=Codex`). `raw_cdp.attach()` 하면 화면에 "🤖 …자동화 사용중 · /url" 배지가 자동으로 뜬다(사장님이 점유 인지, SOT 투명성). 상세 규약은 humansearch SKILL "브라우저 드라이버" 절.
 - 사장님 :9222 세션에 우선 붙고, 로그아웃이면 `docs/search-access.md`/SOT26 기준으로 LinkedIn RPS도 시크릿 저장소 자동 로그인을 1회 시도한다. 캡차·2FA·checkpoint·멀티세션 락 우회만 금지.
 
 ---

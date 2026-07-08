@@ -73,7 +73,7 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 
 ## Spec Stages (docs/sot/25 stages와 1:1)
 
-1. `0_preflight` — v5 레포 + Chrome/CDP(:9222) 경로 확인.
+1. `0_preflight` — v5 레포 + Chrome/CDP(:9222) 경로 확인. **점유 배지**: raw CDP 로 붙기 전 `export VH_BUSY_TASK=/aisearch`(Codex 면 `VH_BUSY_AGENT=Codex`) → `raw_cdp.attach()` 하면 "🤖 …자동화 사용중 · /aisearch" 배지가 화면에 자동 표시(사장님 점유 인지, SOT 투명성). 규약: humansearch SKILL "브라우저 드라이버" 절.
 2. `1_occupancy_captcha_gate` — 캡차·멀티세션·로그인 상태 먼저 확인, 채널 분류.
 3. `2_yield_resume` — 사장님 크롬 사용 중 양보, 손 떼면 자동 재개.
 4. `3_jd_intake` — ClickUp JD 우선, 비거나 오래되면 공식 채용홈에서 보강. 정리된 포지션은 `docs/sot/24-position-jd-sot.json`.

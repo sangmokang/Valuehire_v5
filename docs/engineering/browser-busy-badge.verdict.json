@@ -1,0 +1,40 @@
+{
+  "claim_id": "browser-busy-badge-2026-07-08",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "자동화 점유 중 화면에 '사용중' 배지 표시. raw_cdp.attach() 가 env(VH_BUSY_AGENT/TASK)로 배지 자동 주입 → 모든 raw CDP 서치(/url·/aisearch·/humansearch)와 Codex 공통. pointer-events:none, navigate 재주입, close 제거, best-effort(서치 안 깸).",
+    "changed_files": [
+      "tools/multi_position_sourcing/raw_cdp.py",
+      "tests/test_raw_cdp_busy_badge.py",
+      "skills/humansearch/SKILL.md",
+      ".claude/skills/url/SKILL.md",
+      ".claude/skills/aisearch/SKILL.md",
+      "docs/engineering/browser-busy-badge-goal-2026-07-08.md"
+    ],
+    "command": "../Valuehire_v5/.venv/bin/python -m pytest tests/test_raw_cdp_busy_badge.py -q",
+    "exit_code": 0,
+    "artifact": "12 passed",
+    "live_evidence": "사람인/링크드인 디버그 크롬(실제 talent search 페이지)에 mark_busy 주입 → 스크린샷에 상단 빨간 배지 '🤖 Claude 자동화 사용중 · /테스트' 육안 확인, pointer-events=none, clear_badge 후 DOM 제거(exists False). 배선: humansearch_cdp_run.py:413 cdp.attach(t) → raw_cdp.attach(202) → _maybe_auto_badge(195) → mark_busy.",
+    "mutation_evidence": "mark_busy best-effort try/except 제거 → test_badge_failure_never_breaks_search FAIL. 되돌리면 12 passed.",
+    "regression": "verify.sh 1146 passed, 4 xfailed, exit 0"
+  },
+  "red_evidence": "구현 전 11 failed(헬퍼/메서드 없음), 1 passed. 구현 후 12 passed.",
+  "v1": {
+    "verdict": "pass",
+    "author": "fresh Claude subagent (general-purpose, agentId a759020651179b180)",
+    "source_jsonl": "tasks/a759020651179b180.output",
+    "attacks_tried_all_failed": "①배지실패→서치 안깸(mark_busy/navigate/clear/close 4경로 try/except, 죽은 eval+죽은 ws SAFE) ②JS안전(json.dumps 이스케이프 — 따옴표/개행/</script>/U+2028·2029/emoji node --check 통과) ③idempotent(remove후 create) ④attach 자동배지 회귀 없음(humansearch:413·auto_send:109 무영향, _maybe_auto_badge 예외래핑) ⑤navigate 재주입 1회/무배지시 skip ⑥회귀 19 통과",
+    "non_defect_note": "auto_send_runner 도 기본 Claude 배지 뜸 — SOT 투명성과 일치, VH_BADGE_OFF 로 끔. 버그 아님."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "_badge_js 에서 json.dumps(label) 기본(ensure_ascii=True)",
+      "root_cause": "한글 라벨이 \\uXXXX 로 이스케이프돼 배지 텍스트 가독성/테스트 단언 깨짐",
+      "repro": "test_badge_js_contract assertIn('사용중') FAIL",
+      "next_change": "json.dumps(label, ensure_ascii=False) — CDP 전송 시 바깥 json.dumps 가 안전 처리"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "G 주장·V1 pass·T(verify 1146 passed exit0) 일치. L2 통과."
+}
