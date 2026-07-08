@@ -39,6 +39,56 @@ def _http_get(path: str) -> Any:
         return json.loads(r.read().decode())
 
 
+# ── 점유 표시 배지 ──────────────────────────────────────────────────────
+# 자동화(Claude/Codex)가 브라우저를 점유해 서치를 도는 동안, 그 화면에 "사용중"을 띄운다.
+# 사장님이 바로 보고, 봇처럼 몰래 굴지 않는다(SOT 투명성). 배지는 부가기능 —
+# 주입 실패가 실제 서치를 절대 깨지 않게 모든 호출을 best-effort 로 감싼다.
+_BADGE_ID = "vh-automation-badge"
+_BADGE_OFF_VALUES = {"1", "true", "yes", "on"}
+
+
+def _resolve_badge_label(env: Any) -> str | None:
+    """env 로 배지 라벨을 만든다. VH_BADGE_OFF 면 None(표시 안 함)."""
+    off = str(env.get("VH_BADGE_OFF", "")).strip().lower()
+    if off in _BADGE_OFF_VALUES:
+        return None
+    agent = (env.get("VH_BUSY_AGENT") or "").strip() or "Claude"
+    task = (env.get("VH_BUSY_TASK") or "").strip()
+    base = f"🤖 {agent} 자동화 사용중"
+    return f"{base} · {task}" if task else base
+
+
+def _badge_js(label: str) -> str:
+    """상단중앙 고정 배지 주입 JS. pointer-events:none 로 사장님 클릭을 막지 않는다.
+    idempotent: 기존 배지를 먼저 제거해 중복이 쌓이지 않는다."""
+    text = json.dumps(label, ensure_ascii=False)
+    return (
+        "(function(){"
+        f"var id={json.dumps(_BADGE_ID)};"
+        "var e=document.getElementById(id);"
+        "if(e){e.remove();}"
+        "e=document.createElement('div');"
+        "e.id=id;"
+        f"e.textContent={text};"
+        "e.style.cssText='position:fixed;top:0;left:50%;transform:translateX(-50%);"
+        "z-index:2147483647;pointer-events:none;"
+        "background:rgba(220,38,38,0.95);color:#fff;"
+        "font:600 13px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;"
+        "padding:4px 14px;border-radius:0 0 8px 8px;box-shadow:0 2px 8px rgba(0,0,0,.3);"
+        "letter-spacing:.2px;white-space:nowrap;';"
+        "(document.body||document.documentElement).appendChild(e);"
+        "return id;})()"
+    )
+
+
+def _clear_js() -> str:
+    return (
+        "(function(){"
+        f"var e=document.getElementById({json.dumps(_BADGE_ID)});"
+        "if(e){e.remove();}return true;})()"
+    )
+
+
 def list_pages() -> list[dict]:
     return [t for t in _http_get("/json") if t.get("type") == "page"]
 
@@ -67,6 +117,7 @@ class CDPTab:
             ws_url, max_size=None, timeout=60, suppress_origin=True
         )
         self._id = 0
+        self._badge_label: str | None = None
         self.send("Page.enable")
         self.send("Runtime.enable")
 
@@ -87,9 +138,31 @@ class CDPTab:
                 return msg.get("result", {})
         raise TimeoutError(f"{method} timed out")
 
+    def mark_busy(self, label: str) -> None:
+        """화면에 '사용중' 배지를 띄운다. 라벨을 기억해 navigate 후 재주입한다.
+        배지는 부가기능 — 주입 실패해도 예외를 던지지 않는다(실 서치 보호)."""
+        self._badge_label = label
+        try:
+            self.eval(_badge_js(label))
+        except Exception:
+            pass
+
+    def clear_badge(self) -> None:
+        self._badge_label = None
+        try:
+            self.eval(_clear_js())
+        except Exception:
+            pass
+
     def navigate(self, url: str, wait_ms: int = 4000) -> None:
         self.send("Page.navigate", {"url": url})
         time.sleep(wait_ms / 1000)
+        # 페이지 로드로 배지가 사라지므로, 점유 중이면 다시 붙인다(best-effort).
+        if getattr(self, "_badge_label", None):
+            try:
+                self.eval(_badge_js(self._badge_label))
+            except Exception:
+                pass
 
     def eval(self, expr: str) -> Any:
         r = self.send("Runtime.evaluate", {
@@ -107,11 +180,30 @@ class CDPTab:
         return path
 
     def close(self):
+        # 작업 끝 → 배지 제거(사장님이 이어받을 때 '사용중' 잔상 안 남게).
+        try:
+            if getattr(self, "_badge_label", None):
+                self.eval(_clear_js())
+        except Exception:
+            pass
         try:
             self.ws.close()
         except Exception:
             pass
 
 
-def attach(target: dict) -> CDPTab:
-    return CDPTab(target["webSocketDebuggerUrl"])
+def _maybe_auto_badge(tab: "CDPTab", env: Any) -> None:
+    """attach 직후 env 로 배지를 자동 표시(모든 서치 공통 경로). 실패해도 무해."""
+    label = _resolve_badge_label(env)
+    if label:
+        tab.mark_busy(label)
+
+
+def attach(target: dict, badge: bool = True) -> CDPTab:
+    tab = CDPTab(target["webSocketDebuggerUrl"])
+    if badge:
+        try:
+            _maybe_auto_badge(tab, os.environ)
+        except Exception:
+            pass
+    return tab
