@@ -4,6 +4,8 @@ Claude 에 등록된 사장님 저작 스킬(`~/.claude/skills`, 레포 `.claude
 Codex CLI 가 읽는 `~/.codex/skills/` 로 미러링한다. Codex 도 `SKILL.md` 형식이 Claude 와 동일하다.
 
 ## 쓰는 법
+다른 PC에서는 repo clone 후 이 명령만 실행하면 repo에 포함된 skill 원본을 `~/.codex/skills/`로 설치한다.
+
 ```bash
 make codex-sync-dry   # 모의실행: 무엇이 복사/보존/충돌인지 숫자만 확인(쓰지 않음)
 make codex-sync       # 실제 동기화 → 끝나면 Codex 재시작

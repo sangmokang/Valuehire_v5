@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valuehire_v5 맥시마이즈 로드맵 (2026-07-07)</title>
+<style>
+  :root { --ink:#1a1a1a; --sub:#555; --line:#e2e2e2; --accent:#0b5fff; --green:#0a7d33; --red:#b3261e; --bg:#fafafa; --card:#fff; }
+  * { box-sizing:border-box; }
+  body { font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; color:var(--ink); background:var(--bg); margin:0; line-height:1.65; }
+  .wrap { max-width:960px; margin:0 auto; padding:40px 24px 80px; }
+  h1 { font-size:1.7rem; border-bottom:3px solid var(--ink); padding-bottom:12px; }
+  h2 { font-size:1.25rem; margin-top:44px; border-left:5px solid var(--accent); padding-left:12px; }
+  h3 { font-size:1.05rem; margin-top:28px; }
+  .boss { background:#fff8e6; border:1px solid #e8d9a0; border-radius:8px; padding:16px 20px; margin:20px 0; }
+  .boss::before { content:"사장님께"; display:block; font-weight:700; color:#8a6d00; margin-bottom:6px; font-size:.85rem; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; font-size:.88rem; background:var(--card); }
+  th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#f0f3f8; }
+  code { background:#eef1f5; padding:1px 5px; border-radius:4px; font-size:.85em; font-family:"SF Mono",Menlo,monospace; }
+  pre { background:#14161a; color:#e6e8ec; padding:16px 18px; border-radius:8px; overflow-x:auto; font-size:.82rem; line-height:1.55; white-space:pre-wrap; word-break:break-word; }
+  .green { color:var(--green); font-weight:600; }
+  .gap { color:var(--red); font-weight:600; }
+  .pill { display:inline-block; background:#e8efff; color:var(--accent); border-radius:999px; padding:1px 10px; font-size:.78rem; font-weight:700; margin-right:4px; }
+  .arch { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; overflow-x:auto; }
+  .arch pre { background:none; color:var(--ink); padding:0; margin:0; }
+  ol.order li { margin-bottom:8px; }
+  .meta { color:var(--sub); font-size:.85rem; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#e8e8e8; --sub:#aaa; --line:#3a3a3a; --bg:#141414; --card:#1e1e1e; }
+    th { background:#26292e; } code { background:#2a2d33; }
+    .boss { background:#2b2410; border-color:#5a4a10; }
+    .pill { background:#1c2c4d; }
+    .arch pre { color:var(--ink); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Valuehire_v5 맥시마이즈 로드맵</h1>
+<p class="meta">2026-07-07 · 마크다운 정본: <code>docs/engineering/repo-maximize-goal-2026-07-07.md</code> · 근거: 통합 스펙(2026-07-01) R1~R10 · PC-* 백로그 · red-ledger</p>
+
+<div class="boss">
+후보 찾는 부품은 이미 대부분 만들어져 있습니다. 이제 남은 건 <b>이어 붙이기</b>입니다 —
+① 찾은 이력서를 창고(DB)에 쌓고, ② 쌓인 이력서를 모든 열린 포지션과 밤낮없이 자동으로 견주고,
+③ 메일함에 온 새 포지션을 알아서 등록하고, ④ 검색 로봇이 사장님 크롬을 방해하지 않으면서
+스스로 멈췄다 다시 돌게 하는 것. 아래는 그 순서와, 조각마다 복사해 붙일 지시문입니다.
+</div>
+
+<h2>1. 니즈 6개 → 현황 → 빈틈</h2>
+<table>
+<tr><th>#</th><th>니즈</th><th>이미 있는 부품 (GREEN)</th><th>빠진 조각</th><th>조각 ID</th></tr>
+<tr><td>N1</td><td>상시 ClickUp 포지션 ↔ 후보 매칭</td><td class="green">harvest 사이클(D2b) · match.py · ClickUp 실쓰기(A1/A2a/A3)</td><td class="gap">임베딩 영속·매치 라이브 미연결, 전수 순회 러너 없음</td><td><span class="pill">PC-D3</span><span class="pill">PC-N3</span></td></tr>
+<tr><td>N2</td><td>레쥬메 재활용 — SQLite/Supabase 저장</td><td class="green">Supabase profile_archives(PR#48) · backfill 스크립트</td><td class="gap">레포 내 SQLite 저수지 미바인딩, 리스팅 전건 저장 레일 없음, 연봉 필드 없음</td><td><span class="pill">PC-D1</span><span class="pill">PC-C4a/b</span><span class="pill">PC-C5/6</span></td></tr>
+<tr><td>N3</td><td>저장 레쥬메 상시 매칭</td><td class="green">embed.py · match_jd_to_reservoir 계약</td><td class="gap">임베딩 영속 + 상시 재매칭 크론 없음</td><td><span class="pill">PC-D3</span><span class="pill">PC-N3</span></td></tr>
+<tr><td>N4</td><td>URL 자동 등록 + Gmail 순회 중복확인</td><td class="green">find_duplicate_position · Discord 디스패처(A3) · weekly-update(수동)</td><td class="gap">Gmail→포지션 파서 없음, 상시 인입 크론 없음, 임의 URL 파서 미완</td><td><span class="pill">PC-N1a/b</span><span class="pill">PC-A4</span><span class="pill">PC-B3</span></td></tr>
+<tr><td>N5</td><td>Humansearch 쉽게 + 교차 포지션 연결</td><td class="green">전수 다중페이지(C3b) · R4 배선(F2) · 러너면 하드제외(C3a)</td><td class="gap">러너 포지션 하드코딩(매번 수동 오버라이드), 교차 재매칭 없음</td><td><span class="pill">PC-N4</span><span class="pill">PC-N3</span></td></tr>
+<tr><td>N6</td><td>AISearch 3사 안정 (브라우저 방해 없이)</td><td class="green">봇방지 페이싱(E1) · 점유감지(F1/F2) · 챌린지 파리티(F3) · 포트분리·탭가드</td><td class="gap">자동재개 상주 데몬 미완, linkedin_rps 전체 attach(INV5 위반) 잔존</td><td><span class="pill">PC-F4a/b</span><span class="pill">PC-F5</span></td></tr>
+</table>
+<p><b>핵심 판정:</b> 니즈 6개 중 5개가 기존 스펙의 미완 조각과 겹친다. 순수 신규는 3개 —
+<b>PC-N1a/N1b(Gmail 인입)</b>, <b>PC-N3(상시 교차 재매칭)</b>, <b>PC-N4(러너 포지션 주입화)</b>.</p>
+
+<h2>2. 목표 아키텍처</h2>
+<div class="arch"><pre>[Gmail] ──N1a/N1b──▶ 포지션 파싱 → 중복확인(find_duplicate_position) → 신규만
+                                        ▼
+[ClickUp FY26ClientsPosition] ◀── 임의 URL 등록(A4) · Discord 명령(A3 ✅)
+        │ active 포지션 순회
+        ▼
+검색식 생성(B2 ✅) → 검색 URL 태스크 저장(B3) ── ★사람 검수
+        ▼
+Humansearch 전수 순회(C3b ✅) — 포지션 주입화(N4)로 한 줄 실행
+        ├─ 리스팅 무조건 저장(C4a) + 연봉 캡처(C5/C6)
+        ├─ 하드제외(C3a ✅) · 채점 · 경력상한(✅)
+        └─ Supabase profile_archives(✅)
+        ▼
+Reservoir 저수지 — SQLite 런간 누적(D1) + pgvector 임베딩(D3)
+        ▼
+상시 교차 재매칭(N3): 새 포지션↔기존 레쥬메 / 새 레쥬메↔전체 포지션
+        │ 적합 후보 → ClickUp 자식 태스크 자동 연결
+        ▼
+발송 드래프트(G1 ✅·G2) → SOT28 게이트 통과분만 자동, 나머지 ★사람 클릭
+
+[상시 운전] R4 점유감지(F1/F2 ✅) → 자동재개 데몬(F4a/F4b)
+            봇방지 페이싱(E1 ✅) · raw CDP 단일탭(F5) · 포트 9223/9224/9225</pre></div>
+
+<h2>3. 작업 순서</h2>
+<ol class="order">
+<li><b>PC-F4a → F4b</b> — 자동재개 데몬. 이것 없이 "상시"가 성립 안 함(R4).</li>
+<li><b>PC-D1</b> — SQLite 저수지. 레쥬메 재활용의 척추.</li>
+<li><b>PC-C4a ∥ PC-N4</b> — 리스팅 전건 저장 / 러너 포지션 주입화 (병렬 가능).</li>
+<li><b>PC-D3</b> — pgvector 임베딩 영속 + match 라이브.</li>
+<li><b>PC-N3</b> — 상시 교차 재매칭 크론.</li>
+<li><b>PC-N1a → N1b</b> — Gmail 포지션 자동 인입.</li>
+<li><b>PC-B3 ∥ PC-A4</b> — 검색 URL 저장 / 임의 URL 파서.</li>
+<li><b>PC-C5/C6 ∥ PC-F5</b> — 연봉 자산 / INV5 정리.</li>
+</ol>
+
+<h2>4. 조각별 복붙 프롬프트</h2>
+<p>정본은 마크다운 문서 §4에 있다. 각 프롬프트는 새 Claude 세션에 그대로 붙여넣으며,
+harness 게이트(워크트리 · RED 먼저 · verify · codex 2패스 적대검증)와 SOT 불변식을 내장한다.
+아래는 공통 머리말:</p>
+<pre>/strict 모드. docs/harness.md 게이트 전부 준수: make red-ledger 확인 → 이슈/인수기준 1개 →
+워크트리(worktrees/&lt;NAME&gt;, 브랜치 task/&lt;NAME&gt;)에서 실패 테스트 먼저 커밋(RED) → 최소 구현(GREEN) →
+./verify.sh 숫자 그대로 보고 → 스스로 적대적 반증 → codex:rescue 2차 적대검증 → make ship → PR·CI 초록.
+시작 전에 과거 지시·기존 코드 회수(중복 구현 금지). SOT 불변식 절대 약화 금지.</pre>
+<table>
+<tr><th>순번</th><th>조각</th><th>니즈</th><th>한 줄 요지</th></tr>
+<tr><td>P1</td><td>PC-F4a/F4b</td><td>N6</td><td>점유 감지 후 idle 복귀 시 자동재개하는 상주 데몬(크래시루프 금지, E1 페이싱 재사용)</td></tr>
+<tr><td>P2</td><td>PC-D1</td><td>N2</td><td>save_rail → 레포 내 SQLite 런간 누적(upsert·재시작 생존·salary 컬럼 선반영)</td></tr>
+<tr><td>P3a</td><td>PC-C4a/C4b</td><td>N2</td><td>리스팅 카드 전건 저장 레일 + SOT 문서 드리프트 정합</td></tr>
+<tr><td>P3b</td><td>PC-N4</td><td>N5</td><td>humansearch 러너 POSITION/SEARCH_URL_BASE 하드코딩 제거 → CLI/ClickUp 주입</td></tr>
+<tr><td>P4</td><td>PC-D3</td><td>N1·N3</td><td>pgvector 임베딩 영속 + match_jd_to_reservoir 라이브 소비(fail-closed)</td></tr>
+<tr><td>P5</td><td>PC-N3 <b>⚡Codex 위임</b></td><td>N1·N3·N5</td><td>양방향 상시 재매칭(발송 아님). <b>구현은 Codex</b> — Claude 는 인수인계·게이트 확인·독립 적대검증(V1)만 담당해 토큰 최소화(2026-07-07 사장님 지시). 인수인계 프롬프트 전문은 md §4 P5.</td></tr>
+<tr><td>P6</td><td>PC-N1a/N1b</td><td>N4</td><td>Gmail 순회→포지션 파싱→중복확인→ClickUp 자동 등록(처리 원장, fail-closed)</td></tr>
+<tr><td>P7</td><td>PC-B3 ∥ PC-A4</td><td>N4·N5</td><td>검수 통과 검색 URL 을 포지션 태스크에 저장 / 임의 공고 URL 인입 파서</td></tr>
+<tr><td>P8</td><td>PC-C5/C6 ∥ PC-F5</td><td>N2·N6</td><td>연봉 자산 수집(추정 금지) / 전체 attach 제거 → raw CDP 단일탭</td></tr>
+</table>
+
+<h2>5. 운영 원칙 (전 조각 공통)</h2>
+<ul>
+<li><b>한 조각 = 한 워크트리 = 인수기준 1개.</b> 두 조각을 한 PR에 섞지 않는다.</li>
+<li><b>부품 재사용 우선.</b> find_duplicate_position · save_rail · harvest_policy · dispatch_register_position 이 이미 있다.</li>
+<li><b>fail-closed.</b> 파싱 실패·장애·빈 본문을 조용히 성공 처리하지 않는다.</li>
+<li><b>발송은 SOT28.</b> 어떤 조각도 "보내기"를 새로 자동화하지 않는다 — 등록·연결·드래프트까지만.</li>
+<li><b>착수 전 원장 회수.</b> red-ledger 와 git log 에서 해당 PC-ID 완료 여부를 먼저 확인.</li>
+</ul>
+
+</div>
+</body>
+</html>

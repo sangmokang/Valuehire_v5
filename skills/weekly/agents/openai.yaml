@@ -1,0 +1,4 @@
+interface:
+  display_name: "Weekly"
+  short_description: "ValueHire weekly Gmail/ClickUp monitoring"
+  default_prompt: "Use $weekly to monitor ValueHire weekly KPIs, Gmail recommendations, position intake, and candidate progress with ClickUp evidence."

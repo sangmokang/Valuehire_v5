@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Search"
+  short_description: "Valuehire AI Search 실행 SOT"
+  default_prompt: "Use $ai-search to run a Valuehire AI Search from a ClickUp position or hiring URL."

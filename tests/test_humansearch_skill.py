@@ -24,6 +24,7 @@ from tools.multi_position_sourcing.humansearch import (
     load_humansearch_config,
     score_humansearch,
 )
+from tools.multi_position_sourcing.humansearch_register import PROFILE_SAVE_EVIDENCE_FIELDS
 from tools.multi_position_sourcing.models import (
     CapturedProfile,
     EmploymentTenure,
@@ -610,8 +611,33 @@ def test_h6_config_has_position_inputs_and_reporting() -> None:
     assert urls["semi_assembled"] is True
     assert set(urls["channels"]) == {"saramin", "jobkorea", "linkedin_rps"}
 
-    assert "매칭 이유" in " ".join(reg["subtask_requires"])
+    assert set(reg["subtask_requires"]) >= {
+        "profile_url",
+        "score",
+        "why_fit",
+        "profile_summary",
+        "saved_profile_evidence",
+    }
+    assert "missing_required_output_field" in reg["fail_closed_on"]
     assert reg["parent_dedup"], "부모 Task 중복 방지(검색→재사용) 규칙 필수"
+
+
+def test_h6_clickup_registration_contract_is_fail_closed() -> None:
+    """FY26AI_Search 등록 계약: 중복검사·프로필 저장 증거·칸반 Subtask 를 config 로 고정."""
+    cfg = load_humansearch_config()
+    reg = cfg["clickup_registration"]
+    assert reg["list_id"] == "901818680208"
+    assert reg["list_url"] == "https://app.clickup.com/9018789656/v/li/901818680208"
+    assert reg["duplicate_check_required"] is True
+    assert set(reg["duplicate_scope"]) >= {"position_parent_task", "candidate_profile_url_subtask"}
+    assert reg["profile_save_evidence_required"] is True
+    assert tuple(reg["profile_save_evidence_fields"]) == PROFILE_SAVE_EVIDENCE_FIELDS
+    assert reg["target_list_required"] is True
+    assert reg["kanban_record_required"] is True
+    assert "saved_profile_evidence" in reg["subtask_requires"]
+    assert "profile_url" in reg["subtask_requires"]
+    assert "duplicate_check_missing" in reg["fail_closed_on"]
+    assert "missing_required_output_field" in reg["fail_closed_on"]
 
 
 def test_h6_no_single_input_contract_leftover() -> None:

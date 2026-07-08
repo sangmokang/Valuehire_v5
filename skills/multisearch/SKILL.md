@@ -1,6 +1,6 @@
 ---
 name: multisearch
-description: "Use when running Valuehire multi-position candidate sourcing from Discord/Hermes: group active positions, search Saramin/Jobkorea/LinkedIn RPS/public web fail-closed, deduplicate profiles, score candidates across positions, and write Profile URL, score, fit reason, and profile summary into ClickUp Activity."
+description: "Use when running Valuehire multi-position candidate sourcing from Discord/Hermes: group active positions, search Saramin/Jobkorea/LinkedIn RPS/public web fail-closed, deduplicate profiles, score candidates across positions, and record eligible saved profiles in ClickUp FY26AI_Search list 901818680208 as position parent Tasks plus candidate Subtasks."
 ---
 
 # Valuehire Multisearch — Multi-Position Portal Sourcing Layer
@@ -16,7 +16,10 @@ description: "Use when running Valuehire multi-position candidate sourcing from 
 - 사람인·잡코리아·LinkedIn RPS·ChatGPT/공개 웹별 키워드와 필터를 만든다.
 - 상세 프로필만 저장 대상으로 삼고, 리스트 페이지는 저장하지 않는다.
 - 같은 후보를 여러 포지션에 역매칭하고 점수화한다.
-- ClickUp Activity에는 반드시 `Profile URL`, `점수`, `왜 잘 맞는지`, `후보자 프로필 요약`을 함께 남긴다.
+- ClickUp 기록은 FY26AI_Search list `901818680208`
+  (`https://app.clickup.com/9018789656/v/li/901818680208`)에 포지션 부모 Task + 후보 Subtask 로 남긴다.
+  부모/후보 `profile_url` 중복검사와 프로필 저장 증거 확인이 먼저이며, Subtask에는 반드시
+  `Profile URL`, `점수`, `왜 잘 맞는지`, `후보자 프로필 요약`을 함께 남긴다.
 - Discord 개인톡과 서버 채널 호출은 `docs/search-access.md`, 채널 allowlist, role allowlist 기준으로 fail-closed 처리한다.
 
 ## When to Use
@@ -25,7 +28,7 @@ Use when:
 - 사용자가 “multisearch”, “멀티서치”, “여러 포지션 서치”, “포털 소싱 레이어”, “사람인/잡코리아/LinkedIn RPS 같이 돌려”라고 요청할 때
 - Discord에서 Hermes를 호출해 Valuehire 후보자 AI Search를 실행하려 할 때
 - 한 후보를 여러 ClickUp 포지션에 reverse-match하고 싶을 때
-- 포털별 키워드, 큐, 중복 제거, ClickUp Activity 기록 형식을 함께 점검해야 할 때
+- 포털별 키워드, 큐, 중복 제거, ClickUp FY26AI_Search Task/Subtask 기록 형식을 함께 점검해야 할 때
 
 Don't use for:
 - 이력서 1개를 active 포지션에 매칭하는 작업: `vh_match_resume` 또는 resume matching 절차를 사용한다.
@@ -358,9 +361,13 @@ LinkedIn RPS:
 구현 파일:
 - `tools/multi_position_sourcing/scoring.py`
 
-## ClickUp Activity Output Contract
+## ClickUp FY26AI_Search Output Contract
 
-AI Search 결과를 ClickUp Activity에 남길 때는 반드시 아래 4가지를 함께 씁니다.
+AI Search 결과를 ClickUp에 남길 때는 FY26AI_Search list `901818680208`의 칸반 Task/Subtask 구조를 씁니다.
+부모 Task 는 포지션 단위로 중복 검색 후 재사용하고, 후보 Subtask 는 같은 부모 아래 `profile_url` 로
+중복 검색 후 없을 때만 생성합니다. 프로필 저장 증거가 없는 후보는 ClickUp 등록 대상이 아닙니다.
+
+후보 Subtask 또는 보조 Activity/comment에는 반드시 아래 4가지를 함께 씁니다.
 
 ```text
 [AI Search / Multisearch 후보 결과]
@@ -382,11 +389,12 @@ Profile URL: {{profile_url}}
 ```
 
 구현 파일:
+- `tools/multi_position_sourcing/humansearch_register.py`
 - `tools/multi_position_sourcing/clickup_activity.py`
 
 주의:
-- URL, 점수, 적합 이유, 프로필 요약 중 하나라도 없으면 Activity 쓰기를 보류한다.
-- 실제 ClickUp comment 생성은 별도 쓰기 게이트와 승인 뒤에만 한다.
+- URL, 점수, 적합 이유, 프로필 요약, 프로필 저장 증거 중 하나라도 없으면 ClickUp 기록을 보류한다.
+- 실제 ClickUp Task/Subtask/comment 생성은 별도 쓰기 게이트와 승인 뒤에만 한다.
 
 ## Queue Behavior
 

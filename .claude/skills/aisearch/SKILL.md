@@ -60,9 +60,15 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 - **사장님이 크롬 사용 중이면 자동화 액션 0, 손 떼면 자동 재개**(INV2).
 - 캡차·2FA·봇차단·로그인캡·LinkedIn 멀티세션락 → 해당 채널 STOP. 우회·반복재시도 금지(INV4).
 - **채널을 직무로 가르지 않는다**(INV5). 라이브 포털 검색 범위에선 사람인·잡코리아·LinkedIn RPS 모두 전 직무 대상.
+- **LinkedIn RPS는 좌측 필터 패널 필수**(2026-07-07 사장님 지시): 검색 시 좌측 "Show filters"를 열어 **Locations = South Korea** 를 드롭다운 제안으로 선택하고, **연차(Years of experience)도 좌측 패널**에 JD ±1~2년 버퍼로 설정한다. 키워드(Boolean)만 넣고 지역·연차를 생략하면 스펙 위반. 상세는 `docs/sot/22-talent-search-filters.json` channels.linkedin.filters.left_panel_required.
 - 상세 진입·저장은 차감 0 → 검토 가치 있으면 즉시 저장(INV6). 차감 버튼만 사람 컨펌.
 - **발송(제안·메일·InMail·Send·보내기) 자동 금지**(INV3) — 사람이 마지막에 누른다.
 - 출력 계약(`profile_url`·`score`·`why_fit`·`profile_summary`) 미충족 후보는 보고하지 않는다.
+- ClickUp 기록은 **FY26AI_Search list `901818680208`**
+  (`https://app.clickup.com/9018789656/v/li/901818680208`) 고정. AI Search/Humansearch 모두
+  부모 Task + 후보 Subtask 구조로 칸반에 남기고, 생성 전 부모 Task와 후보 `profile_url`
+  중복검사를 반드시 수행한다. **프로필 저장 증거**(`screenshot`/`evidence_paths`/archive id 등)가
+  없는 후보는 등록 금지.
 - 보고는 짧고 쉬운 한국어로(CLAUDE.md 0번 규칙).
 
 ## Spec Stages (docs/sot/25 stages와 1:1)
@@ -74,7 +80,7 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 5. `4_keyword_strategy` — JD를 산업·직무·스킬/툴·경력·제외 5축으로. **AND 1개로 보통 90% 좁힘.**
 6. `5_channel_search` — 사람인·잡코리아·LinkedIn RPS **병렬**(INV7, 직렬 금지 → 뒤 채널 누락). talent pool URL만.
 7. `6_evaluation` — JD 적합·학교 신호·이직 안정성·도메인/툴 적합 4축 점수.
-8. `7_output_contract` — 필수 4필드 충족 후보만 직렬화(아래 출력 계약).
+8. `7_output_contract` — 필수 4필드 충족 후보만 직렬화(아래 출력 계약)하고, ClickUp 기록 범위면 FY26AI_Search 등록 계약을 적용.
 9. `8_jd_template_lane` — 신규/오픈 포지션이면 LinkedIn/RPS JD 템플릿 상태까지. **Send 금지.**
 10. `9_report` — 채널별 인원·템플릿 상태·다음 키워드·산출물 경로·종료 사유 보고.
 
@@ -94,6 +100,7 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 - profile_url은 채널별 풀URL만(링크드인·잡코리아=무료, 사람인=이용권 필요·미보유 시 `url_pending=credit-gated`). 내부 id(사람인 residx) 금지.
 - 점수 85+ 강력추천 / 70~84 후보 / 70↓ 리스트 제외.
 - 디스코드 후보 리스트 기본 채널 = `#ai_search`. webhook 전송엔 **User-Agent 헤더 필수**(없으면 Cloudflare 403). 상세는 계약 JSON의 `discord_send_spec`.
+- ClickUp은 FY26AI_Search 보드(list `901818680208`)에 포지션 부모 Task + 후보 Subtask 로 기록한다. 부모/후보 중복검사와 프로필 저장 증거가 없으면 fail-closed.
 - 발송(제안·메일·InMail)은 절대 자동 금지 — 이 계약은 "후보 리스트 전송"만.
 
 ## When Work Is Limited

@@ -10,8 +10,20 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from tools.multi_position_sourcing.humansearch import hard_exclude_reason
-from tools.multi_position_sourcing.humansearch_register import eligible, reconstruct_captured_profile
+from tools.multi_position_sourcing.humansearch_register import (
+    FY26_AI_SEARCH_LIST_ID,
+    FY26_AI_SEARCH_LIST_URL,
+    PROFILE_SAVE_EVIDENCE_FIELDS,
+    clickup_registration_eligible,
+    eligible,
+    has_required_candidate_output_fields,
+    has_saved_profile_evidence,
+    reconstruct_captured_profile,
+    register_clickup_fy26_ai_search,
+)
 from tools.multi_position_sourcing.models import CapturedProfile, EmploymentTenure
 
 
@@ -264,3 +276,205 @@ def test_eligible_skips_non_dict_items_without_crash() -> None:
     """results 에 비dict 항목이 섞여도 예외 없이 skip(fail-closed) — Codex exception."""
     clean = _runner_dict(visible_text="backend", summary="부산대", url="https://x.co/ok")
     assert eligible([clean, None, "bad-item", 123], "saramin") == [clean]
+
+
+# ── ClickUp FY26AI_Search 등록 계약: 중복검사·칸반 Task/Subtask·프로필 저장 증거 ──
+class _FakeClickUp:
+    def __init__(
+        self,
+        *,
+        parent_hits: list[dict] | None = None,
+        duplicate_profile_urls: set[str] | None = None,
+    ) -> None:
+        self.parent_hits = parent_hits or []
+        self.duplicate_profile_urls = duplicate_profile_urls or set()
+        self.searches: list[tuple[str, str, str | None]] = []
+        self.creates: list[tuple[str, str, str, str | None]] = []
+
+    def search_tasks(self, *, list_id: str, query: str, parent: str | None = None) -> list[dict]:
+        self.searches.append((list_id, query, parent))
+        if parent is None:
+            return self.parent_hits
+        if query in self.duplicate_profile_urls:
+            return [{"id": "SUB-EXISTING", "url": "https://app.clickup.com/t/SUB-EXISTING"}]
+        return []
+
+    def create_task(
+        self,
+        *,
+        list_id: str,
+        name: str,
+        description: str,
+        parent: str | None = None,
+    ) -> dict:
+        task_id = f"TASK-{len(self.creates) + 1}"
+        self.creates.append((list_id, name, description, parent))
+        return {"id": task_id, "url": f"https://app.clickup.com/t/{task_id}"}
+
+
+def test_clickup_registration_eligible_requires_saved_profile_evidence() -> None:
+    """ClickUp 등록은 프로필 저장 증거가 있는 후보만 통과 — 단순 URL/점수 통과와 분리."""
+    saved = _runner_dict(screenshot="/tmp/profile.png")
+    unsaved = _runner_dict(url="https://www.linkedin.com/in/not-saved")
+    unsaved.pop("screenshot", None)
+    unsaved.pop("evidence_paths", None)
+
+    assert has_saved_profile_evidence(saved) is True
+    assert has_saved_profile_evidence(unsaved) is False
+    assert clickup_registration_eligible([saved, unsaved], "linkedin_rps") == [saved]
+
+
+def test_clickup_registration_eligible_requires_output_contract_fields() -> None:
+    """Subtask 후보는 profile_url·score·why_fit·profile_summary 계약을 만족해야 한다."""
+    base = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/abc",
+        score=91,
+        why_fit=["직무 직결"],
+        summary="프로필 요약",
+        screenshot="/tmp/profile.png",
+    )
+    no_why_fit = dict(base, url="https://www.linkedin.com/talent/profile/no-why", why_fit=[])
+    no_summary = dict(base, url="https://www.linkedin.com/talent/profile/no-summary", summary="")
+
+    assert has_required_candidate_output_fields(base) is True
+    assert has_required_candidate_output_fields(no_why_fit) is False
+    assert has_required_candidate_output_fields(no_summary) is False
+    assert clickup_registration_eligible([base, no_why_fit, no_summary], "linkedin_rps") == [base]
+
+
+def test_clickup_fy26_registration_checks_duplicates_before_creating_tasks() -> None:
+    """부모 Task 와 후보 profile_url Subtask 를 먼저 검색한 뒤 FY26AI_Search 리스트에만 생성."""
+    fake = _FakeClickUp()
+    candidate = _runner_dict(
+        name="홍길동",
+        url="https://www.linkedin.com/talent/profile/abc",
+        score=91,
+        screenshot="/tmp/profile.png",
+    )
+
+    plan = register_clickup_fy26_ai_search(
+        position_name="Acme Backend",
+        position_id="86abc",
+        passers=[candidate],
+        channel="linkedin_rps",
+        clickup_search_tasks=fake.search_tasks,
+        clickup_create_task=fake.create_task,
+        dry_run=False,
+    )
+
+    assert plan.list_id == FY26_AI_SEARCH_LIST_ID
+    assert plan.list_url == FY26_AI_SEARCH_LIST_URL
+    assert fake.searches[0] == (FY26_AI_SEARCH_LIST_ID, "Acme Backend", None)
+    assert (FY26_AI_SEARCH_LIST_ID, candidate["url"], plan.parent_task_id) in fake.searches
+    assert len(fake.creates) == 2
+    assert fake.creates[0][0] == FY26_AI_SEARCH_LIST_ID
+    assert fake.creates[0][3] is None
+    assert fake.creates[1][0] == FY26_AI_SEARCH_LIST_ID
+    assert fake.creates[1][3] == plan.parent_task_id
+    assert candidate["url"] in fake.creates[1][1]
+    assert candidate["url"] in fake.creates[1][2]
+
+
+def test_clickup_fy26_registration_skips_duplicate_candidate_subtask() -> None:
+    """같은 부모 아래 이미 profile_url 이 있으면 후보 Subtask 를 새로 만들지 않는다."""
+    candidate = _runner_dict(
+        name="홍길동",
+        url="https://www.linkedin.com/talent/profile/dup",
+        score=88,
+        screenshot="/tmp/profile.png",
+    )
+    fake = _FakeClickUp(duplicate_profile_urls={candidate["url"]})
+
+    plan = register_clickup_fy26_ai_search(
+        position_name="Acme Backend",
+        position_id="86abc",
+        passers=[candidate],
+        channel="linkedin_rps",
+        clickup_search_tasks=fake.search_tasks,
+        clickup_create_task=fake.create_task,
+        dry_run=False,
+    )
+
+    assert len(fake.creates) == 1  # parent only
+    assert plan.candidates[0].action == "skipped_duplicate"
+    assert plan.candidates[0].profile_url == candidate["url"]
+
+
+def test_clickup_fy26_registration_requires_duplicate_checker() -> None:
+    """중복검사 어댑터가 없으면 dry-run 이어도 등록 계획을 만들지 않는다."""
+    with pytest.raises(RuntimeError, match="duplicate_check_required"):
+        register_clickup_fy26_ai_search(
+            position_name="Acme Backend",
+            position_id="86abc",
+            passers=[_runner_dict(screenshot="/tmp/profile.png")],
+            channel="linkedin_rps",
+            clickup_search_tasks=None,
+            clickup_create_task=None,
+            dry_run=True,
+        )
+
+
+def test_clickup_fy26_registration_dry_run_never_creates_tasks() -> None:
+    """dry-run 은 중복검사만 하고 create_task 를 호출하지 않는다."""
+    fake = _FakeClickUp()
+    candidate = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/dry",
+        score=82,
+        screenshot="/tmp/profile.png",
+    )
+
+    plan = register_clickup_fy26_ai_search(
+        position_name="Acme Backend",
+        position_id="86abc",
+        passers=[candidate],
+        channel="linkedin_rps",
+        clickup_search_tasks=fake.search_tasks,
+        clickup_create_task=fake.create_task,
+        dry_run=True,
+    )
+
+    assert fake.creates == []
+    assert plan.parent_action == "planned_create"
+    assert plan.candidates[0].action == "planned_create"
+
+
+def test_clickup_fy26_registration_live_requires_create_adapter() -> None:
+    """live 모드에서 create 어댑터가 없으면 created 라고 주장하지 않고 fail-closed."""
+    fake = _FakeClickUp()
+    with pytest.raises(RuntimeError, match="clickup_create_task_required"):
+        register_clickup_fy26_ai_search(
+            position_name="Acme Backend",
+            position_id="86abc",
+            passers=[_runner_dict(screenshot="/tmp/profile.png")],
+            channel="linkedin_rps",
+            clickup_search_tasks=fake.search_tasks,
+            clickup_create_task=None,
+            dry_run=False,
+        )
+
+
+def test_clickup_fy26_registration_live_requires_parent_task_id() -> None:
+    """부모 Task id 를 받지 못하면 후보를 top-level task 로 만들지 않는다."""
+    fake = _FakeClickUp()
+
+    def bad_create_task(**_kwargs) -> dict:
+        return {"id": "", "url": "https://app.clickup.com/t/EMPTY"}
+
+    with pytest.raises(RuntimeError, match="parent_task_id_required"):
+        register_clickup_fy26_ai_search(
+            position_name="Acme Backend",
+            position_id="86abc",
+            passers=[_runner_dict(screenshot="/tmp/profile.png")],
+            channel="linkedin_rps",
+            clickup_search_tasks=fake.search_tasks,
+            clickup_create_task=bad_create_task,
+            dry_run=False,
+        )
+
+
+def test_profile_save_evidence_fields_include_db_and_supabase_ids() -> None:
+    """DB/Supabase 저장 id 도 SOT 의 프로필 저장 증거 필드로 인정된다."""
+    assert "sourcing_result_id" in PROFILE_SAVE_EVIDENCE_FIELDS
+    assert "db_row_id" in PROFILE_SAVE_EVIDENCE_FIELDS
+    assert has_saved_profile_evidence(_runner_dict(screenshot="", sourcing_result_id="src-1")) is True
+    assert has_saved_profile_evidence(_runner_dict(screenshot="", db_row_id="row-1")) is True

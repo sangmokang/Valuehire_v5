@@ -10,11 +10,18 @@
 """
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
+
+from tools.multi_position_sourcing.humansearch_register import PROFILE_SAVE_EVIDENCE_FIELDS
 
 REPO = Path(__file__).resolve().parent.parent
 MULTISEARCH = REPO / "skills" / "multisearch" / "SKILL.md"
 SEARCH = REPO / "skills" / "search" / "SKILL.md"
+AISEARCH = REPO / ".claude" / "skills" / "aisearch" / "SKILL.md"
+AISEARCH_SOT_CHECKER = REPO / ".claude" / "skills" / "aisearch" / "vendor" / "ai_search_sot_check.py"
+AI_SEARCH_SOT = REPO / "docs" / "sot" / "25-ai-search-execution-process.json"
 AUTOLOGIN = REPO / "tools" / "multi_position_sourcing" / "portal_autologin.py"
 RECOVERY = REPO / "tools" / "multi_position_sourcing" / "portal_recovery.py"
 WORKER = REPO / "tools" / "multi_position_sourcing" / "portal_worker.py"
@@ -61,3 +68,54 @@ def test_s3_stability_claims_reference_real_code() -> None:
     for path, symbol in CODE_SYMBOLS:
         assert path.exists(), f"코드 부재: {path}"
         assert symbol in path.read_text(encoding="utf-8"), f"코드 심볼 부재: {symbol} in {path.name}"
+
+
+def test_s4_ai_search_sot_has_clickup_fy26_registration_contract() -> None:
+    """AI Search/Humansearch 공통 등록처와 fail-closed 게이트를 SOT25 JSON 에 고정."""
+    sot = json.loads(AI_SEARCH_SOT.read_text(encoding="utf-8"))
+    contract = sot["clickup_registration_contract"]
+    assert contract["list_id"] == "901818680208"
+    assert contract["list_url"] == "https://app.clickup.com/9018789656/v/li/901818680208"
+    assert set(contract["applies_to"]) >= {"ai_search", "humansearch"}
+    assert contract["duplicate_check_required"] is True
+    assert set(contract["duplicate_scope"]) >= {"position_parent_task", "candidate_profile_url_subtask"}
+    assert contract["profile_save_evidence_required"] is True
+    assert tuple(contract["profile_save_evidence_fields"]) == PROFILE_SAVE_EVIDENCE_FIELDS
+    assert contract["kanban_record_required"] is True
+    assert set(contract["candidate_subtask_required_fields"]) >= {
+        "profile_url",
+        "score",
+        "why_fit",
+        "profile_summary",
+        "saved_profile_evidence",
+    }
+    assert "duplicate_check_missing" in contract["fail_closed_on"]
+    assert "profile_save_evidence_missing" in contract["fail_closed_on"]
+    assert "missing_required_output_field" in contract["fail_closed_on"]
+
+
+def test_s4_repo_aisearch_skill_mentions_fy26_clickup_contract() -> None:
+    """레포 스코프 aisearch 스킬도 SOT25 의 FY26AI_Search 등록 계약을 가리켜야 한다."""
+    text = AISEARCH.read_text(encoding="utf-8")
+    for marker in (
+        "901818680208",
+        "FY26AI_Search",
+        "중복검사",
+        "프로필 저장 증거",
+        "부모 Task",
+        "후보 Subtask",
+    ):
+        assert marker in text, f"aisearch SKILL 등록 계약 마커 누락: {marker}"
+
+
+def test_s4_ai_search_sot_checker_fails_closed_on_clickup_contract_drift() -> None:
+    """Claude/Codex 시작 게이트가 FY26AI_Search 계약을 직접 검사해야 한다."""
+    result = subprocess.run(
+        ["python3", str(AISEARCH_SOT_CHECKER), "--repo", str(REPO)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "CLICKUP_CONTRACT_OK list_id=901818680208" in result.stdout

@@ -6,12 +6,14 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import math
 import os
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Callable, Mapping, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.multi_position_sourcing.humansearch import (
@@ -24,6 +26,47 @@ from tools.multi_position_sourcing.models import CapturedProfile, Channel, Emplo
 
 POSITION_ID = "86ey2cdfj"
 POSITION_NAME = "[뤼튼테크놀로지스 AX CIC] AX Sales Team Lead (AI Account Executive 리드)"
+FY26_AI_SEARCH_LIST_ID = "901818680208"
+FY26_AI_SEARCH_LIST_URL = "https://app.clickup.com/9018789656/v/li/901818680208"
+PROFILE_SAVE_EVIDENCE_FIELDS = (
+    "screenshot",
+    "screenshot_path",
+    "evidence_paths",
+    "archive_path",
+    "saved_profile_path",
+    "profile_archive_id",
+    "sourcing_result_id",
+    "db_row_id",
+    "supabase_profile_archive_id",
+)
+REQUIRED_CANDIDATE_OUTPUT_FIELDS = ("profile_url", "score", "why_fit", "profile_summary")
+
+ClickUpSearchTasks = Callable[..., Sequence[Mapping[str, object]]]
+ClickUpCreateTask = Callable[..., Mapping[str, object] | tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class ClickUpCandidateRegistration:
+    profile_url: str
+    name: str
+    action: str
+    task_id: str = ""
+    task_url: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class ClickUpRegistrationPlan:
+    list_id: str
+    list_url: str
+    position_id: str
+    position_name: str
+    parent_task_id: str
+    parent_task_url: str
+    parent_action: str
+    candidates: tuple[ClickUpCandidateRegistration, ...]
+    dry_run: bool
+    duplicate_checked: bool = True
 
 
 def _load_env(key: str) -> str | None:
@@ -125,6 +168,331 @@ def eligible(results: list[dict], channel: Channel) -> list[dict]:
     return sorted(ok, key=lambda r: -r["score"])
 
 
+def _present(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(_normalize(value))
+    return bool(value)
+
+
+def has_saved_profile_evidence(result: object) -> bool:
+    """프로필 저장 증거가 있는지 검사한다.
+
+    ClickUp FY26AI_Search 등록은 "찾았다"가 아니라 "프로필을 저장했다"는 증거가 있어야 한다.
+    스크린샷/아카이브/DB·Supabase id/evidence_paths 중 하나도 없으면 등록 경계에서 fail-closed.
+    """
+    if not isinstance(result, dict):
+        return False
+
+    direct_keys = tuple(key for key in PROFILE_SAVE_EVIDENCE_FIELDS if key != "evidence_paths")
+    if any(_present(result.get(key)) for key in direct_keys):
+        return True
+
+    evidence = result.get("evidence_paths")
+    if isinstance(evidence, str):
+        return _present(evidence)
+    if isinstance(evidence, (list, tuple, set)):
+        return any(_present(item) for item in evidence)
+    return False
+
+
+def _has_profile_summary(result: Mapping[str, object]) -> bool:
+    return _present(result.get("profile_summary")) or _present(result.get("summary"))
+
+
+def _has_why_fit(result: Mapping[str, object]) -> bool:
+    why_fit = result.get("why_fit")
+    if isinstance(why_fit, (list, tuple, set)):
+        return any(_present(item) for item in why_fit)
+    return _present(why_fit)
+
+
+def has_required_candidate_output_fields(result: object) -> bool:
+    """ClickUp Subtask 생성 전 후보 출력 계약 4필드를 검사한다.
+
+    humansearch runner 의 내부 dict 는 URL 키를 ``url`` 로 쓴다. 등록 경계에서는 이를
+    SOT 의 ``profile_url`` 로 매핑하되, 점수·매칭 이유·프로필 요약은 빠지면 fail-closed 한다.
+    """
+    if not isinstance(result, dict):
+        return False
+    score = result.get("score")
+    return (
+        is_valid_profile_url(result.get("url") or result.get("profile_url"))
+        and isinstance(score, (int, float))
+        and math.isfinite(score)
+        and _has_why_fit(result)
+        and _has_profile_summary(result)
+    )
+
+
+def clickup_registration_eligible(results: list[dict], channel: Channel) -> list[dict]:
+    """FY26AI_Search Task/Subtask 등록 대상 후보.
+
+    기존 eligible(score>=70, URL 무결성, 하드제외) 위에 후보 출력 4필드와 프로필 저장 증거를 추가로 요구한다.
+    """
+    return [
+        r
+        for r in eligible(results, channel)
+        if has_required_candidate_output_fields(r) and has_saved_profile_evidence(r)
+    ]
+
+
+def _task_field(task: Mapping[str, object], *keys: str) -> str:
+    for key in keys:
+        value = task.get(key)
+        if value is not None:
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def _search_clickup_tasks(
+    clickup_search_tasks: ClickUpSearchTasks | None,
+    *,
+    list_id: str,
+    query: str,
+    parent: str | None = None,
+) -> tuple[Mapping[str, object], ...]:
+    if clickup_search_tasks is None:
+        raise RuntimeError("duplicate_check_required: clickup_search_tasks adapter is mandatory")
+    result = clickup_search_tasks(list_id=list_id, query=query, parent=parent)
+    return tuple(result or ())
+
+
+def _create_clickup_task(
+    clickup_create_task: ClickUpCreateTask | None,
+    *,
+    list_id: str,
+    name: str,
+    description: str,
+    parent: str | None = None,
+) -> tuple[str, str]:
+    if clickup_create_task is None:
+        raise RuntimeError("clickup_create_task_required: live ClickUp registration needs a create adapter")
+    result = clickup_create_task(
+        list_id=list_id,
+        name=name,
+        description=description,
+        parent=parent,
+    )
+    if isinstance(result, Mapping):
+        return (
+            _task_field(result, "id", "task_id"),
+            _task_field(result, "url", "task_url", "link"),
+        )
+    if isinstance(result, tuple) and len(result) >= 2:
+        return str(result[0]), str(result[1])
+    return "", ""
+
+
+def _saved_profile_evidence_text(result: Mapping[str, object]) -> str:
+    for key in (
+        "screenshot",
+        "screenshot_path",
+        "archive_path",
+        "saved_profile_path",
+        "profile_archive_id",
+        "supabase_profile_archive_id",
+    ):
+        value = result.get(key)
+        if _present(value):
+            return f"{key}: {value}"
+    evidence = result.get("evidence_paths")
+    if isinstance(evidence, str) and _present(evidence):
+        return f"evidence_paths: {evidence}"
+    if isinstance(evidence, (list, tuple, set)):
+        first = next((str(item) for item in evidence if _present(item)), "")
+        if first:
+            return f"evidence_paths: {first}"
+    return "missing"
+
+
+def _parent_task_description(*, position_name: str, position_id: str, channel: Channel) -> str:
+    return "\n".join(
+        [
+            "[AI Search / Humansearch 등록]",
+            f"원 포지션 ID: {position_id or '(미상)'}",
+            f"포지션: {position_name}",
+            f"채널: {channel}",
+            f"칸반 리스트: FY26AI_Search ({FY26_AI_SEARCH_LIST_URL})",
+            "중복검사: 부모 Task 검색 후 재사용, 후보 profile_url Subtask 검색 후 생성",
+            "프로필 저장 증거 없는 후보는 등록하지 않음",
+            "제안/메일/InMail 자동발송 안 함",
+        ]
+    )
+
+
+def _parent_task_name(position_name: str) -> str:
+    return f"{position_name} — AI Search"
+
+
+def _candidate_task_name(result: Mapping[str, object]) -> str:
+    name = str(result.get("name") or "후보").strip()
+    score = result.get("score", "?")
+    otw = " OTW" if result.get("otw") else ""
+    summary = str(result.get("headline") or result.get("summary") or "").strip()
+    suffix = f" · {summary[:48]}" if summary else ""
+    # profile_url 을 이름에도 넣어 이름 기반 ClickUp 검색 어댑터에서도 후보 중복검사가 잡히게 한다.
+    return f"{name} — {score}점{otw}{suffix} · {result['url']}"
+
+
+def _candidate_task_description(
+    result: Mapping[str, object],
+    *,
+    position_id: str,
+    channel: Channel,
+) -> str:
+    why_fit = result.get("why_fit")
+    if isinstance(why_fit, (list, tuple)):
+        why_fit_text = "\n".join(f"- {item}" for item in why_fit if _present(item)) or "- 미기재"
+    else:
+        why_fit_text = f"- {why_fit}" if _present(why_fit) else "- 미기재"
+    return "\n".join(
+        [
+            f"Profile: {result['url']}",
+            f"점수: {result.get('score', '?')}/100",
+            f"대상 포지션 ID: {position_id or '(미상)'}",
+            f"채널: {channel}",
+            f"프로필 저장 증거: {_saved_profile_evidence_text(result)}",
+            "",
+            "매칭 이유:",
+            why_fit_text,
+        ]
+    )
+
+
+def register_clickup_fy26_ai_search(
+    *,
+    position_name: str,
+    position_id: str,
+    passers: list[dict],
+    channel: Channel,
+    clickup_search_tasks: ClickUpSearchTasks | None,
+    clickup_create_task: ClickUpCreateTask | None = None,
+    dry_run: bool = True,
+) -> ClickUpRegistrationPlan:
+    """FY26AI_Search 보드에 부모 Task + 후보 Subtask 를 등록/계획한다.
+
+    중복검사 어댑터는 dry-run 에도 필수다. 검색 없이 create 계획을 세우면 같은 포지션/후보가
+    칸반에 중복 생성되므로 fail-closed 한다. 실제 쓰기는 ``dry_run=False`` 와 create 어댑터가
+    둘 다 있을 때만 일어난다.
+    """
+    position_name = (position_name or POSITION_NAME).strip()
+    position_id = (position_id or POSITION_ID).strip()
+    parent_name = _parent_task_name(position_name)
+    parent_hits = _search_clickup_tasks(
+        clickup_search_tasks,
+        list_id=FY26_AI_SEARCH_LIST_ID,
+        query=position_name,
+    )
+    if not parent_hits:
+        parent_hits = _search_clickup_tasks(
+            clickup_search_tasks,
+            list_id=FY26_AI_SEARCH_LIST_ID,
+            query=parent_name,
+        )
+
+    parent_action = "reused"
+    parent_task_id = ""
+    parent_task_url = ""
+    if parent_hits:
+        parent_task_id = _task_field(parent_hits[0], "id", "task_id")
+        parent_task_url = _task_field(parent_hits[0], "url", "task_url", "link")
+    elif dry_run:
+        parent_action = "planned_create"
+        parent_task_id = "DRYRUN-FY26AI-SEARCH-PARENT"
+        parent_task_url = FY26_AI_SEARCH_LIST_URL
+    else:
+        parent_action = "created"
+        parent_task_id, parent_task_url = _create_clickup_task(
+            clickup_create_task,
+            list_id=FY26_AI_SEARCH_LIST_ID,
+            name=parent_name,
+            description=_parent_task_description(
+                position_name=position_name,
+                position_id=position_id,
+                channel=channel,
+            ),
+            parent=None,
+        )
+        if not parent_task_id:
+            raise RuntimeError("parent_task_id_required: ClickUp parent Task creation returned no id")
+
+    candidates: list[ClickUpCandidateRegistration] = []
+    for result in clickup_registration_eligible(passers, channel):
+        if not parent_task_id:
+            raise RuntimeError("parent_task_id_required: cannot register candidate Subtasks without parent id")
+        profile_url = str(result["url"])
+        duplicate_hits = _search_clickup_tasks(
+            clickup_search_tasks,
+            list_id=FY26_AI_SEARCH_LIST_ID,
+            query=profile_url,
+            parent=parent_task_id,
+        )
+        name = str(result.get("name") or "후보").strip()
+        if duplicate_hits:
+            candidates.append(
+                ClickUpCandidateRegistration(
+                    profile_url=profile_url,
+                    name=name,
+                    action="skipped_duplicate",
+                    task_id=_task_field(duplicate_hits[0], "id", "task_id"),
+                    task_url=_task_field(duplicate_hits[0], "url", "task_url", "link"),
+                    reason="candidate profile_url already registered under parent",
+                )
+            )
+            continue
+
+        if dry_run:
+            candidates.append(
+                ClickUpCandidateRegistration(
+                    profile_url=profile_url,
+                    name=name,
+                    action="planned_create",
+                    reason="dry-run",
+                )
+            )
+            continue
+
+        task_id, task_url = _create_clickup_task(
+            clickup_create_task,
+            list_id=FY26_AI_SEARCH_LIST_ID,
+            name=_candidate_task_name(result),
+            description=_candidate_task_description(
+                result,
+                position_id=position_id,
+                channel=channel,
+            ),
+            parent=parent_task_id,
+        )
+        if not task_id:
+            raise RuntimeError("candidate_task_id_required: ClickUp candidate Subtask creation returned no id")
+        candidates.append(
+            ClickUpCandidateRegistration(
+                profile_url=profile_url,
+                name=name,
+                action="created",
+                task_id=task_id,
+                task_url=task_url,
+            )
+        )
+
+    return ClickUpRegistrationPlan(
+        list_id=FY26_AI_SEARCH_LIST_ID,
+        list_url=FY26_AI_SEARCH_LIST_URL,
+        position_id=position_id,
+        position_name=position_name,
+        parent_task_id=parent_task_id,
+        parent_task_url=parent_task_url,
+        parent_action=parent_action,
+        candidates=tuple(candidates),
+        dry_run=dry_run,
+        duplicate_checked=True,
+    )
+
+
 def _school(education: str) -> str:
     """학력 원문에서 학교명만 — 'Degree details' 앞부분(부분일치 잡음 제거)."""
     head = (education or "").split("Degree details")[0]
@@ -190,8 +558,11 @@ if __name__ == "__main__":
     for r in passers:
         print(" ", r["score"], r["name"], r["url"])
     if "--send" in sys.argv:
+        if "--clickup-register" in sys.argv:
+            raise RuntimeError(
+                "ClickUp FY26AI_Search registration requires duplicate-check capable "
+                "clickup_search_tasks/clickup_create_task adapters; legacy comment body output is blocked."
+            )
         status = post_discord(build_message(passers))
         print("discord status:", status)
-        # ClickUp 댓글 본문은 stdout 으로 — 호출자가 MCP 로 1개 등록
-        Path("/tmp/clickup_comment_body.txt").write_text(clickup_comment_body(passers))
-        print("clickup comment body -> /tmp/clickup_comment_body.txt")
+        print("clickup FY26AI_Search registration skipped: use register_clickup_fy26_ai_search with duplicate-check adapters")
