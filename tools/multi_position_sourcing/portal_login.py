@@ -232,6 +232,24 @@ async def _with_preflight_snapshot_status(
     }
 
 
+async def _bring_browser_to_front(page: Any) -> None:
+    """사람 개입(2FA/캡차/체크포인트)이 필요할 때 브라우저 탭을 앞으로 띄운다(best-effort).
+
+    로그인은 자동화가 무조건 수행하지만, 챌린지가 뜨는 순간에는 사장님이 직접 처리하도록
+    창을 표면화한다. bring_to_front 를 지원하지 않는 page(테스트/폴백)거나 호출이 실패해도
+    조용히 넘어가 사람-게이트 폴링·자동재개 흐름을 깨지 않는다.
+    """
+    fn = getattr(page, "bring_to_front", None)
+    if fn is None:
+        return
+    try:
+        result = fn()
+        if hasattr(result, "__await__"):
+            await result
+    except Exception:
+        pass
+
+
 async def _wait_for_human_intervention(
     page: Any,
     channel: Channel,
@@ -242,6 +260,12 @@ async def _wait_for_human_intervention(
 ) -> dict[str, object]:
     if not options.enabled:
         return _result(channel, ready=False, login="human_intervention_disabled", note=note, url=getattr(page, "url", ""))
+
+    # 2FA/캡차/체크포인트 등 사람 개입이 필요한 순간 — 브라우저(탭)를 앞으로 띄워 사장님이 바로
+    # 보고 처리할 수 있게 한다(SOT26: 사람 개입 시 브라우저 앞으로). 로그인 자체는 자동화가
+    # 무조건 수행하고, 오직 이 챌린지 순간에만 사람 게이트로 넘긴다(SOT26 INV1/INV2·INV6).
+    # best-effort: 앞으로 띄우기가 실패해도 폴링/자동재개 흐름은 그대로 계속된다.
+    await _bring_browser_to_front(page)
 
     print(
         f"[{channel}] human intervention required: {note}. "
