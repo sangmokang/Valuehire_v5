@@ -216,9 +216,20 @@ class FleetWorker:
         self._notify(job, f"✅ 잡 #{job_id} 완료 ({self.machine}):\n{result['summary'][:1500]}")
         return "done"
 
+    def record_heartbeat(self) -> None:
+        """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지)."""
+        import os
+        try:
+            self.queue._call(  # noqa: SLF001 — 내부 RPC 재사용(재발명 금지)
+                "POST", "/rpc/record_heartbeat",
+                {"p_machine": self.machine, "p_worker_pid": os.getpid()})
+        except Exception as exc:  # noqa: BLE001 — heartbeat 실패가 워커를 죽이면 안 됨
+            print(f"[fleet] heartbeat 실패(fail-soft): {exc}", file=sys.stderr)
+
     def loop(self, poll_seconds: int = POLL_SECONDS) -> None:
         print(f"[fleet] worker 시작 — machine={self.machine}")
         while True:
+            self.record_heartbeat()
             try:
                 status = self.run_once()
             except Exception as exc:  # noqa: BLE001 — 루프는 죽지 않는다(fail-soft)

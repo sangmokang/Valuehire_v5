@@ -117,6 +117,32 @@ def test_watchdog_no_webhook_fail_soft():
     w.run_once(now_epoch=1_000_000)  # 예외 전파되면 실패
 
 
+def test_worker_loop_records_heartbeat():
+    # 배선(R4): fleet_worker.record_heartbeat 가 record_heartbeat RPC 를 자기 머신으로 호출
+    from tools.multi_position_sourcing.fleet_worker import FleetWorker
+
+    calls = []
+
+    class Q:
+        def _call(self, method, path, payload):
+            calls.append((method, path, payload))
+            return [{"machine": "macmini"}]
+
+    w = FleetWorker(machine="macmini", queue=Q(),
+                    runner=lambda p, t: ("", 0), notifier=lambda j, t: None)
+    w.record_heartbeat()
+    assert calls and calls[0][1] == "/rpc/record_heartbeat"
+    assert calls[0][2]["p_machine"] == "macmini"
+    assert isinstance(calls[0][2]["p_worker_pid"], int)
+
+
+def test_watchdog_script_and_plist_exist():
+    sh = REPO / "scripts" / "fleet_watchdog.py"
+    plist = REPO / "ops" / "launchd" / "com.valuehire.fleet-watchdog.plist"
+    assert sh.exists() and "Watchdog" in sh.read_text()
+    assert plist.exists() and "fleet_watchdog.py" in plist.read_text()
+
+
 def test_migration_has_heartbeat_table():
     cands = sorted((REPO / "supabase" / "migrations").glob("*heartbeat*.sql"))
     assert cands, "heartbeat 마이그레이션 없음"
