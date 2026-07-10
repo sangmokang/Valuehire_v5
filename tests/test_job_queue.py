@@ -90,6 +90,14 @@ def test_new_job_payload_rejects_unserializable_params():
     assert new_job_payload(**_ok_kwargs(), params={"x": float("inf")}) is None
 
 
+def test_new_job_payload_url_parity_with_sql():
+    # V1 3R: python↔SQL 규칙 일치 — 쿼리스트링/경로 내 '..' 는 양쪽 다 허용
+    assert new_job_payload(**_ok_kwargs(position_url="https://example.com?x=1")) is not None
+    assert new_job_payload(**_ok_kwargs(position_url="https://example.com/a..b")) is not None
+    assert new_job_payload(**_ok_kwargs(position_url="https://example.com:65535/x")) is not None
+    assert new_job_payload(**_ok_kwargs(position_url="https://example.com:0/x")) is None
+
+
 def test_new_job_payload_rejects_bad_account_key():
     # V1 2R: 비문자열/공백 포함 account_key 가 DB text 경계까지 흘러가면 안 됨
     assert new_job_payload(**_ok_kwargs(), account_key={"seat": 1}) is None  # type: ignore[arg-type]
@@ -229,6 +237,20 @@ def test_client_requires_url_key_pair():
     assert (c.url, c.key) == ("https://example.supabase.co", "k")
 
 
+def test_env_config_rejects_whitespace_only_env(tmp_path, monkeypatch):
+    # V1 3R: 공백만 든 환경변수가 빈 자격증명으로 채택되면 안 됨
+    monkeypatch.setenv("NEXT_PUBLIC_SUPABASE_URL", "   ")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "   ")
+    empty = tmp_path / "empty"; empty.mkdir()
+    (empty / ".env.local").write_text("")
+    monkeypatch.setenv("VALUEHIRE_REPO_DIR", str(empty))
+    try:
+        url, key = _env_config()
+        assert url.strip() and key.strip(), "공백 자격증명이 채택됨"
+    except RuntimeError:
+        pass  # 상위 폴더에도 짝이 없으면 명시적 실패 — 정상
+
+
 def test_env_config_pairs_from_same_file(tmp_path, monkeypatch):
     # V1 결함 7: URL 과 키가 서로 다른 파일에서 섞이면 안 됨
     for k in ("NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
@@ -272,6 +294,7 @@ def test_migration_file_contains_core_ddl():
         "limit 1",                   # V1 결함 1: 커서 프리페치 회피(한 행씩 잠금)
         "jobs_insert_guard",         # V1 2R: INSERT 초기 상태 우회 차단
         "not exists",                # V1 2R: 락 충돌 후보 사전 필터(사재기 최소화)
+        "between 1 and 65535",       # V1 3R: SQL 포트 범위(0·99999 거부)
         "'paused_for_human') then\n    delete from public.account_locks",
     ):
         assert needle in sql.lower(), f"마이그레이션에 '{needle}' 누락"

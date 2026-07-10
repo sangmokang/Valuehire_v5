@@ -48,12 +48,18 @@ create policy service_role_account_locks_all on public.account_locks
   for all to service_role using (true) with check (true);
 
 -- 무결성 보강(V1 적대검증 반영): 라이브 DB 재적용 안전(드롭 후 재생성).
+-- V1 3R: python _valid_url 과 1:1 동일 규칙 — 호스트 뒤 /?# 허용, '..' 금지는 호스트만,
+-- 포트는 1~65535 (CHECK 에서 NULL 은 통과이므로 포트 없는 URL 은 두 번째 조건이 자동 통과).
 alter table public.jobs drop constraint if exists jobs_position_url_http_chk;
 alter table public.jobs add constraint jobs_position_url_http_chk
   check (
-    position_url ~ '^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/.*)?$'
+    position_url ~ '^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?([/?#].*)?$'
     and position_url !~ '\s'
-    and position_url !~ '\.\.'
+    and substring(position_url from '^https?://([^/?#:]+)') !~ '\.\.'
+    and (
+      position_url !~ '^https?://[^/?#]*:[0-9]'
+      or (substring(position_url from '^https?://[^/?#:]+:([0-9]{1,5})'))::int between 1 and 65535
+    )
   );
 
 do $$ begin

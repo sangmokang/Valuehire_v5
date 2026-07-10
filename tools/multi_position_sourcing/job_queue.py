@@ -165,8 +165,11 @@ def _env_config() -> tuple[str, str]:
     """
     import os
 
-    if os.environ.get(_URL_KEY) and os.environ.get(_SRK_KEY):
-        return os.environ[_URL_KEY].strip(), os.environ[_SRK_KEY].strip()
+    # V1 3R: 공백만 든 환경변수가 빈 자격증명으로 통과하지 않게 strip 후 판정
+    env_url = (os.environ.get(_URL_KEY) or "").strip()
+    env_key = (os.environ.get(_SRK_KEY) or "").strip()
+    if env_url and env_key:
+        return env_url, env_key
     bases: list[Path] = []
     if os.environ.get("VALUEHIRE_REPO_DIR"):
         bases.append(Path(os.environ["VALUEHIRE_REPO_DIR"]))
