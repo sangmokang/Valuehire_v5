@@ -117,15 +117,34 @@ def test_build_fleet_job_payload_fail_closed(opts):
 
 # ── owner 판정 ───────────────────────────────────────────────────────
 
-def test_is_owner_by_dm_and_role():
+def test_is_owner_by_explicit_id_and_role():
     assert is_owner(_inv("fleet-resume", user_id=OWNER_ID, is_dm=True),
-                    authorized_users=_users(), owner_role_ids=(OWNER_ROLE,)) is True
+                    owner_user_ids=(OWNER_ID,), owner_role_ids=(OWNER_ROLE,)) is True
     # 멤버 DM → owner 아님
     assert is_owner(_inv("fleet-resume", user_id=MEMBER_ID, is_dm=True),
-                    authorized_users=_users(), owner_role_ids=(OWNER_ROLE,)) is False
+                    owner_user_ids=(OWNER_ID,), owner_role_ids=(OWNER_ROLE,)) is False
     # 길드에서 owner 역할 보유 → owner
     assert is_owner(_inv("fleet-resume", user_id=MEMBER_ID, is_dm=False, roles=(OWNER_ROLE,)),
-                    authorized_users=_users(), owner_role_ids=(OWNER_ROLE,)) is True
+                    owner_user_ids=(OWNER_ID,), owner_role_ids=(OWNER_ROLE,)) is True
+
+
+def test_owner_decoupled_from_member_contacts():
+    # V1 결함: 인가된 멤버 연락처(팀원)가 owner 로 새면 안 됨. owner 는 명시적 id 로만.
+    from tools.multi_position_sourcing.fleet_dispatch import OWNER_USER_IDS
+    team_member = "555000111222333444"  # authorized_users 에 있어도 owner_user_ids 엔 없음
+    q = FakeQueue()
+    r = dispatch_fleet_command(
+        DiscordInvocation(user_id=team_member, channel_id="dm", command_name="fleet-resume",
+                          is_dm=True, invocation_kind="slash", guild_id="",
+                          member_role_ids=(), options={"job": "7"}),
+        authorized_users=(DiscordAuthorizedUser(name="팀원", alias="m", email="m@x.kr",
+                                                discord_id=team_member),),
+        config=DiscordAccessConfig(allowed_channel_ids=(), allowed_role_ids=(), allow_dm=True),
+        queue=q, owner_user_ids=OWNER_USER_IDS, owner_role_ids=())
+    assert r["action"] == "denied_owner_only"
+    assert q.resumed == []
+    # 반대로 사장님(OWNER_USER_IDS)은 멤버 목록에 없어도 owner
+    assert OWNER_ID in OWNER_USER_IDS
 
 
 # ── 디스패치: fleet-run (멤버 허용) ──────────────────────────────────

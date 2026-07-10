@@ -11,9 +11,10 @@ route_discord_invocation(인가) + job_queue(큐) 를 조합만 한다(재발명
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Mapping, Optional, Sequence
 
-from .access import DiscordAuthorizedUser, is_authorized_discord_dm
+from .access import DiscordAuthorizedUser
 from .discord_routing import (
     DiscordAccessConfig,
     DiscordInvocation,
@@ -21,10 +22,26 @@ from .discord_routing import (
 )
 from .job_queue import JobQueueClient, new_job_payload
 
-__all__ = ["FLEET_COMMANDS", "build_fleet_job_payload", "dispatch_fleet_command", "is_owner"]
+__all__ = [
+    "FLEET_COMMANDS", "OWNER_USER_IDS", "build_fleet_job_payload",
+    "dispatch_fleet_command", "is_owner", "owner_user_ids_from_env",
+]
 
 FLEET_COMMANDS: tuple[str, ...] = ("fleet-run", "fleet-resume", "fleet-status", "fleet-cancel")
 _OWNER_ONLY: frozenset[str] = frozenset({"fleet-resume", "fleet-cancel"})
+
+# 사장님(밸류커넥트) Discord user id — discord_command_listener.OWNER_ID / dm_report.RECIPIENT_ID 와 동일.
+# ⚠️ V1 지적: owner 는 *멤버 연락처 목록(authorized_users)* 과 분리한다. 인가된 DM 연락처는
+# 팀원 3명이라, 그걸 owner 로 보면 팀원이 resume/cancel 을 얻고 사장님이 역전된다.
+OWNER_USER_IDS: tuple[str, ...] = ("814353841088757800",)
+
+
+def owner_user_ids_from_env(env: object = None) -> tuple[str, ...]:
+    """FLEET_OWNER_DISCORD_IDS 로 owner 를 재정의(미설정 시 사장님 기본)."""
+    source = os.environ if env is None else env
+    raw = (source.get("FLEET_OWNER_DISCORD_IDS") or "").strip()  # type: ignore[union-attr]
+    ids = tuple(x.strip() for x in raw.replace(",", " ").split() if x.strip().isdigit())
+    return ids or OWNER_USER_IDS
 
 
 def build_fleet_job_payload(
@@ -49,11 +66,14 @@ def build_fleet_job_payload(
 def is_owner(
     invocation: DiscordInvocation,
     *,
-    authorized_users: Sequence[DiscordAuthorizedUser],
+    owner_user_ids: Sequence[str] = OWNER_USER_IDS,
     owner_role_ids: Sequence[str] = (),
 ) -> bool:
-    """owner 판정 = 인가된 DM 사용자(사장님) 또는 owner 역할 보유."""
-    if is_authorized_discord_dm(invocation.user_id, tuple(authorized_users)):
+    """owner 판정 = 명시적 owner user id(사장님) 또는 owner 역할 보유.
+
+    V1: 멤버 연락처(authorized_users)와 무관하게 owner 를 결정한다 — 팀원이 owner 로 새는 것 차단.
+    """
+    if str(invocation.user_id) in set(owner_user_ids):
         return True
     return bool(set(invocation.member_role_ids) & set(owner_role_ids))
 
@@ -68,6 +88,7 @@ def dispatch_fleet_command(
     authorized_users: Sequence[DiscordAuthorizedUser],
     config: DiscordAccessConfig,
     queue: Any | None = None,
+    owner_user_ids: Sequence[str] = OWNER_USER_IDS,
     owner_role_ids: Sequence[str] = (),
 ) -> Optional[dict[str, Any]]:
     """fleet-* 인보케이션 1건 처리. 반환 dict(action=...) 또는 None(타 명령).
@@ -83,7 +104,7 @@ def dispatch_fleet_command(
         return {"action": "denied", "reason": decision.reason}
 
     q = queue if queue is not None else JobQueueClient()
-    owner = is_owner(invocation, authorized_users=authorized_users, owner_role_ids=owner_role_ids)
+    owner = is_owner(invocation, owner_user_ids=owner_user_ids, owner_role_ids=owner_role_ids)
     role = "owner" if owner else "member"
 
     if invocation.command_name in _OWNER_ONLY and not owner:
