@@ -55,7 +55,16 @@
     ],
     "round3_fix_commit": "0d587e7",
     "round3_fix_live_evidence": "SQL URL 5케이스(99999·0·query-only·path'..'·host'a..b') python 판정과 5/5 일치, verify interpreter=python3 1204 passed exit 0",
-    "round4_verdict": "pending"
+    "round4_verdict": "fail",
+    "round4_author": "fresh Claude 서브에이전트 (Codex 세션한도 대체 — 메모리 codex-rescue-blocked-use-fresh-claude-v1 방침)",
+    "round4_findings": [
+      "closed: SQL 포트범위(엣지 포함), 공백 env 자격증명, verify(이 머신 exit 0, 1204 passed — Codex 6건 실패는 샌드박스 요인으로 종결)",
+      "closed: mutant 2종 모두 테스트가 검출(원복 확인)",
+      "still-open: 'HTTPS://example.com/x' — python accept vs SQL reject (대문자 스킴)"
+    ],
+    "round4_fix_commit": "f134637",
+    "round4_fix_evidence": "python 소문자 스킴 프리픽스만 인정 + 거부 테스트 2건 추가, verify 1206 passed exit 0",
+    "round5_verdict": "pending"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
