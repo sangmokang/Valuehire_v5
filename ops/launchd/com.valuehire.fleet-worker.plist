@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 함대 워커 LaunchAgent *초안* — 설치는 사장님/운영 단계에서 수동으로.
+     설치: cp ops/launchd/com.valuehire.fleet-worker.plist ~/Library/LaunchAgents/
+           launchctl load ~/Library/LaunchAgents/com.valuehire.fleet-worker.plist
+     주의: LaunchDaemon 이 아니라 LaunchAgent(사용자 세션) — 크롬 자동화 전제. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.valuehire.fleet-worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-dimsu</string>
+    <string>/Users/kangsangmo/Valuehire_v5/scripts/fleet_worker_loop.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/kangsangmo/Valuehire_v5</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VALUEHIRE_REPO_DIR</key>
+    <string>/Users/kangsangmo/Valuehire_v5</string>
+    <key>VALUEHIRE_MACHINE</key>
+    <string>macmini</string>
+    <key>PATH</key>
+    <string>/Users/kangsangmo/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/valuehire-fleet-worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/valuehire-fleet-worker.err</string>
+</dict>
+</plist>
