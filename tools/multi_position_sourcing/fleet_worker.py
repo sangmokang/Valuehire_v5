@@ -50,10 +50,11 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     url = job.get("position_url")
     if not _valid_url(url):
         raise ValueError(f"invalid position_url: {url!r}")
-    # V1: requested_by 개행/제어문자 = 프롬프트 인젝션("규칙 5: ..." 삽입) → fail-closed
+    # V1+V2: 개행/제어문자/유니코드 줄구분자(U+2028/2029/0085) = 프롬프트 인젝션 → fail-closed
+    # (splitlines 가 줄로 취급하는 모든 문자 — 일반 스페이스 외 공백류 전부 거부)
     requested_by = str(job.get("requested_by") or "").strip() or "(미상)"
-    if any(ord(ch) < 32 for ch in requested_by):
-        raise ValueError("requested_by 에 제어문자/개행 — 프롬프트 인젝션 차단")
+    if any(ch != " " and (ch.isspace() or ord(ch) < 32) for ch in requested_by):
+        raise ValueError("requested_by 에 제어문자/줄구분자 — 프롬프트 인젝션 차단")
     role = job.get("role")
     if role not in ("owner", "member"):
         raise ValueError(f"invalid role: {role!r}")
