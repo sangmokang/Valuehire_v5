@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 함대 watchdog LaunchAgent *초안* — 맥미니 1곳에서만 상주. 설치는 수동.
+     설치: cp ops/launchd/com.valuehire.fleet-watchdog.plist ~/Library/LaunchAgents/
+           launchctl load ~/Library/LaunchAgents/com.valuehire.fleet-watchdog.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.valuehire.fleet-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kangsangmo/Valuehire_v5/.venv/bin/python</string>
+    <string>/Users/kangsangmo/Valuehire_v5/scripts/fleet_watchdog.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/kangsangmo/Valuehire_v5</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VALUEHIRE_REPO_DIR</key>
+    <string>/Users/kangsangmo/Valuehire_v5</string>
+    <key>PATH</key>
+    <string>/Users/kangsangmo/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/valuehire-fleet-watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/valuehire-fleet-watchdog.err</string>
+</dict>
+</plist>

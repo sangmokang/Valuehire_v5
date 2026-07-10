@@ -1,0 +1,34 @@
+{
+  "sot_id": 29,
+  "title": "함대 통제 — 3대 머신 · Discord 명령 · 계정↔머신 바인딩",
+  "confirmed_date": "2026-07-11",
+  "supersedes": [],
+  "depends_on": ["docs/sot/26-portal-login-spec.json", "docs/sot/28-auto-send-policy.json"],
+  "components": {
+    "job_queue": {"pr": 83, "tables": ["jobs", "account_locks"],
+                  "rpcs": ["claim_next_job", "release_job", "resume_job", "cancel_job"]},
+    "worker": {"pr": 84, "module": "tools/multi_position_sourcing/fleet_worker.py"},
+    "discord": {"pr": 85, "module": "tools/multi_position_sourcing/fleet_dispatch.py",
+                "commands": ["fleet-run", "fleet-status", "fleet-resume", "fleet-cancel"]},
+    "heartbeat": {"module": "tools/multi_position_sourcing/fleet_heartbeat.py",
+                  "watchdog": "scripts/fleet_watchdog.py",
+                  "tables": ["machine_heartbeats"]}
+  },
+  "invariants": {
+    "INV1_account_machine_binding": "같은 포털 계정을 여러 머신에서 동시에 돌리지 않는다. account_key 로 계정 글로벌 락(한 시점 한 머신).",
+    "INV2_linkedin_single_seat": "LinkedIn Recruiter 시트가 1개면 LinkedIn 잡은 macmini 전용.",
+    "INV3_profile_preserve": "각 머신 --user-data-dir 디버그 프로필은 삭제·초기화 금지. 일시정지 중 크롬 탭/프로필 유지.",
+    "INV4_send_gate": "어떤 Discord 명령도 아웃리치 발송을 트리거하지 못한다(SOT28). 큐엔 검색 스킬(humansearch/aisearch/url)만.",
+    "INV5_owner_only": "fleet-resume·fleet-cancel 은 owner(명시적 OWNER_USER_IDS) 전용. 멤버 연락처와 분리.",
+    "INV6_paused_human": "캡차/2FA → paused_for_human + 크롬 조작 중단(양보) + Discord 알림 → fleet-resume 재개. 크롬 안 닫음.",
+    "INV7_stale_alert": "머신 heartbeat 5분 초과/누락 → OPS_HEALTH 경보(30분 억제).",
+    "INV8_machine_reliability": "신뢰도 macmini > winpc > macbook(보조 캐파). 맥북은 기본 캐파 아님."
+  },
+  "machines": {
+    "macmini": {"role": "primary", "reliability": "highest", "watchdog_host": true},
+    "winpc": {"role": "secondary", "reliability": "high", "requires": "Autologon+작업스케줄러(interactive, 서비스 금지)"},
+    "macbook": {"role": "overflow", "reliability": "medium", "requires": "클램셸+더미플러그+배터리80%+FileVault결정"}
+  },
+  "maintenance_window": "일요일 새벽 — OS/Chrome 업데이트 몰아서",
+  "manual_setup_owner": ["Tailscale 3대+ACL", "맥북 클램셸/배터리/FileVault", "윈도우 Autologon/스케줄러/크롬프로필/VNC(RDP금지)", "각 머신 claude -p 로그인 확인", "plist 설치(worker 머신별·watchdog 맥미니만)"]
+}

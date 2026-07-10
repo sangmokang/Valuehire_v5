@@ -216,19 +216,42 @@ class FleetWorker:
         self._notify(job, f"✅ 잡 #{job_id} 완료 ({self.machine}):\n{result['summary'][:1500]}")
         return "done"
 
-    def loop(self, poll_seconds: int = POLL_SECONDS) -> None:
+    def record_heartbeat(self) -> None:
+        """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지)."""
+        import os
+        try:
+            self.queue._call(  # noqa: SLF001 — 내부 RPC 재사용(재발명 금지)
+                "POST", "/rpc/record_heartbeat",
+                {"p_machine": self.machine, "p_worker_pid": os.getpid()})
+        except Exception as exc:  # noqa: BLE001 — heartbeat 실패가 워커를 죽이면 안 됨
+            print(f"[fleet] heartbeat 실패(fail-soft): {exc}", file=sys.stderr)
+
+    def loop(self, poll_seconds: int = POLL_SECONDS, heartbeat_seconds: int = 60) -> None:
         print(f"[fleet] worker 시작 — machine={self.machine}")
-        while True:
-            try:
-                status = self.run_once()
-            except Exception as exc:  # noqa: BLE001 — 루프는 죽지 않는다(fail-soft)
-                print(f"[fleet] run_once 예외(fail-soft): {exc}", file=sys.stderr)
-                status = "error"
-            if status == "idle":
-                time.sleep(poll_seconds)
-            elif status == "error":
-                # V1: 예외 연발 시 hot-loop 방지 — 백오프 후 재시도
-                time.sleep(min(poll_seconds, 15))
+        # V1 결함1: 심장박동을 잡 처리와 분리 — 40분 잡 실행 중에도 계속 뛰게 별도 스레드.
+        import threading
+
+        from .fleet_heartbeat import beat_loop
+
+        stop = threading.Event()
+        beater = threading.Thread(
+            target=beat_loop, args=(self.record_heartbeat, stop),
+            kwargs={"interval": heartbeat_seconds}, daemon=True)
+        beater.start()
+        try:
+            while True:
+                try:
+                    status = self.run_once()
+                except Exception as exc:  # noqa: BLE001 — 루프는 죽지 않는다(fail-soft)
+                    print(f"[fleet] run_once 예외(fail-soft): {exc}", file=sys.stderr)
+                    status = "error"
+                if status == "idle":
+                    time.sleep(poll_seconds)
+                elif status == "error":
+                    # V1: 예외 연발 시 hot-loop 방지 — 백오프 후 재시도
+                    time.sleep(min(poll_seconds, 15))
+        finally:
+            stop.set()
 
 
 def main(argv: list[str] | None = None) -> int:

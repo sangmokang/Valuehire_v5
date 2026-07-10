@@ -1,0 +1,51 @@
+{
+  "claim_id": "fleet-heartbeat-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude Fable 5 (2026-07-11 야간 자율)",
+    "claim": "1분 heartbeat + 5분 stale watchdog 경보(30분 억제)가 배선·라이브 검증됨",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_heartbeat.py",
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "scripts/fleet_watchdog.py",
+      "supabase/migrations/20260711_fleet_heartbeat.sql",
+      "ops/launchd/com.valuehire.fleet-watchdog.plist",
+      "tests/test_fleet_heartbeat.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1286 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "마이그레이션 201+스키마리로드; macmini/macbook record_heartbeat→heartbeats_epoch 조회→winpc stale 판정→watchdog --once 가 winpc 경보 발송(OPS_HEALTH)"
+  },
+  "v1": {
+    "author": "fresh Claude 서브에이전트",
+    "round1_verdict": "fail",
+    "round1_findings": [
+      "치명: heartbeat 가 loop 상단 1회뿐이라 40분 잡 실행 중 굶어 정상 머신 상시 오경보(계약 '1분마다' 위반)",
+      "테스트갭: stale 300초 경계 mutant(>→>=) 생존",
+      "테스트갭: suppress 1800초 경계 mutant 생존",
+      "중: notify 실패해도 30분 억제+alerted 표기 → 실장애 은폐"
+    ],
+    "fix_evidence": "beat_loop 독립 스레드(잡과 분리), 경계 정확값 테스트(mutant 각 1 failed 검출), notify 실패 시 억제 금지+재시도, 21 passed / verify 1293 exit 0",
+    "round2_verdict": "pass",
+    "round2_evidence": "4결함 재현 차단 확인, mutant 3종(경계2+notify) 검출, beat_loop 스레드 신규결함 없음(daemon/try-finally stop/clean shutdown), 21 passed / verify 1293 exit 0",
+    "final_verdict": "pass"
+  },
+  "v2": {
+    "author": "fresh Claude reset (goal+verdict 만 읽음, 2026-07-11)",
+    "verdict": "pass",
+    "evidence": "21 passed / verify 1293 exit 0, mutant 2종(경계·심박) 검출·원복, 라이브 GET machine_heartbeats macmini/macbook 실재 winpc 누락, 공격 5종(스레드 독립·경계·notify·SOT29정합·마이그레이션권한) 방어, minor 2건은 범위밖/무해",
+    "final_verdict": "pass"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "record_heartbeat RPC 1차 호출",
+      "root_cause": "PostgREST 스키마 캐시가 새 함수 미인식(404)",
+      "repro": "마이그레이션 201 직후 /rpc/record_heartbeat → 404",
+      "next_change": "notify pgrst, 'reload schema' 후 재시도 → 200"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "3자 일치 — G+H 함께 배송(PR→CI→merge)"
+}
