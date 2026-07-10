@@ -78,11 +78,15 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
 def parse_worker_output(stdout: str, exit_code: int) -> dict[str, str]:
     """claude 출력 → 상태 판정. PAUSED 마커 > exit code > 빈 출력 불신."""
     text = (stdout or "").strip()
-    # V1: 마커 *인용* 오탐 방지 — 프로토콜상 마커는 마지막 줄이다(마지막 비공백 줄만 판정).
+    # V1 2R: 실패 방향 설계 — 진짜 PAUSED 를 놓치는 것(캡차인데 자동 진행)이
+    # 인용 오탐(불필요한 사람 호출)보다 훨씬 위험하다. 그래서:
+    #  - 마지막 15개 비공백 줄 안에서 '줄 시작' 마커면 paused (후행 stderr/로그 허용)
+    #  - 줄 중간 인용은 절대 매칭 안 됨, 출력 앞부분의 인용은 15줄 창 밖이라 무시
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    if lines and lines[-1].startswith(_PAUSE_MARKER):
-        reason = lines[-1][len(_PAUSE_MARKER):].strip() or "(사유 미기재)"
-        return {"status": "paused_for_human", "reason": reason}
+    for line in reversed(lines[-15:]):
+        if line.startswith(_PAUSE_MARKER):
+            reason = line[len(_PAUSE_MARKER):].strip() or "(사유 미기재)"
+            return {"status": "paused_for_human", "reason": reason}
     if exit_code != 0:
         return {"status": "failed", "reason": f"exit={exit_code}",
                 "summary": text[-_SUMMARY_LIMIT:]}

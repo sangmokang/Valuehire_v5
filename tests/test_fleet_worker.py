@@ -109,11 +109,20 @@ def test_parse_paused_for_human_wins_over_exit_code():
     assert r2["status"] == "paused_for_human"
 
 
-def test_parse_ignores_quoted_pause_marker_mid_output():
-    # V1: 출력 *중간*의 마커 인용은 오탐하지 않는다 — 프로토콜상 마커는 마지막 줄
+def test_parse_pause_marker_tolerates_trailing_log_lines():
+    # V1 2R: 마커 뒤 후행 로그/stderr 가 붙어도 정당한 PAUSED 를 놓치면 안 된다(미탐 > 오탐 위험)
+    out = "후보 검토 중\nPAUSED_FOR_HUMAN: 캡차 감지\n[log] cdp session closed\nTraceback: ..."
+    assert parse_worker_output(out, exit_code=0)["status"] == "paused_for_human"
+    assert parse_worker_output(out, exit_code=1)["status"] == "paused_for_human"
+
+
+def test_parse_ignores_quoted_pause_marker():
+    # 줄 중간 인용은 매칭 안 됨
     out = "안내: 'PAUSED_FOR_HUMAN: ...' 문구는 캡차 시에만 씁니다.\n후보 8명 등록 완료"
     assert parse_worker_output(out, exit_code=0)["status"] == "done"
-    out2 = "PAUSED_FOR_HUMAN: 인용\n계속 진행함\n후보 2명 등록"
+    # 출력 앞부분(15줄 창 밖)의 줄 시작 인용도 무시
+    filler = "\n".join(f"진행 로그 {i}" for i in range(20))
+    out2 = f"PAUSED_FOR_HUMAN: 인용\n{filler}\n후보 2명 등록 완료"
     assert parse_worker_output(out2, exit_code=0)["status"] == "done"
 
 
