@@ -21,6 +21,51 @@
 #    auto_send_runner 로 자동화한다. 게이트 밖 발송은 여전히 사람 손 (2026-07-07 사장님 지시 개정).
 #  - CDP 포트는 127.0.0.1 에만 묶는다(외부 노출 금지 — 무인증 원격조종 취약점).
 set -euo pipefail
+SCRIPT_SELF_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="${VALUEHIRE_REPO_DIR:-$SCRIPT_SELF_DIR}"
+
+apply_search_machine_env() {
+  [[ -n "${VALUEHIRE_SEARCH_MACHINE_ID:-}" ]] || return 0
+  local machine_env_output line key value
+  machine_env_output="$(PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 \
+    -m tools.multi_position_sourcing.search_machine env \
+    --machine-id "$VALUEHIRE_SEARCH_MACHINE_ID")" || {
+      echo "⚠️ VALUEHIRE_SEARCH_MACHINE_ID could not be applied; using legacy portal browser defaults only. Search loop still validates the machine ID." >&2
+      return 0
+    }
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    value="${value//\$HOME/$HOME}"
+    case "$key" in
+      VALUEHIRE_SEARCH_MACHINE_ID|VALUEHIRE_SEARCH_MACHINE_LABEL|VALUEHIRE_SEARCH_MACHINE_ROLE|VALUEHIRE_SEARCH_MACHINE_OS|SARAMIN_PORT|JOBKOREA_PORT|LINKEDIN_PORT|SARAMIN_PROFILE|JOBKOREA_PROFILE|LINKEDIN_PROFILE)
+        export "$key=$value" ;;
+    esac
+  done <<<"$machine_env_output"
+}
+
+warn_missing_machine_identity() {
+  case "${1:-}" in
+    cdp) return 0 ;;
+  esac
+  if [[ -n "${VALUEHIRE_SEARCH_MACHINE_ID:-}" ]]; then
+    return 0
+  fi
+  local required=(
+    SARAMIN_PORT JOBKOREA_PORT LINKEDIN_PORT
+    SARAMIN_PROFILE JOBKOREA_PROFILE LINKEDIN_PROFILE
+  )
+  local key
+  for key in "${required[@]}"; do
+    if [[ -z "${!key:-}" ]]; then
+      echo "⚠️ VALUEHIRE_SEARCH_MACHINE_ID is not set; using legacy portal browser defaults only. Search loop still requires a machine ID." >&2
+      return 0
+    fi
+  done
+}
+
+apply_search_machine_env
+warn_missing_machine_identity "${1:-}"
 
 # ── 설정 (필요하면 환경변수로 덮어쓰기) ────────────────────────────────
 CHROME="${PORTAL_CHROME:-$HOME/Library/Caches/ms-playwright/chromium-1223/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing}"
