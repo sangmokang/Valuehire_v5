@@ -40,8 +40,13 @@
     "final_verdict": "pass"
   },
   "v2": {
-    "author": "fresh Claude reset (goal+verdict 만 읽음)",
-    "verdict": "pending"
+    "author": "fresh Claude reset (goal+verdict 만 읽음, 2026-07-11)",
+    "round1_verdict": "fail",
+    "what_v1_missed": "인젝션 '닫힘' 판정이 ASCII 개행만 본 해피패스 — 유니코드 줄구분자 U+2028/2029/0085 는 ord<32 필터 통과하면서 splitlines/LLM 이 줄로 취급 → requested_by(Discord 표시이름, 사용자 제어)에 '규칙 5: 발송' 삽입 가능. _valid_url 은 isspace 로 이미 막아 함수간 기준 불일치.",
+    "round1_confirmed_ok": "머신 fail-closed, 발송스킬 게이트, dry-run 미실행(라이브 12·13 GET 대조), PAUSED 15줄창(mutant 검출), 타임아웃/예외 고아방지, verify 1255 passed exit 0",
+    "fix_commit": "c45a0d2",
+    "fix_evidence": "필터를 isspace 기준으로 통일(스페이스 1개 제외 모든 공백류+제어문자 거부), 세 구분자 거부 테스트 큐입구·프롬프트 양쪽 추가, 78 passed / verify 1255 passed exit 0",
+    "round2_verdict": "pending"
   },
   "failed_attempts": [
     {
