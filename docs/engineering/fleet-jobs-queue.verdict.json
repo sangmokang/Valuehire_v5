@@ -45,7 +45,17 @@
     ],
     "round2_fix_commit": "c435e63",
     "round2_fix_live_evidence": "INSERT status=running 400, no-op PATCH 400, running→paused 직접 PATCH 후 잔존 락 0, resume→claim→done 왕복 OK, verify 1202 passed exit 0",
-    "round3_verdict": "pending"
+    "round3_verdict": "fail",
+    "round3_findings": [
+      "closed: 락 사재기(NOT EXISTS 필터), no-op 전이, pause 락 누수, account_key, INSERT 우회, SQL 무의미 호스트",
+      "still-open: SQL 포트 0/99999 통과",
+      "still-open: 공백 env 자격증명이 빈 문자열로 채택",
+      "still-open: V1 환경 verify 6건 실패(홈디렉토리/소켓/프로세스 제약 추정, 실패 테스트명 요청함)",
+      "신규: SQL 이 python 보다 과엄격(query-only URL·path '..' 거부) — 역방향 불일치"
+    ],
+    "round3_fix_commit": "0d587e7",
+    "round3_fix_live_evidence": "SQL URL 5케이스(99999·0·query-only·path'..'·host'a..b') python 판정과 5/5 일치, verify interpreter=python3 1204 passed exit 0",
+    "round4_verdict": "pending"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
