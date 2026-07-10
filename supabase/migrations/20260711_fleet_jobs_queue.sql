@@ -47,11 +47,14 @@ drop policy if exists service_role_account_locks_all on public.account_locks;
 create policy service_role_account_locks_all on public.account_locks
   for all to service_role using (true) with check (true);
 
--- 무결성 보강(V1 적대검증 반영): 라이브 DB 재적용 안전한 DO 블록.
-do $$ begin
-  alter table public.jobs add constraint jobs_position_url_http_chk
-    check (position_url ~ '^https?://' and position_url !~ '\s');
-exception when duplicate_object then null; end $$;
+-- 무결성 보강(V1 적대검증 반영): 라이브 DB 재적용 안전(드롭 후 재생성).
+alter table public.jobs drop constraint if exists jobs_position_url_http_chk;
+alter table public.jobs add constraint jobs_position_url_http_chk
+  check (
+    position_url ~ '^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/.*)?$'
+    and position_url !~ '\s'
+    and position_url !~ '\.\.'
+  );
 
 do $$ begin
   alter table public.jobs add constraint jobs_requested_by_nonblank_chk
@@ -64,14 +67,13 @@ returns trigger
 language plpgsql
 as $$
 begin
-  if old.status is distinct from new.status then
-    if not (
-         (old.status = 'queued'           and new.status in ('running','cancelled'))
-      or (old.status = 'running'          and new.status in ('paused_for_human','done','failed'))
-      or (old.status = 'paused_for_human' and new.status in ('queued','cancelled'))
-    ) then
-      raise exception '금지된 상태 전이: % -> %', old.status, new.status;
-    end if;
+  -- V1 2R: no-op 재설정(running→running 등)도 python 화이트리스트와 동일하게 거부
+  if not (
+       (old.status = 'queued'           and new.status in ('running','cancelled'))
+    or (old.status = 'running'          and new.status in ('paused_for_human','done','failed'))
+    or (old.status = 'paused_for_human' and new.status in ('queued','cancelled'))
+  ) then
+    raise exception '금지된 상태 전이: % -> %', old.status, new.status;
   end if;
   return new;
 end;
@@ -82,13 +84,35 @@ create trigger jobs_transition_guard_trg
   before update of status on public.jobs
   for each row execute function public.jobs_transition_guard();
 
+-- V1 2R 신규 결함: INSERT 로 초기 상태를 running/done 등으로 심는 우회 차단.
+create or replace function public.jobs_insert_guard()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.status <> 'queued' then
+    raise exception '신규 잡은 queued 로만 생성 가능 (시도: %)', new.status;
+  end if;
+  if new.started_at is not null or new.finished_at is not null then
+    raise exception '신규 잡에 started_at/finished_at 선지정 금지';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists jobs_insert_guard_trg on public.jobs;
+create trigger jobs_insert_guard_trg
+  before insert on public.jobs
+  for each row execute function public.jobs_insert_guard();
+
 -- 락 고아화 방지(V1 결함 3): 어떤 경로로든 종결/재큐잉되면 락 자동 해제.
 create or replace function public.jobs_lock_cleanup()
 returns trigger
 language plpgsql
 as $$
 begin
-  if new.status in ('done','failed','cancelled','queued') then
+  -- V1 2R: 직접 UPDATE 로 paused_for_human 이 되어도 락이 남지 않게(release_job 과 동일 의미)
+  if new.status in ('done','failed','cancelled','queued','paused_for_human') then
     delete from public.account_locks where job_id = new.id;
   end if;
   return new;
@@ -117,8 +141,13 @@ begin
     raise exception 'unknown machine: %', p_machine;
   end if;
   loop
+    -- V1 2R: 락 충돌이 뻔한 후보는 애초에 잠그지 않는다(사재기 최소화).
+    -- unique_violation 폴백은 이 필터와 insert 사이의 레이스 전용으로만 남는다.
     select * into j from public.jobs
       where machine = p_machine and status = 'queued' and id > last_id
+        and (account_key = '' or not exists (
+              select 1 from public.account_locks al
+              where al.account_key = public.jobs.account_key))
       order by id
       limit 1
       for update skip locked;

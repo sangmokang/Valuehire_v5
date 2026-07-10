@@ -75,6 +75,8 @@ def test_new_job_payload_rejects_bad_role(role):
     "https://exa mple.com/x",   # V1: 공백 포함
     "https://./x",              # V1: 무의미 netloc
     "https://exa\tmple.com",
+    "https://example.com:99999/x",  # V1 2R: 포트 범위 초과
+    "https://a..b/x",               # V1 2R: 무의미 호스트
 ])
 def test_new_job_payload_rejects_bad_url(url):
     assert new_job_payload(**_ok_kwargs(position_url=url)) is None
@@ -84,6 +86,14 @@ def test_new_job_payload_rejects_unserializable_params():
     # V1: JSON 직렬화 불가 params 가 enqueue 단계 TypeError 로 새면 안 됨 — 입구에서 None
     assert new_job_payload(**_ok_kwargs(), params={"x": object()}) is None
     assert new_job_payload(**_ok_kwargs(), params={"x": {1, 2}}) is None
+    assert new_job_payload(**_ok_kwargs(), params={"x": float("nan")}) is None  # V1 2R
+    assert new_job_payload(**_ok_kwargs(), params={"x": float("inf")}) is None
+
+
+def test_new_job_payload_rejects_bad_account_key():
+    # V1 2R: 비문자열/공백 포함 account_key 가 DB text 경계까지 흘러가면 안 됨
+    assert new_job_payload(**_ok_kwargs(), account_key={"seat": 1}) is None  # type: ignore[arg-type]
+    assert new_job_payload(**_ok_kwargs(), account_key="seat 1") is None
 
 
 def test_new_job_payload_rejects_blank_requester():
@@ -213,6 +223,10 @@ def test_client_requires_url_key_pair():
         JobQueueClient(url="https://example.supabase.co")   # 키만 빠짐
     with pytest.raises(ValueError):
         JobQueueClient(key="k")
+    with pytest.raises(ValueError):
+        JobQueueClient(url="https://example.supabase.co", key="  ")  # V1 2R: 공백 자격증명
+    c = JobQueueClient(url=" https://example.supabase.co/ ", key=" k ")
+    assert (c.url, c.key) == ("https://example.supabase.co", "k")
 
 
 def test_env_config_pairs_from_same_file(tmp_path, monkeypatch):
@@ -256,5 +270,8 @@ def test_migration_file_contains_core_ddl():
         "cancel_job",                # V1 결함 4: 취소 전용 RPC
         "jobs_position_url_http_chk",
         "limit 1",                   # V1 결함 1: 커서 프리페치 회피(한 행씩 잠금)
+        "jobs_insert_guard",         # V1 2R: INSERT 초기 상태 우회 차단
+        "not exists",                # V1 2R: 락 충돌 후보 사전 필터(사재기 최소화)
+        "'paused_for_human') then\n    delete from public.account_locks",
     ):
         assert needle in sql.lower(), f"마이그레이션에 '{needle}' 누락"

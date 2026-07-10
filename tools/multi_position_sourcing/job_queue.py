@@ -52,7 +52,15 @@ def _valid_url(url: Any) -> bool:
         import re
         _NETLOC_RE = re.compile(
             r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:\d{1,5})?$")
-    return bool(parsed.netloc) and bool(_NETLOC_RE.match(parsed.netloc))
+    if not parsed.netloc or not _NETLOC_RE.match(parsed.netloc):
+        return False
+    if ".." in parsed.netloc:            # V1 2R: 'a..b' 같은 무의미 호스트
+        return False
+    try:
+        port = parsed.port               # V1 2R: 65535 초과 포트
+    except ValueError:
+        return False
+    return port is None or 0 < port <= 65535
 
 
 def default_account_key(skill: str, machine: str) -> str:
@@ -86,9 +94,12 @@ def new_job_payload(
     if not isinstance(params, dict):
         return None
     try:
-        json.dumps(params)  # V1: 직렬화 불가 params 가 enqueue 에서 TypeError 로 새는 것 차단
+        # V1: 직렬화 불가 params 차단. allow_nan=False — NaN/Infinity 는 유효 JSON 이 아님(V1 2R)
+        json.dumps(params, allow_nan=False)
     except (TypeError, ValueError):
         return None
+    if not isinstance(account_key, str) or any(ch.isspace() for ch in account_key):
+        return None  # V1 2R: dict 등 비문자열 account_key 가 DB 경계까지 흘러가는 것 차단
     return {
         "machine": machine,
         "skill": skill,
@@ -183,6 +194,7 @@ def _env_config() -> tuple[str, str]:
 
 class JobQueueClient:
     def __init__(self, url: str = "", key: str = "") -> None:
+        url, key = (url or "").strip(), (key or "").strip()  # V1 2R: 공백 자격증명 거부
         if url and key:
             self.url, self.key = url.rstrip("/"), key
         elif url or key:
