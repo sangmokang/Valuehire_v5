@@ -64,7 +64,9 @@
     ],
     "round4_fix_commit": "f134637",
     "round4_fix_evidence": "python 소문자 스킴 프리픽스만 인정 + 거부 테스트 2건 추가, verify 1206 passed exit 0",
-    "round5_verdict": "pending"
+    "round5_verdict": "pass",
+    "round5_evidence": "4R 반례(HTTPS:// 대문자 스킴) python 거부 확인, 신규 반례 없음, verify exit 0 (1206 passed, 4 xfailed, 14 subtests)",
+    "final_verdict": "pass"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
