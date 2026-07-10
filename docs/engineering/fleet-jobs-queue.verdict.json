@@ -17,10 +17,21 @@
     "mutation_evidence": "role 검증 제거 mutant → 4 failed / 복구 → 45 passed (테스트 실효성 증명)"
   },
   "v1": {
-    "author": "codex-rescue (별도 세션)",
-    "verdict": "pending",
-    "counterexample": "",
-    "repro": ""
+    "author": "codex-rescue (별도 세션, thread 019f4ca0-d5c1-7f62-b337-2044c3bf5081)",
+    "round1_verdict": "fail",
+    "round1_findings": [
+      "plpgsql FOR-IN 커서 프리페치(10행)가 여분 잡 락 보유 — 동시 워커 기아 가능",
+      "상태 전이가 DB 경계에서 미강제 — service_role 직접 UPDATE 로 done→queued 가능",
+      "직접 UPDATE 시 account_locks 고아화 — release_job 이 락을 못 지움",
+      "python 화이트리스트의 queued/paused→cancelled 전이를 수행할 RPC 부재",
+      "URL 공백/무의미 netloc 통과, 직렬화 불가 params 가 TypeError 로 누출",
+      "enqueue 사후 변조 무방비 + SQL check 부실",
+      "_env 가 URL 과 키를 다른 .env.local 에서 섞을 수 있음",
+      "테스트가 순수 함수만 커버 — 클라이언트/동시성 미검증"
+    ],
+    "fix_commit": "2dc8b94",
+    "fix_live_evidence": "done→queued PATCH 400 P0001, running→queued PATCH 400, release(cancelled) 400, cancel_job OK, 잔존 락 0, verify 1199 passed exit 0",
+    "round2_verdict": "pending"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
