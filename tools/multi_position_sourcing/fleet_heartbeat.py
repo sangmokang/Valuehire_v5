@@ -124,9 +124,32 @@ class Watchdog:
                         f"응답이 없습니다. 워커/전원/네트워크를 확인해 주세요.")
                 try:
                     self.notify(text)
-                except Exception as exc:  # noqa: BLE001 — 경보 실패는 watchdog 을 죽이지 않는다
-                    print(f"[watchdog] 경보 전송 실패(fail-soft): {exc}", file=sys.stderr)
+                except Exception as exc:  # noqa: BLE001 — watchdog 은 죽지 않는다
+                    # V1 결함4: 전송 실패 시 억제(state)·alerted 표기 안 함 → 다음 주기 재시도.
+                    #           실장애를 "경보함"으로 은폐하지 않는다.
+                    print(f"[watchdog] 경보 전송 실패(다음 주기 재시도): {exc}", file=sys.stderr)
+                    continue
                 state[m] = now_epoch
                 alerted.append(m)
         self.save_alert_state(state)
         return alerted
+
+
+def beat_loop(
+    beat_fn: Callable[[], None],
+    stop_event: Any,
+    *,
+    interval: int = 60,
+) -> None:
+    """잡 실행과 무관하게 interval 마다 심장박동(별도 스레드).
+
+    V1 결함1: 워커 loop 은 최대 40분 잡에 블로킹되므로 loop 상단 heartbeat 만으로는
+    정상 머신이 stale 오경보된다. 심장박동을 잡 처리와 분리한다.
+    stop_event 는 threading.Event 호환(.is_set(), .wait(t)).
+    """
+    while not stop_event.is_set():
+        try:
+            beat_fn()
+        except Exception as exc:  # noqa: BLE001 — 심장박동 실패는 스레드를 죽이지 않는다
+            print(f"[fleet] heartbeat 스레드 예외(fail-soft): {exc}", file=sys.stderr)
+        stop_event.wait(interval)
