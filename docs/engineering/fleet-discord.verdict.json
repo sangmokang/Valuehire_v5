@@ -1,0 +1,30 @@
+{
+  "claim_id": "fleet-discord-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude Fable 5 (2026-07-11 야간 자율)",
+    "claim": "fleet-* Discord 명령이 인가·owner 게이트를 지키며 작업 큐로 잇고, 발송은 절대 트리거하지 않는다",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_dispatch.py",
+      "tools/multi_position_sourcing/discord_routing.py",
+      "tests/test_fleet_dispatch.py",
+      "tests/test_multi_position_sourcing.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1271 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "owner fleet-run→job14 enqueue(queued)→fleet-status(최근10)→fleet-cancel(cancelled), 미인가 fleet-run→denied"
+  },
+  "v1": {
+    "author": "fresh Claude 서브에이전트",
+    "verdict": "pending"
+  },
+  "v2": {
+    "author": "fresh Claude reset (goal+verdict 만 읽음)",
+    "verdict": "pending"
+  },
+  "failed_attempts": [],
+  "three_way_agree": false,
+  "status": "진행중"
+}
