@@ -16,6 +16,11 @@ SUPPORTED_DISCORD_COMMANDS: tuple[str, ...] = (
     "register-position",
     "session-status",
     "relogin-needed",
+    # 함대 작업 큐 명령(단계 C, 2026-07-11) — 기존 run-search(source/keyword) 와 별개.
+    "fleet-run",
+    "fleet-resume",
+    "fleet-status",
+    "fleet-cancel",
 )
 
 SEARCH_SOURCES: tuple[Channel, ...] = ("saramin", "jobkorea", "linkedin_rps", "public_web")
@@ -246,5 +251,38 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
             "description": "Report which protected portals need manual relogin.",
             "type": 1,
             "contexts": [0, 1],
+        },
+        {
+            "name": "fleet-run",
+            "description": "Queue a Valuehire fleet search job (humansearch/aisearch/url).",
+            "type": 1,
+            "contexts": [0, 1],
+            "options": [
+                {"name": "skill", "description": "Search skill.", "type": 3, "required": True,
+                 "choices": [{"name": s, "value": s} for s in ("humansearch", "aisearch", "url")]},
+                {"name": "url", "description": "Position URL (ClickUp/Wanted).", "type": 3, "required": True},
+                {"name": "machine", "description": "Target machine.", "type": 3, "required": False,
+                 "choices": [{"name": m, "value": m} for m in ("macmini", "macbook", "winpc")]},
+            ],
+        },
+        {
+            "name": "fleet-status",
+            "description": "Show recent Valuehire fleet jobs.",
+            "type": 1,
+            "contexts": [0, 1],
+        },
+        {
+            "name": "fleet-resume",
+            "description": "(owner) Resume a paused fleet job.",
+            "type": 1,
+            "contexts": [0, 1],
+            "options": [{"name": "job", "description": "Job id.", "type": 3, "required": True}],
+        },
+        {
+            "name": "fleet-cancel",
+            "description": "(owner) Cancel a queued/paused fleet job.",
+            "type": 1,
+            "contexts": [0, 1],
+            "options": [{"name": "job", "description": "Job id.", "type": 3, "required": True}],
         },
     ]

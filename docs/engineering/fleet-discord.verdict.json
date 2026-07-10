@@ -1,0 +1,39 @@
+{
+  "claim_id": "fleet-discord-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude Fable 5 (2026-07-11 야간 자율)",
+    "claim": "fleet-* Discord 명령이 인가·owner 게이트를 지키며 작업 큐로 잇고, 발송은 절대 트리거하지 않는다",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_dispatch.py",
+      "tools/multi_position_sourcing/discord_routing.py",
+      "tests/test_fleet_dispatch.py",
+      "tests/test_multi_position_sourcing.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1271 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "owner fleet-run→job14 enqueue(queued)→fleet-status(최근10)→fleet-cancel(cancelled), 미인가 fleet-run→denied"
+  },
+  "v1": {
+    "author": "fresh Claude 서브에이전트",
+    "round1_verdict": "pass",
+    "round1_flag_medium": "is_owner 가 인가된 DM 연락처(팀원 3명, 사장님은 목록 밖)를 owner 로 판정 → 배선 시 팀원이 resume/cancel 얻고 사장님 역전. goal 비범위지만 배선 전 닫으라 권고.",
+    "round1_confirmed_ok": "owner 게이트(mutant 검출), 발송 게이트, fail-closed 파싱, machine 화이트리스트, payload Discord 스펙 정합, 16 passed / verify 1271 exit 0",
+    "fix_commit": "4970cb5",
+    "fix_evidence": "owner 를 명시적 owner_user_ids(사장님)+역할로 분리, authorized_users 는 route 전용, 회귀 테스트 추가, 17 passed / verify 1272 exit 0",
+    "round2_verdict": "pass",
+    "round2_evidence": "owner 누출 경로 차단 확인, 기본값 814...=dm_report RECIPIENT_ID(사장님) 일치, 회귀 테스트 mutant 검출, 17 passed / verify 1272 exit 0",
+    "final_verdict": "pass"
+  },
+  "v2": {
+    "author": "fresh Claude reset (goal+verdict 만 읽음, 2026-07-11)",
+    "verdict": "pass",
+    "evidence": "17 passed / verify 1272 exit 0 (V1 숫자 일치), 라이브 GET job14=cancelled 대조, mutant 2종(owner 우회·발송스킬) 검출·원복, 5개 공격포인트 방어, V1 놓친 것 없음",
+    "final_verdict": "pass"
+  },
+  "failed_attempts": [],
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행(PR→CI→merge)"
+}

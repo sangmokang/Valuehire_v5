@@ -9254,7 +9254,12 @@ set search_path = public"""
         self.assertTrue(discord_message_content_intent_required(free_text_channel_commands=True))
         command_names = {payload["name"] for payload in discord_slash_command_payloads()}
         self.assertEqual(
-            {"search-status", "run-search", "register-position", "session-status", "relogin-needed"},
+            {
+                "search-status", "run-search", "register-position", "session-status",
+                "relogin-needed",
+                # 함대 작업 큐 명령(단계 C) — 전부 슬래시라 Message Content intent 불필요는 유지.
+                "fleet-run", "fleet-resume", "fleet-status", "fleet-cancel",
+            },
             command_names,
         )
 
