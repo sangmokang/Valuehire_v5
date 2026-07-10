@@ -69,10 +69,10 @@
     "final_verdict": "pass"
   },
   "v2": {
-    "author": "fresh Claude reset (goal+verdict 만 읽음)",
-    "verdict": "pending",
-    "what_v1_missed": "",
-    "independent_repro": ""
+    "author": "fresh Claude reset (goal+verdict 만 읽음, 2026-07-11)",
+    "verdict": "pass",
+    "what_v1_missed": "SQL DDL 배선 테스트(test_migration_file_contains_core_ddl)가 주석에 속음 — 134행 주석에 'LIMIT 1 FOR UPDATE SKIP LOCKED' 가 있어 sql.lower() 스트링 매칭이 주석만으로 충족됨. 재현: 실제 쿼리(159행)의 'skip locked' 를 제거한 mutant 로 60 passed(미검출). limit 1 니들도 동일하게 마스킹. 수용기준 위반은 아니나(라이브 SQL 은 올바름·적용 확인) 회귀 감지 구멍 — 니들 매칭 전 '--' 주석 스트립 권고. 부수: goal 의 '45개' 는 5라운드 후 60개로 드리프트(문서만).",
+    "independent_repro": "pytest tests/test_job_queue.py: 60 passed exit 0. ./verify.sh: 1206 passed, 4 xfailed, 14 subtests, exit 0 (interpreter=.venv). 라이브 읽기전용 GET: jobs id 1(done)·2(cancelled)·3(done)·4·6·9·10 실재, id 5/7/8 공백은 가드 거부 INSERT 의 identity 소모와 정합, account_locks=[] (잔존 락 0), anon key GET → 42501 permission denied (revoke/RLS 라이브 적용 증명). fix 커밋 4개(2dc8b94·c435e63·0d587e7·f134637) 전부 존재. 자체 mutant 3종: _valid_url 무력화→13 failed(검출), running→queued 허용→2 failed(검출), SQL skip locked 제거→60 passed(미검출·상기 결함)."
   },
   "failed_attempts": [
     {
@@ -88,6 +88,6 @@
       "next_change": "os.environ 우선 + 홈까지 상위 순회 + VALUEHIRE_REPO_DIR 지원"
     }
   ],
-  "three_way_agree": false,
-  "status": "진행중"
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행(PR→CI→merge)"
 }
