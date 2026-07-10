@@ -18,7 +18,12 @@
   },
   "v1": {
     "author": "fresh Claude 서브에이전트",
-    "verdict": "pending"
+    "round1_verdict": "pass",
+    "round1_flag_medium": "is_owner 가 인가된 DM 연락처(팀원 3명, 사장님은 목록 밖)를 owner 로 판정 → 배선 시 팀원이 resume/cancel 얻고 사장님 역전. goal 비범위지만 배선 전 닫으라 권고.",
+    "round1_confirmed_ok": "owner 게이트(mutant 검출), 발송 게이트, fail-closed 파싱, machine 화이트리스트, payload Discord 스펙 정합, 16 passed / verify 1271 exit 0",
+    "fix_commit": "4970cb5",
+    "fix_evidence": "owner 를 명시적 owner_user_ids(사장님)+역할로 분리, authorized_users 는 route 전용, 회귀 테스트 추가, 17 passed / verify 1272 exit 0",
+    "round2_verdict": "pending"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
