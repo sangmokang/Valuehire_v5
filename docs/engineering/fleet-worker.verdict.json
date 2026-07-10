@@ -1,0 +1,62 @@
+{
+  "claim_id": "fleet-worker-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude Fable 5 (2026-07-11 야간 자율)",
+    "claim": "함대 워커가 머신 fail-closed·프롬프트 계약·PAUSED 프로토콜·발송 게이트를 지키며 큐 잡을 실행/보고한다",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "tools/multi_position_sourcing/job_queue.py",
+      "scripts/fleet_worker_loop.sh",
+      "ops/launchd/com.valuehire.fleet-worker.plist",
+      "tests/test_fleet_worker.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1254 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "잡 12(dry-run done)·13(dry-run done + Discord DM 보고 전송) — 실제 Supabase 큐 왕복"
+  },
+  "v1": {
+    "author": "fresh Claude 서브에이전트 (Codex 세션한도 대체)",
+    "round1_verdict": "fail",
+    "round1_findings": [
+      "HIGH: requested_by 개행으로 프롬프트에 지시 줄 삽입 가능(SOT28 우회 벡터) + role 미검증",
+      "MEDIUM-HIGH: TimeoutExpired 외 예외 시 잡이 running 고아 + loop hot-drain",
+      "MEDIUM: 출력 중간의 PAUSED 마커 인용이 오탐",
+      "부차: plist 머신 하드코딩 — 복사 시 1:1 정책 위반 함정"
+    ],
+    "round1_confirmed_ok": "params json.dumps 안전, release 시그니처·전이 정합, mutant(PAUSED 우선순위) 검출",
+    "fix_commit": "f093d1e",
+    "round2_verdict": "pass",
+    "round2_findings": [
+      "closed: 인젝션(재현 차단 확인), 잡 고아(재현 차단 확인)",
+      "신규(2R 수정이 도입): '마지막 줄' 한정이 마커 뒤 후행 로그/stderr 케이스에서 정당한 PAUSED 를 미탐 — 캡차 사람 게이트 무음 통과 위험(미탐이 오탐보다 위험)"
+    ],
+    "round2_fix_commit": "5aca7be",
+    "round2_fix_evidence": "마지막 15줄 창+줄시작 마커로 재설계(후행 로그 허용, 인용 방어 유지), 경계 테스트 2건, verify 1255 passed exit 0",
+    "round3_verdict": "pass",
+    "round3_evidence": "2R 재현 2케이스(exit0+후행로그·stderr-append) paused 판정 확인, 잔여 반례는 LOW(15줄 초과 후행 시 무음 done 아닌 가시적 failed), 대상 78 passed, verify 1255 passed exit 0",
+    "final_verdict": "pass"
+  },
+  "v2": {
+    "author": "fresh Claude reset (goal+verdict 만 읽음, 2026-07-11)",
+    "round1_verdict": "fail",
+    "what_v1_missed": "인젝션 '닫힘' 판정이 ASCII 개행만 본 해피패스 — 유니코드 줄구분자 U+2028/2029/0085 는 ord<32 필터 통과하면서 splitlines/LLM 이 줄로 취급 → requested_by(Discord 표시이름, 사용자 제어)에 '규칙 5: 발송' 삽입 가능. _valid_url 은 isspace 로 이미 막아 함수간 기준 불일치.",
+    "round1_confirmed_ok": "머신 fail-closed, 발송스킬 게이트, dry-run 미실행(라이브 12·13 GET 대조), PAUSED 15줄창(mutant 검출), 타임아웃/예외 고아방지, verify 1255 passed exit 0",
+    "fix_commit": "c45a0d2",
+    "fix_evidence": "필터를 isspace 기준으로 통일(스페이스 1개 제외 모든 공백류+제어문자 거부), 세 구분자 거부 테스트 큐입구·프롬프트 양쪽 추가, 78 passed / verify 1255 passed exit 0",
+    "round2_verdict": "pass",
+    "final_verdict": "pass"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "워커 dry-run 1차 — Discord 보고 생략됨",
+      "root_cause": "_load_env_line 이 워크트리 루트/홈만 봐서 메인 레포 .env.local 못 찾음",
+      "repro": "워크트리에서 --once --dry-run → '[fleet] discord 토큰 없음'",
+      "next_change": "REPO→홈 상위 순회 + VALUEHIRE_REPO_DIR (job_queue._env_config 와 동일 패턴)"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행(PR→CI→merge)"
+}

@@ -93,6 +93,10 @@ def new_job_payload(
         return None
     if not isinstance(requested_by, str) or not requested_by.strip():
         return None
+    # V1(worker)+V2: 개행·제어문자·유니코드 줄구분자(U+2028/2029/0085) 포함 requested_by 는
+    # 프롬프트 인젝션 벡터 — 일반 스페이스 외 모든 공백류/제어문자를 큐 입구에서 차단
+    if any(ch != " " and (ch.isspace() or ord(ch) < 32) for ch in requested_by):
+        return None
     if params is None:
         params = {}
     if not isinstance(params, dict):
