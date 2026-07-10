@@ -1,0 +1,47 @@
+{
+  "claim_id": "fleet-worker-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude Fable 5 (2026-07-11 야간 자율)",
+    "claim": "함대 워커가 머신 fail-closed·프롬프트 계약·PAUSED 프로토콜·발송 게이트를 지키며 큐 잡을 실행/보고한다",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "tools/multi_position_sourcing/job_queue.py",
+      "scripts/fleet_worker_loop.sh",
+      "ops/launchd/com.valuehire.fleet-worker.plist",
+      "tests/test_fleet_worker.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1254 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "잡 12(dry-run done)·13(dry-run done + Discord DM 보고 전송) — 실제 Supabase 큐 왕복"
+  },
+  "v1": {
+    "author": "fresh Claude 서브에이전트 (Codex 세션한도 대체)",
+    "round1_verdict": "fail",
+    "round1_findings": [
+      "HIGH: requested_by 개행으로 프롬프트에 지시 줄 삽입 가능(SOT28 우회 벡터) + role 미검증",
+      "MEDIUM-HIGH: TimeoutExpired 외 예외 시 잡이 running 고아 + loop hot-drain",
+      "MEDIUM: 출력 중간의 PAUSED 마커 인용이 오탐",
+      "부차: plist 머신 하드코딩 — 복사 시 1:1 정책 위반 함정"
+    ],
+    "round1_confirmed_ok": "params json.dumps 안전, release 시그니처·전이 정합, mutant(PAUSED 우선순위) 검출",
+    "fix_commit": "f093d1e",
+    "round2_verdict": "pending"
+  },
+  "v2": {
+    "author": "fresh Claude reset (goal+verdict 만 읽음)",
+    "verdict": "pending"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "워커 dry-run 1차 — Discord 보고 생략됨",
+      "root_cause": "_load_env_line 이 워크트리 루트/홈만 봐서 메인 레포 .env.local 못 찾음",
+      "repro": "워크트리에서 --once --dry-run → '[fleet] discord 토큰 없음'",
+      "next_change": "REPO→홈 상위 순회 + VALUEHIRE_REPO_DIR (job_queue._env_config 와 동일 패턴)"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "진행중"
+}
