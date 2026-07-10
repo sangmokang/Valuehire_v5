@@ -35,7 +35,9 @@
     ],
     "round2_fix_commit": "5aca7be",
     "round2_fix_evidence": "마지막 15줄 창+줄시작 마커로 재설계(후행 로그 허용, 인용 방어 유지), 경계 테스트 2건, verify 1255 passed exit 0",
-    "round3_verdict": "pending"
+    "round3_verdict": "pass",
+    "round3_evidence": "2R 재현 2케이스(exit0+후행로그·stderr-append) paused 판정 확인, 잔여 반례는 LOW(15줄 초과 후행 시 무음 done 아닌 가시적 failed), 대상 78 passed, verify 1255 passed exit 0",
+    "final_verdict": "pass"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
