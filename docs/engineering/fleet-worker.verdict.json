@@ -28,7 +28,14 @@
     ],
     "round1_confirmed_ok": "params json.dumps 안전, release 시그니처·전이 정합, mutant(PAUSED 우선순위) 검출",
     "fix_commit": "f093d1e",
-    "round2_verdict": "pending"
+    "round2_verdict": "fail",
+    "round2_findings": [
+      "closed: 인젝션(재현 차단 확인), 잡 고아(재현 차단 확인)",
+      "신규(2R 수정이 도입): '마지막 줄' 한정이 마커 뒤 후행 로그/stderr 케이스에서 정당한 PAUSED 를 미탐 — 캡차 사람 게이트 무음 통과 위험(미탐이 오탐보다 위험)"
+    ],
+    "round2_fix_commit": "5aca7be",
+    "round2_fix_evidence": "마지막 15줄 창+줄시작 마커로 재설계(후행 로그 허용, 인용 방어 유지), 경계 테스트 2건, verify 1255 passed exit 0",
+    "round3_verdict": "pending"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
