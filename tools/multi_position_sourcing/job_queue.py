@@ -45,6 +45,10 @@ def _valid_url(url: Any) -> bool:
     u = url.strip()
     if any(ch.isspace() for ch in u):
         return False
+    # V1 4R: urlparse 는 스킴을 소문자화해 'HTTPS://' 도 통과시키지만 SQL CHECK 는
+    # 소문자만 허용 — DB 와 1:1 정합 위해 소문자 프리픽스만 인정.
+    if not u.startswith(("http://", "https://")):
+        return False
     parsed = urllib.parse.urlparse(u)
     if parsed.scheme not in ("http", "https"):
         return False

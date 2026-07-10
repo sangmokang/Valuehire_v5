@@ -77,6 +77,8 @@ def test_new_job_payload_rejects_bad_role(role):
     "https://exa\tmple.com",
     "https://example.com:99999/x",  # V1 2R: 포트 범위 초과
     "https://a..b/x",               # V1 2R: 무의미 호스트
+    "HTTPS://example.com/x",        # V1 4R: 대문자 스킴 — SQL CHECK 와 1:1 정합
+    "Http://example.com/x",
 ])
 def test_new_job_payload_rejects_bad_url(url):
     assert new_job_payload(**_ok_kwargs(position_url=url)) is None
