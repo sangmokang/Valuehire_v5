@@ -32,7 +32,12 @@
     "round2_evidence": "4결함 재현 차단 확인, mutant 3종(경계2+notify) 검출, beat_loop 스레드 신규결함 없음(daemon/try-finally stop/clean shutdown), 21 passed / verify 1293 exit 0",
     "final_verdict": "pass"
   },
-  "v2": {"author": "fresh Claude reset (goal+verdict 만 읽음)", "verdict": "pending"},
+  "v2": {
+    "author": "fresh Claude reset (goal+verdict 만 읽음, 2026-07-11)",
+    "verdict": "pass",
+    "evidence": "21 passed / verify 1293 exit 0, mutant 2종(경계·심박) 검출·원복, 라이브 GET machine_heartbeats macmini/macbook 실재 winpc 누락, 공격 5종(스레드 독립·경계·notify·SOT29정합·마이그레이션권한) 방어, minor 2건은 범위밖/무해",
+    "final_verdict": "pass"
+  },
   "failed_attempts": [
     {
       "attempt": "record_heartbeat RPC 1차 호출",
@@ -41,6 +46,6 @@
       "next_change": "notify pgrst, 'reload schema' 후 재시도 → 200"
     }
   ],
-  "three_way_agree": false,
-  "status": "진행중"
+  "three_way_agree": true,
+  "status": "3자 일치 — G+H 함께 배송(PR→CI→merge)"
 }
