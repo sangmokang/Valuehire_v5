@@ -143,6 +143,25 @@ def test_watchdog_script_and_plist_exist():
     assert plist.exists() and "fleet_watchdog.py" in plist.read_text()
 
 
+def test_sot29_fleet_control_doc_integrity():
+    import json
+    doc = REPO / "docs" / "sot" / "29-fleet-control.json"
+    md = REPO / "docs" / "sot" / "29-fleet-control.md"
+    assert doc.exists() and md.exists()
+    d = json.loads(doc.read_text())
+    assert d["sot_id"] == 29
+    inv = d["invariants"]
+    # 핵심 불변식이 문서에 실재하는지(계정 바인딩·발송 게이트·owner 전용·stale 경보)
+    assert "INV1_account_machine_binding" in inv
+    assert "INV4_send_gate" in inv
+    assert "INV5_owner_only" in inv
+    assert "INV7_stale_alert" in inv
+    assert set(d["machines"]) == {"macmini", "winpc", "macbook"}
+    # CLAUDE.md 에서 링크(배선)
+    claude_md = REPO / "CLAUDE.md"
+    assert "29-fleet-control" in claude_md.read_text()
+
+
 def test_migration_has_heartbeat_table():
     cands = sorted((REPO / "supabase" / "migrations").glob("*heartbeat*.sql"))
     assert cands, "heartbeat 마이그레이션 없음"

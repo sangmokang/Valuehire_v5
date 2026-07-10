@@ -68,3 +68,4 @@
 - `main`은 직접 건드리지 않는다. 따로 작업방(worktree)을 파서 거기서 한다.
 - 무엇이든 끝났다고 말하기 전에 **실제로 검사를 돌려보고** 결과를 보고한다.
 - 전체 코드를 다시 훑어볼 때는 `docs/prompts/goal-full-codebase-review.md`(Goal 프롬프트)를 쓴다.
+- 3대 머신(맥미니·맥북·윈도우) 함대 운영·Discord 명령·계정↔머신 바인딩은 `docs/sot/29-fleet-control.md`(+`.json`)를 SOT 로 따른다.
