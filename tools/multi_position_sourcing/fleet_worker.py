@@ -50,8 +50,13 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     url = job.get("position_url")
     if not _valid_url(url):
         raise ValueError(f"invalid position_url: {url!r}")
+    # V1: requested_by 개행/제어문자 = 프롬프트 인젝션("규칙 5: ..." 삽입) → fail-closed
     requested_by = str(job.get("requested_by") or "").strip() or "(미상)"
-    role = str(job.get("role") or "member")
+    if any(ord(ch) < 32 for ch in requested_by):
+        raise ValueError("requested_by 에 제어문자/개행 — 프롬프트 인젝션 차단")
+    role = job.get("role")
+    if role not in ("owner", "member"):
+        raise ValueError(f"invalid role: {role!r}")
     params = job.get("params") or {}
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
@@ -66,17 +71,18 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"2. 아웃리치·메시지·메일 발송은 어떤 경우에도 하지 말 것 (발송 게이트 SOT28).\n"
         f"3. 로그인된 크롬 프로필을 로그아웃·삭제·초기화하지 말 것.\n"
         f"4. 캡차/2FA/본인확인을 만나면 조작을 멈추고 "
-        f"'{_PAUSE_MARKER} <상황>' 한 줄을 출력하고 종료할 것.\n"
+        f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력하고 즉시 종료할 것.\n"
     )
 
 
 def parse_worker_output(stdout: str, exit_code: int) -> dict[str, str]:
     """claude 출력 → 상태 판정. PAUSED 마커 > exit code > 빈 출력 불신."""
     text = (stdout or "").strip()
-    for line in text.splitlines():
-        if line.strip().startswith(_PAUSE_MARKER):
-            reason = line.strip()[len(_PAUSE_MARKER):].strip() or "(사유 미기재)"
-            return {"status": "paused_for_human", "reason": reason}
+    # V1: 마커 *인용* 오탐 방지 — 프로토콜상 마커는 마지막 줄이다(마지막 비공백 줄만 판정).
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if lines and lines[-1].startswith(_PAUSE_MARKER):
+        reason = lines[-1][len(_PAUSE_MARKER):].strip() or "(사유 미기재)"
+        return {"status": "paused_for_human", "reason": reason}
     if exit_code != 0:
         return {"status": "failed", "reason": f"exit={exit_code}",
                 "summary": text[-_SUMMARY_LIMIT:]}
@@ -184,6 +190,10 @@ class FleetWorker:
             self.queue.release(job_id, "failed", error=f"claude 타임아웃({self.timeout}s)")
             self._notify(job, f"⏱️ 잡 #{job_id} 실패 — {self.timeout}초 타임아웃")
             return "failed"
+        except Exception as exc:  # noqa: BLE001 — V1: 어떤 예외든 잡을 running 고아로 두지 않는다
+            self.queue.release(job_id, "failed", error=f"runner 예외: {exc}")
+            self._notify(job, f"❌ 잡 #{job_id} 실패 — 실행 예외: {exc}")
+            return "failed"
         result = parse_worker_output(stdout, code)
         if result["status"] == "paused_for_human":
             self.queue.release(job_id, "paused_for_human", error=result["reason"])
@@ -211,6 +221,9 @@ class FleetWorker:
                 status = "error"
             if status == "idle":
                 time.sleep(poll_seconds)
+            elif status == "error":
+                # V1: 예외 연발 시 hot-loop 방지 — 백오프 후 재시도
+                time.sleep(min(poll_seconds, 15))
 
 
 def main(argv: list[str] | None = None) -> int:

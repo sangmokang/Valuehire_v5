@@ -24,6 +24,8 @@
   <dict>
     <key>VALUEHIRE_REPO_DIR</key>
     <string>/Users/kangsangmo/Valuehire_v5</string>
+    <!-- ⚠️ 머신마다 반드시 수정: macmini | macbook | winpc (계정↔머신 1:1 정책).
+         다른 머신에 그대로 복사하면 같은 machine 큐를 두 곳이 소비한다. -->
     <key>VALUEHIRE_MACHINE</key>
     <string>macmini</string>
     <key>PATH</key>

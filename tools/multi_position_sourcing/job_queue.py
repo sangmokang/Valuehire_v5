@@ -93,6 +93,9 @@ def new_job_payload(
         return None
     if not isinstance(requested_by, str) or not requested_by.strip():
         return None
+    # V1(worker): 개행·제어문자 포함 requested_by 는 프롬프트 인젝션 벡터 — 큐 입구에서 차단
+    if any(ord(ch) < 32 for ch in requested_by):
+        return None
     if params is None:
         params = {}
     if not isinstance(params, dict):
