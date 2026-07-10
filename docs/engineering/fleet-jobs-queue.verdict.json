@@ -1,0 +1,47 @@
+{
+  "claim_id": "fleet-jobs-queue-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude Fable 5 (session 2026-07-11 야간 자율)",
+    "claim": "jobs/account_locks 스키마 + claim/release/resume RPC + fail-closed 클라이언트가 계약대로 동작하고 라이브 DB에서 왕복 검증됨",
+    "changed_files": [
+      "supabase/migrations/20260711_fleet_jobs_queue.sql",
+      "tools/multi_position_sourcing/job_queue.py",
+      "tests/test_job_queue.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1191 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "Supabase sjldbyfcesinrbkgkqwv: 마이그레이션 HTTP 201 적용; jobs id 1 enqueue→claim(running)→같은 account_key 두번째 claim=None(락충돌)→release(done)→jobs id 2 재클레임→cancelled 정리",
+    "mutation_evidence": "role 검증 제거 mutant → 4 failed / 복구 → 45 passed (테스트 실효성 증명)"
+  },
+  "v1": {
+    "author": "codex-rescue (별도 세션)",
+    "verdict": "pending",
+    "counterexample": "",
+    "repro": ""
+  },
+  "v2": {
+    "author": "fresh Claude reset (goal+verdict 만 읽음)",
+    "verdict": "pending",
+    "what_v1_missed": "",
+    "independent_repro": ""
+  },
+  "failed_attempts": [
+    {
+      "attempt": "Management API 로 마이그레이션 적용 (기본 urllib UA)",
+      "root_cause": "Cloudflare 1010 차단 — python 기본 User-Agent 거부",
+      "repro": "POST api.supabase.com/v1/projects/.../database/query UA 없이 → 403",
+      "next_change": "User-Agent: supabase-cli/2.109.1 헤더 추가 → 201"
+    },
+    {
+      "attempt": "라이브 왕복 1차 (JobQueueClient 초기화)",
+      "root_cause": "_env 가 워크트리 루트만 탐색 — 메인 레포 .env.local 못 찾음",
+      "repro": "워크트리에서 JobQueueClient() → RuntimeError",
+      "next_change": "os.environ 우선 + 홈까지 상위 순회 + VALUEHIRE_REPO_DIR 지원"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "진행중"
+}
