@@ -31,7 +31,21 @@
     ],
     "fix_commit": "2dc8b94",
     "fix_live_evidence": "done→queued PATCH 400 P0001, running→queued PATCH 400, release(cancelled) 400, cancel_job OK, 잔존 락 0, verify 1199 passed exit 0",
-    "round2_verdict": "pending"
+    "round2_verdict": "fail",
+    "round2_findings": [
+      "still-open 1: 충돌 skip 시 이미 잠근 행이 트랜잭션 끝까지 락 보유(사재기)",
+      "still-open 2: no-op 전이(running→running)가 python 과 달리 DB 에서 허용",
+      "still-open 3: 직접 UPDATE 로 running→paused 시 account_locks 누수",
+      "still-open 5: 포트 99999·'a..b' 통과, NaN params 가 allow_nan 기본값으로 누출",
+      "still-open 6: account_key 비문자열이 재검증 통과",
+      "신규: INSERT 로 초기 status=running/done 심기 가능(가드가 UPDATE 전용)",
+      "신규: SQL URL check 가 https:///x 허용",
+      "신규: 공백 자격증명 생성자 통과",
+      "참고: V1 환경 verify 6건 실패는 샌드박스 제약이라 V1 스스로 명시 — 이 환경 재실행 interpreter=python3, 1199→1202 passed exit 0"
+    ],
+    "round2_fix_commit": "c435e63",
+    "round2_fix_live_evidence": "INSERT status=running 400, no-op PATCH 400, running→paused 직접 PATCH 후 잔존 락 0, resume→claim→done 왕복 OK, verify 1202 passed exit 0",
+    "round3_verdict": "pending"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
