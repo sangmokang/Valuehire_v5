@@ -18,7 +18,18 @@
     "test_numbers": "1286 passed, 4 xfailed, 14 subtests passed",
     "live_evidence": "마이그레이션 201+스키마리로드; macmini/macbook record_heartbeat→heartbeats_epoch 조회→winpc stale 판정→watchdog --once 가 winpc 경보 발송(OPS_HEALTH)"
   },
-  "v1": {"author": "fresh Claude 서브에이전트", "verdict": "pending"},
+  "v1": {
+    "author": "fresh Claude 서브에이전트",
+    "round1_verdict": "fail",
+    "round1_findings": [
+      "치명: heartbeat 가 loop 상단 1회뿐이라 40분 잡 실행 중 굶어 정상 머신 상시 오경보(계약 '1분마다' 위반)",
+      "테스트갭: stale 300초 경계 mutant(>→>=) 생존",
+      "테스트갭: suppress 1800초 경계 mutant 생존",
+      "중: notify 실패해도 30분 억제+alerted 표기 → 실장애 은폐"
+    ],
+    "fix_evidence": "beat_loop 독립 스레드(잡과 분리), 경계 정확값 테스트(mutant 각 1 failed 검출), notify 실패 시 억제 금지+재시도, 21 passed / verify 1293 exit 0",
+    "round2_verdict": "pending"
+  },
   "v2": {"author": "fresh Claude reset (goal+verdict 만 읽음)", "verdict": "pending"},
   "failed_attempts": [
     {
