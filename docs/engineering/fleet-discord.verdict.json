@@ -23,7 +23,9 @@
     "round1_confirmed_ok": "owner 게이트(mutant 검출), 발송 게이트, fail-closed 파싱, machine 화이트리스트, payload Discord 스펙 정합, 16 passed / verify 1271 exit 0",
     "fix_commit": "4970cb5",
     "fix_evidence": "owner 를 명시적 owner_user_ids(사장님)+역할로 분리, authorized_users 는 route 전용, 회귀 테스트 추가, 17 passed / verify 1272 exit 0",
-    "round2_verdict": "pending"
+    "round2_verdict": "pass",
+    "round2_evidence": "owner 누출 경로 차단 확인, 기본값 814...=dm_report RECIPIENT_ID(사장님) 일치, 회귀 테스트 mutant 검출, 17 passed / verify 1272 exit 0",
+    "final_verdict": "pass"
   },
   "v2": {
     "author": "fresh Claude reset (goal+verdict 만 읽음)",
