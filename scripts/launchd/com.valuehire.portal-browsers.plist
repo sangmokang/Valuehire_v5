@@ -29,6 +29,12 @@
   <key>StartInterval</key>
   <integer>300</integer>
 
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VALUEHIRE_SEARCH_MACHINE_ID</key>
+    <string>VH-SM-001</string>
+  </dict>
+
   <key>StandardOutPath</key>
   <string>/Users/kangsangmo/.valuehire/logs/portal-browsers.launchd.out.log</string>
 

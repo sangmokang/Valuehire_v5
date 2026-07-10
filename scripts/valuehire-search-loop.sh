@@ -30,8 +30,15 @@ while true; do
     continue
   fi
 
+  if ! PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 \
+    -m tools.multi_position_sourcing.search_machine validate \
+    --machine-id "${VALUEHIRE_SEARCH_MACHINE_ID:-}" >/dev/null; then
+    echo "VALUEHIRE_SEARCH_MACHINE_ID is required or invalid; refusing to start search loop" >&2
+    exit 2
+  fi
+
   started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  echo "[$started_at] valuehire search cycle start"
+  echo "[$started_at] valuehire search cycle start machine=${VALUEHIRE_SEARCH_MACHINE_ID}"
 
   if /usr/bin/python3 -m tools.multi_position_sourcing.dry_run \
     --output "$ARTIFACT_DIR/dry-run-latest.json"; then

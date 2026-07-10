@@ -5,6 +5,13 @@ REPO_DIR="${VALUEHIRE_REPO_DIR:-/Users/kangsangmo/Desktop/Valuehire_v5}"
 ARTIFACT_PATH="${VALUEHIRE_DRY_RUN_ARTIFACT:-$REPO_DIR/artifacts/multi_position_sourcing/dry-run-latest.json}"
 MAX_AGE_SECONDS="${VALUEHIRE_HEALTH_MAX_ARTIFACT_AGE_SECONDS:-1800}"
 
+if ! PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" /usr/bin/python3 \
+  -m tools.multi_position_sourcing.search_machine validate \
+  --machine-id "${VALUEHIRE_SEARCH_MACHINE_ID:-}" >/dev/null; then
+  echo "VALUEHIRE_SEARCH_MACHINE_ID is required or invalid; refusing healthcheck" >&2
+  exit 2
+fi
+
 if ! pgrep -f "valuehire-search-loop.sh" >/dev/null; then
   echo "search loop process is not running"
   exit 1

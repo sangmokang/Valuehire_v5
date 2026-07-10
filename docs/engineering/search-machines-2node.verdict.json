@@ -1,0 +1,88 @@
+{
+  "claim_id": "search-machines-2node",
+  "mode": "mixed",
+  "risk": "L3",
+  "issue": "https://github.com/sangmokang/Valuehire_v5/issues/81",
+  "goal_doc": "docs/engineering/search-machines-2node-goal-2026-07-10.md",
+  "owner_signoff": {
+    "evidence": "Owner's current-turn instruction explicitly approved problem resolution and execution within the enumerated GitHub write limits.",
+    "approved_target": "sangmokang/Valuehire_v5",
+    "approved_channel": "GitHub issue, existing branch push, pull request, and merge",
+    "approved_counts": {
+      "issue": 1,
+      "branch_push": 1,
+      "pull_request": 1,
+      "merge": 1
+    },
+    "issue_write": {
+      "payload_sha256": "47788795d9c1aa2a14ac0f3e6558fadaba55ffbc2c5e0813be241d43d127eb99",
+      "nonce": "7A85E89E-D57C-4932-AA43-3FAF8AB59AEA",
+      "tty": "/dev/ttys065"
+    },
+    "excluded": "deployment, production server changes, browser/portal execution, login, candidate search/registration, and outreach"
+  },
+  "red_reproduction": {
+    "method": "Created a safe temporary git-archive copy of the base commit, copied only the new focused test into it, and did not reset or checkout the user worktree.",
+    "command": "tmp_dir=\"$(mktemp -d /tmp/valuehire-search-machines-2node-red.XXXXXX)\" && git archive HEAD | tar -x -C \"$tmp_dir\" && cp tests/test_search_machine_config.py \"$tmp_dir/tests/test_search_machine_config.py\" && cd \"$tmp_dir\" && PYTHONSAFEPATH=1 PYTHONPATH=. python -m pytest tests/test_search_machine_config.py -q",
+    "exit_code": 2,
+    "output": "Collection error: ModuleNotFoundError: No module named 'tools.multi_position_sourcing.search_machine'"
+  },
+  "generator": {
+    "claim": "Only VH-SM-001 and VH-SM-002 can start search workers; their ports and canonical OS-correct profile paths cannot collide; loop and healthcheck fail closed on missing or invalid identity; portal launcher consumes an allowlisted non-secret machine env while preserving the exact legacy Mac login profiles.",
+    "focused_command": "PYTHONSAFEPATH=1 PYTHONPATH=. python -m pytest tests/test_search_machine_config.py -q",
+    "focused_exit_code": 0,
+    "focused_output": "31 passed",
+    "full_command": "./verify.sh",
+    "full_exit_code": 0,
+    "full_output": "1177 passed, 4 xfailed, 14 subtests passed",
+    "artifact_hashes": {
+      "docs/engineering/search-machines-2node-goal-2026-07-10.md": "f6162ee2897642cf2b5aec88125f092a20eca34494aafdc5df1dff356f008c00",
+      "tools/multi_position_sourcing/search_machine.py": "592d0dd8400e10c5fbb11efe46d3ebf99a7e90b968a8d664128981dc571ebb8b",
+      "tests/test_search_machine_config.py": "68ba1c34864a8ba7dd4e6bf6a1104a1fde728dc5f1a7a9a31cb0275ee3f6b881",
+      "scripts/portal_browsers.sh": "15687ce12b406613ce82419f9b20fe82aa6b04ed6e121162b6718370a875263a",
+      "scripts/valuehire-search-loop.sh": "04587500a467d455b4be78653afd9363bb1e55c976935db9cd7e19e9a3da73c5",
+      "scripts/valuehire-search-healthcheck.sh": "dbc33f47595f19ad96548d135b8e20eac693046bdb81f870b7b14301bbb20e40",
+      "scripts/launchd/com.valuehire.portal-browsers.plist": "09e9acc27336e3fa6c8a1d888bcb16eaeb00c525a3b04dc142d172acde0eca6f",
+      "scripts/launchd/com.valuehire.search-runner.plist": "06707c5385a9fa6df0daea1e4cefd86b4552b44b33083d3652ac2cff3a8431f6"
+    }
+  },
+  "v1": {
+    "author": "claude -p adversarial review",
+    "verdict": "unavailable",
+    "notes": "Read-only review produced no output for 120 seconds and ended with Execution error; no result was trusted."
+  },
+  "v2": {
+    "author": "Codex Rescue independent read-only review",
+    "verdict": "pass",
+    "counterexamples_reproduced": [
+      "missing, blank, padded, unknown, and inactive machine IDs",
+      "duplicate ports and profiles, including case-only aliases",
+      "Windows/Mac profile syntax mixed in either direction",
+      "Windows/Mac dot-dot, duplicate-separator, and trailing-separator aliases",
+      "Windows trailing-dot and trailing-space component aliases",
+      "portal launcher machine-env wiring and exact legacy Mac profiles",
+      "secret sentinel output and existing fail-soft daemon regressions"
+    ],
+    "focused_output": "27 passed, 4 deselected",
+    "daemon_output": "6 passed",
+    "notes": "All 11 path attacks were rejected; no practical remaining acceptance/security bypass was found."
+  },
+  "failed_attempts": [
+    "Baseline focused test failed collection as intended because the registry module did not exist.",
+    "Initial collision test expected a duplicate error but OS-mixing validation rejected earlier; the fixture was corrected to a true same-OS collision.",
+    "Independent review found prefix-suffix OS mixing and macOS case aliases; code and tests were hardened.",
+    "Independent re-review found dot-dot and separator aliases; canonical path comparison and relative-segment rejection were added.",
+    "Final re-review found Windows trailing-dot/space aliases; Win32-incompatible components were rejected.",
+    "First full verify output transport lost its exit code; verify was rerun and later rerun again after final changes with exit 0."
+  ],
+  "scope": {
+    "runtime_implementation_files": 4,
+    "runtime_added_lines": 282,
+    "deployment_config_files": 2,
+    "deployment_config_added_lines": 8,
+    "implementation_with_config_added_lines": 290,
+    "limit": "runtime implementation remains at or below 5 files and 300 added lines; tests and evidence artifacts are separate"
+  },
+  "three_way_agree": true,
+  "status": "pass"
+}
