@@ -16,6 +16,9 @@ from tools.multi_position_sourcing.job_queue import (
     ALLOWED_TRANSITIONS,
     FLEET_MACHINES,
     FLEET_SKILLS,
+    JobQueueClient,
+    _env_config,
+    cancel_job_payload,
     claim_next_job_payload,
     is_valid_transition,
     new_job_payload,
@@ -67,9 +70,20 @@ def test_new_job_payload_rejects_bad_role(role):
     assert new_job_payload(**_ok_kwargs(role=role)) is None
 
 
-@pytest.mark.parametrize("url", ["", None, "notaurl", "javascript:alert(1)", "ftp://x"])
+@pytest.mark.parametrize("url", [
+    "", None, "notaurl", "javascript:alert(1)", "ftp://x",
+    "https://exa mple.com/x",   # V1: 공백 포함
+    "https://./x",              # V1: 무의미 netloc
+    "https://exa\tmple.com",
+])
 def test_new_job_payload_rejects_bad_url(url):
     assert new_job_payload(**_ok_kwargs(position_url=url)) is None
+
+
+def test_new_job_payload_rejects_unserializable_params():
+    # V1: JSON 직렬화 불가 params 가 enqueue 단계 TypeError 로 새면 안 됨 — 입구에서 None
+    assert new_job_payload(**_ok_kwargs(), params={"x": object()}) is None
+    assert new_job_payload(**_ok_kwargs(), params={"x": {1, 2}}) is None
 
 
 def test_new_job_payload_rejects_blank_requester():
@@ -146,6 +160,8 @@ def test_release_payload_terminal_or_pause_only():
     with pytest.raises(ValueError):
         release_job_payload(9, "running")
     with pytest.raises(ValueError):
+        release_job_payload(9, "cancelled")     # 취소는 cancel_job 전용(V1 결함 4)
+    with pytest.raises(ValueError):
         release_job_payload(0, "done")          # 잡 id 양수 강제
     with pytest.raises(ValueError):
         release_job_payload(-1, "failed")
@@ -163,6 +179,64 @@ def test_fleet_machines_fixed():
     assert set(FLEET_MACHINES) == {"macmini", "macbook", "winpc"}
 
 
+def test_cancel_payload():
+    assert cancel_job_payload(3, "사장님 취소") == {"p_job_id": 3, "p_reason": "사장님 취소"}
+    for bad in (0, -1, True, "3"):
+        with pytest.raises(ValueError):
+            cancel_job_payload(bad)  # type: ignore[arg-type]
+
+
+# ── 클라이언트: 변조 방지 + env 짝 강제 (V1 결함 6·7) ────────────────
+
+def _fake_client() -> JobQueueClient:
+    return JobQueueClient(url="https://example.supabase.co", key="k")
+
+
+def test_enqueue_rejects_tampered_payload(monkeypatch):
+    c = _fake_client()
+    calls = []
+    monkeypatch.setattr(c, "_call", lambda *a, **k: calls.append(a) or [{"id": 1}])
+    good = new_job_payload(**_ok_kwargs())
+    tampered = dict(good, skill="send")          # 사후 변조
+    with pytest.raises(ValueError):
+        c.enqueue(tampered)
+    tampered2 = dict(good, status="running")     # 상태 변조
+    with pytest.raises(ValueError):
+        c.enqueue(tampered2)
+    assert calls == []                            # 무효 페이로드는 HTTP 자체가 안 나감
+    assert c.enqueue(good) == {"id": 1}
+    assert len(calls) == 1
+
+
+def test_client_requires_url_key_pair():
+    with pytest.raises(ValueError):
+        JobQueueClient(url="https://example.supabase.co")   # 키만 빠짐
+    with pytest.raises(ValueError):
+        JobQueueClient(key="k")
+
+
+def test_env_config_pairs_from_same_file(tmp_path, monkeypatch):
+    # V1 결함 7: URL 과 키가 서로 다른 파일에서 섞이면 안 됨
+    for k in ("NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    half = tmp_path / "half"; half.mkdir()
+    (half / ".env.local").write_text("NEXT_PUBLIC_SUPABASE_URL=https://half.supabase.co\n")
+    monkeypatch.setenv("VALUEHIRE_REPO_DIR", str(half))
+    # half 에는 짝이 없으므로 half 를 채택하지 않고 상위(실레포)로 넘어가거나,
+    # 상위에도 없으면 RuntimeError — 어느 쪽이든 "half URL + 다른 파일 키" 조합은 금지.
+    try:
+        url, key = _env_config()
+        assert not (url.startswith("https://half.") and key), "짝 없는 출처의 URL 이 채택됨"
+    except RuntimeError:
+        pass
+    full = tmp_path / "full"; full.mkdir()
+    (full / ".env.local").write_text(
+        "NEXT_PUBLIC_SUPABASE_URL=https://full.supabase.co\nSUPABASE_SERVICE_ROLE_KEY=sk-full\n")
+    monkeypatch.setenv("VALUEHIRE_REPO_DIR", str(full))
+    url, key = _env_config()
+    assert (url, key) == ("https://full.supabase.co", "sk-full")
+
+
 # ── 마이그레이션 실체(배선) ──────────────────────────────────────────
 
 def test_migration_file_contains_core_ddl():
@@ -177,5 +251,10 @@ def test_migration_file_contains_core_ddl():
         "for update skip locked",
         "enable row level security",
         "service_role",
+        "jobs_transition_guard",     # V1 결함 2: DB 경계 전이 강제
+        "jobs_lock_cleanup",         # V1 결함 3: 락 고아화 방지
+        "cancel_job",                # V1 결함 4: 취소 전용 RPC
+        "jobs_position_url_http_chk",
+        "limit 1",                   # V1 결함 1: 커서 프리페치 회피(한 행씩 잠금)
     ):
         assert needle in sql.lower(), f"마이그레이션에 '{needle}' 누락"

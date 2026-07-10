@@ -30,14 +30,29 @@ ALLOWED_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "cancelled": (),
 }
 
-_RELEASE_STATUSES = ("done", "failed", "cancelled", "paused_for_human")
+# 취소는 cancel_job 전용(V1: running→cancelled 는 화이트리스트에 없음).
+_RELEASE_STATUSES = ("done", "failed", "paused_for_human")
+_CANCELABLE_STATUSES = ("queued", "paused_for_human")
+
+_NETLOC_RE = None  # lazy compile
 
 
 def _valid_url(url: Any) -> bool:
+    """http(s) + 공백 없음 + netloc 이 호스트꼴(영숫자/점/하이픈, 선택적 :포트)."""
+    global _NETLOC_RE
     if not isinstance(url, str) or not url.strip():
         return False
-    parsed = urllib.parse.urlparse(url.strip())
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    u = url.strip()
+    if any(ch.isspace() for ch in u):
+        return False
+    parsed = urllib.parse.urlparse(u)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if _NETLOC_RE is None:
+        import re
+        _NETLOC_RE = re.compile(
+            r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:\d{1,5})?$")
+    return bool(parsed.netloc) and bool(_NETLOC_RE.match(parsed.netloc))
 
 
 def default_account_key(skill: str, machine: str) -> str:
@@ -69,6 +84,10 @@ def new_job_payload(
     if params is None:
         params = {}
     if not isinstance(params, dict):
+        return None
+    try:
+        json.dumps(params)  # V1: 직렬화 불가 params 가 enqueue 에서 TypeError 로 새는 것 차단
+    except (TypeError, ValueError):
         return None
     return {
         "machine": machine,
@@ -112,17 +131,31 @@ def release_job_payload(
     }
 
 
+def cancel_job_payload(job_id: int, reason: str = "") -> dict[str, Any]:
+    """queued/paused_for_human 잡 취소용 RPC 페이로드."""
+    if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+        raise ValueError(f"invalid job_id: {job_id!r}")
+    return {"p_job_id": job_id, "p_reason": reason or ""}
+
+
 # ── HTTP 클라이언트 (테스트에서는 urlopen 을 mock) ────────────────────
 
-def _env(key: str) -> str:
-    """os.environ 우선, 없으면 REPO 부터 홈까지 상위로 올라가며 .env.local 탐색.
+_URL_KEY = "NEXT_PUBLIC_SUPABASE_URL"
+_SRK_KEY = "SUPABASE_SERVICE_ROLE_KEY"
 
-    워크트리(.claude/worktrees/*)나 타 머신(VALUEHIRE_REPO_DIR 지정)에서도 동작해야 한다.
+
+def _env_config() -> tuple[str, str]:
+    """(supabase_url, service_role_key) 를 *같은 출처*에서 짝으로 해석.
+
+    V1 결함 7 반영: URL 과 키가 서로 다른 .env.local 에서 섞여 나오면
+    엉뚱한 프로젝트에 service_role 키를 쏘게 된다 → 둘 다 가진 첫 출처만 채택.
+    우선순위: ① 둘 다 os.environ ② VALUEHIRE_REPO_DIR/.env.local
+    ③ REPO 부터 홈까지 상위 폴더의 .env.local (둘 다 가진 첫 파일).
     """
     import os
 
-    if os.environ.get(key):
-        return os.environ[key].strip()
+    if os.environ.get(_URL_KEY) and os.environ.get(_SRK_KEY):
+        return os.environ[_URL_KEY].strip(), os.environ[_SRK_KEY].strip()
     bases: list[Path] = []
     if os.environ.get("VALUEHIRE_REPO_DIR"):
         bases.append(Path(os.environ["VALUEHIRE_REPO_DIR"]))
@@ -135,17 +168,28 @@ def _env(key: str) -> str:
         cur = cur.parent
     for base in bases:
         env = base / ".env.local"
-        if env.exists():
-            for line in env.read_text().splitlines():
+        if not env.exists():
+            continue
+        found: dict[str, str] = {}
+        for line in env.read_text().splitlines():
+            for key in (_URL_KEY, _SRK_KEY):
                 if line.startswith(key + "="):
-                    return line.split("=", 1)[1].strip()
-    raise RuntimeError(f"{key} 를 환경변수/.env.local 에서 찾지 못했습니다")
+                    found[key] = line.split("=", 1)[1].strip()
+        if found.get(_URL_KEY) and found.get(_SRK_KEY):
+            return found[_URL_KEY], found[_SRK_KEY]
+    raise RuntimeError(
+        f"{_URL_KEY}+{_SRK_KEY} 짝을 같은 출처(환경변수 또는 단일 .env.local)에서 찾지 못했습니다")
 
 
 class JobQueueClient:
     def __init__(self, url: str = "", key: str = "") -> None:
-        self.url = (url or _env("NEXT_PUBLIC_SUPABASE_URL")).rstrip("/")
-        self.key = key or _env("SUPABASE_SERVICE_ROLE_KEY")
+        if url and key:
+            self.url, self.key = url.rstrip("/"), key
+        elif url or key:
+            raise ValueError("url/key 는 둘 다 주거나 둘 다 생략(같은 출처 강제)")
+        else:
+            u, k = _env_config()
+            self.url, self.key = u.rstrip("/"), k
 
     def _call(self, method: str, path: str, payload: Any = None,
               prefer: str = "return=representation") -> Any:
@@ -165,10 +209,21 @@ class JobQueueClient:
         return json.loads(body)
 
     def enqueue(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """new_job_payload 결과만 받는다. None/비정형 dict 는 거부."""
-        if not payload or payload.get("status") != "queued":
+        """new_job_payload 결과만 받는다 — 사후 변조 방지를 위해 필드를 재검증(V1 결함 6)."""
+        if not isinstance(payload, dict):
             raise ValueError("new_job_payload 로 만든 페이로드만 enqueue 가능")
-        rows = self._call("POST", "/jobs", payload)
+        revalidated = new_job_payload(
+            machine=payload.get("machine"),
+            skill=payload.get("skill"),
+            position_url=payload.get("position_url"),
+            requested_by=payload.get("requested_by"),
+            role=payload.get("role"),
+            params=payload.get("params"),
+            account_key=payload.get("account_key", ""),
+        )
+        if revalidated is None or payload.get("status") != "queued":
+            raise ValueError("무효 페이로드 — new_job_payload 검증 실패")
+        rows = self._call("POST", "/jobs", revalidated)
         return rows[0] if isinstance(rows, list) and rows else rows
 
     def claim_next(self, machine: str) -> dict[str, Any] | None:
@@ -183,6 +238,10 @@ class JobQueueClient:
             "POST", "/rpc/release_job",
             release_job_payload(job_id, status, result_summary=result_summary, error=error),
         )
+
+    def cancel(self, job_id: int, reason: str = "") -> Any:
+        """queued/paused_for_human 잡 취소 (cancel_job RPC)."""
+        return self._call("POST", "/rpc/cancel_job", cancel_job_payload(job_id, reason))
 
     def resume(self, job_id: int) -> Any:
         """paused_for_human → queued (/resume 전용 RPC)."""

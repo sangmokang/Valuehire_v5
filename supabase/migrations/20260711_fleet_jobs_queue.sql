@@ -47,8 +47,61 @@ drop policy if exists service_role_account_locks_all on public.account_locks;
 create policy service_role_account_locks_all on public.account_locks
   for all to service_role using (true) with check (true);
 
--- 잡 1건 클레임: 자기 머신 queued 를 FOR UPDATE SKIP LOCKED 로 집고,
--- account_locks 를 잡을 수 있는 잡만 running 전환(계정 글로벌 락 — 세션 밀어내기 방지).
+-- 무결성 보강(V1 적대검증 반영): 라이브 DB 재적용 안전한 DO 블록.
+do $$ begin
+  alter table public.jobs add constraint jobs_position_url_http_chk
+    check (position_url ~ '^https?://' and position_url !~ '\s');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table public.jobs add constraint jobs_requested_by_nonblank_chk
+    check (btrim(requested_by) <> '');
+exception when duplicate_object then null; end $$;
+
+-- 상태 전이 화이트리스트를 DB 경계에서 강제(V1 결함 2: service_role 직접 UPDATE 우회 차단).
+create or replace function public.jobs_transition_guard()
+returns trigger
+language plpgsql
+as $$
+begin
+  if old.status is distinct from new.status then
+    if not (
+         (old.status = 'queued'           and new.status in ('running','cancelled'))
+      or (old.status = 'running'          and new.status in ('paused_for_human','done','failed'))
+      or (old.status = 'paused_for_human' and new.status in ('queued','cancelled'))
+    ) then
+      raise exception '금지된 상태 전이: % -> %', old.status, new.status;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists jobs_transition_guard_trg on public.jobs;
+create trigger jobs_transition_guard_trg
+  before update of status on public.jobs
+  for each row execute function public.jobs_transition_guard();
+
+-- 락 고아화 방지(V1 결함 3): 어떤 경로로든 종결/재큐잉되면 락 자동 해제.
+create or replace function public.jobs_lock_cleanup()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.status in ('done','failed','cancelled','queued') then
+    delete from public.account_locks where job_id = new.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists jobs_lock_cleanup_trg on public.jobs;
+create trigger jobs_lock_cleanup_trg
+  after update of status on public.jobs
+  for each row execute function public.jobs_lock_cleanup();
+
+-- 잡 1건 클레임. V1 결함 1(암묵 커서 프리페치가 여분 행 락 보유) 반영:
+-- FOR-IN 커서 대신 반복마다 LIMIT 1 FOR UPDATE SKIP LOCKED 로 한 행씩만 잠근다.
 create or replace function public.claim_next_job(p_machine text)
 returns setof public.jobs
 language plpgsql
@@ -57,17 +110,22 @@ set search_path = public
 as $$
 declare
   j public.jobs%rowtype;
+  last_id bigint := 0;
   locked boolean;
 begin
   if p_machine not in ('macmini','macbook','winpc') then
     raise exception 'unknown machine: %', p_machine;
   end if;
-  for j in
-    select * from public.jobs
-    where machine = p_machine and status = 'queued'
-    order by id
-    for update skip locked
   loop
+    select * into j from public.jobs
+      where machine = p_machine and status = 'queued' and id > last_id
+      order by id
+      limit 1
+      for update skip locked;
+    if not found then
+      return;  -- 집을 잡 없음 → 빈 결과
+    end if;
+    last_id := j.id;
     if j.account_key = '' then
       locked := true;
     else
@@ -87,11 +145,11 @@ begin
       return;
     end if;
   end loop;
-  return;  -- 집을 잡 없음 → 빈 결과
 end;
 $$;
 
--- 잡 종결/일시정지 + 락 해제. 재큐잉은 resume_job 전용.
+-- 잡 종결/일시정지 + 락 해제. 재큐잉은 resume_job, 취소는 cancel_job 전용
+-- (V1 결함 4: running→cancelled 는 전이 화이트리스트에 없음 — release 에서 제외).
 create or replace function public.release_job(
   p_job_id bigint,
   p_status text,
@@ -103,12 +161,12 @@ security definer
 set search_path = public
 as $$
 begin
-  if p_status not in ('done','failed','cancelled','paused_for_human') then
+  if p_status not in ('done','failed','paused_for_human') then
     raise exception 'release 불가 상태: %', p_status;
   end if;
   update public.jobs
     set status = p_status,
-        finished_at = case when p_status in ('done','failed','cancelled') then now() else finished_at end,
+        finished_at = case when p_status in ('done','failed') then now() else finished_at end,
         result_summary = coalesce(p_result_summary, ''),
         error = coalesce(p_error, '')
     where id = p_job_id and status = 'running';
@@ -116,6 +174,25 @@ begin
     raise exception 'running 상태의 잡 % 가 없습니다', p_job_id;
   end if;
   delete from public.account_locks where job_id = p_job_id;
+  return query select * from public.jobs where id = p_job_id;
+end;
+$$;
+
+-- 취소: queued 또는 paused_for_human 에서만(화이트리스트와 1:1 정합).
+create or replace function public.cancel_job(p_job_id bigint, p_reason text default '')
+returns setof public.jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.jobs
+    set status = 'cancelled', finished_at = now(),
+        result_summary = coalesce(p_reason, '')
+    where id = p_job_id and status in ('queued','paused_for_human');
+  if not found then
+    raise exception 'queued/paused_for_human 상태의 잡 % 가 없습니다', p_job_id;
+  end if;
   return query select * from public.jobs where id = p_job_id;
 end;
 $$;
@@ -142,6 +219,8 @@ $$;
 revoke all on function public.claim_next_job(text) from public, anon, authenticated;
 revoke all on function public.release_job(bigint, text, text, text) from public, anon, authenticated;
 revoke all on function public.resume_job(bigint) from public, anon, authenticated;
+revoke all on function public.cancel_job(bigint, text) from public, anon, authenticated;
 grant execute on function public.claim_next_job(text) to service_role;
 grant execute on function public.release_job(bigint, text, text, text) to service_role;
 grant execute on function public.resume_job(bigint) to service_role;
+grant execute on function public.cancel_job(bigint, text) to service_role;
