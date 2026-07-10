@@ -1,0 +1,33 @@
+{
+  "claim_id": "fleet-heartbeat-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Claude Fable 5 (2026-07-11 야간 자율)",
+    "claim": "1분 heartbeat + 5분 stale watchdog 경보(30분 억제)가 배선·라이브 검증됨",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_heartbeat.py",
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "scripts/fleet_watchdog.py",
+      "supabase/migrations/20260711_fleet_heartbeat.sql",
+      "ops/launchd/com.valuehire.fleet-watchdog.plist",
+      "tests/test_fleet_heartbeat.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1286 passed, 4 xfailed, 14 subtests passed",
+    "live_evidence": "마이그레이션 201+스키마리로드; macmini/macbook record_heartbeat→heartbeats_epoch 조회→winpc stale 판정→watchdog --once 가 winpc 경보 발송(OPS_HEALTH)"
+  },
+  "v1": {"author": "fresh Claude 서브에이전트", "verdict": "pending"},
+  "v2": {"author": "fresh Claude reset (goal+verdict 만 읽음)", "verdict": "pending"},
+  "failed_attempts": [
+    {
+      "attempt": "record_heartbeat RPC 1차 호출",
+      "root_cause": "PostgREST 스키마 캐시가 새 함수 미인식(404)",
+      "repro": "마이그레이션 201 직후 /rpc/record_heartbeat → 404",
+      "next_change": "notify pgrst, 'reload schema' 후 재시도 → 200"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "진행중"
+}
