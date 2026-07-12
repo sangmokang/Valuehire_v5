@@ -2,6 +2,6 @@
 # 신규 환경: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 # 기존: .venv-playwright 가 있으면 verify.sh 가 자동으로 그걸 우선 사용.
 pytest>=9,<10
-# 일부 테스트가 가져오는 소스 모듈이 import 시점에 playwright를 당긴다(브라우저 실행은 안 함 — 가짜 매니저 사용).
-# CI에서 ModuleNotFoundError 방지용. 브라우저 바이너리(playwright install)는 불필요.
+# DOM 가시성·구조화 회사 추출 회귀 테스트가 실제 headless Chromium을 실행한다.
+# CI는 .github/workflows/verify.yml에서 `playwright install --with-deps chromium`을 함께 수행한다.
 playwright==1.60.0
