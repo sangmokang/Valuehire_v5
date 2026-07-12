@@ -66,17 +66,9 @@ _NUMERIC_DATE_RE = re.compile(
     r"(?P<end_month>\d{1,2})\s*월?)(?!\d)",
     re.I,
 )
-_MONTH_NUMBER = {
-    name: number
-    for number, names in enumerate(
-        (("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"),
-         ("may",), ("jun", "june"), ("jul", "july"), ("aug", "august"),
-         ("sep", "september"), ("oct", "october"), ("nov", "november"),
-         ("dec", "december")),
-        1,
-    )
-    for name in names
-}
+_MONTH_NUMBER: dict[str, int] = {}
+for _number, _name in enumerate("january february march april may june july august september october november december".split(), 1):
+    _MONTH_NUMBER[_name] = _MONTH_NUMBER[_name[:3]] = _number
 _YEAR_MONTH_RE = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$")
 
 ClickUpSearchTasks = Callable[..., Sequence[Mapping[str, object]]]
@@ -396,10 +388,7 @@ def _source_date_ranges(visible_text: object) -> list[dict[str, str]]:
             f"{match.group('end_year')}-{int(match.group('end_month')):02d}"
         )
         found.append((match.start(), start, end))
-    return [
-        {"start_month": start, "end_month": end}
-        for _offset, start, end in sorted(found)
-    ]
+    return [{"start_month": start, "end_month": end} for _offset, start, end in sorted(found)]
 
 
 def _candidate_spec(result: Mapping[str, object], channel: Channel) -> dict[str, object]:
@@ -461,16 +450,10 @@ def _tool_text(tool_input: Mapping[str, object]) -> str:
 
 
 def _canonical_parent_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
-    allowed_keys = {
-        "list_id", "name", "description", "markdown_description", "parent", "caller",
-    }
+    allowed_keys = {"list_id", "name", "description", "markdown_description", "parent", "caller"}
     if set(tool_input) - allowed_keys:
         return False
-    descriptions = [
-        str(tool_input[key])
-        for key in ("description", "markdown_description")
-        if tool_input.get(key)
-    ]
+    descriptions = [str(tool_input[key]) for key in ("description", "markdown_description") if tool_input.get(key)]
     if len(descriptions) != 1:
         return False
     caller = tool_input.get("caller")
@@ -559,11 +542,7 @@ def _deduplicated_history(raw: object) -> list[dict[str, str]]:
         if key in seen:
             continue
         seen.add(key)
-        output.append({
-            "company": item.company,
-            "start_month": item.start_month,
-            "end_month": item.end_month,
-        })
+        output.append({"company": item.company, "start_month": item.start_month, "end_month": item.end_month})
     return output
 
 
