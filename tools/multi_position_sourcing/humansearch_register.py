@@ -461,10 +461,27 @@ def _tool_text(tool_input: Mapping[str, object]) -> str:
 
 
 def _canonical_parent_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
+    allowed_keys = {
+        "list_id", "name", "description", "markdown_description", "parent", "caller",
+    }
+    if set(tool_input) - allowed_keys:
+        return False
+    descriptions = [
+        str(tool_input[key])
+        for key in ("description", "markdown_description")
+        if tool_input.get(key)
+    ]
+    if len(descriptions) != 1:
+        return False
+    caller = tool_input.get("caller")
+    if caller is not None and not (
+        isinstance(caller, Mapping)
+        and set(caller) <= {"type"}
+        and caller.get("type") == "direct"
+    ):
+        return False
     name = str(tool_input.get("name", "") or "")
-    description = str(
-        tool_input.get("description") or tool_input.get("markdown_description") or ""
-    )
+    description = descriptions[0]
     lines = description.splitlines()
     if len(lines) != 8 or not name.endswith(" — AI Search"):
         return False

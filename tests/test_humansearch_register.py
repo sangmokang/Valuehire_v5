@@ -181,6 +181,20 @@ def test_candidate_spec_hook_fails_closed_on_exact_manual_bypass_shape() -> None
             },
         }
         assert candidate_spec_hook_cli(json.dumps(disguised)) == (2, "candidate_parent_missing")
+    extra_fields = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "mcp__clickup__clickup_create_task",
+        "tool_input": {
+            "list_id": FY26_AI_SEARCH_LIST_ID,
+            "name": "홍길동 — AI Search",
+            "description": parent_description,
+            "custom_fields": [
+                {"id": "profile", "value": "https://www.linkedin.com/talent/profile/x"},
+                {"id": "score", "value": 99},
+            ],
+        },
+    }
+    assert candidate_spec_hook_cli(json.dumps(extra_fields)) == (2, "candidate_parent_missing")
 
 
 def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None:
@@ -297,6 +311,7 @@ def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() 
                 "description": _parent_task_description(
                     position_name=position_name, position_id="position-1", channel="linkedin_rps"
                 ),
+                "caller": {"type": "direct"},
             },
         }
         assert candidate_spec_hook_cli(json.dumps(parent_event)) == (0, "")
