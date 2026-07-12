@@ -157,6 +157,13 @@ def test_candidate_spec_hook_fails_closed_on_exact_manual_bypass_shape() -> None
         "tool_input": {"task_id": "86ey7gzrr", "name": "Candidate — 99점 강력추천"},
     }
     assert candidate_spec_hook_cli(json.dumps(score_only_update)) == (2, "candidate_spec_missing")
+    for tool_name, tool_input, reason in (
+        ("mcp__clickup__clickup_create_task", {"list_id": FY26_AI_SEARCH_LIST_ID, "name": "홍길동 후보"}, "candidate_parent_missing"),
+        ("mcp__clickup__clickup_update_task", {"task_id": "86ey7gzrr", "name": "홍길동 후보"}, "candidate_spec_missing"),
+    ):
+        assert candidate_spec_hook_cli(json.dumps({
+            "hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": tool_input,
+        })) == (2, reason)
 
 
 def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None:
@@ -181,6 +188,67 @@ def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None
     )
 
     assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_incomplete")
+
+
+@pytest.mark.parametrize(
+    ("channel", "visible_text"),
+    [
+        ("linkedin_rps", _linkedin_raw(
+            "Jan 2010 – Jan 2020", "January 2021 – June 2021", "July 2021 – November 2021"
+        )),
+        ("jobkorea", "경력\n2020.01 ~ 2025.01\n2021.01 ~ 2021.06\n2022.01 ~ 2022.06"),
+    ],
+)
+def test_candidate_spec_hook_rejects_partial_history_in_all_source_formats(
+    channel: str, visible_text: str
+) -> None:
+    partial = _runner_dict(
+        url="https://www.jobkorea.co.kr/profile/partial" if channel == "jobkorea" else
+            "https://www.linkedin.com/talent/profile/full-month-partial",
+        visible_text=visible_text,
+        employment_history=[
+            {"company": "Stable", "start_month": "2020-01", "end_month": "2025-01"}
+            if channel == "jobkorea" else
+            {"company": "Stable", "start_month": "2010-01", "end_month": "2020-01"},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(partial, position_id="position-1", channel=channel),
+    )
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_incomplete")
+
+
+def test_candidate_spec_hook_rejects_reversed_tenure_ranges() -> None:
+    invalid = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/reversed",
+        visible_text=_linkedin_raw("Dec 2023 – Jan 2023", "Jun 2024 – Mar 2024"),
+        employment_history=[
+            {"company": "A", "start_month": "2023-12", "end_month": "2023-01"},
+            {"company": "B", "start_month": "2024-06", "end_month": "2024-03"},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(invalid, position_id="position-1", channel="linkedin_rps"),
+    )
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_invalid")
+
+    bad_month = _runner_dict(
+        url="https://www.jobkorea.co.kr/profile/bad-month",
+        visible_text="경력\n2023.00 ~ 2023.05",
+        employment_history=[
+            {"company": "A", "start_month": "2023-00", "end_month": "2023-05"},
+        ],
+    )
+    bad_month_event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(bad_month, position_id="position-1", channel="jobkorea"),
+    )
+    assert candidate_spec_hook_cli(json.dumps(bad_month_event)) == (2, "candidate_history_invalid")
 
 
 def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() -> None:
@@ -243,8 +311,8 @@ def test_candidate_spec_hook_deduplicates_titles_and_excludes_current_tenure() -
             "Jan 2024 – Present",
         ),
         employment_history=[
-            {"company": "One short role", "start_month": "2023-01", "end_month": "2023-06"},
-            {"company": "Duplicate title", "start_month": "2023-01", "end_month": "2023-06"},
+            {"company": "Same company", "start_month": "2023-01", "end_month": "2023-06"},
+            {"company": "Same company", "start_month": "2023-01", "end_month": "2023-06"},
             {"company": "Twelve months", "start_month": "2020-01", "end_month": "2021-01"},
             {"company": "Current", "start_month": "2024-01", "end_month": ""},
         ],
@@ -256,6 +324,21 @@ def test_candidate_spec_hook_deduplicates_titles_and_excludes_current_tenure() -
     )
 
     assert candidate_spec_hook_cli(json.dumps(event)) == (0, "")
+
+    two_companies = {**edge, "visible_text": _linkedin_raw(
+        "Jan 2023 – Jun 2023", "Jan 2023 – Jun 2023"
+    ), "employment_history": [
+        {"company": "Company A", "start_month": "2023-01", "end_month": "2023-06"},
+        {"company": "Company B", "start_month": "2023-01", "end_month": "2023-06"},
+    ]}
+    two_company_event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(
+            two_companies, position_id="position-1", channel="linkedin_rps"
+        ),
+    )
+    assert candidate_spec_hook_cli(json.dumps(two_company_event)) == (2, "frequent_job_change")
 
 
 def test_claude_and_codex_hooks_share_the_same_fail_closed_command() -> None:

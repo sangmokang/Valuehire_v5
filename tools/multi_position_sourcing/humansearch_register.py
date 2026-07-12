@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
@@ -47,17 +48,36 @@ CANDIDATE_SPEC_MARKER = "VALUEHIRE_CANDIDATE_SPEC_V1:"
 _CANDIDATE_SPEC_RE = re.compile(
     rf"<!--\s*{CANDIDATE_SPEC_MARKER}([A-Za-z0-9_-]+)\s*-->"
 )
-_LINKEDIN_DATE_RE = re.compile(
-    r"\b([A-Z][a-z]{2})\s+(\d{4})\s*[–—-]\s*"
-    r"(Present|([A-Z][a-z]{2})\s+(\d{4}))\b"
+_MONTH_NAME = (
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+)
+_ENGLISH_DATE_RE = re.compile(
+    rf"\b(?P<start_month>{_MONTH_NAME})\s+(?P<start_year>\d{{4}})\s*[–—-]\s*"
+    rf"(?:(?P<current>Present|Current|현재|재직중)|"
+    rf"(?P<end_month>{_MONTH_NAME})\s+(?P<end_year>\d{{4}}))\b",
+    re.I,
+)
+_NUMERIC_DATE_RE = re.compile(
+    r"(?<!\d)(?P<start_year>\d{4})\s*(?:[./-]\s*|년\s*)"
+    r"(?P<start_month>\d{1,2})\s*월?\s*(?:~|–|—|to|-)\s*"
+    r"(?:(?P<current>Present|Current|현재|재직중)|"
+    r"(?P<end_year>\d{4})\s*(?:[./-]\s*|년\s*)"
+    r"(?P<end_month>\d{1,2})\s*월?)(?!\d)",
+    re.I,
 )
 _MONTH_NUMBER = {
-    month: index
-    for index, month in enumerate(
-        ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+    name: number
+    for number, names in enumerate(
+        (("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"),
+         ("may",), ("jun", "june"), ("jul", "july"), ("aug", "august"),
+         ("sep", "september"), ("oct", "october"), ("nov", "november"),
+         ("dec", "december")),
         1,
     )
+    for name in names
 }
+_YEAR_MONTH_RE = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$")
 
 ClickUpSearchTasks = Callable[..., Sequence[Mapping[str, object]]]
 ClickUpCreateTask = Callable[..., Mapping[str, object] | tuple[str, str]]
@@ -357,18 +377,29 @@ def _candidate_task_name(result: Mapping[str, object]) -> str:
 
 
 def _source_date_ranges(visible_text: object) -> list[dict[str, str]]:
-    """LinkedIn 원문 날짜를 구조 경력과 별도로 추출한다(중복 직함 날짜는 1건)."""
-    ranges: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for match in _LINKEDIN_DATE_RE.finditer(str(visible_text or "")):
-        start = f"{match.group(2)}-{_MONTH_NUMBER[match.group(1)]:02d}"
-        end = "" if match.group(3) == "Present" else (
-            f"{match.group(5)}-{_MONTH_NUMBER[match.group(4)]:02d}"
+    """영문 월·숫자형 원문 날짜를 별도 추출한다. 같은 날짜의 출현 횟수도 보존한다."""
+    text = str(visible_text or "")
+    found: list[tuple[int, str, str]] = []
+    for match in _ENGLISH_DATE_RE.finditer(text):
+        start = (
+            f"{match.group('start_year')}-"
+            f"{_MONTH_NUMBER[match.group('start_month').lower()]:02d}"
         )
-        if (start, end) not in seen:
-            seen.add((start, end))
-            ranges.append({"start_month": start, "end_month": end})
-    return ranges
+        end = "" if match.group("current") else (
+            f"{match.group('end_year')}-"
+            f"{_MONTH_NUMBER[match.group('end_month').lower()]:02d}"
+        )
+        found.append((match.start(), start, end))
+    for match in _NUMERIC_DATE_RE.finditer(text):
+        start = f"{match.group('start_year')}-{int(match.group('start_month')):02d}"
+        end = "" if match.group("current") else (
+            f"{match.group('end_year')}-{int(match.group('end_month')):02d}"
+        )
+        found.append((match.start(), start, end))
+    return [
+        {"start_month": start, "end_month": end}
+        for _offset, start, end in sorted(found)
+    ]
 
 
 def _candidate_spec(result: Mapping[str, object], channel: Channel) -> dict[str, object]:
@@ -440,7 +471,7 @@ def _candidate_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
     ) or CANDIDATE_SPEC_MARKER in text or bool(
         re.search(r"https?://\S*(?:linkedin\.com|saramin\.co\.kr|jobkorea\.co\.kr)\S*", text, re.I)
     ) or bool(
-        re.search(r"profile_url|\"score\"|점수|강력추천|\b\d{2,3}\s*점", text, re.I)
+        re.search(r"profile_url|\"score\"|점수|강력추천|후보|candidate|\b\d{2,3}\s*점", text, re.I)
     )
 
 
@@ -457,8 +488,30 @@ def _decode_candidate_spec(tool_input: Mapping[str, object]) -> dict[str, object
     return value if isinstance(value, dict) else None
 
 
-def _history_signature(raw: object) -> set[tuple[str, str]]:
-    return {(item.start_month, item.end_month) for item in _reconstruct_tenures(raw)}
+def _valid_tenure(item: EmploymentTenure) -> bool:
+    return bool(
+        _YEAR_MONTH_RE.fullmatch(item.start_month)
+        and (not item.end_month or _YEAR_MONTH_RE.fullmatch(item.end_month))
+        and (not item.end_month or item.start_month <= item.end_month)
+    )
+
+
+def _deduplicated_history(raw: object) -> list[dict[str, str]]:
+    """동일 회사·기간의 복수 직함만 합친다. 회사 미상은 안전하게 각각 센다."""
+    output: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for index, item in enumerate(_reconstruct_tenures(raw)):
+        company = _normalize(item.company)
+        key = (company or f"unknown:{index}", item.start_month, item.end_month)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append({
+            "company": item.company,
+            "start_month": item.start_month,
+            "end_month": item.end_month,
+        })
+    return output
 
 
 def candidate_spec_hook_reason(event: object) -> str | None:
@@ -503,22 +556,23 @@ def candidate_spec_hook_reason(event: object) -> str | None:
     source_ranges = _source_date_ranges(visible_text)
     if source_ranges != spec.get("source_date_ranges"):
         return "candidate_source_ranges_mismatch"
-    history_signature = _history_signature(spec.get("employment_history"))
-    if not history_signature:
+    history = _reconstruct_tenures(spec.get("employment_history"))
+    if not history:
         return "candidate_history_missing"
-    if channel == "linkedin_rps":
-        source_signature = _history_signature(source_ranges)
-        if not source_signature:
-            return "candidate_source_dates_missing"
-        if not source_signature.issubset(history_signature):
-            return "candidate_history_incomplete"
+    if any(not _valid_tenure(item) for item in history):
+        return "candidate_history_invalid"
+    source_history = _reconstruct_tenures(source_ranges)
+    if not source_history:
+        return "candidate_source_dates_missing"
+    if any(not _valid_tenure(item) for item in source_history):
+        return "candidate_source_dates_invalid"
+    source_count = Counter((item.start_month, item.end_month) for item in source_history)
+    history_count = Counter((item.start_month, item.end_month) for item in history)
+    if any(history_count[period] < count for period, count in source_count.items()):
+        return "candidate_history_incomplete"
 
     profile_input = dict(spec)
-    # 동일 회사/동일 기간의 복수 직함은 한 재직이다. LinkedIn은 원문 날짜 기준으로 중복 제거한 뒤
-    # 정본 판정기에 넘겨, 중복 직함 두 개를 이직 두 번으로 세지 않는다.
-    profile_input["employment_history"] = source_ranges if channel == "linkedin_rps" else [
-        {"start_month": start, "end_month": end} for start, end in sorted(history_signature)
-    ]
+    profile_input["employment_history"] = _deduplicated_history(history)
     profile = reconstruct_captured_profile(profile_input, channel)
     if profile is None:
         return "candidate_profile_invalid"
