@@ -271,19 +271,19 @@ def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() 
             clean, position_id="position-1", channel="linkedin_rps"
         ),
     )
-    parent_event = {
-        **candidate_event,
-        "tool_input": {
-            "list_id": FY26_AI_SEARCH_LIST_ID,
-            "name": "Position — AI Search",
-            "description": _parent_task_description(
-                position_name="Position", position_id="position-1", channel="linkedin_rps"
-            ),
-        },
-    }
-
     assert candidate_spec_hook_cli(json.dumps(candidate_event)) == (0, "")
-    assert candidate_spec_hook_cli(json.dumps(parent_event)) == (0, "")
+    for position_name in ("Candidate Experience Manager", "후보자 경험 담당자"):
+        parent_event = {
+            **candidate_event,
+            "tool_input": {
+                "list_id": FY26_AI_SEARCH_LIST_ID,
+                "name": f"{position_name} — AI Search",
+                "description": _parent_task_description(
+                    position_name=position_name, position_id="position-1", channel="linkedin_rps"
+                ),
+            },
+        }
+        assert candidate_spec_hook_cli(json.dumps(parent_event)) == (0, "")
     code, reason, updated_input = _candidate_spec_evaluation(json.dumps(candidate_event))
     assert (code, reason) == (0, "")
     assert "VALUEHIRE_CANDIDATE_SPEC" not in updated_input["description"]

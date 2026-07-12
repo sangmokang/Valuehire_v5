@@ -460,9 +460,31 @@ def _tool_text(tool_input: Mapping[str, object]) -> str:
     return json.dumps(tool_input, ensure_ascii=False, default=str)
 
 
+def _canonical_parent_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
+    name = str(tool_input.get("name", "") or "")
+    description = str(
+        tool_input.get("description") or tool_input.get("markdown_description") or ""
+    )
+    suffix = " — AI Search"
+    if not name.endswith(suffix):
+        return False
+    position_name = name[:-len(suffix)]
+    return bool(
+        "create_task" in tool_name.lower()
+        and str(tool_input.get("list_id", "")) == FY26_AI_SEARCH_LIST_ID
+        and not tool_input.get("parent")
+        and description.startswith("[AI Search / Humansearch 등록]\n")
+        and f"\n포지션: {position_name}\n" in description
+        and f"칸반 리스트: FY26AI_Search ({FY26_AI_SEARCH_LIST_URL})" in description
+        and "중복검사: 부모 Task 검색 후 재사용" in description
+    )
+
+
 def _candidate_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
     tool = tool_name.lower()
     if "clickup_" not in tool or not ("create_task" in tool or "update_task" in tool):
+        return False
+    if _canonical_parent_write(tool_name, tool_input):
         return False
     text = _tool_text(tool_input)
     name = str(tool_input.get("name", "") or "")
