@@ -9026,6 +9026,32 @@ set search_path = public"""
         self.assertTrue(is_authorized_discord_dm("834330913469890570", users))
         self.assertFalse(is_authorized_discord_dm("999", users))
 
+    def test_discord_contacts_table_scoped_to_its_own_heading(self) -> None:
+        # self-attack(ultracode 적대검증 2026-07-13): 예시/코드블록 안에 있는 표가 실제
+        # 연락처로 오인되면 안 된다 — "## Discord Contacts" 표제 아래 구간만 인정한다.
+        markdown = """
+## Some Other Section
+
+Example format, not a real contact:
+| Name | Alias | Email | Discord ID |
+| --- | --- | --- | --- |
+| 가짜 |  | fake@example.com | 999999999999999999 |
+
+## Discord Contacts
+
+| Name | Alias | Email | Discord ID |
+| --- | --- | --- | --- |
+| 김충수 |  | kcs@valueconnect.kr | 834330913469890570 |
+
+## Supabase
+
+| Key | Value |
+| --- | --- |
+| whatever | 111111111111111111 |
+"""
+        users = authorized_discord_users_from_markdown(markdown)
+        self.assertEqual({user.discord_id for user in users}, {"834330913469890570"})
+
     def test_portal_credential_status_supports_per_portal_and_shared_env_names(self) -> None:
         status = portal_credential_status(
             {

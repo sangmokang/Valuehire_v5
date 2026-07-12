@@ -15,15 +15,34 @@ class DiscordAuthorizedUser:
     discord_id: str
 
 
+_CONTACTS_HEADING_RE = re.compile(r"^#{1,6}\s*Discord Contacts\s*$")
+_ANY_HEADING_RE = re.compile(r"^#{1,6}\s")
+
+
 def authorized_discord_users_from_markdown(markdown: str) -> tuple[DiscordAuthorizedUser, ...]:
     """Parse the Discord Contacts table from docs/search-access.md.
 
     The parser is deliberately small and fail-closed: only rows with an all-digit
-    Discord ID are returned. Header/separator rows and malformed rows are ignored.
+    Discord ID are returned. When a ``## Discord Contacts`` heading is present,
+    only rows between it and the next heading count — an illustrative
+    "| Name | ... | 123... |" example row placed elsewhere in the doc (even
+    inside a fenced code block) must never be silently treated as an authorized
+    contact. Markdown fragments with no heading at all (e.g. a bare table
+    passed directly by a caller/test) are scanned in full, unchanged from prior
+    behavior.
     """
+    has_heading = any(_CONTACTS_HEADING_RE.match(line.strip()) for line in markdown.splitlines())
     users: list[DiscordAuthorizedUser] = []
+    in_contacts_section = not has_heading
     for raw_line in markdown.splitlines():
         line = raw_line.strip()
+        if _CONTACTS_HEADING_RE.match(line):
+            in_contacts_section = True
+            continue
+        if has_heading and in_contacts_section and _ANY_HEADING_RE.match(line):
+            break
+        if not in_contacts_section:
+            continue
         if not line.startswith("|") or "Discord ID" in line or "---" in line:
             continue
         cells = [cell.strip() for cell in line.strip("|").split("|")]
