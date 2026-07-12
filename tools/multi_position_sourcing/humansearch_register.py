@@ -6,10 +6,14 @@
 """
 from __future__ import annotations
 
+import base64
+from collections import Counter
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 import os
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -40,6 +44,32 @@ PROFILE_SAVE_EVIDENCE_FIELDS = (
     "supabase_profile_archive_id",
 )
 REQUIRED_CANDIDATE_OUTPUT_FIELDS = ("profile_url", "score", "why_fit", "profile_summary")
+CANDIDATE_SPEC_MARKER = "VALUEHIRE_CANDIDATE_SPEC_V1:"
+_CANDIDATE_SPEC_RE = re.compile(
+    rf"<!--\s*{CANDIDATE_SPEC_MARKER}([A-Za-z0-9_-]+)\s*-->"
+)
+_MONTH_NAME = (
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+)
+_ENGLISH_DATE_RE = re.compile(
+    rf"\b(?P<start_month>{_MONTH_NAME})\s+(?P<start_year>\d{{4}})\s*[–—-]\s*"
+    rf"(?:(?P<current>Present|Current|현재|재직중)|"
+    rf"(?P<end_month>{_MONTH_NAME})\s+(?P<end_year>\d{{4}}))\b",
+    re.I,
+)
+_NUMERIC_DATE_RE = re.compile(
+    r"(?<!\d)(?P<start_year>\d{4})\s*(?:[./-]\s*|년\s*)"
+    r"(?P<start_month>\d{1,2})\s*월?\s*(?:~|–|—|to|-)\s*"
+    r"(?:(?P<current>Present|Current|현재|재직중)|"
+    r"(?P<end_year>\d{4})\s*(?:[./-]\s*|년\s*)"
+    r"(?P<end_month>\d{1,2})\s*월?)(?!\d)",
+    re.I,
+)
+_MONTH_NUMBER: dict[str, int] = {}
+for _number, _name in enumerate("january february march april may june july august september october november december".split(), 1):
+    _MONTH_NUMBER[_name] = _MONTH_NUMBER[_name[:3]] = _number
+_YEAR_MONTH_RE = re.compile(r"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])$")
 
 ClickUpSearchTasks = Callable[..., Sequence[Mapping[str, object]]]
 ClickUpCreateTask = Callable[..., Mapping[str, object] | tuple[str, str]]
@@ -338,6 +368,56 @@ def _candidate_task_name(result: Mapping[str, object]) -> str:
     return f"{name} — {score}점{otw}{suffix} · {result['url']}"
 
 
+def _source_date_ranges(visible_text: object) -> list[dict[str, str]]:
+    """영문 월·숫자형 원문 날짜를 별도 추출한다. 같은 날짜의 출현 횟수도 보존한다."""
+    text = str(visible_text or "")
+    found: list[tuple[int, str, str]] = []
+    for match in _ENGLISH_DATE_RE.finditer(text):
+        start = (
+            f"{match.group('start_year')}-"
+            f"{_MONTH_NUMBER[match.group('start_month').lower()]:02d}"
+        )
+        end = "" if match.group("current") else (
+            f"{match.group('end_year')}-"
+            f"{_MONTH_NUMBER[match.group('end_month').lower()]:02d}"
+        )
+        found.append((match.start(), start, end))
+    for match in _NUMERIC_DATE_RE.finditer(text):
+        start = f"{match.group('start_year')}-{int(match.group('start_month')):02d}"
+        end = "" if match.group("current") else (
+            f"{match.group('end_year')}-{int(match.group('end_month')):02d}"
+        )
+        found.append((match.start(), start, end))
+    return [{"start_month": start, "end_month": end} for _offset, start, end in sorted(found)]
+
+
+def _candidate_spec(result: Mapping[str, object], channel: Channel) -> dict[str, object]:
+    visible_text = str(result.get("visible_text", "") or "")
+    history = [
+        {"company": item.company, "start_month": item.start_month, "end_month": item.end_month}
+        for item in _reconstruct_tenures(result.get("employment_history", ()))
+    ]
+    return {
+        "version": 1,
+        "profile_url": str(result.get("url") or result.get("profile_url") or ""),
+        "channel": channel,
+        "score": result.get("score"),
+        "summary": str(result.get("summary", "") or ""),
+        "headline": str(result.get("headline", "") or ""),
+        "visible_text": visible_text,
+        "visible_text_sha256": hashlib.sha256(visible_text.encode()).hexdigest(),
+        "education": str(result.get("education", "") or ""),
+        "employment_history": history,
+        "source_date_ranges": _source_date_ranges(visible_text),
+        "saved_profile_evidence": _saved_profile_evidence_text(result),
+    }
+
+
+def _encoded_candidate_spec(result: Mapping[str, object], channel: Channel) -> str:
+    raw = json.dumps(_candidate_spec(result, channel), ensure_ascii=False, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
 def _candidate_task_description(
     result: Mapping[str, object],
     *,
@@ -359,8 +439,216 @@ def _candidate_task_description(
             "",
             "매칭 이유:",
             why_fit_text,
+            "",
+            f"<!-- {CANDIDATE_SPEC_MARKER}{_encoded_candidate_spec(result, channel)} -->",
         ]
     )
+
+
+def _tool_text(tool_input: Mapping[str, object]) -> str:
+    return json.dumps(tool_input, ensure_ascii=False, default=str)
+
+
+def _canonical_parent_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
+    allowed_keys = {"list_id", "name", "description", "markdown_description", "parent", "caller"}
+    if set(tool_input) - allowed_keys:
+        return False
+    descriptions = [str(tool_input[key]) for key in ("description", "markdown_description") if tool_input.get(key)]
+    if len(descriptions) != 1:
+        return False
+    caller = tool_input.get("caller")
+    if caller is not None and not (
+        isinstance(caller, Mapping)
+        and set(caller) <= {"type"}
+        and caller.get("type") == "direct"
+    ):
+        return False
+    name = str(tool_input.get("name", "") or "")
+    description = descriptions[0]
+    lines = description.splitlines()
+    if len(lines) != 8 or not name.endswith(" — AI Search"):
+        return False
+    if not lines[1].startswith("원 포지션 ID: ") or not lines[2].startswith("포지션: "):
+        return False
+    if not lines[3].startswith("채널: "):
+        return False
+    position_id = lines[1].removeprefix("원 포지션 ID: ")
+    position_name = lines[2].removeprefix("포지션: ")
+    channel = lines[3].removeprefix("채널: ")
+    return bool(
+        "create_task" in tool_name.lower()
+        and str(tool_input.get("list_id", "")) == FY26_AI_SEARCH_LIST_ID
+        and not tool_input.get("parent")
+        and name == _parent_task_name(position_name)
+        and channel in ("linkedin_rps", "saramin", "jobkorea")
+        and description == _parent_task_description(
+            position_name=position_name,
+            position_id="" if position_id == "(미상)" else position_id,
+            channel=channel,
+        )
+    )
+
+
+def _candidate_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
+    tool = tool_name.lower()
+    if "clickup_" not in tool or not ("create_task" in tool or "update_task" in tool):
+        return False
+    if _canonical_parent_write(tool_name, tool_input):
+        return False
+    if "create_task" in tool and str(tool_input.get("list_id", "")) == FY26_AI_SEARCH_LIST_ID:
+        return True
+    text = _tool_text(tool_input)
+    name = str(tool_input.get("name", "") or "")
+    return (
+        str(tool_input.get("list_id", "")) == FY26_AI_SEARCH_LIST_ID
+        and bool(tool_input.get("parent"))
+    ) or CANDIDATE_SPEC_MARKER in text or bool(
+        re.search(r"https?://\S*(?:linkedin\.com|saramin\.co\.kr|jobkorea\.co\.kr)\S*", text, re.I)
+    ) or bool(
+        re.search(r"\"score\"|점수|강력추천|\b\d{2,3}\s*점", text, re.I)
+    ) or bool(
+        re.search(r"후보|candidate", name, re.I)
+    )
+
+
+def _decode_candidate_spec(tool_input: Mapping[str, object]) -> dict[str, object] | None:
+    match = _CANDIDATE_SPEC_RE.search(_tool_text(tool_input))
+    if not match:
+        return None
+    try:
+        token = match.group(1)
+        decoded = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        value = json.loads(decoded)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _valid_tenure(item: EmploymentTenure) -> bool:
+    return bool(
+        _YEAR_MONTH_RE.fullmatch(item.start_month)
+        and (not item.end_month or _YEAR_MONTH_RE.fullmatch(item.end_month))
+        and (not item.end_month or item.start_month <= item.end_month)
+    )
+
+
+def _deduplicated_history(raw: object) -> list[dict[str, str]]:
+    """동일 회사·기간의 복수 직함만 합친다. 회사 미상은 안전하게 각각 센다."""
+    output: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for index, item in enumerate(_reconstruct_tenures(raw)):
+        company = _normalize(item.company)
+        key = (company or f"unknown:{index}", item.start_month, item.end_month)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append({"company": item.company, "start_month": item.start_month, "end_month": item.end_month})
+    return output
+
+
+def candidate_spec_hook_reason(event: object) -> str | None:
+    """Claude/Codex 공통 PreToolUse 판정. None이면 허용, 문자열이면 exit 2 차단."""
+    if not isinstance(event, Mapping):
+        return "candidate_hook_input_invalid"
+    tool_name = str(event.get("tool_name", "") or "")
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, Mapping):
+        return "candidate_hook_input_invalid"
+    if not _candidate_write(tool_name, tool_input):
+        return None
+
+    is_create = "create_task" in tool_name.lower()
+    if is_create and str(tool_input.get("list_id", "")) != FY26_AI_SEARCH_LIST_ID:
+        return "wrong_list_id"
+    if is_create and not tool_input.get("parent"):
+        return "candidate_parent_missing"
+
+    spec = _decode_candidate_spec(tool_input)
+    if spec is None:
+        return "candidate_spec_missing"
+    if spec.get("version") != 1:
+        return "candidate_spec_version_invalid"
+    profile_url = str(spec.get("profile_url", "") or "")
+    if not is_valid_profile_url(profile_url) or profile_url not in _tool_text(tool_input):
+        return "candidate_identity_mismatch"
+    score = spec.get("score")
+    if not (isinstance(score, (int, float)) and math.isfinite(score) and score >= PASS_THRESHOLD):
+        return "candidate_score_invalid"
+    if spec.get("saved_profile_evidence") in (None, "", "missing"):
+        return "candidate_evidence_missing"
+    visible_text = str(spec.get("visible_text", "") or "")
+    if hashlib.sha256(visible_text.encode()).hexdigest() != spec.get("visible_text_sha256"):
+        return "candidate_source_hash_mismatch"
+
+    channel = str(spec.get("channel", "") or "")
+    if channel == "linkedin":
+        channel = "linkedin_rps"
+    if channel not in ("linkedin_rps", "saramin", "jobkorea"):
+        return "candidate_channel_invalid"
+    source_ranges = _source_date_ranges(visible_text)
+    if source_ranges != spec.get("source_date_ranges"):
+        return "candidate_source_ranges_mismatch"
+    history = _reconstruct_tenures(spec.get("employment_history"))
+    if not history:
+        return "candidate_history_missing"
+    if any(not _valid_tenure(item) for item in history):
+        return "candidate_history_invalid"
+    source_history = _reconstruct_tenures(source_ranges)
+    if not source_history:
+        return "candidate_source_dates_missing"
+    if any(not _valid_tenure(item) for item in source_history):
+        return "candidate_source_dates_invalid"
+    source_count = Counter((item.start_month, item.end_month) for item in source_history)
+    history_count = Counter((item.start_month, item.end_month) for item in history)
+    if any(history_count[period] < count for period, count in source_count.items()):
+        return "candidate_history_incomplete"
+
+    profile_input = dict(spec)
+    profile_input["employment_history"] = _deduplicated_history(history)
+    profile = reconstruct_captured_profile(profile_input, channel)
+    if profile is None:
+        return "candidate_profile_invalid"
+    return hard_exclude_reason(profile, channel)
+
+
+def _candidate_spec_evaluation(raw: str) -> tuple[int, str, dict[str, object] | None]:
+    try:
+        event = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return 2, "candidate_hook_input_invalid", None
+    reason = candidate_spec_hook_reason(event)
+    if reason:
+        return 2, reason, None
+    if not isinstance(event, dict) or not isinstance(event.get("tool_input"), dict):
+        return 0, "", None
+    tool_input = dict(event["tool_input"])
+    if _decode_candidate_spec(tool_input) is None:
+        return 0, "", None
+    for key in ("description", "markdown_description"):
+        if isinstance(tool_input.get(key), str):
+            tool_input[key] = _CANDIDATE_SPEC_RE.sub("", tool_input[key]).rstrip()
+    return 0, "", tool_input
+
+
+def candidate_spec_hook_cli(raw: str) -> tuple[int, str]:
+    code, reason, _updated_input = _candidate_spec_evaluation(raw)
+    return code, reason
+
+
+def _run_candidate_spec_hook() -> int:
+    code, reason, updated_input = _candidate_spec_evaluation(sys.stdin.read())
+    if code:
+        sys.stderr.write(reason + "\n")
+        return code
+    if updated_input is not None:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": updated_input,
+            }
+        }, ensure_ascii=False))
+    return 0
 
 
 def register_clickup_fy26_ai_search(
@@ -550,6 +838,8 @@ def clickup_comment_body(passers: list[dict]) -> str:
 
 
 if __name__ == "__main__":
+    if "--candidate-spec-hook" in sys.argv:
+        raise SystemExit(_run_candidate_spec_hook())
     results_path = Path(sys.argv[1]) if len(sys.argv) > 1 else (
         Path.home() / ".vh-search-results" / "linkedin_rps")
     results = json.loads(Path(results_path).read_text())

@@ -1,0 +1,1 @@
+{"hooks":{"PreToolUse":[{"matcher":"mcp__.*__clickup_(create|update)_task","hooks":[{"type":"command","command":"python3 \"$(git rev-parse --show-toplevel)/tools/multi_position_sourcing/humansearch_register.py\" --candidate-spec-hook","timeout":30,"statusMessage":"Checking candidate hard-exclude spec"}]}]}}

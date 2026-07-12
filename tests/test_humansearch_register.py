@@ -10,6 +10,11 @@
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
 from tools.multi_position_sourcing.humansearch import hard_exclude_reason
@@ -17,6 +22,11 @@ from tools.multi_position_sourcing.humansearch_register import (
     FY26_AI_SEARCH_LIST_ID,
     FY26_AI_SEARCH_LIST_URL,
     PROFILE_SAVE_EVIDENCE_FIELDS,
+    _candidate_task_description,
+    _candidate_spec_evaluation,
+    _parent_task_description,
+    candidate_spec_hook_cli,
+    candidate_spec_hook_reason,
     clickup_registration_eligible,
     eligible,
     has_required_candidate_output_fields,
@@ -50,6 +60,333 @@ def _runner_dict(**over) -> dict:
     }
     d.update(over)
     return d
+
+
+_ESCAPED_SHORT_HISTORY = [
+    {"company": "FreelancerCoin", "start_month": "2017-11", "end_month": "2018-06"},
+    {"company": "tutto", "start_month": "2017-06", "end_month": "2018-03"},
+    {"company": "o2palm", "start_month": "2016-11", "end_month": "2017-04"},
+    {"company": "treport", "start_month": "2016-08", "end_month": "2016-11"},
+]
+
+
+def _linkedin_raw(*ranges: str) -> str:
+    return "Experience\n" + "\n".join(
+        f"Dates employed and Duration\n{date_range} • duration" for date_range in ranges
+    )
+
+
+def _hook_event(
+    *, model: str, tool_name: str, description: str, description_key: str = "description"
+) -> dict:
+    return {
+        "hook_event_name": "PreToolUse",
+        "model": model,
+        "tool_name": tool_name,
+        "tool_input": {
+            "list_id": FY26_AI_SEARCH_LIST_ID,
+            "parent": "86ey7gzp5",
+            "name": "Candidate — 87 strong recommendation",
+            description_key: description,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("model", "tool_name", "description_key"),
+    [
+        ("claude-opus-4-8", "mcp__claude_ai_ClickUp__clickup_create_task", "markdown_description"),
+        ("gpt-5.6", "mcp__clickup__clickup_create_task", "description"),
+    ],
+)
+def test_candidate_spec_hook_blocks_escaped_short_tenure_for_both_engines(
+    model: str, tool_name: str, description_key: str
+) -> None:
+    escaped = _runner_dict(
+        name="DongJun Kwon",
+        url="https://www.linkedin.com/talent/profile/escaped-short-tenure",
+        score=87,
+        summary="AI Solutions Architect and full-stack engineer",
+        visible_text=_linkedin_raw(
+            "Nov 2017 – Jun 2018",
+            "Jun 2017 – Mar 2018",
+            "Nov 2016 – Apr 2017",
+            "Aug 2016 – Nov 2016",
+        ),
+        employment_history=_ESCAPED_SHORT_HISTORY,
+    )
+    description = _candidate_task_description(
+        escaped, position_id="bist-pool", channel="linkedin_rps"
+    )
+    event = _hook_event(
+        model=model,
+        tool_name=tool_name,
+        description=description,
+        description_key=description_key,
+    )
+
+    assert candidate_spec_hook_reason(event) == "frequent_job_change"
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "frequent_job_change")
+
+
+def test_candidate_spec_hook_fails_closed_on_exact_manual_bypass_shape() -> None:
+    manual_description = """- **profile_url**: https://www.linkedin.com/talent/profile/manual-bypass
+- **score**: 87 (strong recommendation)
+- **why_fit**: AI solutions architect
+- **profile_summary**: RAG and LLM Agent
+- **evidence**: SQLite ai_search_candidates + Supabase profile_archives"""
+    event = _hook_event(
+        model="claude-opus-4-8",
+        tool_name="mcp__claude_ai_ClickUp__clickup_create_task",
+        description=manual_description,
+    )
+
+    raw = json.dumps(event)
+    assert candidate_spec_hook_cli(raw) == (2, "candidate_spec_missing")
+    script = Path(__file__).resolve().parents[1] / "tools/multi_position_sourcing/humansearch_register.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--candidate-spec-hook"],
+        input=raw,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert (completed.returncode, completed.stderr.strip()) == (2, "candidate_spec_missing")
+    score_only_update = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "mcp__clickup__clickup_update_task",
+        "tool_input": {"task_id": "86ey7gzrr", "name": "Candidate — 99점 강력추천"},
+    }
+    assert candidate_spec_hook_cli(json.dumps(score_only_update)) == (2, "candidate_spec_missing")
+    for tool_name, tool_input, reason in (
+        ("mcp__clickup__clickup_create_task", {"list_id": FY26_AI_SEARCH_LIST_ID, "name": "홍길동 후보"}, "candidate_parent_missing"),
+        ("mcp__clickup__clickup_update_task", {"task_id": "86ey7gzrr", "name": "홍길동 후보"}, "candidate_spec_missing"),
+    ):
+        assert candidate_spec_hook_cli(json.dumps({
+            "hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": tool_input,
+        })) == (2, reason)
+    parent_description = _parent_task_description(
+        position_name="홍길동", position_id="position-1", channel="linkedin_rps"
+    )
+    for name, description in (
+        ("홍길동 — AI Search", parent_description +
+         "\nProfile: https://www.linkedin.com/talent/profile/disguised\n점수: 99/100"),
+        ("홍길동", "AI Engineer"),
+    ):
+        disguised = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "mcp__clickup__clickup_create_task",
+            "tool_input": {
+                "list_id": FY26_AI_SEARCH_LIST_ID, "name": name, "description": description,
+            },
+        }
+        assert candidate_spec_hook_cli(json.dumps(disguised)) == (2, "candidate_parent_missing")
+    extra_fields = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "mcp__clickup__clickup_create_task",
+        "tool_input": {
+            "list_id": FY26_AI_SEARCH_LIST_ID,
+            "name": "홍길동 — AI Search",
+            "description": parent_description,
+            "custom_fields": [
+                {"id": "profile", "value": "https://www.linkedin.com/talent/profile/x"},
+                {"id": "score", "value": 99},
+            ],
+        },
+    }
+    assert candidate_spec_hook_cli(json.dumps(extra_fields)) == (2, "candidate_parent_missing")
+
+
+def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None:
+    partial = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/partial-history",
+        visible_text=_linkedin_raw(
+            "Nov 2017 – Jun 2018",
+            "Jun 2017 – Mar 2018",
+            "Nov 2016 – Apr 2017",
+            "Aug 2016 – Nov 2016",
+        ),
+        employment_history=[
+            {"company": "Stable", "start_month": "2019-01", "end_month": "2024-01"},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(
+            partial, position_id="position-1", channel="linkedin_rps"
+        ),
+    )
+
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_incomplete")
+
+
+@pytest.mark.parametrize(
+    ("channel", "visible_text"),
+    [
+        ("linkedin_rps", _linkedin_raw(
+            "Jan 2010 – Jan 2020", "January 2021 – June 2021", "July 2021 – November 2021"
+        )),
+        ("jobkorea", "경력\n2020.01 ~ 2025.01\n2021.01 ~ 2021.06\n2022.01 ~ 2022.06"),
+    ],
+)
+def test_candidate_spec_hook_rejects_partial_history_in_all_source_formats(
+    channel: str, visible_text: str
+) -> None:
+    partial = _runner_dict(
+        url="https://www.jobkorea.co.kr/profile/partial" if channel == "jobkorea" else
+            "https://www.linkedin.com/talent/profile/full-month-partial",
+        visible_text=visible_text,
+        employment_history=[
+            {"company": "Stable", "start_month": "2020-01", "end_month": "2025-01"}
+            if channel == "jobkorea" else
+            {"company": "Stable", "start_month": "2010-01", "end_month": "2020-01"},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(partial, position_id="position-1", channel=channel),
+    )
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_incomplete")
+
+
+def test_candidate_spec_hook_rejects_reversed_tenure_ranges() -> None:
+    invalid = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/reversed",
+        visible_text=_linkedin_raw("Dec 2023 – Jan 2023", "Jun 2024 – Mar 2024"),
+        employment_history=[
+            {"company": "A", "start_month": "2023-12", "end_month": "2023-01"},
+            {"company": "B", "start_month": "2024-06", "end_month": "2024-03"},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(invalid, position_id="position-1", channel="linkedin_rps"),
+    )
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_invalid")
+
+    bad_month = _runner_dict(
+        url="https://www.jobkorea.co.kr/profile/bad-month",
+        visible_text="경력\n2023.00 ~ 2023.05",
+        employment_history=[
+            {"company": "A", "start_month": "2023-00", "end_month": "2023-05"},
+        ],
+    )
+    bad_month_event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(bad_month, position_id="position-1", channel="jobkorea"),
+    )
+    assert candidate_spec_hook_cli(json.dumps(bad_month_event)) == (2, "candidate_history_invalid")
+
+
+def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() -> None:
+    clean = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/stable-candidate",
+        visible_text=_linkedin_raw(
+            "Jan 2019 – Jan 2024",
+            "Jan 2024 – Present",
+        ),
+        employment_history=[
+            {"company": "Stable", "start_month": "2019-01", "end_month": "2024-01"},
+            {"company": "Current", "start_month": "2024-01", "end_month": ""},
+        ],
+    )
+    candidate_event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(
+            clean, position_id="position-1", channel="linkedin_rps"
+        ),
+    )
+    assert candidate_spec_hook_cli(json.dumps(candidate_event)) == (0, "")
+    for position_name in ("Candidate Experience Manager", "후보자 경험 담당자"):
+        parent_event = {
+            **candidate_event,
+            "tool_input": {
+                "list_id": FY26_AI_SEARCH_LIST_ID,
+                "name": f"{position_name} — AI Search",
+                "description": _parent_task_description(
+                    position_name=position_name, position_id="position-1", channel="linkedin_rps"
+                ),
+                "caller": {"type": "direct"},
+            },
+        }
+        assert candidate_spec_hook_cli(json.dumps(parent_event)) == (0, "")
+    code, reason, updated_input = _candidate_spec_evaluation(json.dumps(candidate_event))
+    assert (code, reason) == (0, "")
+    assert "VALUEHIRE_CANDIDATE_SPEC" not in updated_input["description"]
+    script = Path(__file__).resolve().parents[1] / "tools/multi_position_sourcing/humansearch_register.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--candidate-spec-hook"],
+        input=json.dumps(candidate_event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert "VALUEHIRE_CANDIDATE_SPEC" not in json.loads(completed.stdout)["hookSpecificOutput"]["updatedInput"]["description"]
+
+    wrong_list = {**candidate_event, "tool_input": {**candidate_event["tool_input"], "list_id": "wrong"}}
+    no_parent = {**candidate_event, "tool_input": {**candidate_event["tool_input"], "parent": ""}}
+    assert candidate_spec_hook_cli(json.dumps(wrong_list)) == (2, "wrong_list_id")
+    assert candidate_spec_hook_cli(json.dumps(no_parent)) == (2, "candidate_parent_missing")
+
+
+def test_candidate_spec_hook_deduplicates_titles_and_excludes_current_tenure() -> None:
+    edge = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/date-edge",
+        visible_text=_linkedin_raw(
+            "Jan 2023 – Jun 2023",
+            "Jan 2023 – Jun 2023",
+            "Jan 2020 – Jan 2021",
+            "Jan 2024 – Present",
+        ),
+        employment_history=[
+            {"company": "Same company", "start_month": "2023-01", "end_month": "2023-06"},
+            {"company": "Same company", "start_month": "2023-01", "end_month": "2023-06"},
+            {"company": "Twelve months", "start_month": "2020-01", "end_month": "2021-01"},
+            {"company": "Current", "start_month": "2024-01", "end_month": ""},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_update_task",
+        description=_candidate_task_description(edge, position_id="position-1", channel="linkedin_rps"),
+    )
+
+    assert candidate_spec_hook_cli(json.dumps(event)) == (0, "")
+
+    two_companies = {**edge, "visible_text": _linkedin_raw(
+        "Jan 2023 – Jun 2023", "Jan 2023 – Jun 2023"
+    ), "employment_history": [
+        {"company": "Company A", "start_month": "2023-01", "end_month": "2023-06"},
+        {"company": "Company B", "start_month": "2023-01", "end_month": "2023-06"},
+    ]}
+    two_company_event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(
+            two_companies, position_id="position-1", channel="linkedin_rps"
+        ),
+    )
+    assert candidate_spec_hook_cli(json.dumps(two_company_event)) == (2, "frequent_job_change")
+
+
+def test_claude_and_codex_hooks_share_the_same_fail_closed_command() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    configs = [repo / ".claude/settings.json", repo / ".codex/hooks.json"]
+    commands = []
+    for path in configs:
+        data = json.loads(path.read_text())
+        groups = data["hooks"]["PreToolUse"]
+        assert groups[0]["matcher"] == "mcp__.*__clickup_(create|update)_task"
+        commands.append(groups[0]["hooks"][0]["command"])
+
+    assert commands[0] == commands[1]
+    assert "--candidate-spec-hook" in commands[0]
 
 
 # ── 가용 필드 복원 ───────────────────────────────────────────────
