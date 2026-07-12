@@ -10,6 +10,9 @@
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from tools.multi_position_sourcing.humansearch import hard_exclude_reason
@@ -17,6 +20,9 @@ from tools.multi_position_sourcing.humansearch_register import (
     FY26_AI_SEARCH_LIST_ID,
     FY26_AI_SEARCH_LIST_URL,
     PROFILE_SAVE_EVIDENCE_FIELDS,
+    _candidate_task_description,
+    candidate_spec_hook_cli,
+    candidate_spec_hook_reason,
     clickup_registration_eligible,
     eligible,
     has_required_candidate_output_fields,
@@ -50,6 +56,158 @@ def _runner_dict(**over) -> dict:
     }
     d.update(over)
     return d
+
+
+_ESCAPED_SHORT_HISTORY = [
+    {"company": "FreelancerCoin", "start_month": "2017-11", "end_month": "2018-06"},
+    {"company": "tutto", "start_month": "2017-06", "end_month": "2018-03"},
+    {"company": "o2palm", "start_month": "2016-11", "end_month": "2017-04"},
+    {"company": "treport", "start_month": "2016-08", "end_month": "2016-11"},
+]
+
+
+def _linkedin_raw(*ranges: str) -> str:
+    return "Experience\n" + "\n".join(
+        f"Dates employed and Duration\n{date_range} • duration" for date_range in ranges
+    )
+
+
+def _hook_event(
+    *, model: str, tool_name: str, description: str, description_key: str = "description"
+) -> dict:
+    return {
+        "hook_event_name": "PreToolUse",
+        "model": model,
+        "tool_name": tool_name,
+        "tool_input": {
+            "list_id": FY26_AI_SEARCH_LIST_ID,
+            "parent": "86ey7gzp5",
+            "name": "Candidate — 87 strong recommendation",
+            description_key: description,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("model", "tool_name", "description_key"),
+    [
+        ("claude-opus-4-8", "mcp__claude_ai_ClickUp__clickup_create_task", "markdown_description"),
+        ("gpt-5.6", "mcp__clickup__clickup_create_task", "description"),
+    ],
+)
+def test_candidate_spec_hook_blocks_escaped_short_tenure_for_both_engines(
+    model: str, tool_name: str, description_key: str
+) -> None:
+    escaped = _runner_dict(
+        name="DongJun Kwon",
+        url="https://www.linkedin.com/talent/profile/escaped-short-tenure",
+        score=87,
+        summary="AI Solutions Architect and full-stack engineer",
+        visible_text=_linkedin_raw(
+            "Nov 2017 – Jun 2018",
+            "Jun 2017 – Mar 2018",
+            "Nov 2016 – Apr 2017",
+            "Aug 2016 – Nov 2016",
+        ),
+        employment_history=_ESCAPED_SHORT_HISTORY,
+    )
+    description = _candidate_task_description(
+        escaped, position_id="bist-pool", channel="linkedin_rps"
+    )
+    event = _hook_event(
+        model=model,
+        tool_name=tool_name,
+        description=description,
+        description_key=description_key,
+    )
+
+    assert candidate_spec_hook_reason(event) == "frequent_job_change"
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "frequent_job_change")
+
+
+def test_candidate_spec_hook_fails_closed_on_exact_manual_bypass_shape() -> None:
+    manual_description = """- **profile_url**: https://www.linkedin.com/talent/profile/manual-bypass
+- **score**: 87 (strong recommendation)
+- **why_fit**: AI solutions architect
+- **profile_summary**: RAG and LLM Agent
+- **evidence**: SQLite ai_search_candidates + Supabase profile_archives"""
+    event = _hook_event(
+        model="claude-opus-4-8",
+        tool_name="mcp__claude_ai_ClickUp__clickup_create_task",
+        description=manual_description,
+    )
+
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_spec_missing")
+
+
+def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None:
+    partial = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/partial-history",
+        visible_text=_linkedin_raw(
+            "Nov 2017 – Jun 2018",
+            "Jun 2017 – Mar 2018",
+            "Nov 2016 – Apr 2017",
+            "Aug 2016 – Nov 2016",
+        ),
+        employment_history=[
+            {"company": "Stable", "start_month": "2019-01", "end_month": "2024-01"},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(
+            partial, position_id="position-1", channel="linkedin_rps"
+        ),
+    )
+
+    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_incomplete")
+
+
+def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() -> None:
+    clean = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/stable-candidate",
+        visible_text=_linkedin_raw(
+            "Jan 2019 – Jan 2024",
+            "Jan 2024 – Present",
+        ),
+        employment_history=[
+            {"company": "Stable", "start_month": "2019-01", "end_month": "2024-01"},
+            {"company": "Current", "start_month": "2024-01", "end_month": ""},
+        ],
+    )
+    candidate_event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_create_task",
+        description=_candidate_task_description(
+            clean, position_id="position-1", channel="linkedin_rps"
+        ),
+    )
+    parent_event = {
+        **candidate_event,
+        "tool_input": {
+            "list_id": FY26_AI_SEARCH_LIST_ID,
+            "name": "Position — AI Search",
+            "description": "AI Search position parent task",
+        },
+    }
+
+    assert candidate_spec_hook_cli(json.dumps(candidate_event)) == (0, "")
+    assert candidate_spec_hook_cli(json.dumps(parent_event)) == (0, "")
+
+
+def test_claude_and_codex_hooks_share_the_same_fail_closed_command() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    configs = [repo / ".claude/settings.json", repo / ".codex/hooks.json"]
+    commands = []
+    for path in configs:
+        data = json.loads(path.read_text())
+        groups = data["hooks"]["PreToolUse"]
+        assert groups[0]["matcher"] == "mcp__.*__clickup_(create|update)_task"
+        commands.append(groups[0]["hooks"][0]["command"])
+
+    assert commands[0] == commands[1]
+    assert "--candidate-spec-hook" in commands[0]
 
 
 # ── 가용 필드 복원 ───────────────────────────────────────────────
