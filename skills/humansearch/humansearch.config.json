@@ -52,7 +52,7 @@
 
   "scoring": {
     "weights": {"education": 0.30, "role_fit": 0.50, "profile_logic": 0.10, "job_stability": 0.10},
-    "weights_note": "학력30%·직무적합50%·프로필 논리력10%·이직 안정성10% (사장님 지시 그대로). 3채널 공통.",
+    "weights_note": "학력30%·직무적합50%·프로필 논리력10%·이직 안정성10% (사장님 지시 그대로). 직무적합 안에서는 position.organization_analysis / talent_density_notes 로 스타트업·스케일업·엔터프라이즈 맥락을 보정한다. 3채널 공통.",
     "pass_threshold": 70,
     "score_range": "0~100 가중합",
     "function": "tools/multi_position_sourcing/humansearch.py score_humansearch()"
@@ -133,14 +133,19 @@
     "db_path": "~/.vh-data/ai-search-candidates.db",
     "db_table": "ai_search_candidates",
     "db_upsert_key": "(url, position_id)",
-    "note": "열어본 프로필·검색 리스트는 점수 무관 전부 저장(SOT22 R6) — 스크린샷→텍스트 전환 후 results.json + DB upsert.",
+    "organization_analysis_table": "organization_analysis",
+    "organization_analysis_db_key": "position_id",
+    "organization_analysis_supabase_table": "organization_analysis",
+    "note": "열어본 프로필·검색 리스트는 점수 무관 전부 저장(SOT22 R6) — 스크린샷→텍스트 전환 후 results.json + DB upsert. 포지션 조직 분석은 sqlite 기본 저장소에 먼저 누적하고, 배치로 Supabase organization_analysis 로 미러한다.",
     "supabase": {
       "enabled": true,
       "profile_archives": "레쥬메 전문(text_content)+profile url — url 무효/본문 공허는 적재 거부(fail-closed)",
       "sourcing_results": "포지션별 profile url(value)·학력(education_summary)·경력(career_summary/periods)·점수(match_score)·이유(fit_reason)",
+      "organization_analysis": "포지션별 organization_analysis·talent_density_notes·org_fit_target 를 sqlite→배치로 Supabase 미러(position_id upsert)",
       "run_fk": "sourcing_results.run_id 는 sourcing_runs 에 run 을 먼저 등록해야 함(FK)",
       "mapper": "tools/multi_position_sourcing/humansearch_supabase_sync.py",
-      "loader": "scripts/humansearch_supabase_backfill.py (url·(value,position_id) 조회 후 신규만 insert — 멱등)"
+      "loader": "scripts/humansearch_supabase_backfill.py (url·(value,position_id) 조회 후 신규만 insert — 멱등)",
+      "organization_analysis_loader": "scripts/organization_analysis_supabase_backfill.py (position_id 조회 후 신규만 insert — 멱등)"
     }
   },
 
@@ -155,7 +160,13 @@
     "completion_report": true,
     "fallback": "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL",
     "no_alarm_bomb": "중간 보고는 페이지 단위 1건, 완료 1건으로 묶는다",
-    "completion_report_includes": ["clickup_urls", "keyword_gap_report"]
+    "completion_report_includes": ["clickup_urls", "keyword_gap_report"],
+    "top_candidate_briefing_required": {
+      "_owner_directive": "2026-07-09 사장님 지시: 핵심 후보자를 Discord로 넘길 때 url만 던지지 말고 브리핑 3요소를 함께 보낸다.",
+      "applies_to": "핵심 후보 (강력추천 85+ 또는 상위 점수 후보)",
+      "fields": ["profile_url (전체 URL)", "career_summary (경력 요약 — 현재 회사·직무·핵심 경력)", "why_fit (왜 이 포지션에 잘 맞는지 1~2줄)"],
+      "rule": "각 핵심 후보 = url + 경력요약 + 적합사유를 한 카드로 묶어 보고. url 단독 전송 금지. 여러 핵심 후보는 한 메시지에 묶어 알람 폭탄 방지."
+    }
   },
 
   "keyword_expansion": {

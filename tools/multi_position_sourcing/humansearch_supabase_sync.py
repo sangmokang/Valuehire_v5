@@ -81,3 +81,28 @@ def to_sourcing_result_row(local: dict[str, Any], position_title: str) -> dict[s
         "mismatch_points": why_not,
         "candidate_briefing": json.dumps(b, ensure_ascii=False)[:4000],
     }
+
+
+def to_organization_analysis_row(local: dict[str, Any]) -> dict[str, Any] | None:
+    """로컬 조직 분석 1행 → organization_analysis 페이로드. position_id/본문 없으면 None."""
+    position_id = str(local.get("position_id", "") or "").strip()
+    company_name = str(local.get("company_name", "") or "").strip()
+    role_title = str(local.get("role_title", "") or "").strip()
+    org = str(local.get("organization_analysis", "") or "").strip()
+    density = str(local.get("talent_density_notes", "") or "").strip()
+    if not position_id or not company_name or not role_title:
+        return None
+    if not org and not density:
+        return None
+    return {
+        "position_id": position_id,
+        "company_name": company_name,
+        "role_title": role_title,
+        "company_size": str(local.get("company_size", "") or ""),
+        "industry_segment": str(local.get("industry_segment", "") or ""),
+        "investment_stage": str(local.get("investment_stage", "") or ""),
+        "organization_analysis": org,
+        "talent_density_notes": density,
+        "org_fit_target": str(local.get("org_fit_target", "") or "neutral_target"),
+        "updated_at": str(local.get("updated_at", "") or local.get("created_at", "") or ""),
+    }

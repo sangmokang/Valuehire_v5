@@ -2,6 +2,7 @@
   "$schema_version": "1.0.0",
   "title": "humansearch 브라우징·로그인 라이브 프리플라이트 (fail-closed 게이트, SOT)",
   "owner_directive_2026-06-30": "브라우징과 로그인은 철저히 책임진다. 검색이 '살아있는 상태'임이 증거로 확인되지 않으면 순회(수집/채점) 코드를 아예 실행하지 않는다(fail-closed). 봇처럼 같은 동작을 반복하지 않는다 — 한 번 점검해서 안 되면 즉시 STOP하고 사람에게 원인을 보고한다.",
+  "owner_correction_2026-07-10": "LinkedIn RPS에서 /uas/login-cap·일반 로그인 화면은 캡차가 아니라 로그아웃/세션 만료로 분류한다. 단 계정명 추출 실패나 검색 0건만으로 로그아웃이라 단정하지 않는다. talent 검색 화면이 로그인 리다이렉트 없이 로드되면 기존 로그인 세션을 그대로 쓴다. 실제 로그인 화면은 재인증 필요 상태로 분류하고, 캡차/2FA/멀티세션 락만 사람 게이트로 멈춘다.",
   "why": "2026-06-30 뤼튼 AX Sales 순회에서 검색 세션 만료/세션충돌/raw+확장 동시 attach로 결과가 0건 렌더되었는데, 러너에 라이브 점검 게이트가 없어 '0명'을 조용히 뱉고 같은 네비게이션을 반복했다(봇 위험). 이 게이트가 그 모든 실패를 사전에 잡아 '실행 거부'로 전환한다.",
 
   "code_single_source": "tools/multi_position_sourcing/humansearch_preflight.py — evaluate_search_preflight()(순수 판정) + assert_live_or_abort()(러너 배선). 테스트(tests/test_humansearch_preflight.py)가 규칙을 강제.",
@@ -13,17 +14,18 @@
       "url": "string — 현재 탭 location.href",
       "card_count": "int — 스크롤 후 a[href*=\"/talent/profile/\"] 고유 개수",
       "results_text": "string — 결과 수 텍스트(예 '3.9K+ results') 없으면 ''",
-      "logged_in_account": "string — 우상단 계정명(예 'Value Connect - RPS') 없으면 ''",
+      "logged_in_account": "string — 우상단 계정명(예 'Value Connect - RPS') 없으면 ''. 화면 언어·A/B UI에 따라 추출 실패할 수 있으므로 보조 신호로만 사용",
       "multiple_signins": "bool — '동시 로그인/Only one session/multiple sign-ins' 화면 여부",
-      "captcha": "bool — 'security verification/captcha/체크포인트' 여부"
+      "captcha": "bool — 실제 캡차/로봇 확인/2FA/멀티세션 락 여부. 단순 /uas/login-cap·로그인 화면은 captcha=false, logged_in=false 로 분류"
     }
   },
 
   "decision_rules": {
-    "no_login_redirect": "url 에 /authwall, /checkpoint, /uas/login, '/login', enterprise-authentication/sessions 중 어느 것도 없음",
-    "logged_in": "logged_in_account 비어있지 않음 AND no_login_redirect",
+    "no_login_redirect": "url 에 /authwall, /checkpoint, /uas/login, '/login', enterprise-authentication/sessions 중 어느 것도 없음. /uas/login-cap 은 캡차가 아니라 로그인 만료 신호다",
+    "logged_in": "no_login_redirect AND (logged_in_account 비어있지 않음 OR on_search_surface). 정상 talent 검색 화면이면 계정명 추출 실패나 검색 0건만으로 재로그인하지 않는다",
+    "on_search_surface": "linkedin.com/talent 경로이며 URL에 /talent/search 또는 recruiterSearch가 있음. 다른 페이지의 남은 DOM을 정상 검색으로 오인하지 않는다",
     "no_session_conflict": "multiple_signins == false AND url 에 enterprise-authentication/sessions 없음",
-    "no_captcha": "captcha == false",
+    "no_captcha": "captcha == false. checkpoint 라는 단어만으로 captcha=true 처리 금지 — 실제 로봇 확인/보안 검증 UI가 보일 때만 true",
     "results_rendered": "card_count >= 1 AND results_text 가 숫자+결과표식(K/results/명/개) 정규식과 매치 — '프로젝트 껍데기만 로드' 또는 'Loading…' 상태를 거른다",
     "ok": "logged_in AND no_session_conflict AND no_captcha AND results_rendered (전부 참일 때만)"
   },
@@ -36,7 +38,7 @@
   },
 
   "enforcement": {
-    "fail_closed": "ok=false 면 assert_live_or_abort 가 PreflightError 를 raise → 러너가 수집/채점을 시작조차 하지 않는다.",
+    "fail_closed": "ok=false 면 assert_live_or_abort 가 PreflightError 를 raise → 러너가 수집/채점을 시작조차 하지 않는다. 실제 로그인 만료(/uas/login-cap·로그인 화면)는 캡차와 구분해 재인증 필요 상태로 보고한다. 이 러너 자체에는 자동 재로그인 배선이 없으므로 재로그인 완료를 거짓으로 주장하지 않는다. 계정명 추출 실패나 검색 0건만으로 재인증 필요 상태에 보내지 않는다.",
     "no_bot_retry": "프리플라이트 실패 시 같은 URL 재네비게이션 루프 금지(SOT22 R2). 1회 점검 실패 = 즉시 STOP + 원인 보고.",
     "single_cdp_client_rule": "raw CDP 와 claude-in-chrome 확장을 같은 탭에 동시 attach 하지 않는다(렌더 손상 원인). 수집은 한 드라이버만 그 탭을 소유한다."
   },
@@ -45,8 +47,8 @@
     "evaluate_search_preflight: 정상(카드+결과수+로그인) → ok=true.",
     "카드 0/결과수 '' (만료·Loading·껍데기) → ok=false, reasons 에 results_rendered 포함.",
     "multiple_signins 또는 enterprise-authentication/sessions url → ok=false, no_session_conflict 실패.",
-    "captcha=true → ok=false, no_captcha 실패.",
-    "로그인 리다이렉트(authwall 등) 또는 계정명 '' → ok=false, logged_in 실패.",
+    "captcha=true → ok=false, no_captcha 실패. /uas/login-cap·일반 로그인 화면은 captcha 실패가 아니라 logged_in 실패여야 한다.",
+    "로그인 리다이렉트(authwall 등) → ok=false, logged_in 실패. 계정명 ''이거나 검색 0건이어도 정상 talent 검색 화면이면 logged_in=true이고 결과 렌더 여부만 별도 판정.",
     "assert_live_or_abort: ok=false probe 면 PreflightError raise(메시지에 reasons).",
     "humansearch_cdp_run 이 순회 전 assert_live_or_abort 를 호출(고아 아님 — grep 배선 증명)."
   ]

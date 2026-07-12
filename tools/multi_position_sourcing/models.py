@@ -138,6 +138,7 @@ class PositionMatch:
     why_not: tuple[str, ...]
     evidence_paths: tuple[str, ...]
     score_breakdown: dict[str, int]
+    org_fit: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,4 +182,3 @@ class QueueCycleSummary:
     stopped_reasons: tuple[str, ...]
     updated_items: tuple[QueueItem, ...]
     collected_cards: int = 0
-

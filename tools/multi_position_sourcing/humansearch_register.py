@@ -126,6 +126,7 @@ def reconstruct_captured_profile(result: object, channel: Channel) -> CapturedPr
     if not _normalize(visible_text + summary + headline):
         return None
     skills = result.get("skills")
+    companies = result.get("current_or_past_companies")
     return CapturedProfile(
         profile_url=url,
         source_channel=channel,
@@ -136,6 +137,11 @@ def reconstruct_captured_profile(result: object, channel: Channel) -> CapturedPr
         captured_at=str(result.get("captured_at", "") or ""),
         education=str(result.get("education", "") or ""),
         skills=tuple(skills) if isinstance(skills, (list, tuple)) else (),
+        current_or_past_companies=(
+            tuple(str(company).strip() for company in companies if _present(company))
+            if isinstance(companies, (list, tuple))
+            else ()
+        ),
         employment_history=_reconstruct_tenures(result.get("employment_history", ())),
     )
 
@@ -238,6 +244,15 @@ def clickup_registration_eligible(results: list[dict], channel: Channel) -> list
     ]
 
 
+def discord_briefing_eligible(results: list[dict], channel: Channel) -> list[dict]:
+    """Discord 후보 브리핑은 경력 요약까지 있는 후보만 fail-closed로 통과시킨다."""
+    return [
+        r
+        for r in eligible(results, channel)
+        if has_required_candidate_output_fields(r) and _present(r.get("career_summary"))
+    ]
+
+
 def _task_field(task: Mapping[str, object], *keys: str) -> str:
     for key in keys:
         value = task.get(key)
@@ -309,6 +324,57 @@ def _saved_profile_evidence_text(result: Mapping[str, object]) -> str:
     return "missing"
 
 
+def _lines(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,) if _present(value) else ()
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item).strip() for item in value if _present(item))
+    return ()
+
+
+def _bullet_text(items: object, *, empty: str = "미기재") -> str:
+    lines = _lines(items)
+    if not lines:
+        return f"- {empty}"
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def _first_present(result: Mapping[str, object], *keys: str) -> str:
+    for key in keys:
+        value = result.get(key)
+        if _present(value):
+            return str(value).strip()
+    return ""
+
+
+def _score_breakdown_text(result: Mapping[str, object]) -> str:
+    breakdown = result.get("breakdown")
+    if not isinstance(breakdown, Mapping):
+        return "- 세부 점수 미기재"
+    labels = (
+        ("education", "학력"),
+        ("role_fit", "직무"),
+        ("profile_logic", "논리"),
+        ("job_stability", "안정"),
+    )
+    parts = [f"{label} {breakdown[key]}" for key, label in labels if key in breakdown]
+    return f"- {' / '.join(parts)}" if parts else "- 세부 점수 미기재"
+
+
+def _profile_signal_text(result: Mapping[str, object]) -> str:
+    signals = []
+    for label, key in (("헤드라인", "headline"), ("학력", "education"), ("요약", "summary")):
+        value = result.get(key)
+        if _present(value):
+            signals.append(f"- {label}: {str(value).strip()}")
+    skills = result.get("skills")
+    if isinstance(skills, (list, tuple, set)):
+        skill_text = ", ".join(str(skill).strip() for skill in skills if _present(skill))
+        if skill_text:
+            signals.append(f"- 기술/키워드: {skill_text}")
+    return "\n".join(signals) if signals else "- 프로필 신호 미기재"
+
+
 def _parent_task_description(*, position_name: str, position_id: str, channel: Channel) -> str:
     return "\n".join(
         [
@@ -344,11 +410,7 @@ def _candidate_task_description(
     position_id: str,
     channel: Channel,
 ) -> str:
-    why_fit = result.get("why_fit")
-    if isinstance(why_fit, (list, tuple)):
-        why_fit_text = "\n".join(f"- {item}" for item in why_fit if _present(item)) or "- 미기재"
-    else:
-        why_fit_text = f"- {why_fit}" if _present(why_fit) else "- 미기재"
+    profile_summary = _first_present(result, "profile_summary", "summary", "headline") or "미기재"
     return "\n".join(
         [
             f"Profile: {result['url']}",
@@ -357,8 +419,24 @@ def _candidate_task_description(
             f"채널: {channel}",
             f"프로필 저장 증거: {_saved_profile_evidence_text(result)}",
             "",
-            "매칭 이유:",
-            why_fit_text,
+            "프로필 요약:",
+            profile_summary,
+            "",
+            "왜 이 포지션에 잘 맞는지:",
+            _bullet_text(result.get("why_fit")),
+            "",
+            "점수 근거:",
+            _score_breakdown_text(result),
+            "",
+            "프로필에서 확인한 신호:",
+            _profile_signal_text(result),
+            "",
+            "리스크/확인 필요:",
+            _bullet_text(result.get("why_not"), empty="큰 리스크 미기재"),
+            "",
+            "등록 판단:",
+            "- 저장 증거와 profile_url 무결성을 확인한 후보만 FY26AI_Search Subtask로 등록",
+            "- 제안/메일/InMail 자동발송 없음",
         ]
     )
 
@@ -499,6 +577,148 @@ def _school(education: str) -> str:
     return head.strip()[:34] or "-"
 
 
+DISCORD_CONTENT_LIMIT = 1990
+DISCORD_EMBED_COUNT_LIMIT = 10
+DISCORD_EMBED_TITLE_LIMIT = 256
+DISCORD_EMBED_DESCRIPTION_LIMIT = 4096
+DISCORD_EMBED_URL_LIMIT = 2048
+DISCORD_EMBED_TOTAL_TEXT_LIMIT = 6000
+TOP_CANDIDATE_SCORE = 85
+
+
+def _compact_line(value: object, *, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _discord_candidate_block(index: int, result: Mapping[str, object]) -> str:
+    breakdown = result.get("breakdown")
+    b = breakdown if isinstance(breakdown, Mapping) else {}
+    otw = " 🟢" if result.get("otw") else ""
+    education = str(result.get("education", "") or "")
+    note = ""
+    if "berkeley college" in education.lower():
+        note = " ⚠️('Berkeley College'=명문대 오탐, 학력 재판단 요)"
+    summary = _first_present(
+        result,
+        "career_summary",
+        "profile_summary",
+        "summary",
+        "headline",
+    ) or "경력 요약 미기재"
+    why_fit = "; ".join(_lines(result.get("why_fit"))) or "적합 사유 미기재"
+    name = _compact_line(result.get("name", "이름 미기재"), limit=80)
+    return (
+        f"**{index}. {name} — {result['score']}/100**{otw} · {_school(education)}{note}\n"
+        f"  학력{b.get('education','?')}/직무{b.get('role_fit','?')}/논리{b.get('profile_logic','?')}/안정{b.get('job_stability','?')}\n"
+        f"  경력 요약: {_compact_line(summary, limit=220)}\n"
+        f"  적합 사유: {_compact_line(why_fit, limit=280)}\n"
+        f"  {result['url']}"
+    )
+
+
+def _ordered_briefing_candidates(passers: list[dict]) -> list[dict]:
+    return sorted(passers, key=lambda item: float(item.get("score", 0)), reverse=True)
+
+
+def _discord_candidate_embed(index: int, result: Mapping[str, object]) -> dict[str, object]:
+    url = str(result["url"])
+    if not is_valid_profile_url(url) or len(url) > DISCORD_EMBED_URL_LIMIT:
+        raise ValueError("Discord 후보 Profile URL이 유효하지 않거나 embed URL 제한을 초과함")
+    if not has_required_candidate_output_fields(result) or not _present(result.get("career_summary")):
+        raise ValueError("Discord 후보 카드 필수 필드(profile_url/score/경력요약/why_fit) 누락")
+    if float(result.get("score", 0)) < PASS_THRESHOLD:
+        raise ValueError("Discord 후보 점수가 합격선 미만")
+    summary = _first_present(
+        result,
+        "career_summary",
+        "profile_summary",
+        "summary",
+        "headline",
+    )
+    why_fit = "; ".join(_lines(result.get("why_fit")))
+    org_fit = _first_present(result, "org_fit") or "neutral"
+    education = _school(str(result.get("education", "") or ""))
+    description = (
+        f"Profile URL: {url}\n"
+        f"경력 요약: {_compact_line(summary, limit=180)}\n"
+        f"적합 사유: {_compact_line(why_fit, limit=220)}\n"
+        f"학력: {education} · org_fit: {org_fit}"
+    )
+    return {
+        "title": _compact_line(
+            f"{index}. {result.get('name', '이름 미기재')} — {result['score']}/100",
+            limit=240,
+        ),
+        "url": url,
+        "description": description,
+        "color": 0x0A66C2,
+    }
+
+
+def _embed_text_size(embed: Mapping[str, object]) -> int:
+    return sum(len(str(embed.get(key, ""))) for key in ("title", "description", "footer", "author"))
+
+
+def _validate_discord_embed(embed: Mapping[str, object]) -> None:
+    if len(str(embed.get("title", ""))) > DISCORD_EMBED_TITLE_LIMIT:
+        raise ValueError("Discord 후보 embed title 제한 초과")
+    if len(str(embed.get("description", ""))) > DISCORD_EMBED_DESCRIPTION_LIMIT:
+        raise ValueError("Discord 후보 embed description 제한 초과")
+    url = str(embed.get("url", ""))
+    if not is_valid_profile_url(url) or len(url) > DISCORD_EMBED_URL_LIMIT:
+        raise ValueError("Discord 후보 embed URL 제한 초과")
+
+
+def build_discord_payloads(passers: list[dict]) -> list[dict[str, object]]:
+    """70점 이상 합격 후보 전원을 Discord 제한에 맞춰 10개 이하 embed 메시지로 분할한다."""
+    ordered = _ordered_briefing_candidates(passers)
+    chunks: list[list[dict[str, object]]] = []
+    current: list[dict[str, object]] = []
+    current_size = 0
+    for index, result in enumerate(ordered, 1):
+        embed = _discord_candidate_embed(index, result)
+        _validate_discord_embed(embed)
+        embed_size = _embed_text_size(embed)
+        if embed_size > DISCORD_EMBED_TOTAL_TEXT_LIMIT:
+            raise ValueError("Discord 후보 embed 1개가 메시지 총 텍스트 제한을 초과함")
+        if current and (
+            len(current) >= DISCORD_EMBED_COUNT_LIMIT
+            or current_size + embed_size > DISCORD_EMBED_TOTAL_TEXT_LIMIT
+        ):
+            chunks.append(current)
+            current = []
+            current_size = 0
+        current.append(embed)
+        current_size += embed_size
+    if current:
+        chunks.append(current)
+
+    total_messages = len(chunks)
+    payloads: list[dict[str, object]] = []
+    for message_index, embeds in enumerate(chunks, 1):
+        strong_count = sum(float(item.get("score", 0)) >= TOP_CANDIDATE_SCORE for item in ordered)
+        continuation = f" · {message_index}/{total_messages}" if total_messages > 1 else ""
+        content = (
+            f"📋 **AI Search 후보 브리핑 — {POSITION_NAME}**{continuation}\n"
+            f"합격 {len(ordered)}명 · 강력추천 {strong_count}명 · 이번 카드 {len(embeds)}명"
+        )
+        if len(content) > DISCORD_CONTENT_LIMIT:
+            raise ValueError("Discord 후보 브리핑 본문이 1메시지 제한을 초과함")
+        payloads.append({"content": content, "embeds": embeds})
+    return payloads
+
+
+def build_discord_payload(passers: list[dict]) -> dict[str, object]:
+    """단일 메시지 호환 래퍼. 분할이 필요하면 누락하지 않고 명시적으로 거부한다."""
+    payloads = build_discord_payloads(passers)
+    if len(payloads) != 1:
+        raise ValueError("Discord 후보가 여러 메시지로 분할됨 — build_discord_payloads 사용 필요")
+    return payloads[0]
+
+
 def build_message(passers: list[dict]) -> str:
     head = (
         f"📋 **AI Search 후보 브리핑 — {POSITION_NAME}**\n"
@@ -506,27 +726,56 @@ def build_message(passers: list[dict]) -> str:
         f"(채점: 학력30·직무50·논리10·이직안정10 / 🟢=Open to work)\n"
         "──────────────"
     )
-    blocks = []
-    for i, r in enumerate(passers, 1):
-        b = r.get("breakdown", {})
-        otw = " 🟢" if r.get("otw") else ""
-        note = ""
-        if "berkeley college" in (r.get("education", "").lower()):
-            note = " ⚠️('Berkeley College'=명문대 오탐, 학력 재판단 요)"
-        blocks.append(
-            f"**{i}. {r['name']} — {r['score']}/100**{otw} · {_school(r.get('education',''))}{note}\n"
-            f"  학력{b.get('education','?')}/직무{b.get('role_fit','?')}/논리{b.get('profile_logic','?')}/안정{b.get('job_stability','?')}\n"
-            f"  {r['url']}"
-        )
-    return head + "\n" + "\n".join(blocks)
+    core = _ordered_briefing_candidates(passers)
+    blocks: list[str] = []
+    for i, r in enumerate(core, 1):
+        block = _discord_candidate_block(i, r)
+        candidate_message = head + "\n" + "\n".join([*blocks, block])
+        if len(candidate_message) <= DISCORD_CONTENT_LIMIT:
+            blocks.append(block)
+            continue
+
+        remaining = len(core) - len(blocks)
+        footer = f"⚠️ 합격 후보 {remaining}명은 텍스트 미리보기 한도로 미포함 — embed 분할본 확인"
+        with_footer = head + "\n" + "\n".join([*blocks, footer])
+        if len(with_footer) <= DISCORD_CONTENT_LIMIT:
+            blocks.append(footer)
+        else:
+            raise ValueError("Discord 후보 브리핑에서 미포함 후보 수를 표시할 공간이 없음")
+        break
+
+    message = head + "\n" + "\n".join(blocks)
+    if len(message) > DISCORD_CONTENT_LIMIT:
+        raise ValueError("Discord 후보 브리핑이 1메시지 제한을 초과함")
+    return message
 
 
-def post_discord(message: str) -> int:
+def post_discord(message: str | Mapping[str, object]) -> int:
+    if isinstance(message, Mapping):
+        payload_body = dict(message)
+        content = str(payload_body.get("content", ""))
+        if len(content) > DISCORD_CONTENT_LIMIT:
+            raise ValueError("Discord 후보 브리핑 본문이 1메시지 제한을 초과함")
+        embeds = payload_body.get("embeds", [])
+        if not isinstance(embeds, list) or len(embeds) > DISCORD_EMBED_COUNT_LIMIT:
+            raise ValueError("Discord 후보 embed 개수 제한 초과")
+        embed_total = 0
+        for embed in embeds:
+            if not isinstance(embed, Mapping):
+                raise ValueError("Discord 후보 embed 형식 오류")
+            _validate_discord_embed(embed)
+            embed_total += _embed_text_size(embed)
+        if embed_total > DISCORD_EMBED_TOTAL_TEXT_LIMIT:
+            raise ValueError("Discord 후보 embed 총 텍스트 제한 초과")
+    else:
+        # 완성된 후보 카드 중간을 잘라 URL/요약/적합사유 계약을 깨지 않는다.
+        if len(message) > DISCORD_CONTENT_LIMIT:
+            raise ValueError("Discord 후보 브리핑이 1메시지 제한을 초과함")
+        payload_body = {"content": message, "flags": 4}
     url = _load_env("VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL")
     if not url:
         raise RuntimeError("VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL 없음")
-    # Discord 2000자 제한 — 넘으면 잘라 1메시지 유지(알람 폭탄 금지 우선).
-    payload = json.dumps({"content": message[:1990], "flags": 4}).encode()
+    payload = json.dumps(payload_body).encode()
     # Discord 는 Cloudflare 뒤 — 기본 python-urllib UA 는 403. 브라우저 UA 로 우회.
     req = urllib.request.Request(url, data=payload, method="POST", headers={
         "Content-Type": "application/json",
@@ -553,7 +802,9 @@ if __name__ == "__main__":
     results_path = Path(sys.argv[1]) if len(sys.argv) > 1 else (
         Path.home() / ".vh-search-results" / "linkedin_rps")
     results = json.loads(Path(results_path).read_text())
-    passers = eligible(results, "linkedin_rps")  # 이 러너 경로는 LinkedIn RPS 포지션(학교컷 미적용 채널)
+    passers = discord_briefing_eligible(
+        results, "linkedin_rps"
+    )  # LinkedIn RPS 포지션(학교컷 미적용) + 후보 출력 계약
     print(f"eligible passers: {len(passers)}")
     for r in passers:
         print(" ", r["score"], r["name"], r["url"])
@@ -563,6 +814,6 @@ if __name__ == "__main__":
                 "ClickUp FY26AI_Search registration requires duplicate-check capable "
                 "clickup_search_tasks/clickup_create_task adapters; legacy comment body output is blocked."
             )
-        status = post_discord(build_message(passers))
-        print("discord status:", status)
+        statuses = [post_discord(payload) for payload in build_discord_payloads(passers)]
+        print("discord statuses:", statuses)
         print("clickup FY26AI_Search registration skipped: use register_clickup_fy26_ai_search with duplicate-check adapters")

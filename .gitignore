@@ -20,6 +20,10 @@ artifacts/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .claude/skills/**/.omc/
+.claude/*_keywords.json
+.claude/*_keywords_final.json
+.claude/*_keywords.txt
+.claude/temp_*_output.json
 logs/
 .playwright-mcp/
 captures/
@@ -30,3 +34,6 @@ _codex_mutant_run_rps_manual_switch/
 
 # git worktree 작업방 (커밋 금지)
 worktrees/
+
+# Supabase CLI local runtime metadata (project refs, pooler hosts, versions)
+supabase/.temp/

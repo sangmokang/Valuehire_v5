@@ -26,6 +26,7 @@ from .models import CapturedProfile, Channel, Position, PositionMatch
 from .scoring import (
     HIGH_TIER_SCHOOL_SIGNALS,
     count_short_tenure_hops,
+    organization_context_bias,
     keyword_in_text,
 )
 
@@ -311,7 +312,9 @@ def _education_subscore(profile: CapturedProfile) -> float:
     return 0.3
 
 
-def _role_fit_subscore(profile: CapturedProfile, position: Position) -> tuple[float, list[str]]:
+def _role_fit_subscore(
+    profile: CapturedProfile, position: Position
+) -> tuple[float, list[str]]:
     text = " ".join([profile.visible_text, profile.ocr_text, " ".join(profile.skills)]).lower()
     must = [kw for kw in position.must_haves if kw and keyword_in_text(kw, text)]
     nice = [kw for kw in position.nice_to_haves if kw and keyword_in_text(kw, text)]
@@ -354,6 +357,10 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
     role_sub, role_reasons = _role_fit_subscore(profile, position)
     logic_sub = _profile_logic_subscore(profile)
     stability_sub, stability_reasons = _job_stability_subscore(profile)
+    organization_bias, org_fit, organization_fit_reasons, organization_not_reasons = (
+        organization_context_bias(profile, position)
+    )
+    role_sub = max(0.0, min(1.0, role_sub + organization_bias))
 
     subs = {
         "education": edu_sub,
@@ -376,8 +383,10 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
     else:
         why_not.append("학력 미수집")
     why_fit.extend(role_reasons)
+    why_fit.extend(organization_fit_reasons)
     if not role_reasons:
         why_not.append("JD 핵심 키워드 직결 근거 부족")
+    why_not.extend(organization_not_reasons)
     if logic_sub < 0.6:
         why_not.append("프로필 텍스트 정리·논리 근거 부족")
     why_not.extend(stability_reasons)
@@ -391,6 +400,7 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
         why_not=tuple(why_not),
         evidence_paths=profile.evidence_paths,
         score_breakdown=breakdown,
+        org_fit=org_fit,
     )
 
 

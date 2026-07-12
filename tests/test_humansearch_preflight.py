@@ -77,7 +77,7 @@ def test_zero_count_korean_fails():
 
 def test_real_count_formats_pass():
     # 링크드인 실제 결과수 포맷들은 통과해야 한다(false-negative 방지).
-    for rt in ("3.9K+ results", "1 – 25 of 3,912 results", "결과 3,912개", "3,912 명"):
+    for rt in ("1 result", "3.9K+ results", "1 – 25 of 3,912 results", "결과 3,912개", "3,912 명"):
         d = evaluate_search_preflight(_live_probe(results_text=rt))
         assert d["ok"] is True, rt
 
@@ -113,10 +113,52 @@ def test_login_redirect_url_fails():
     assert d["checks"]["logged_in"] is False
 
 
-def test_empty_account_fails():
-    d = evaluate_search_preflight(_live_probe(logged_in_account="  "))
+def test_linkedin_login_cap_is_login_expiry_not_captcha():
+    d = evaluate_blocking_preflight(
+        {
+            "url": "https://www.linkedin.com/uas/login-cap?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ftalent%2Fprofile%2Fabc",
+            "card_count": 0,
+            "results_text": "",
+            "logged_in_account": "",
+            "multiple_signins": False,
+            "captcha": False,
+        }
+    )
     assert d["ok"] is False
-    assert d["checks"]["logged_in"] is False
+    assert d["checks"]["no_login_redirect"] is False
+    assert d["checks"]["no_captcha"] is True
+    assert any("로그인" in reason for reason in d["reasons"])
+    assert not any("캡차" in reason for reason in d["reasons"])
+
+
+def test_live_search_without_account_label_reuses_existing_session():
+    # 우상단 계정명 셀렉터가 화면 언어/A-B UI 때문에 빗나가도 카드와 결과수가 정상으로
+    # 렌더됐다면 이미 로그인된 세션이다. 계정명 공백만으로 재로그인시키면 안 된다.
+    d = evaluate_search_preflight(_live_probe(logged_in_account="  "))
+    assert d["ok"] is True
+    assert d["checks"]["logged_in"] is True
+
+
+def test_empty_account_without_live_results_fails():
+    d = evaluate_search_preflight(
+        _live_probe(logged_in_account="  ", card_count=0, results_text="")
+    )
+    assert d["ok"] is False
+    assert d["checks"]["logged_in"] is True
+    assert d["checks"]["results_rendered"] is False
+
+
+def test_non_talent_url_with_stale_result_dom_fails():
+    d = evaluate_search_preflight(
+        _live_probe(
+            url="https://www.linkedin.com/feed/",
+            logged_in_account="",
+            card_count=1,
+            results_text="1 result",
+        )
+    )
+    assert d["ok"] is False
+    assert d["checks"]["on_search_surface"] is False
 
 
 # ── fail-closed 배선 ──
@@ -199,10 +241,10 @@ def test_build_probe_js_regex_matches_evaluate_formats_incl_korean():
     import re as _re
 
     js = build_probe_js()
-    pattern = r"\d[\d,.]*\s*(?:K\+?|results|명|개)"
+    pattern = r"\d[\d,.]*\s*(?:K\+?|results?|명|개)"
     assert pattern in js, "build_probe_js 가 evaluate 와 동일한 결과수 정규식을 써야 한다"
     pat = _re.compile(pattern, _re.I)
-    for rt in ("3.9K+ results", "1 – 25 of 3,912 results", "결과 3,912개", "3,912 명"):
+    for rt in ("1 result", "3.9K+ results", "1 – 25 of 3,912 results", "결과 3,912개", "3,912 명"):
         m = pat.search(rt)
         assert m, f"JS 정규식이 못 잡음: {rt}"
         # 추출된 토큰이 evaluate 의 positive-count 도 통과해야 한다(end-to-end 일관성)
@@ -215,3 +257,33 @@ def test_build_probe_js_is_nonempty_str_with_markers():
     # 핵심 신호를 수집하는 JS 여야 한다
     assert "/talent/profile/" in js
     assert "multiple sign" in js.lower()
+    assert "one-time-code" in js
+    assert "captcha: challenge" in js
+    assert "getComputedStyle" in js
+    assert "getBoundingClientRect" in js
+
+
+def test_build_probe_js_only_flags_visible_challenge_ui() -> None:
+    """숨은/화면 밖 OTP DOM과 후보 서술은 차단으로 오인하지 않고 실제 보이는 UI만 잡는다."""
+    from playwright.sync_api import sync_playwright
+
+    cases = (
+        ('<input autocomplete="one-time-code" style="width:120px;height:24px">', True),
+        ('<div style="display:none"><input autocomplete="one-time-code" style="width:120px;height:24px"></div>', False),
+        ('<div style="visibility:hidden"><input autocomplete="one-time-code" style="width:120px;height:24px"></div>', False),
+        ('<div style="opacity:0"><input autocomplete="one-time-code" style="width:120px;height:24px"></div>', False),
+        ('<div aria-hidden="true"><input autocomplete="one-time-code" style="width:120px;height:24px"></div>', False),
+        ('<input autocomplete="one-time-code" style="position:fixed;left:-10000px;width:120px;height:24px">', False),
+        ('<p>2단계 인증 제품을 만든 후보 경력</p>', False),
+        ('<h1>Security verification</h1>', True),
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(viewport={"width": 800, "height": 600})
+            for html, expected in cases:
+                page.set_content(html)
+                probe = page.evaluate(build_probe_js())
+                assert probe["captcha"] is expected, (html, probe)
+        finally:
+            browser.close()

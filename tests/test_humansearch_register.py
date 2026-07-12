@@ -17,10 +17,16 @@ from tools.multi_position_sourcing.humansearch_register import (
     FY26_AI_SEARCH_LIST_ID,
     FY26_AI_SEARCH_LIST_URL,
     PROFILE_SAVE_EVIDENCE_FIELDS,
+    _candidate_task_description,
+    build_discord_payload,
+    build_discord_payloads,
+    build_message,
     clickup_registration_eligible,
+    discord_briefing_eligible,
     eligible,
     has_required_candidate_output_fields,
     has_saved_profile_evidence,
+    post_discord,
     reconstruct_captured_profile,
     register_clickup_fy26_ai_search,
 )
@@ -42,6 +48,8 @@ def _runner_dict(**over) -> dict:
         "why_not": [],
         "screenshot": "/x/1.png",
         "summary": "백엔드 8년",
+        "career_summary": "A사 Backend Engineer · 백엔드 8년",
+        "current_or_past_companies": ["A사"],
         "visible_text": "python backend engineer, 안정적 경력",
         "skills": ["python", "backend"],
         "employment_history": [
@@ -50,6 +58,111 @@ def _runner_dict(**over) -> dict:
     }
     d.update(over)
     return d
+
+
+def test_discord_briefing_includes_full_url_summary_and_why_fit() -> None:
+    result = _runner_dict(
+        name="핵심 후보",
+        url="https://www.linkedin.com/talent/profile/fully-qualified-candidate",
+        profile_summary="B2B SaaS 영업 8년, 엔터프라이즈 딜 클로징과 팀 리딩 경험",
+        career_summary="B2B SaaS 영업 8년, 엔터프라이즈 딜 클로징과 팀 리딩 경험",
+        why_fit=["대형 고객 딜 발굴·클로징 경험이 JD와 직접 맞음", "플레잉 리드 경험 보유"],
+    )
+    message = build_message([result])
+    assert result["url"] in message
+    assert "경력 요약" in message
+    assert result["profile_summary"] in message
+    assert "적합 사유" in message
+    assert result["why_fit"][0] in message
+
+    payload = build_discord_payload([result])
+    assert len(payload["embeds"]) == 1
+    embed = payload["embeds"][0]
+    assert embed["url"] == result["url"]
+    assert result["url"] in embed["description"]
+    assert result["profile_summary"] in embed["description"]
+    assert result["why_fit"][0] in embed["description"]
+
+
+def test_discord_briefing_eligibility_rejects_missing_contract_fields() -> None:
+    valid = _runner_dict(url="https://www.linkedin.com/talent/profile/valid")
+    no_summary = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/no-summary",
+        summary="",
+        headline="",
+        career_summary="",
+    )
+    no_why_fit = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/no-fit",
+        why_fit=[],
+    )
+    assert discord_briefing_eligible(
+        [valid, no_summary, no_why_fit], "linkedin_rps"
+    ) == [valid]
+
+
+def test_discord_payload_splits_all_passers_without_omission() -> None:
+    candidates = [
+        _runner_dict(
+            name=f"후보{i}",
+            score=90,
+            url=f"https://www.linkedin.com/talent/profile/core-{i}",
+            profile_summary=f"후보{i} 경력 요약",
+            why_fit=[f"후보{i} 적합 사유"],
+        )
+        for i in range(12)
+    ]
+    payloads = build_discord_payloads(candidates)
+    assert [len(payload["embeds"]) for payload in payloads] == [10, 2]
+    urls = [embed["url"] for payload in payloads for embed in payload["embeds"]]
+    assert urls == [candidate["url"] for candidate in candidates]
+    assert all("ClickUp" not in payload["content"] for payload in payloads)
+
+
+def test_discord_payload_keeps_70_to_84_point_passers() -> None:
+    candidates = [
+        _runner_dict(
+            name=f"후보{score}",
+            score=score,
+            url=f"https://www.linkedin.com/talent/profile/score-{score}",
+        )
+        for score in (90, 84, 80)
+    ]
+    payloads = build_discord_payloads(candidates)
+    assert len(payloads) == 1
+    assert [embed["url"] for embed in payloads[0]["embeds"]] == [
+        candidate["url"] for candidate in candidates
+    ]
+
+
+def test_discord_payload_rejects_embed_url_over_platform_limit() -> None:
+    candidate = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/" + "x" * 2100,
+    )
+    with pytest.raises(ValueError, match="URL"):
+        build_discord_payloads([candidate])
+
+
+def test_post_discord_validates_embed_description_before_loading_webhook(monkeypatch) -> None:
+    from tools.multi_position_sourcing import humansearch_register as register
+
+    monkeypatch.setattr(
+        register,
+        "_load_env",
+        lambda _key: (_ for _ in ()).throw(AssertionError("loaded webhook before validation")),
+    )
+    payload = {
+        "content": "header",
+        "embeds": [
+            {
+                "title": "candidate",
+                "url": "https://www.linkedin.com/talent/profile/x",
+                "description": "x" * 4097,
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="description"):
+        post_discord(payload)
 
 
 # ── 가용 필드 복원 ───────────────────────────────────────────────
@@ -62,6 +175,7 @@ def test_reconstruct_restores_available_fields() -> None:
     assert p.summary == "백엔드 8년"
     assert p.education == "부산대학교 학사"
     assert p.skills == ("python", "backend")
+    assert p.current_or_past_companies == ("A사",)
 
 
 def test_reconstruct_employment_history_becomes_tenure_tuples() -> None:
@@ -373,6 +487,36 @@ def test_clickup_fy26_registration_checks_duplicates_before_creating_tasks() -> 
     assert fake.creates[1][3] == plan.parent_task_id
     assert candidate["url"] in fake.creates[1][1]
     assert candidate["url"] in fake.creates[1][2]
+
+
+def test_clickup_candidate_subtask_description_explains_fit_in_detail() -> None:
+    """Subtask 본문은 URL+점수만이 아니라 왜 맞는지 판단 근거를 상세히 보여줘야 한다."""
+    candidate = _runner_dict(
+        name="홍길동",
+        url="https://www.linkedin.com/talent/profile/detail",
+        score=91,
+        headline="AI Product Builder",
+        education="KAIST 석사",
+        summary="AI SaaS 제품기획과 B2B GTM을 함께 수행",
+        profile_summary="AI SaaS 7년, B2B 고객검증과 제품 출시 경험",
+        skills=["AI SaaS", "B2B", "MVP"],
+        breakdown={"education": 28, "role_fit": 45, "profile_logic": 9, "job_stability": 9},
+        why_fit=["JD 필수요건인 AI 서비스 기획과 B2B 고객검증 경험이 직접 맞음", "초기 제품 출시 경험이 MVP 검증 업무와 맞음"],
+        why_not=["대기업 프로세스 경험은 상대적으로 약함"],
+        screenshot="/tmp/profile.png",
+    )
+
+    body = _candidate_task_description(candidate, position_id="86abc", channel="linkedin_rps")
+
+    assert "프로필 요약:" in body
+    assert "왜 이 포지션에 잘 맞는지:" in body
+    assert "점수 근거:" in body
+    assert "학력 28 / 직무 45 / 논리 9 / 안정 9" in body
+    assert "프로필에서 확인한 신호:" in body
+    assert "기술/키워드: AI SaaS, B2B, MVP" in body
+    assert "리스크/확인 필요:" in body
+    assert "등록 판단:" in body
+    assert "JD 필수요건인 AI 서비스 기획과 B2B 고객검증 경험이 직접 맞음" in body
 
 
 def test_clickup_fy26_registration_skips_duplicate_candidate_subtask() -> None:
