@@ -465,18 +465,27 @@ def _canonical_parent_write(tool_name: str, tool_input: Mapping[str, object]) ->
     description = str(
         tool_input.get("description") or tool_input.get("markdown_description") or ""
     )
-    suffix = " — AI Search"
-    if not name.endswith(suffix):
+    lines = description.splitlines()
+    if len(lines) != 8 or not name.endswith(" — AI Search"):
         return False
-    position_name = name[:-len(suffix)]
+    if not lines[1].startswith("원 포지션 ID: ") or not lines[2].startswith("포지션: "):
+        return False
+    if not lines[3].startswith("채널: "):
+        return False
+    position_id = lines[1].removeprefix("원 포지션 ID: ")
+    position_name = lines[2].removeprefix("포지션: ")
+    channel = lines[3].removeprefix("채널: ")
     return bool(
         "create_task" in tool_name.lower()
         and str(tool_input.get("list_id", "")) == FY26_AI_SEARCH_LIST_ID
         and not tool_input.get("parent")
-        and description.startswith("[AI Search / Humansearch 등록]\n")
-        and f"\n포지션: {position_name}\n" in description
-        and f"칸반 리스트: FY26AI_Search ({FY26_AI_SEARCH_LIST_URL})" in description
-        and "중복검사: 부모 Task 검색 후 재사용" in description
+        and name == _parent_task_name(position_name)
+        and channel in ("linkedin_rps", "saramin", "jobkorea")
+        and description == _parent_task_description(
+            position_name=position_name,
+            position_id="" if position_id == "(미상)" else position_id,
+            channel=channel,
+        )
     )
 
 
@@ -486,6 +495,8 @@ def _candidate_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
         return False
     if _canonical_parent_write(tool_name, tool_input):
         return False
+    if "create_task" in tool and str(tool_input.get("list_id", "")) == FY26_AI_SEARCH_LIST_ID:
+        return True
     text = _tool_text(tool_input)
     name = str(tool_input.get("name", "") or "")
     return (

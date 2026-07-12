@@ -165,6 +165,22 @@ def test_candidate_spec_hook_fails_closed_on_exact_manual_bypass_shape() -> None
         assert candidate_spec_hook_cli(json.dumps({
             "hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": tool_input,
         })) == (2, reason)
+    parent_description = _parent_task_description(
+        position_name="홍길동", position_id="position-1", channel="linkedin_rps"
+    )
+    for name, description in (
+        ("홍길동 — AI Search", parent_description +
+         "\nProfile: https://www.linkedin.com/talent/profile/disguised\n점수: 99/100"),
+        ("홍길동", "AI Engineer"),
+    ):
+        disguised = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "mcp__clickup__clickup_create_task",
+            "tool_input": {
+                "list_id": FY26_AI_SEARCH_LIST_ID, "name": name, "description": description,
+            },
+        }
+        assert candidate_spec_hook_cli(json.dumps(disguised)) == (2, "candidate_parent_missing")
 
 
 def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None:
