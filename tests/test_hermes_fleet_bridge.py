@@ -126,3 +126,31 @@ def test_status_and_owner_actions_return_json_serializable_results() -> None:
             command, raw, gateway_user_id=OWNER, queue=queue
         )
         json.dumps(result, ensure_ascii=False)
+
+
+def test_default_access_doc_resolves_regardless_of_process_cwd(monkeypatch, tmp_path) -> None:
+    # 라이브 적대검증(2026-07-13)에서 실제 발견: 돌아가는 Hermes 게이트웨이의 cwd 는
+    # ~/.hermes 라 상대경로 "docs/search-access.md" 는 항상 못 찾는다. 레포 루트 기준
+    # 절대경로로 파생해야 cwd 와 무관하게 동작한다.
+    monkeypatch.chdir(tmp_path)  # 레포 밖 임의 디렉터리로 이동 — 상대경로였다면 여기서 깨진다
+    result = dispatch_hermes_fleet_command(
+        "fleet-status", "", gateway_user_id=OWNER, queue=FakeQueue()
+    )
+    assert result["action"] == "status"
+
+
+def test_unexpected_internal_error_is_reported_not_leaked_as_raw_exception(monkeypatch) -> None:
+    # self-attack: authorized_users 로딩이나 큐 호출에서 예상 못 한 예외(파일 I/O, 네트워크)가
+    # 나면 조용한 무응답(Hermes 쪽 광역 except 가 삼킴) 대신 명시적 error dict 로 보고해야 한다.
+    class ExplodingQueue:
+        def enqueue(self, payload):
+            raise RuntimeError("boom")
+
+    result = dispatch_hermes_fleet_command(
+        "fleet-run",
+        "skill:humansearch url:https://x.test machine:macmini",
+        gateway_user_id=OWNER,
+        queue=ExplodingQueue(),
+    )
+    assert result["action"] == "error"
+    assert "boom" in result["reason"]

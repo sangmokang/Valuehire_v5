@@ -82,6 +82,10 @@ def _make_handler(command_name: str):
             )
         except HermesFleetBridgeError as exc:
             return f"거부됨: {exc}"
+        except Exception as exc:  # noqa: BLE001 — 마지막 방어선. 여기서 새면 Hermes 의
+            # gateway/run.py 쪽 광역 except 가 조용히 로그만 남기고 무응답으로 삼켜, 원문
+            # '/fleet-run ...' 이 그대로 LLM 채팅으로 흘러간다(적대검증에서 실제 발견된 경로).
+            return f"오류: {exc}"
         return json.dumps(result, ensure_ascii=False)
 
     return _handler

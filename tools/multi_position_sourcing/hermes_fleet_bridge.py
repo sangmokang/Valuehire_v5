@@ -14,6 +14,7 @@ fleet_dispatch.dispatch_fleet_command(단일출처)를 그대로 감싼다.
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .access import DiscordAuthorizedUser, load_authorized_discord_users
@@ -21,6 +22,11 @@ from .discord_routing import DiscordAccessConfig, DiscordInvocation
 from .fleet_dispatch import FLEET_COMMANDS, dispatch_fleet_command
 
 FLEET_PLUGIN_COMMANDS: tuple[str, ...] = FLEET_COMMANDS  # ("fleet-run","fleet-resume","fleet-status","fleet-cancel")
+
+# 레포 루트 기준 절대경로 — Hermes 게이트웨이 프로세스는 cwd 가 ~/.hermes 라
+# (실측: pid 5698, lsof cwd=/Users/kangsangmo/.hermes) 상대경로 "docs/search-access.md" 는
+# 그 프로세스에서 항상 못 찾는다(FileNotFoundError). 이 파일 위치에서 파생해 cwd 와 무관하게 만든다.
+_DEFAULT_ACCESS_DOC = Path(__file__).resolve().parents[2] / "docs" / "search-access.md"
 
 _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "fleet-run": frozenset({"skill", "url", "machine"}),
@@ -81,24 +87,29 @@ def dispatch_hermes_fleet_command(
 
     options = parse_hermes_fleet_args(command, raw_args)
 
-    users = (
-        authorized_users
-        if authorized_users is not None
-        else load_authorized_discord_users("docs/search-access.md")
-    )
-    invocation = DiscordInvocation(
-        user_id=str(gateway_user_id).strip(),
-        channel_id="hermes-dm",
-        command_name=command,
-        is_dm=True,
-        invocation_kind="hermes-plugin",
-        options=options,
-    )
-    config = DiscordAccessConfig(allow_dm=True)
-
-    result = dispatch_fleet_command(
-        invocation, authorized_users=users, config=config, queue=queue
-    )
+    try:
+        users = (
+            authorized_users
+            if authorized_users is not None
+            else load_authorized_discord_users(str(_DEFAULT_ACCESS_DOC))
+        )
+        invocation = DiscordInvocation(
+            user_id=str(gateway_user_id).strip(),
+            channel_id="hermes-dm",
+            command_name=command,
+            is_dm=True,
+            invocation_kind="hermes-plugin",
+            options=options,
+        )
+        config = DiscordAccessConfig(allow_dm=True)
+        result = dispatch_fleet_command(
+            invocation, authorized_users=users, config=config, queue=queue
+        )
+    except Exception as exc:  # noqa: BLE001 — 여기서부턴 절대 새지 않는다.
+        # Hermes 쪽 _handler()는 HermesFleetBridgeError만 골라 잡으므로, 예상 못 한 예외
+        # (파일 I/O·Supabase 네트워크 오류 등)가 여기서 새면 조용한 무응답으로 이어진다
+        # (플러그인 계약 위반). 알 수 없는 실패도 항상 dict로 명시 보고한다(fail-closed 보고).
+        return {"action": "error", "reason": f"internal error: {exc}"}
     # command 는 parse_hermes_fleet_args 에서 이미 FLEET_PLUGIN_COMMANDS 검증을 통과했으므로
     # dispatch_fleet_command 가 None(미지원 명령)을 반환할 일은 없다.
     assert result is not None
