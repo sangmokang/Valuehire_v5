@@ -47,13 +47,23 @@ def compute_yield_decision(
 ) -> bool:
     """순수 결정: 무인 워커가 지금 양보(yield)해야 하는가? (True=양보, False=재개)
 
-    - 크롬이 앞창이면 사장님이 크롬을 쓰는 중으로 보고 idle 과 무관하게 양보(True).
-    - 크롬이 앞창이 아니면 OS idle 로 판단: 최근 활동(idle<threshold)이면 양보(True),
-      오래 자리를 비웠으면(idle>=threshold) 재개(False).
-    - idle 을 읽지 못하면(None) 판단 불가 → fail-closed 양보(True). 사장님을 앞지르지 않는다.
+    (2026-07-13 사장님 정정, 2차 — R4 "점유"는 정확히 사장님이 지금 그 브라우저를
+    **손으로 만지고 있을 때**만이다. 1차 수정에서 "크롬 앞창이면 무조건 양보"로 바꿨더니
+    워커 자신이 ``Page.bringToFront`` 로 크롬을 앞으로 띄우는 것만으로도 스스로에게
+    양보해버리는 자기유발 오탐이 생겼다(실측: CDP `Page.bringToFront`/`Input.dispatchMouseEvent`
+    는 macOS `HIDIdleTime` 을 갱신하지 않는다 — 진짜 사람 입력과 구분 가능). 그래서 최종
+    규칙은 **크롬이 앞창이고 AND 최근 진짜 HID 입력(idle<threshold)이 둘 다일 때만** 양보다.
+
+    - 크롬이 앞창이 아니면(Claude Code/터미널/Slack 등) idle 무관 즉시 재개(False) — 워커가
+      쓰는 브라우저와 무관.
+    - 크롬이 앞창이고 idle<threshold(사장님이 방금 진짜로 클릭/타이핑) → 양보(True).
+    - 크롬이 앞창이어도 idle>=threshold(워커 자신의 bringToFront 뿐, 사람 입력 없음) → 재개(False).
+      워커의 CDP 입력(bringToFront·Input.dispatch*)은 HIDIdleTime 을 갱신하지 않으므로 이 값은
+      순수하게 사람 입력만 반영한다.
+    - idle 을 못 읽으면(None) 판단 불가 → fail-closed 양보(True)(사장님을 앞지르지 않는다).
     """
-    if frontmost_is_chrome:
-        return True
+    if not frontmost_is_chrome:
+        return False
     if os_idle_seconds is None:
         return True
     return os_idle_seconds < idle_threshold_seconds

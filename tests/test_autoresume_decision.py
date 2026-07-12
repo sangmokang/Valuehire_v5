@@ -47,10 +47,11 @@ def test_idle_resumes_with_antibot_delay() -> None:
 
 
 # ----------------------------------------------------------------------------
-# 2. 크롬 점유/판단불가 → 양보 (PC-F1 fail-closed 상속)
+# 2. 크롬 점유(=사람이 지금 만짐)/판단불가 → 양보. 크롬 아니면 idle 무관 재개
+#    (PC-F1 2026-07-13 2차 정정 상속 — "점유"는 크롬 앞창 AND 최근 실제 입력일 때만)
 # ----------------------------------------------------------------------------
-def test_chrome_foreground_yields_regardless_of_idle() -> None:
-    for idle in (None, 0.0, 10.0, 10_000.0):
+def test_chrome_foreground_recent_input_yields_but_stale_idle_resumes() -> None:
+    for idle in (None, 0.0, 10.0):  # None=판단불가(fail-closed), 나머지는 threshold 미만
         decision = decide_resume(
             frontmost_is_chrome=True,
             os_idle_seconds=idle,
@@ -60,16 +61,24 @@ def test_chrome_foreground_yields_regardless_of_idle() -> None:
         assert decision.resume is False
         assert decision.delay_ms == 0
 
+    # idle이 threshold 이상이면 크롬이 앞창이어도 재개(워커 자신의 bringToFront뿐일 수 있음).
+    decision = decide_resume(
+        frontmost_is_chrome=True,
+        os_idle_seconds=10_000.0,
+        ticks_yielded=1,
+        seed=1,
+    )
+    assert decision.resume is True
 
-def test_unknown_idle_fails_closed_to_yield() -> None:
+
+def test_non_chrome_always_resumes_even_with_unknown_idle() -> None:
     decision = decide_resume(
         frontmost_is_chrome=False,
         os_idle_seconds=None,
         ticks_yielded=5,
         seed=7,
     )
-    assert decision.resume is False
-    assert decision.delay_ms == 0
+    assert decision.resume is True
 
 
 # ----------------------------------------------------------------------------
@@ -155,22 +164,24 @@ def test_resume_matches_decide_tick_over_full_grid() -> None:
 
 def test_custom_idle_threshold_is_forwarded_to_decide_tick() -> None:
     """V1 생존 뮤턴트(M1: idle_threshold_seconds 미전달) 사살 — 소비자(F4b)가 임계를
-    조정하면 그 값으로 판단해야 한다. idle 50 은 임계 30 기준 재개, 임계 60 기준 양보."""
+    조정하면 그 값으로 판단해야 한다. idle 50 은 임계 30 기준 재개, 임계 60 기준 양보.
+    threshold 비교는 크롬이 앞창일 때만 의미가 있다(크롬 아니면 idle 무관 항상 재개이므로
+    frontmost_is_chrome=True 로 고정해야 이 뮤턴트를 실제로 잡는다)."""
     d_lo = decide_resume(
-        frontmost_is_chrome=False, os_idle_seconds=50.0, ticks_yielded=1, seed=1,
+        frontmost_is_chrome=True, os_idle_seconds=50.0, ticks_yielded=1, seed=1,
         idle_threshold_seconds=30.0,
     )
     assert d_lo.resume is True
     assert d_lo.delay_ms > 0
     d_hi = decide_resume(
-        frontmost_is_chrome=False, os_idle_seconds=50.0, ticks_yielded=1, seed=1,
+        frontmost_is_chrome=True, os_idle_seconds=50.0, ticks_yielded=1, seed=1,
         idle_threshold_seconds=60.0,
     )
     assert d_hi.resume is False
     assert d_hi.delay_ms == 0
     # 단일출처 대조 — decide_tick 에 같은 임계를 줬을 때와 일치
     assert d_lo.resume == decide_tick(
-        frontmost_is_chrome=False, os_idle_seconds=50.0, idle_threshold_seconds=30.0
+        frontmost_is_chrome=True, os_idle_seconds=50.0, idle_threshold_seconds=30.0
     ).run
 
 
