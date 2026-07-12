@@ -60,6 +60,7 @@ python3 tools/multi_position_sourcing/humansearch_register.py --candidate-spec-h
 - RED: `61ca8fc` failed import because the shared hook validator and both hook configs did not exist.
 - Focused: `49 passed` in `tests/test_humansearch_register.py`.
 - Full: `1303 passed, 4 xfailed, 14 subtests passed`; `./verify.sh` exit 0.
+- Failed attempt: one unrelated `test_portal_tab_guard` timing run failed once; the focused file then passed `2/2`, and the immediate full rerun passed with the counts above.
 - Self-attack: altered history, source text, and source ranges returned `candidate_history_incomplete`, `candidate_source_hash_mismatch`, and `candidate_source_ranges_mismatch`.
 - Independent verifier first returned FAIL for date formats, cross-company duplicate periods, malformed dates, and parent-task disguises. Every counterexample became a regression test and was fixed. Final verdict on the behavior-changing code: PASS.
 - Separate Claude CLI review attempts did not produce a usable verdict (one execution error, one budget limit), so the required fallback was the independent Codex review plus direct command reproduction.
