@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -21,6 +23,7 @@ from tools.multi_position_sourcing.humansearch_register import (
     FY26_AI_SEARCH_LIST_URL,
     PROFILE_SAVE_EVIDENCE_FIELDS,
     _candidate_task_description,
+    _candidate_spec_evaluation,
     candidate_spec_hook_cli,
     candidate_spec_hook_reason,
     clickup_registration_eligible,
@@ -137,7 +140,23 @@ def test_candidate_spec_hook_fails_closed_on_exact_manual_bypass_shape() -> None
         description=manual_description,
     )
 
-    assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_spec_missing")
+    raw = json.dumps(event)
+    assert candidate_spec_hook_cli(raw) == (2, "candidate_spec_missing")
+    script = Path(__file__).resolve().parents[1] / "tools/multi_position_sourcing/humansearch_register.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--candidate-spec-hook"],
+        input=raw,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert (completed.returncode, completed.stderr.strip()) == (2, "candidate_spec_missing")
+    score_only_update = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "mcp__clickup__clickup_update_task",
+        "tool_input": {"task_id": "86ey7gzrr", "name": "Candidate — 99점 강력추천"},
+    }
+    assert candidate_spec_hook_cli(json.dumps(score_only_update)) == (2, "candidate_spec_missing")
 
 
 def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None:
@@ -194,6 +213,49 @@ def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() 
 
     assert candidate_spec_hook_cli(json.dumps(candidate_event)) == (0, "")
     assert candidate_spec_hook_cli(json.dumps(parent_event)) == (0, "")
+    code, reason, updated_input = _candidate_spec_evaluation(json.dumps(candidate_event))
+    assert (code, reason) == (0, "")
+    assert "VALUEHIRE_CANDIDATE_SPEC" not in updated_input["description"]
+    script = Path(__file__).resolve().parents[1] / "tools/multi_position_sourcing/humansearch_register.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--candidate-spec-hook"],
+        input=json.dumps(candidate_event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert "VALUEHIRE_CANDIDATE_SPEC" not in json.loads(completed.stdout)["hookSpecificOutput"]["updatedInput"]["description"]
+
+    wrong_list = {**candidate_event, "tool_input": {**candidate_event["tool_input"], "list_id": "wrong"}}
+    no_parent = {**candidate_event, "tool_input": {**candidate_event["tool_input"], "parent": ""}}
+    assert candidate_spec_hook_cli(json.dumps(wrong_list)) == (2, "wrong_list_id")
+    assert candidate_spec_hook_cli(json.dumps(no_parent)) == (2, "candidate_parent_missing")
+
+
+def test_candidate_spec_hook_deduplicates_titles_and_excludes_current_tenure() -> None:
+    edge = _runner_dict(
+        url="https://www.linkedin.com/talent/profile/date-edge",
+        visible_text=_linkedin_raw(
+            "Jan 2023 – Jun 2023",
+            "Jan 2023 – Jun 2023",
+            "Jan 2020 – Jan 2021",
+            "Jan 2024 – Present",
+        ),
+        employment_history=[
+            {"company": "One short role", "start_month": "2023-01", "end_month": "2023-06"},
+            {"company": "Duplicate title", "start_month": "2023-01", "end_month": "2023-06"},
+            {"company": "Twelve months", "start_month": "2020-01", "end_month": "2021-01"},
+            {"company": "Current", "start_month": "2024-01", "end_month": ""},
+        ],
+    )
+    event = _hook_event(
+        model="gpt-5.6",
+        tool_name="mcp__clickup__clickup_update_task",
+        description=_candidate_task_description(edge, position_id="position-1", channel="linkedin_rps"),
+    )
+
+    assert candidate_spec_hook_cli(json.dumps(event)) == (0, "")
 
 
 def test_claude_and_codex_hooks_share_the_same_fail_closed_command() -> None:
