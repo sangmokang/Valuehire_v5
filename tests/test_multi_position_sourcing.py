@@ -9132,6 +9132,7 @@ set search_path = public"""
         self.assertIn("Profile URL:", briefing)
         self.assertIn(SAMPLE_PROFILE.profile_url, briefing)
         self.assertIn("점수:", briefing)
+        self.assertIn("org_fit:", briefing)
         self.assertIn("후보자 요약:", briefing)
         self.assertIn("잘 맞는 이유:", briefing)
         self.assertIn("안 맞는 이유:", briefing)

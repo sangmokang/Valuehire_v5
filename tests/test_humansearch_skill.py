@@ -46,6 +46,14 @@ SAFETY_MARKERS = (
     "천천히",        # 너무 빠른 속도 금지(사장님 2026-06-25)
 )
 
+BROWSER_SURVEY_MARKERS = (
+    "브라우저 환경 전수 조사",
+    "실제 CDP 포트",
+    "--user-data-dir",
+    "/json/list",
+    "이 상태 보고가 끝나기 전에는",
+)
+
 
 def _position() -> Position:
     return Position(
@@ -57,6 +65,24 @@ def _position() -> Position:
         seniority_max=10,
         must_haves=("robotics", "c++", "motion control"),
         nice_to_haves=("ros", "kinematics"),
+    )
+
+
+def _startup_position() -> Position:
+    return Position(
+        position_id="POS-2",
+        company_name="UglyLab",
+        role_title="Growth Lead",
+        jd_text="Lead consumer growth, performance marketing, CRM, retention, and funnel experimentation.",
+        seniority_min=7,
+        seniority_max=14,
+        company_size="startup",
+        industry_segment="consumer_commerce",
+        investment_stage="series_a",
+        organization_analysis="Founder-adjacent growth owner for consumer commerce scaling.",
+        talent_density_notes="Good pool from Kurly, Zigzag, TodayHouse, commerce and subscription apps.",
+        must_haves=("growth", "performance marketing", "crm", "retention"),
+        nice_to_haves=("consumer app", "commerce", "referral"),
     )
 
 
@@ -92,6 +118,15 @@ def test_h1_skill_has_safety_markers() -> None:
     text = SKILL.read_text(encoding="utf-8")
     missing = [m for m in SAFETY_MARKERS if m not in text]
     assert not missing, f"안전 마커 누락: {missing}"
+
+
+def test_h1_browser_environment_survey_precedes_browser_actions() -> None:
+    text = SKILL.read_text(encoding="utf-8")
+    missing = [m for m in BROWSER_SURVEY_MARKERS if m not in text]
+    assert not missing, f"브라우저 전수 조사 선행 계약 누락: {missing}"
+    survey = text.index("브라우저 환경 전수 조사")
+    actions = [text.index(marker) for marker in ("브라우저 드라이버", "브라우저를 열거나") if marker in text]
+    assert not actions or survey < min(actions), "브라우저 조작 설명보다 전수 조사 규칙이 먼저여야 함"
 
 
 # ── H2: config 스키마 ────────────────────────────────────────────
@@ -178,6 +213,39 @@ def test_h3_job_stability_lowers_score() -> None:
         }
     )
     assert score_humansearch(hoppy, pos).score < score_humansearch(base, pos).score
+
+
+def test_h3_organization_context_penalizes_big_org_profile_for_startup_role() -> None:
+    """스타트업/owner 포지션에서 대형 조직/플랫폼 출신은 감점·코멘트가 남아야 한다."""
+    pos = _startup_position()
+    big_org = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/big-org",
+        source_channel="linkedin_rps",
+        visible_text="Growth lead with live commerce and CRM experience at a large platform company.",
+        summary="29CM, CJ ENM Commerce, and Woowa Bros background.",
+        captured_at="2026-06-25T00:00:00+00:00",
+        education="성균관대",
+        current_or_past_companies=("29CM", "CJ ENM Commerce Division", "Woowa Bros"),
+        skills=("growth", "crm", "retention", "performance marketing"),
+        years_experience=10,
+    )
+    builder = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/builder",
+        source_channel="linkedin_rps",
+        visible_text="Growth lead from an early-stage startup, owning funnel experiments and CRM.",
+        summary="Founder-adjacent growth operator.",
+        captured_at="2026-06-25T00:00:00+00:00",
+        education="성균관대",
+        current_or_past_companies=("Early-stage startup",),
+        skills=("growth", "crm", "retention", "performance marketing"),
+        years_experience=10,
+    )
+    big_score = score_humansearch(big_org, pos)
+    builder_score = score_humansearch(builder, pos)
+    assert big_score.score < builder_score.score
+    assert big_score.org_fit == "builder-mismatch"
+    assert builder_score.org_fit == "builder-fit"
+    assert any("대형 조직/플랫폼 출신" in reason for reason in big_score.why_not)
 
 
 # ── H4: 하드 제외 ────────────────────────────────────────────────
@@ -606,6 +674,9 @@ def test_h6_config_has_position_inputs_and_reporting() -> None:
     assert persist["db_path"] == "~/.vh-data/ai-search-candidates.db"
     assert persist["db_table"] == "ai_search_candidates"
     assert persist["db_upsert_key"] == "(url, position_id)"
+    assert persist["organization_analysis_table"] == "organization_analysis"
+    assert persist["organization_analysis_db_key"] == "position_id"
+    assert persist["organization_analysis_supabase_table"] == "organization_analysis"
 
     urls = cfg["search_url_inputs"]
     assert urls["semi_assembled"] is True
@@ -638,6 +709,10 @@ def test_h6_clickup_registration_contract_is_fail_closed() -> None:
     assert "profile_url" in reg["subtask_requires"]
     assert "duplicate_check_missing" in reg["fail_closed_on"]
     assert "missing_required_output_field" in reg["fail_closed_on"]
+
+    sb = cfg["persistence"]["supabase"]
+    assert "organization_analysis" in sb["organization_analysis"]
+    assert sb["organization_analysis_loader"] == "scripts/organization_analysis_supabase_backfill.py (position_id 조회 후 신규만 insert — 멱등)"
 
 
 def test_h6_no_single_input_contract_leftover() -> None:

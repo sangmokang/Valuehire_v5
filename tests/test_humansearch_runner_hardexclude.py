@@ -10,6 +10,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from tools.multi_position_sourcing import humansearch_cdp_run as hcr
 from tools.multi_position_sourcing.humansearch_cdp_run import (
     collect_results,
     runner_hard_exclude,
@@ -84,3 +87,97 @@ def test_collect_results_preserves_order_and_full_rows() -> None:
     rows = [{"name": "a", "score": 70}, {"name": "b", "score": 99, "hard_exclude": "freelancer"}]
     out = collect_results(rows)
     assert out == [{"name": "a", "score": 70}]
+
+
+def test_process_profile_exposes_briefing_and_org_fit_fields(tmp_path, monkeypatch) -> None:
+    class FakeTab:
+        def navigate(self, _url, wait_ms=0):
+            return None
+
+        def eval(self, _expr):
+            return {
+                "name": "핵심 후보",
+                "headline": "Enterprise Sales Lead",
+                "otw": True,
+                "summary": "B2B SaaS 영업 8년, 대형 고객 클로징과 팀 리딩 경험",
+                "education": "연세대학교",
+                "dates": [],
+                "companies": ["29CM"],
+                "full": "29CM Enterprise Sales Lead, B2B deal closing and team leadership",
+            }
+
+        def screenshot(self, path):
+            Path(path).write_bytes(b"png")
+
+    monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
+    row = hcr.process_profile(
+        FakeTab(),
+        {
+            "url": "https://www.linkedin.com/talent/profile/fully-qualified-candidate",
+            "name": "핵심 후보",
+            "snippet": "Enterprise Sales Lead at 29CM",
+        },
+        1,
+    )
+
+    assert row["profile_summary"] == "B2B SaaS 영업 8년, 대형 고객 클로징과 팀 리딩 경험"
+    assert "Enterprise Sales Lead" in row["career_summary"]
+    assert "29CM" in row["career_summary"]
+    assert row["profile_summary"] in row["career_summary"]
+    assert row["current_or_past_companies"] == ["29CM"]
+    assert row["org_fit"] == "enterprise-fit"
+
+
+def test_process_profile_screenshot_failure_has_no_fake_save_evidence(tmp_path, monkeypatch) -> None:
+    class FailingScreenshotTab:
+        def navigate(self, _url, wait_ms=0):
+            return None
+
+        def eval(self, _expr):
+            return {
+                "name": "후보",
+                "headline": "Sales Lead",
+                "otw": False,
+                "summary": "B2B 영업 8년",
+                "education": "연세대학교",
+                "dates": [],
+                "full": "B2B sales leadership",
+            }
+
+        def screenshot(self, _path):
+            raise RuntimeError("capture failed")
+
+    monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
+    row = hcr.process_profile(
+        FailingScreenshotTab(),
+        {"url": "https://www.linkedin.com/talent/profile/no-shot", "name": "후보"},
+        1,
+    )
+
+    assert row["screenshot"] == ""
+    assert row["screenshot"] != "."
+
+
+def test_extract_js_collects_structured_company_links() -> None:
+    from playwright.sync_api import sync_playwright
+
+    html = """
+      <h1>후보</h1>
+      <p>고객사 <a href="https://www.linkedin.com/company/naver/">Naver</a> 연동 경험</p>
+      <section><h2>Experience</h2>
+        <a href="https://www.linkedin.com/company/29cm/">29CM</a>
+        <a href="https://www.linkedin.com/company/29cm/">29CM</a>
+        <a href="https://www.linkedin.com/company/tiny-labs/">Tiny Labs</a>
+      </section>
+    """
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(html)
+            info = page.evaluate(hcr.EXTRACT_JS)
+        finally:
+            browser.close()
+    assert info["companies"] == ["29CM", "Tiny Labs"]

@@ -52,3 +52,4 @@ humansearch-result-count-tree	GREEN	#73	PR#73 merged 2026-07-07(squash d10b2e2) 
 humansearch-multipage-full	GREEN	#75	PR#75 merged 2026-07-07(squash 5b37c1b) — PC-C3b 전수조사 다중페이지: cards[:max_profiles] 하드캡 제거 + plan_result_count_traversal(PC-C2) 소비, full=&start 다중페이지 전건. 1085 passed 4 xfailed 로컬+CI green
 humansearch-r4-wiring	GREEN	#76	PR#76 merged 2026-07-07(squash df3258d) — PC-F2 detector→라이브 러너 R4 배선: 매 프로필 전 compute_yield_decision 점유 감지 양보, 캡차/세션락 STOP. rebase 후 1085 passed fresh+CI green
 autoresume-daemon-decision	GREEN	#77	PR#77 merged 2026-07-07 — PC-F4a decide_resume 자동재개 순수 결정함수: decide_tick(PC-F1)×deterministic_delay_ms(PC-E1) 합성, V1/V2 생존뮤턴트 2종 봉인, 3자일치 verdict. 1078 passed 4 xfailed+CI green. 소비자는 PC-F4b(seam)
+search-machines-2node	GREEN	#81	PR#82 merged 2026-07-10 (merge 6dac4e3) — 2-node search machine startup contract, 31 focused + 1177 full tests, CI green

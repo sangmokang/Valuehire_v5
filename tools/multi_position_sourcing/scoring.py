@@ -19,6 +19,90 @@ HIGH_TIER_COMPANY_SIGNALS = {
     "platform",
 }
 
+ESTABLISHED_ORG_SIGNALS = {
+    "cj",
+    "cj enm",
+    "woowa",
+    "baemin",
+    "musinsa",
+    "29cm",
+    "kakao",
+    "naver",
+    "coupang",
+    "line",
+    "toss",
+    "kurly",
+    "zigzag",
+    "todayhouse",
+    "samsung",
+    "lg",
+    "sk",
+    "lotte",
+    "hyundai",
+    "shinsegae",
+    "nexon",
+    "netmarble",
+}
+
+POSITION_BUILDER_CONTEXT_SIGNALS = {
+    "startup",
+    "scaleup",
+    "seed",
+    "series a",
+    "series_a",
+    "series b",
+    "series_b",
+    "series c",
+    "series_c",
+    "founder-adjacent",
+    "0→1",
+    "0 to 1",
+    "1→10",
+    "early-stage",
+    "scrappy",
+    "fast execution",
+    "small team",
+}
+
+# 후보의 초기조직 경험은 직함의 generic "owner"/"hands-on"만으로 만들지 않는다.
+# 회사 단계나 0→1처럼 출처가 분명한 신호만 쓴다.
+CANDIDATE_BUILDER_BACKGROUND_SIGNALS = {
+    "startup",
+    "scaleup",
+    "seed",
+    "series a",
+    "series_a",
+    "series b",
+    "series_b",
+    "series c",
+    "series_c",
+    "founder-adjacent",
+    "founding team",
+    "early-stage",
+    "0→1",
+    "0 to 1",
+    "1→10",
+    "small team",
+}
+
+POSITION_ENTERPRISE_CONTEXT_SIGNALS = {
+    "enterprise",
+    "대기업",
+    "공공",
+    "government",
+    "global",
+    "large customer",
+    "client",
+    "b2b",
+    "b2g",
+    "compliance",
+    "audit",
+    "reliability",
+    "settlement",
+    "traffic",
+    "scale",
+}
+
 # 저수지 단계 3 — 우수 대학 티어 신호(소문자 비교). 새 신호 추가 시 같은 커밋에 테스트도 보강.
 HIGH_TIER_SCHOOL_SIGNALS = {
     "서울대",
@@ -166,6 +250,30 @@ def keyword_in_text(keyword: str, text: str) -> bool:
     return re.search(left + re.escape(kw) + right, text_folded) is not None
 
 
+def position_organization_target(position: Position) -> str:
+    """포지션 원본 필드에서 조직 운영환경 target을 한 번만 분류한다.
+
+    저장 레일과 런타임 채점이 이 함수를 함께 써 target 불일치를 막는다. startup/scaleup
+    단계 신호가 있으면 B2B 고객 맥락보다 우선하고, 둘 다 없으면 neutral이다.
+    """
+    text = " ".join(
+        [
+            position.organization_analysis,
+            position.talent_density_notes,
+            position.company_size,
+            position.industry_segment,
+            position.investment_stage,
+            position.role_title,
+            position.jd_text,
+        ]
+    )
+    if any(keyword_in_text(signal, text) for signal in POSITION_BUILDER_CONTEXT_SIGNALS):
+        return "builder"
+    if any(keyword_in_text(signal, text) for signal in POSITION_ENTERPRISE_CONTEXT_SIGNALS):
+        return "enterprise"
+    return "neutral"
+
+
 def _role_direct_score(profile: CapturedProfile, position: Position) -> tuple[int, tuple[str, ...]]:
     """직무 직결성 — 후보 기술스택(skills)이 JD must/nice 키워드와 직결되면 가점."""
     skills = " ".join(profile.skills).lower()
@@ -183,12 +291,76 @@ def _contains_any(text: str, signals: tuple[str, ...] | list[str]) -> list[str]:
 def _company_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
     companies = " ".join(profile.current_or_past_companies).lower()
     # sorted: set 반복 순서(PYTHONHASHSEED 의존)가 사장님 브리핑 문구를 흔들지 않게 결정론 고정.
-    matched = tuple(signal for signal in sorted(HIGH_TIER_COMPANY_SIGNALS) if signal in companies)
+    matched = tuple(
+        signal for signal in sorted(HIGH_TIER_COMPANY_SIGNALS) if keyword_in_text(signal, companies)
+    )
     if matched:
         return 10, tuple(f"company tier signal: {signal}" for signal in matched[:2])
     if profile.current_or_past_companies:
         return 6, ("company history present but tier requires human review",)
     return 0, ()
+
+
+def organization_context_bias(
+    profile: CapturedProfile, position: Position
+) -> tuple[float, str, tuple[str, ...], tuple[str, ...]]:
+    """포지션 조직 맥락에 맞춰 후보의 경력 출처를 보정한다.
+
+    organization_analysis / talent_density_notes 를 읽어 포지션이
+    - 스타트업/스케일업/실행형인지
+    - 대기업/엔터프라이즈/대형 고객 맥락인지
+    를 구분하고, 후보의 회사 이력과 맞지 않으면 약하게 감점한다.
+
+    실제 업계 순위의 외부 랭킹은 아직 실시간 소스가 없으므로, 이 함수는
+    position.organization_analysis 와 candidate company/history 신호를 근거로 한
+    결정론적 추론만 수행한다.
+    """
+    candidate_company_text = " ".join(profile.current_or_past_companies).lower()
+
+    bias = 0.0
+    why_fit: list[str] = []
+    why_not: list[str] = []
+    label = "neutral"
+
+    target = position_organization_target(position)
+    builder_target = target == "builder"
+    enterprise_target = target == "enterprise"
+    established_org_background = any(
+        keyword_in_text(signal, candidate_company_text)
+        for signal in sorted(ESTABLISHED_ORG_SIGNALS)
+    )
+    builder_background = any(
+        keyword_in_text(signal, candidate_company_text)
+        for signal in CANDIDATE_BUILDER_BACKGROUND_SIGNALS
+    )
+
+    if builder_target:
+        if established_org_background and not builder_background:
+            bias -= 0.15
+            label = "builder-mismatch"
+            why_not.append("대형 조직/플랫폼 출신이라 초기조직·owner 환경 추가 확인 필요")
+        elif builder_background:
+            bias += 0.06
+            label = "builder-fit"
+            why_fit.append("초기조직/실행형 경험이 포지션 맥락과 맞음")
+
+    if enterprise_target:
+        if established_org_background:
+            bias += 0.10
+            label = "enterprise-fit"
+            why_fit.append("대형 조직/플랫폼 경험이 엔터프라이즈 맥락과 맞음")
+        elif builder_background:
+            bias -= 0.05
+            label = "enterprise-mismatch"
+            why_not.append("스타트업/실행형 경력이 강해 enterprise 운영 맥락은 추가 확인 필요")
+
+    if position.talent_density_notes and established_org_background and not why_not:
+        bias += 0.03
+        if label == "neutral":
+            label = "density-fit"
+        why_fit.append("고밀도 팀/플랫폼 조직에서의 경험 신호가 있음")
+
+    return max(-0.2, min(0.15, bias)), label, tuple(why_fit), tuple(why_not)
 
 
 def score_profile_for_position(profile: CapturedProfile, position: Position) -> PositionMatch:
@@ -246,6 +418,18 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
     else:
         why_not.append("stage/industry/culture fit not directly visible")
 
+    (
+        organization_bias,
+        organization_label,
+        organization_fit_reasons,
+        organization_not_reasons,
+    ) = organization_context_bias(profile, position)
+    organization_context_score = round(20 * organization_bias)
+    if organization_fit_reasons:
+        why_fit.extend(organization_fit_reasons)
+    if organization_not_reasons:
+        why_not.extend(organization_not_reasons)
+
     korea_score = 0
     if _contains_any(" ".join(profile.location_signals), ["korea", "seoul", "대한민국", "서울"]):
         korea_score += 3
@@ -286,6 +470,7 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
         "university_tier": university_score,
         "role_direct": role_direct_score,
         "stage_industry_culture": industry_score,
+        "organization_context": organization_context_score,
         "korea_language_region": korea_score,
         "evidence_quality": evidence_score,
         "risk_penalty": -risk_penalty,
@@ -301,6 +486,7 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
         why_not=tuple(why_not),
         evidence_paths=profile.evidence_paths,
         score_breakdown=breakdown,
+        org_fit=organization_label,
     )
 
 
@@ -312,4 +498,3 @@ def top_matches_for_profile(
     matches = [score_profile_for_position(profile, position) for position in positions]
     matches.sort(key=lambda item: item.score, reverse=True)
     return tuple(matches[:top_n])
-

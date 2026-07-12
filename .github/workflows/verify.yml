@@ -19,5 +19,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
       - name: Run verify.sh
         run: chmod +x verify.sh && ./verify.sh

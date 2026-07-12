@@ -19,10 +19,12 @@ def format_discord_candidate_briefing(match: PositionMatch) -> str:
     why_fit = _bullet_lines(match.why_fit, empty="적합 사유 없음 — 후보 재검토 필요")
     why_not = _bullet_lines(match.why_not, empty="뚜렷한 불일치 사유 없음")
     evidence = _bullet_lines(match.evidence_paths, empty="근거 경로 없음 — 저장 전 확인 필요")
+    org_fit = f"- org_fit: {match.org_fit}" if getattr(match, "org_fit", "") else "- org_fit: neutral"
     return (
         "[Multisearch 후보 브리핑]\n"
         f"Profile URL: {match.candidate_url}\n"
         f"점수: {match.score}/100\n"
+        f"{org_fit}\n"
         f"대상 포지션 ID: {match.position_id}\n"
         "후보자 요약:\n"
         f"{match.profile_summary}\n\n"

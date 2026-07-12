@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import json
 
+from scripts import organization_analysis_supabase_backfill as org_backfill
+from tools.multi_position_sourcing import organization_analysis as org_store
 from tools.multi_position_sourcing.humansearch_supabase_sync import (
+    to_organization_analysis_row,
     to_profile_archive_row,
     to_sourcing_result_row,
 )
+from tools.multi_position_sourcing.models import Position
+from tools.multi_position_sourcing.scoring import position_organization_target
 
 LOCAL = {
     "url": "https://www.linkedin.com/talent/profile/AEMAAtest1",
@@ -100,4 +105,138 @@ def test_s1_v1_career_summary_excludes_education_sentences() -> None:
     assert "학력" not in row["fit_reason"].split(";")[0]  # 이유 첫 문장도 경력/직무 우선
 
 
+def test_s1_organization_analysis_row_maps_position_context() -> None:
+    row = to_organization_analysis_row(
+        {
+            "position_id": "pos-growth-uglylab",
+            "company_name": "UglyLab",
+            "role_title": "Growth Lead",
+            "company_size": "startup",
+            "industry_segment": "consumer_commerce",
+            "investment_stage": "series_a",
+            "organization_analysis": "Founder-adjacent growth owner for consumer commerce scaling.",
+            "talent_density_notes": "Good pool from Kurly, Zigzag, TodayHouse, commerce and subscription apps.",
+            "org_fit_target": "builder_target",
+            "updated_at": "2026-07-08T00:00:00+00:00",
+        }
+    )
+    assert row["position_id"] == "pos-growth-uglylab"
+    assert row["organization_analysis"]
+    assert row["talent_density_notes"]
+    assert row["org_fit_target"] == "builder_target"
+    assert row["updated_at"].startswith("2026-07-08")
 
+
+def test_s1_organization_analysis_row_rejects_empty_payload() -> None:
+    assert to_organization_analysis_row({}) is None
+    assert to_organization_analysis_row({"position_id": "x", "company_name": "c", "role_title": "r"}) is None
+
+
+def test_s1_organization_analysis_sqlite_roundtrip(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "ai-search-candidates.db"
+    monkeypatch.setattr(org_store, "DB_PATH", db_path)
+    position = Position(
+        position_id="pos-growth-uglylab",
+        company_name="UglyLab",
+        role_title="Growth Lead",
+        jd_text="consumer growth",
+        company_size="startup",
+        industry_segment="consumer_commerce",
+        investment_stage="series_a",
+        organization_analysis="Founder-adjacent growth owner for consumer commerce scaling.",
+        talent_density_notes="Good pool from Kurly, Zigzag, TodayHouse, commerce and subscription apps.",
+    )
+    record = org_store.store_position(position, updated_at="2026-07-08T00:00:00+00:00")
+    assert record.position_id == "pos-growth-uglylab"
+    assert record.org_fit_target == "builder_target"
+    rows = org_store.load_records(db_path)
+    assert len(rows) == 1
+    assert rows[0].company_name == "UglyLab"
+    assert rows[0].organization_analysis
+
+
+def test_s1_builder_stage_precedes_b2b_customer_context() -> None:
+    """scaleup가 B2B 고객을 상대해도 운영 환경 target은 builder로 한 번만 분류한다."""
+    position = Position(
+        position_id="scaleup-b2b-owner",
+        company_name="Example",
+        role_title="B2B Sales Owner",
+        jd_text="Scaleup owner who closes B2B enterprise deals hands-on.",
+        company_size="scaleup",
+    )
+    assert org_store.org_fit_target_for_position(position) == "builder_target"
+
+
+def test_s1_enterprise_sales_without_stage_signal_stays_enterprise_target() -> None:
+    position = Position(
+        position_id="enterprise-sales",
+        company_name="LargeCo",
+        role_title="Enterprise Sales Lead",
+        jd_text="Close enterprise B2B deals for large customers.",
+        company_size="large enterprise",
+    )
+    assert org_store.org_fit_target_for_position(position) == "enterprise_target"
+
+
+def test_s1_store_and_runtime_share_all_builder_context_signals() -> None:
+    for jd in (
+        "Join an early-stage small team and build growth.",
+        "Series B scrappy fast execution team.",
+    ):
+        position = Position(
+            position_id="builder-signal",
+            company_name="Example",
+            role_title="Growth Lead",
+            jd_text=jd,
+        )
+        assert org_store.org_fit_target_for_position(position) == "builder_target", jd
+
+
+def test_s1_generic_sales_is_neutral_in_store_and_runtime_classifier() -> None:
+    position = Position(
+        position_id="generic-sales",
+        company_name="Example",
+        role_title="Sales Manager",
+        jd_text="Lead the sales team and improve revenue.",
+    )
+    assert position_organization_target(position) == "neutral"
+    assert org_store.org_fit_target_for_position(position) == "neutral_target"
+
+
+def test_s1_store_runtime_target_parity_for_structured_stage_fields() -> None:
+    for field, value in (
+        ("investment_stage", "series_a"),
+        ("investment_stage", "series_c"),
+        ("company_size", "early-stage"),
+    ):
+        position = Position(
+            position_id=f"stage-{field}",
+            company_name="Example",
+            role_title="Growth Lead",
+            jd_text="Build growth systems.",
+            **{field: value},
+        )
+        runtime_target = position_organization_target(position)
+        assert runtime_target == "builder", (field, value)
+        assert org_store.org_fit_target_for_position(position) == f"{runtime_target}_target"
+
+
+def test_s1_backfill_dry_run_needs_no_supabase_credentials(tmp_path, monkeypatch, capsys) -> None:
+    """--dry-run은 로컬 payload 검사이며 서비스 키를 읽거나 외부 요청을 해서는 안 된다."""
+    monkeypatch.setattr(org_backfill, "DB_PATH", tmp_path / "missing.db")
+    monkeypatch.setattr(
+        org_backfill,
+        "_env",
+        lambda _key: (_ for _ in ()).throw(AssertionError("dry-run read credentials")),
+    )
+    monkeypatch.setattr(
+        org_backfill,
+        "_api",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dry-run called API")),
+    )
+
+    org_backfill.main(dry=True)
+
+    output = capsys.readouterr().out
+    assert "organization_analysis: 대상 0" in output
+    assert "dry-run" in output

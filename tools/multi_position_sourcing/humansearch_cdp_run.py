@@ -10,6 +10,7 @@ import json
 import math
 import random
 import re
+import sqlite3
 import sys
 import time
 from collections.abc import Iterable
@@ -25,6 +26,7 @@ from tools.multi_position_sourcing.humansearch import (
     plan_result_count_traversal,
     score_humansearch,
 )
+from tools.multi_position_sourcing.organization_analysis import record_position
 from tools.multi_position_sourcing.scoring import tenure_months
 from tools.multi_position_sourcing.humansearch_preflight import PreflightError
 from tools.multi_position_sourcing.humansearch_preflight import assert_not_blocked_or_abort
@@ -33,6 +35,7 @@ from tools.multi_position_sourcing.models import (
     CapturedProfile,
     EmploymentTenure,
     Position,
+    utc_now_iso,
 )
 from tools.multi_position_sourcing.owner_activity import detect_owner_activity_snapshot
 
@@ -96,10 +99,21 @@ EXTRACT_JS = r"""(() => {
   let education = '';
   const em = t.split(/\nEducation\n/);
   if (em.length > 1) education = em[1].split(/\n(?:Skills|Accomplishments|Interests|Languages)\b/)[0].trim().slice(0,300);
+  // Experience의 회사명은 회사 페이지 링크에서만 구조적으로 수집한다. 본문 고객사 언급을
+  // 재직 회사로 오인하지 않도록 innerText 전체에서 회사명을 추론하지 않는다.
+  const experienceRoot = [...document.querySelectorAll('section')].find(section =>
+    [...section.querySelectorAll('h1, h2, h3, [role="heading"]')]
+      .some(heading => /^(experience|경력)$/i.test((heading.innerText || '').trim()))
+  );
+  const companies = [...new Set(
+    [...(experienceRoot ? experienceRoot.querySelectorAll('a[href*="/company/"]') : [])]
+      .map(a => (a.innerText || '').replace(/\s+/g, ' ').trim())
+      .filter(name => name && name.length <= 120)
+  )];
   // 경력 날짜 구간들: 'Mon YYYY – Mon YYYY' / 'Mon YYYY – Present'
   const dates = [...t.matchAll(/([A-Z][a-z]{2})\s+(\d{4})\s*[–-]\s*(Present|[A-Z][a-z]{2}\s+\d{4})/g)]
     .map(m => ({start: m[1]+' '+m[2], end: m[3]}));
-  return {name, headline, otw, summary, education, dates, full: t.slice(0, 8000)};
+  return {name, headline, otw, summary, education, companies, dates, full: t.slice(0, 8000)};
 })()"""
 
 _MON = {m: i for i, m in enumerate(
@@ -316,6 +330,16 @@ def _write_results(rows: list[dict]) -> None:
     )
 
 
+def _career_summary_for_briefing(info: dict, card: dict) -> str:
+    """검색 카드(현 회사/직함 신호) + 프로필 headline/summary를 한 줄 경력 요약으로 묶는다."""
+    parts: list[str] = []
+    for raw in (card.get("snippet", ""), info.get("headline", ""), info.get("summary", "")):
+        text = _clean(str(raw or ""))
+        if text and text not in parts:
+            parts.append(text)
+    return " · ".join(parts)[:600]
+
+
 def process_cards_with_r4(
     tab,
     cards: list[dict],
@@ -357,27 +381,37 @@ def process_profile(tab, card: dict, idx: int) -> dict:
     name = info.get("name") or card.get("name") or f"cand{idx}"
     education = _clean(info.get("education", "")).replace("School name", "").strip()
     safe = re.sub(r"[^A-Za-z0-9]+", "_", name)[:40] or f"cand{idx}"
-    shot = OUT_DIR / f"{idx:02d}_{safe}.png"
+    shot_path = OUT_DIR / f"{idx:02d}_{safe}.png"
+    screenshot = ""
     try:
-        tab.screenshot(str(shot))
+        tab.screenshot(str(shot_path))
+        screenshot = str(shot_path)
     except Exception as e:
         log(f"  screenshot fail: {e}")
-        shot = Path("")
     tenures = build_tenures(info.get("dates", []))
+    companies = tuple(
+        dict.fromkeys(
+            _clean(str(company))
+            for company in (info.get("companies", []) if isinstance(info.get("companies"), list) else [])
+            if _clean(str(company))
+        )
+    )
+    career_summary = _career_summary_for_briefing(info, card)
     prof = CapturedProfile(
         profile_url=card["url"],
         source_channel="linkedin_rps",
         visible_text=info.get("full", ""),
         summary=info.get("summary", "") or info.get("headline", ""),
         captured_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
-        screenshot_path=str(shot),
+        screenshot_path=screenshot,
         education=education,
         # PC-I2: 졸업연도/근속으로 경력연차 산출 → PC-I1 경력상한 컷의 입력.
         years_experience=compute_years_experience(
             education, tenures, today_year=date.today().year, today_month=date.today().month
         ),
-        evidence_paths=(str(shot),) if shot else (),
+        evidence_paths=(screenshot,) if screenshot else (),
         employment_history=tenures,
+        current_or_past_companies=companies,
     )
     match = score_humansearch(prof, POSITION)
     return {
@@ -393,9 +427,13 @@ def process_profile(tab, card: dict, idx: int) -> dict:
         "breakdown": match.score_breakdown,
         "why_fit": list(match.why_fit),
         "why_not": list(match.why_not),
-        "screenshot": str(shot),
+        "org_fit": match.org_fit,
+        "screenshot": screenshot,
         # 재채점용 원시 필드(채점 상수 변경 시 재오픈 없이 offline re-score 가능)
         "summary": prof.summary,
+        "profile_summary": prof.summary,
+        "career_summary": career_summary or prof.summary,
+        "current_or_past_companies": list(prof.current_or_past_companies),
         "visible_text": prof.visible_text,
         "skills": list(prof.skills),
         "employment_history": [
@@ -407,6 +445,13 @@ def process_profile(tab, card: dict, idx: int) -> dict:
 
 def main(max_profiles: int = 25, start: int = 0, *, owner_snapshot=detect_owner_activity_snapshot) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    db_path = Path.home() / ".vh-data" / "ai-search-candidates.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        record_position(conn, POSITION, updated_at=utc_now_iso())
+    finally:
+        conn.close()
     t = cdp.find_page_by_url("searchContextId=8d792952") or cdp.find_page_by_url("linkedin.com/talent/search")
     if not t:
         t = cdp.new_tab("about:blank")

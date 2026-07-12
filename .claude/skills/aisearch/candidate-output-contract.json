@@ -32,6 +32,12 @@
     "점수 85+ = 강력추천 표기, 70~84 = 후보, 70 미만은 리스트 제외 권장."
   ],
   "discord_message_format": "포지션 제목 + 채널별 후보 카드. 각 카드: 이름/채널 · 점수 · profile_url · why_fit(불릿) · profile_summary. 길면 채널별로 분할 전송.",
+  "top_candidate_briefing_required": {
+    "_owner_directive": "2026-07-09 사장님 지시: 핵심 후보자를 Discord로 넘길 때 url만 던지지 말고 브리핑 3요소를 함께 보낸다.",
+    "applies_to": "핵심 후보 (강력추천 85+ 또는 상위 점수 후보)",
+    "fields": ["profile_url (전체 URL)", "career_summary (경력 요약 — 현재 회사·직무·핵심 경력)", "why_fit (왜 이 포지션에 잘 맞는지 1~2줄)"],
+    "rule": "각 핵심 후보 = url + 경력요약 + 적합사유를 한 카드/embed로 묶어 전송. url 단독 금지. 여러 핵심 후보는 한 메시지(embeds 배열)에 묶어 알람 폭탄 방지."
+  },
   "discord_send_spec": {
     "_doc": "디스코드 webhook 전송 표준 절차 (2026-06-24 확정). 이대로만 보내면 Cloudflare 403 안 막힌다.",
     "method": "POST",

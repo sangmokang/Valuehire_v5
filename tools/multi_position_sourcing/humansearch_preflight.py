@@ -29,7 +29,7 @@ _LOGIN_REDIRECT_MARKERS = (
 _SESSION_CONFLICT_URL = "enterprise-authentication/sessions"
 
 # 결과 수 텍스트가 '진짜 결과'를 가리키는지: 숫자 + (K / results / 명 / 개).
-_RESULTS_COUNT_RE = re.compile(r"\d[\d,.]*\s*(?:k\+?|results|명|개)", re.IGNORECASE)
+_RESULTS_COUNT_RE = re.compile(r"\d[\d,.]*\s*(?:k\+?|results?|명|개)", re.IGNORECASE)
 
 # 결과가 렌더됐다고 인정할 최소 카드 수.
 MIN_CARD_COUNT = 1
@@ -83,11 +83,19 @@ def evaluate_search_preflight(probe: dict[str, Any]) -> dict[str, Any]:
     multiple_signins = bool(probe.get("multiple_signins"))
     captcha = bool(probe.get("captcha"))
 
+    results_rendered = card_count >= MIN_CARD_COUNT and _positive_results_count(results_text)
     no_login_redirect = not any(m in url for m in _LOGIN_REDIRECT_MARKERS)
-    logged_in = bool(account) and no_login_redirect
+    on_search_surface = (
+        "linkedin.com" in url
+        and "/talent/" in url
+        and ("/talent/search" in url or "recruitersearch" in url)
+    )
+    # LinkedIn은 화면 언어·A/B UI에 따라 우상단 계정명 텍스트가 없거나 문구가 달라질 수 있다.
+    # 실제 talent 검색 화면이 로그인 리다이렉트 없이 로드됐다면 이미 인증된 세션이므로,
+    # 계정명 추출 실패나 0건 검색만으로 재로그인시키지 않는다(SOT26 login_state_check).
+    logged_in = no_login_redirect and (bool(account) or on_search_surface)
     no_session_conflict = (not multiple_signins) and (_SESSION_CONFLICT_URL not in url)
     no_captcha = not captcha
-    results_rendered = card_count >= MIN_CARD_COUNT and _positive_results_count(results_text)
 
     checks = {
         "logged_in": logged_in,
@@ -95,11 +103,14 @@ def evaluate_search_preflight(probe: dict[str, Any]) -> dict[str, Any]:
         "no_captcha": no_captcha,
         "results_rendered": results_rendered,
         "no_login_redirect": no_login_redirect,
+        "on_search_surface": on_search_surface,
     }
 
     reasons: list[str] = []
     if not logged_in:
-        reasons.append("로그인 안 됨 또는 로그인/인증 페이지로 리다이렉트 — 계정 로그인 상태가 아님")
+        reasons.append(
+            "로그인 화면으로 리다이렉트됐거나 살아있는 검색 결과·계정 신호가 없음 — 세션 상태 확인 필요"
+        )
     if not no_session_conflict:
         reasons.append("다른 기기 동시 로그인(세션 충돌) 감지 — 한쪽 세션 정리 필요")
     if not no_captcha:
@@ -108,6 +119,8 @@ def evaluate_search_preflight(probe: dict[str, Any]) -> dict[str, Any]:
         reasons.append(
             f"검색 결과 미렌더(카드 {card_count}개, 결과수 '{results_text}') — 세션 만료/Loading/껍데기 상태로 판단"
         )
+    if not on_search_surface:
+        reasons.append("LinkedIn Talent 검색 화면이 아님 — 남은 DOM만으로 정상 검색이라 판정하지 않음")
 
     ok = all(checks.values())
     return {"ok": ok, "checks": checks, "reasons": reasons, "card_count": card_count}
@@ -153,8 +166,27 @@ def build_probe_js() -> str:
       }
       // 결과수 정규식은 evaluate 의 _RESULTS_COUNT_RE 와 동일해야 한다(불일치 시 살아있는
       // 한국어 검색 '결과 N개'를 못 잡아 false-negative 발생). 숫자 + 단위(K+/results/명/개).
-      const rm = txt.match(/\d[\d,.]*\s*(?:K\+?|results|명|개)/i);
+      const rm = txt.match(/\d[\d,.]*\s*(?:K\+?|results?|명|개)/i);
       const am = txt.match(/Expand the user menu\n([^\n]+)/);
+      const isVisible = el => {
+        if (!el) return false;
+        for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (node.hidden || node.inert || node.getAttribute('aria-hidden') === 'true') return false;
+          if (style.display === 'none' || style.visibility === 'hidden' ||
+              style.visibility === 'collapse' || Number(style.opacity || 1) <= 0) return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 &&
+          rect.top < window.innerHeight && rect.left < window.innerWidth;
+      };
+      const challenge = [...document.querySelectorAll(
+        'iframe[src*="recaptcha" i], iframe[title*="recaptcha" i], .g-recaptcha, [data-sitekey], ' +
+        'input[name*="captcha" i], input[id*="captcha" i], input[autocomplete="one-time-code"]'
+      )].some(isVisible);
+      const challengeHeading = [...document.querySelectorAll('h1, h2, [role="heading"]')]
+        .some(el => isVisible(el) &&
+          /^(security verification|로봇이 아닙니다|2단계 인증|인증번호)\s*$/i.test((el.innerText || '').trim()));
       return {
         url: location.href,
         card_count: cardSet.size,
@@ -166,7 +198,7 @@ def build_probe_js() -> str:
         // 검색을 캡차로 오탐해 순회를 통째로 중단시킨다(adversarial V2/V3 재현). 진짜 블록/캡차/세션락
         // 페이지는 후보 카드를 렌더하지 않아 results_rendered=False + URL 마커(_LOGIN_REDIRECT_MARKERS)로
         // 이미 abort 되므로, 여기 텍스트 스캔은 좁은 블록-특정 문구만 유지한다(확장 금지).
-        captcha: /security verification|captcha|checkpoint|체크포인트|로봇이 아닙니다/i.test(txt)
+        captcha: challenge || challengeHeading
       };
     })()"""
 
