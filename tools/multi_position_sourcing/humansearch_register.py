@@ -465,13 +465,16 @@ def _candidate_write(tool_name: str, tool_input: Mapping[str, object]) -> bool:
     if "clickup_" not in tool or not ("create_task" in tool or "update_task" in tool):
         return False
     text = _tool_text(tool_input)
+    name = str(tool_input.get("name", "") or "")
     return (
         str(tool_input.get("list_id", "")) == FY26_AI_SEARCH_LIST_ID
         and bool(tool_input.get("parent"))
     ) or CANDIDATE_SPEC_MARKER in text or bool(
         re.search(r"https?://\S*(?:linkedin\.com|saramin\.co\.kr|jobkorea\.co\.kr)\S*", text, re.I)
     ) or bool(
-        re.search(r"profile_url|\"score\"|점수|강력추천|후보|candidate|\b\d{2,3}\s*점", text, re.I)
+        re.search(r"\"score\"|점수|강력추천|\b\d{2,3}\s*점", text, re.I)
+    ) or bool(
+        re.search(r"후보|candidate", name, re.I)
     )
 
 

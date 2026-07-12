@@ -24,6 +24,7 @@ from tools.multi_position_sourcing.humansearch_register import (
     PROFILE_SAVE_EVIDENCE_FIELDS,
     _candidate_task_description,
     _candidate_spec_evaluation,
+    _parent_task_description,
     candidate_spec_hook_cli,
     candidate_spec_hook_reason,
     clickup_registration_eligible,
@@ -275,7 +276,9 @@ def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() 
         "tool_input": {
             "list_id": FY26_AI_SEARCH_LIST_ID,
             "name": "Position — AI Search",
-            "description": "AI Search position parent task",
+            "description": _parent_task_description(
+                position_name="Position", position_id="position-1", channel="linkedin_rps"
+            ),
         },
     }
 
