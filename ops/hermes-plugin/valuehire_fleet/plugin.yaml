@@ -1,0 +1,7 @@
+name: valuehire_fleet
+version: 0.1.0
+description: "Valuehire 3-machine search fleet — fleet-run/fleet-status/fleet-resume/fleet-cancel slash commands, delegating to tools/multi_position_sourcing/hermes_fleet_bridge.py in the Valuehire_v5 repo."
+author: valueconnect
+kind: standalone
+platforms:
+  - macos
