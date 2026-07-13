@@ -139,6 +139,74 @@ def test_default_access_doc_resolves_regardless_of_process_cwd(monkeypatch, tmp_
     assert result["action"] == "status"
 
 
+def test_bare_url_alone_defaults_skill_humansearch_and_machine_macmini() -> None:
+    # 사장님 요청(2026-07-13): "그냥 /fleet-run 하고 클릭업 링크만 주면 서치하도록" —
+    # skill:/machine: 없이 URL 하나만 줘도 humansearch/macmini 기본값으로 등록돼야 한다.
+    options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc")
+    assert options == {"skill": "humansearch", "url": "https://app.clickup.com/t/abc"}
+
+
+def test_bare_url_dispatches_end_to_end_with_defaults() -> None:
+    queue = FakeQueue()
+    result = dispatch_hermes_fleet_command(
+        "fleet-run", "https://app.clickup.com/t/abc", gateway_user_id=OWNER, queue=queue
+    )
+    assert result["action"] == "enqueued"
+    assert queue.enqueued[0]["skill"] == "humansearch"
+    assert queue.enqueued[0]["machine"] == "macmini"
+    assert queue.enqueued[0]["position_url"] == "https://app.clickup.com/t/abc"
+
+
+def test_bare_url_with_explicit_skill_override_still_works() -> None:
+    options = parse_hermes_fleet_args("fleet-run", "skill:aisearch https://app.clickup.com/t/abc")
+    assert options == {"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}
+
+
+def test_bare_machine_token_overrides_default() -> None:
+    options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc winpc")
+    assert options == {"skill": "humansearch", "url": "https://app.clickup.com/t/abc", "machine": "winpc"}
+
+
+def test_bare_skill_token_also_accepted() -> None:
+    options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc aisearch")
+    assert options == {"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}
+
+
+def test_bare_url_conflicting_with_explicit_url_key_is_rejected() -> None:
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args(
+            "fleet-run", "url:https://a.test https://b.test"
+        )
+
+
+def test_two_bare_urls_is_rejected_not_last_one_wins() -> None:
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args("fleet-run", "https://a.test https://b.test")
+
+
+def test_fleet_run_without_any_url_is_rejected_with_clear_message() -> None:
+    with pytest.raises(HermesFleetBridgeError, match="url"):
+        parse_hermes_fleet_args("fleet-run", "skill:humansearch machine:macmini")
+
+
+def test_unrecognized_bare_word_is_still_rejected_not_guessed() -> None:
+    # fail-closed: url/skill/machine 어디에도 안 맞는 맨 단어는 추측하지 않고 거부한다.
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc some_random_word")
+
+
+def test_uppercase_scheme_bare_url_not_silently_accepted() -> None:
+    # self-attack: 대소문자 우회로 URL 판정을 피해가려는 시도 — 소문자 http(s):// 만 인정.
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args("fleet-run", "HTTPS://app.clickup.com/t/abc")
+
+
+def test_flexible_format_not_offered_to_other_commands() -> None:
+    # fleet-status/resume/cancel 은 여전히 엄격 key:value 만 — bare 토큰 완화는 fleet-run 전용.
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args("fleet-resume", "7")
+
+
 def test_unexpected_internal_error_is_reported_not_leaked_as_raw_exception(monkeypatch) -> None:
     # self-attack: authorized_users 로딩이나 큐 호출에서 예상 못 한 예외(파일 I/O, 네트워크)가
     # 나면 조용한 무응답(Hermes 쪽 광역 except 가 삼킴) 대신 명시적 error dict 로 보고해야 한다.
