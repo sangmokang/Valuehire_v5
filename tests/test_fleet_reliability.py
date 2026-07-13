@@ -319,7 +319,9 @@ class TestPauseCooldown:
     def test_loop_가_paused_후_실제로_쉰다(self, monkeypatch):
         sleeps: list[float] = []
 
-        class StopLoop(Exception):
+        class StopLoop(BaseException):
+            # loop 의 광역 except Exception 방어(의도된 fail-soft)에 잡히지 않고
+            # 테스트를 탈출시키기 위한 신호 — BaseException 직계.
             pass
 
         class Q:

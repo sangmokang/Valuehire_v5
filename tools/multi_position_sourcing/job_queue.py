@@ -300,6 +300,14 @@ class JobQueueClient:
             "/jobs?status=eq.queued&select=id,machine,status,created_at"
             f"&order=id.asc&limit={limit}")
 
+    def running_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
+        """QA-1 — watchdog running 고아 판정용 잡 목록(워커 급사 가시화)."""
+        limit = max(1, min(int(limit), 100))
+        return self._call(
+            "GET",
+            "/jobs?status=eq.running&select=id,machine,status,started_at"
+            f"&order=id.asc&limit={limit}")
+
     def heartbeats_epoch(self) -> list[dict[str, Any]]:
         """머신별 마지막 heartbeat(heartbeats_epoch RPC) — fleet-status 표시용."""
         rows = self._call("POST", "/rpc/heartbeats_epoch", {})
