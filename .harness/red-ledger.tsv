@@ -53,3 +53,5 @@ humansearch-multipage-full	GREEN	#75	PR#75 merged 2026-07-07(squash 5b37c1b) —
 humansearch-r4-wiring	GREEN	#76	PR#76 merged 2026-07-07(squash df3258d) — PC-F2 detector→라이브 러너 R4 배선: 매 프로필 전 compute_yield_decision 점유 감지 양보, 캡차/세션락 STOP. rebase 후 1085 passed fresh+CI green
 autoresume-daemon-decision	GREEN	#77	PR#77 merged 2026-07-07 — PC-F4a decide_resume 자동재개 순수 결정함수: decide_tick(PC-F1)×deterministic_delay_ms(PC-E1) 합성, V1/V2 생존뮤턴트 2종 봉인, 3자일치 verdict. 1078 passed 4 xfailed+CI green. 소비자는 PC-F4b(seam)
 search-machines-2node	GREEN	#81	PR#82 merged 2026-07-10 (merge 6dac4e3) — 2-node search machine startup contract, 31 focused + 1177 full tests, CI green
+candidate-spec-hook	PARKED	#89	2026-07-13 보류. branch task/candidate-spec-hook에 위조 proof·URL 불일치·모호 update 우회 RED 검사 보존(30ceb07). 신뢰 경계 재설계 후 재개.
+fleet-hermes-bridge	GREEN	#92	PR#92 merged — Hermes 플러그인 어댑터. 후속 PR#93(tools 패키지 충돌 수정)도 merged, 라이브 재배포·재시작·왕복 검증(job 15/16 enqueued) 완료. 워크트리 정리됨.
