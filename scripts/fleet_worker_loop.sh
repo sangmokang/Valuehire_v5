@@ -11,6 +11,15 @@ REPO_DIR="${VALUEHIRE_REPO_DIR:-$SELF_REPO_DIR}"
 
 RETRY_SECONDS="${FLEET_LOOP_RETRY_SECONDS:-60}"
 MAX_RETRIES="${FLEET_LOOP_MAX_RETRIES:-}"   # 빈 값 = 무한(launchd 상주용)
+# 비정수 값이 [ -ge ] 비교를 매번 깨뜨리며 조용히 무한루프가 되지 않게 명시 정규화.
+case "$MAX_RETRIES" in
+  ''|*[!0-9]*)
+    if [ -n "$MAX_RETRIES" ]; then
+      echo "[fleet-loop] FLEET_LOOP_MAX_RETRIES 비정수('$MAX_RETRIES') — 무한 재시도로 간주" >&2
+      MAX_RETRIES=""
+    fi
+    ;;
+esac
 
 attempt=0
 until [ -d "$REPO_DIR/tools/multi_position_sourcing" ] && cd "$REPO_DIR"; do

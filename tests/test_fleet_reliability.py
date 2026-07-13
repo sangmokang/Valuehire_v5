@@ -419,3 +419,36 @@ class TestReleaseRetry:
         with pytest.raises(Exception):
             self._worker(Q(), notes).run_once()
         assert any("고아" in n and "6" in n for n in notes), "최종 실패는 조용히 넘어가지 않는다"
+
+
+# ── QA-7(자기 적대검증 2026-07-13 적발): 러너 반환형 계약 위반 방어 ──
+
+class TestRunnerShapeGuard:
+    def _worker(self, runner, rel):
+        class Q:
+            def claim_next(self, m):
+                return {"id": 9, "skill": "humansearch", "machine": "macmini",
+                        "position_url": "https://x.co/p", "requested_by": "u",
+                        "role": "owner", "params": {}}
+
+            def release(self, jid, st, **k):
+                rel.append(st)
+                return {}
+
+        return FleetWorker("macmini", queue=Q(), runner=runner,
+                           notifier=lambda j, t: None)
+
+    def test_4튜플_러너도_잡을_고아로_두지_않는다(self):
+        rel: list[str] = []
+        out = self._worker(lambda p, t: ("a", "b", "c", "d"), rel).run_once()
+        assert out == "failed" and rel == ["failed"], "예외 누출=running 고아 금지"
+
+    def test_문자열_반환_러너도_방어(self):
+        rel: list[str] = []
+        out = self._worker(lambda p, t: "그냥 문자열", rel).run_once()
+        assert out == "failed" and rel == ["failed"]
+
+    def test_정상_3튜플과_2튜플은_그대로_동작(self):
+        rel: list[str] = []
+        assert self._worker(lambda p, t: ("요약", "", 0), rel).run_once() == "done"
+        assert self._worker(lambda p, t: ("요약", 0), rel).run_once() == "done"

@@ -294,11 +294,18 @@ class FleetWorker:
             self._notify(job, f"❌ 잡 #{job_id} 실패 — 실행 예외: {exc}")
             return "failed"
         # QA-3: 신형 러너는 (stdout, stderr, code), 기존 러너/테스트는 (stdout, code)
-        if len(raw) == 3:
-            stdout, stderr, code = raw
-        else:
-            stdout, code = raw
-            stderr = ""
+        # QA-7(자기 적대검증): 계약 밖 반환형이 예외로 새면 잡이 running 고아가 된다
+        # — 어떤 형태든 release(failed) 로 종결(fail-closed).
+        try:
+            if len(raw) == 3:
+                stdout, stderr, code = raw
+            else:
+                stdout, code = raw
+                stderr = ""
+        except (TypeError, ValueError) as exc:
+            self._release(job, job_id, "failed", error=f"러너 반환형 계약 위반: {exc}")
+            self._notify(job, f"❌ 잡 #{job_id} 실패 — 러너 반환형 계약 위반: {exc}")
+            return "failed"
         result = parse_worker_output(stdout, code, stderr=stderr)
         if result["status"] == "paused_for_human":
             self._release(job, job_id, "paused_for_human", error=result["reason"])

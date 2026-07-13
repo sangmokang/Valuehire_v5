@@ -1,0 +1,22 @@
+{
+  "task": "fleet-run-reliability",
+  "date": "2026-07-13",
+  "spec": "docs/sot/30-fleet-run-reliability.md",
+  "gate4b": {
+    "pass_ultracode_review": {
+      "agents": 16,
+      "confirmed_defects": ["QA-1 running 고아 데드락(가시화 처치)", "QA-2 캡차 중 재진입(쿨다운)", "QA-3 PAUSED 마커 stderr 밀림", "QA-4 release 실패 고아", "QA-5 경로 무가드 크래시루프", "QA-6 401 조용 재시도(S3로 해소)"],
+      "rejected_as_not_real": ["contextvar 신원 오염", "is_dm 우회", "SSRF allowlist", "params 인젝션", "게이트웨이 훅 경합"]
+    },
+    "pass_self_adversarial": {
+      "mutations_killed": ["queued 필터 반전(13 failed)", "쿨다운 제거(2)", "마커 결합스캔 복원(1)", "running 필터 반전(4)", "재시도 제거(4)"],
+      "attack_rounds": {
+        "defended": ["미래 created_at", "bool epoch 위장", "억제 키 충돌(job:N — running 최소나이 3000s > 억제창 1800s 라 삼켜질 수 없음, 산술 증명)", "마커 인용 오탐", "probe 교차 경보 1회", "REPO_DIR 후행 슬래시"],
+        "defect_found_and_sealed": ["QA-7 러너 반환형 계약위반 시 ValueError 누출 → running 고아 (재현→가드→회귀 3건)", "MAX_RETRIES 비정수 무한루프 명시화"]
+      }
+    },
+    "codex_rescue": "사장님 지시(2026-07-13)로 생략 — '네가 적대적 검증 해'. 자기 적대검증으로 대체."
+  },
+  "verify": "1382+ passed, 기존실패 1건(test_resolve_repo_dir Desktop 경로 가정 — main 동일 재현, 본 변경 무관, CI Linux 통과)",
+  "followups": ["fleet-lease(DB, QA-1 근본)", "fleet-pause-lock(DB, QA-2 근본)", "gateway 단일화(운영, 사장님 승인)", "맥북 .env.local 열쇠 교체(운영)"]
+}
