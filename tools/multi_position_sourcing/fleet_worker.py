@@ -128,6 +128,48 @@ def _load_env_line(key: str) -> str:
     return ""
 
 
+AUTH_BACKOFF_SECONDS: tuple[int, ...] = (60, 300, 900)  # SOT30 S3 재시도 백오프
+
+
+def wait_until_authenticated(
+    probe: Callable[[], tuple[str, str]],
+    *,
+    notify: Callable[[str], None],
+    sleep: Callable[[float], None],
+    max_attempts: int | None = None,
+) -> bool:
+    """SOT30 S3 — 기동 인증 게이트. 죽은 열쇠(401)로 조용히 폴링루프에 들어가지 않는다.
+
+    probe() → (분류, 상세). "ok" 면 True. "credential_error" 는 첫 발견 시 1회만
+    명시 경보(notify — 같은 원인 스팸 금지)하고 백오프 재시도(크래시루프 금지).
+    probe 예외도 삼키지 않고 로그 후 재시도. max_attempts 소진 시 False.
+    """
+    attempts = 0
+    credential_alerted = False
+    while True:
+        attempts += 1
+        try:
+            status, detail = probe()
+        except Exception as exc:  # noqa: BLE001 — 프로브 예외 = 재시도성(네트워크 등)
+            status, detail = "server_error", str(exc)[:200]
+        if status == "ok":
+            return True
+        if status == "credential_error" and not credential_alerted:
+            credential_alerted = True
+            try:
+                notify(
+                    f"🚨 함대 워커 기동 실패 — Supabase 자격증명 오류: {detail}\n"
+                    f".env.local 열쇠 교체 전까지 잡을 집어갈 수 없습니다"
+                    f"(백오프 재시도 중).")
+            except Exception as exc:  # noqa: BLE001 — 경보 실패가 게이트를 죽이면 안 됨
+                print(f"[fleet] 인증경보 전송 실패(fail-soft): {exc}", file=sys.stderr)
+        print(f"[fleet] 인증 프로브 {status}: {detail}", file=sys.stderr)
+        if max_attempts is not None and attempts >= max_attempts:
+            return False
+        backoff = AUTH_BACKOFF_SECONDS[min(attempts - 1, len(AUTH_BACKOFF_SECONDS) - 1)]
+        sleep(backoff)
+
+
 def discord_notify(job: Mapping[str, Any], text: str) -> None:
     """잡 보고를 Discord 채널로 전송(fail-soft — 보고 실패가 잡을 죽이면 안 됨)."""
     import os
@@ -228,6 +270,14 @@ class FleetWorker:
 
     def loop(self, poll_seconds: int = POLL_SECONDS, heartbeat_seconds: int = 60) -> None:
         print(f"[fleet] worker 시작 — machine={self.machine}")
+        # SOT30 S3: 폴링 전에 인증 프로브 — 죽은 열쇠가 15초 조용한 재시도로 위장 못 하게.
+        probe = getattr(self.queue, "probe_auth", None)
+        if callable(probe):
+            wait_until_authenticated(
+                probe,
+                notify=lambda text: self._notify({}, text),
+                sleep=time.sleep,
+            )
         # V1 결함1: 심장박동을 잡 처리와 분리 — 40분 잡 실행 중에도 계속 뛰게 별도 스레드.
         import threading
 

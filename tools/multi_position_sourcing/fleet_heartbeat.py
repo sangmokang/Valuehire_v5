@@ -20,6 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 STALE_SECONDS = 300      # 5분 무응답 → stale
 ALERT_SUPPRESS_SECONDS = 1800  # 30분 중복 경보 억제
+QUEUED_STALL_SECONDS = 600  # SOT30 S2 — queued 가 10분 초과 미claim 이면 고착 경보
 
 
 def heartbeat_payload(machine: Any, *, worker_pid: int, now_iso: str) -> dict[str, Any]:
@@ -53,6 +54,74 @@ def stale_machines(
         if beat is None or (now_epoch - beat) > STALE_SECONDS:
             stale.append(m)
     return stale
+
+
+def _created_epoch(row: Mapping[str, Any]) -> int | None:
+    """행에서 생성 시각 epoch 을 뽑는다. created_at_epoch(int) 우선, 없으면 created_at(ISO).
+
+    해석 불가면 None — 호출부(stalled_queued_jobs)가 fail-closed 로 '고착' 취급한다.
+    """
+    raw = row.get("created_at_epoch")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    iso = row.get("created_at")
+    if isinstance(iso, str) and iso.strip():
+        from datetime import datetime
+        try:
+            return int(datetime.fromisoformat(iso.strip()).timestamp())
+        except ValueError:
+            return None
+    return None
+
+
+def stalled_queued_jobs(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    now_epoch: int,
+    stall_seconds: int = QUEUED_STALL_SECONDS,
+) -> list[dict[str, Any]]:
+    """SOT30 S2 — queued 상태로 stall_seconds *초과* 방치된 잡 목록.
+
+    - status != "queued" 는 제외(고착 개념이 없음).
+    - 생성 시각을 증명 못 하는 queued 행(결손·비정수·ISO 해석불가)은 신선하다고
+      가정하지 않고 포함한다(fail-closed) — age_seconds=None 으로 표시.
+    반환 행: {"id", "machine", "age_seconds"}
+    """
+    stalled: list[dict[str, Any]] = []
+    for r in rows:
+        if r.get("status") != "queued":
+            continue
+        created = _created_epoch(r)
+        if created is None:
+            stalled.append({"id": r.get("id"), "machine": r.get("machine"),
+                            "age_seconds": None})
+            continue
+        age = now_epoch - created
+        if age > stall_seconds:
+            stalled.append({"id": r.get("id"), "machine": r.get("machine"),
+                            "age_seconds": age})
+    return stalled
+
+
+def heartbeat_ages(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    now_epoch: int,
+    expected: Sequence[str] = FLEET_MACHINES,
+) -> dict[str, int | None]:
+    """SOT30 인수기준 3 — 머신별 마지막 heartbeat 나이(초). beat 없으면 None.
+
+    입력 rows: heartbeats_epoch RPC 형상 [{"machine", "beat_at_epoch"}, ...]
+    """
+    latest: dict[str, int] = {}
+    for r in rows:
+        m = r.get("machine")
+        epoch = r.get("beat_at_epoch")
+        if m is None or not isinstance(epoch, int) or isinstance(epoch, bool):
+            continue
+        if m not in latest or epoch > latest[m]:
+            latest[m] = epoch
+    return {m: (now_epoch - latest[m]) if m in latest else None for m in expected}
 
 
 def should_alert(machine: str, *, last_alert_epoch: int | None, now_epoch: int) -> bool:
@@ -105,32 +174,61 @@ class Watchdog:
         load_alert_state: Callable[[], dict[str, int]] = lambda: {},
         save_alert_state: Callable[[dict[str, int]], None] = lambda s: None,
         expected: Sequence[str] = FLEET_MACHINES,
+        fetch_queued_jobs: Callable[[int], Sequence[Mapping[str, Any]]] | None = None,
     ) -> None:
         self.fetch_heartbeats = fetch_heartbeats
         self.notify = notify
         self.load_alert_state = load_alert_state
         self.save_alert_state = save_alert_state
         self.expected = tuple(expected)
+        self.fetch_queued_jobs = fetch_queued_jobs  # SOT30 S2 — None 이면 기존 동작 그대로
+
+    def _alert(self, key: str, text: str, state: dict[str, int],
+               alerted: list[str], now_epoch: int) -> None:
+        """경보 1건(억제·전송실패 규율 공통). 실패 시 억제 안 함 → 다음 주기 재시도."""
+        if not should_alert(key, last_alert_epoch=state.get(key), now_epoch=now_epoch):
+            return
+        try:
+            self.notify(text)
+        except Exception as exc:  # noqa: BLE001 — watchdog 은 죽지 않는다
+            # V1 결함4: 전송 실패 시 억제(state)·alerted 표기 안 함 → 다음 주기 재시도.
+            #           실장애를 "경보함"으로 은폐하지 않는다.
+            print(f"[watchdog] 경보 전송 실패(다음 주기 재시도): {exc}", file=sys.stderr)
+            return
+        state[key] = now_epoch
+        alerted.append(key)
 
     def run_once(self, *, now_epoch: int) -> list[str]:
-        """stale 머신 경보(억제 반영). 반환: 이번에 실제 경보한 머신 목록."""
+        """stale 머신 + queued 고착 잡 경보(억제 반영). 반환: 경보한 키 목록.
+
+        키: 머신 이름("macmini") 또는 고착 잡("job:16").
+        """
         rows = self.fetch_heartbeats(now_epoch)
         stale = stale_machines(rows, now_epoch=now_epoch, expected=self.expected)
         state = self.load_alert_state()
         alerted: list[str] = []
         for m in stale:
-            if should_alert(m, last_alert_epoch=state.get(m), now_epoch=now_epoch):
-                text = (f"🚨 함대 경보: 머신 '{m}' 이(가) {STALE_SECONDS // 60}분 넘게 "
-                        f"응답이 없습니다. 워커/전원/네트워크를 확인해 주세요.")
-                try:
-                    self.notify(text)
-                except Exception as exc:  # noqa: BLE001 — watchdog 은 죽지 않는다
-                    # V1 결함4: 전송 실패 시 억제(state)·alerted 표기 안 함 → 다음 주기 재시도.
-                    #           실장애를 "경보함"으로 은폐하지 않는다.
-                    print(f"[watchdog] 경보 전송 실패(다음 주기 재시도): {exc}", file=sys.stderr)
-                    continue
-                state[m] = now_epoch
-                alerted.append(m)
+            self._alert(
+                m,
+                (f"🚨 함대 경보: 머신 '{m}' 이(가) {STALE_SECONDS // 60}분 넘게 "
+                 f"응답이 없습니다. 워커/전원/네트워크를 확인해 주세요."),
+                state, alerted, now_epoch)
+        if self.fetch_queued_jobs is not None:
+            try:
+                job_rows = self.fetch_queued_jobs(now_epoch)
+            except Exception as exc:  # noqa: BLE001 — 잡 조회 실패가 머신 경보를 막으면 안 됨
+                print(f"[watchdog] queued 잡 조회 실패(다음 주기 재시도): {exc}",
+                      file=sys.stderr)
+                job_rows = []
+            for j in stalled_queued_jobs(job_rows, now_epoch=now_epoch):
+                age = j.get("age_seconds")
+                age_txt = f"{age // 60}분" if isinstance(age, int) else "확인불가(시각결손)"
+                self._alert(
+                    f"job:{j.get('id')}",
+                    (f"🚨 함대 경보: 잡 #{j.get('id')} (machine={j.get('machine')}) 이(가) "
+                     f"{age_txt} 동안 queued 고착 — '{j.get('machine')}' 일꾼이 잡을 "
+                     f"집어가지 않습니다. worker 가동/열쇠(401)를 확인해 주세요."),
+                    state, alerted, now_epoch)
         self.save_alert_state(state)
         return alerted
 

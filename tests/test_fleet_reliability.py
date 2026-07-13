@@ -167,7 +167,9 @@ class TestFleetStatusHeartbeats:
         inv = DiscordInvocation(
             user_id="814353841088757800", channel_id="c", command_name="fleet-status",
             is_dm=True, invocation_kind="slash", options={})
-        users = [DiscordAuthorizedUser(name="사장님", discord_user_id="814353841088757800")]
+        users = [DiscordAuthorizedUser(
+            name="사장님", alias="boss", email="sangmokang@valueconnect.kr",
+            discord_id="814353841088757800")]
         out = dispatch_fleet_command(
             inv, authorized_users=users, config=DiscordAccessConfig(allow_dm=True),
             queue=FakeQueue())

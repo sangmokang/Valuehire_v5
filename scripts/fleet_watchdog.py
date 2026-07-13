@@ -29,6 +29,12 @@ def _fetch(now_epoch: int):
     return rows if isinstance(rows, list) else []
 
 
+def _fetch_queued(now_epoch: int):
+    """SOT30 S2 — queued 고착 판정용 잡 목록(조회 실패는 Watchdog 이 fail-soft 처리)."""
+    rows = JobQueueClient().queued_jobs()
+    return rows if isinstance(rows, list) else []
+
+
 def _load_state() -> dict[str, int]:
     if STATE_PATH.exists():
         try:
@@ -51,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     wd = Watchdog(
         fetch_heartbeats=_fetch, notify=health_notify,
         load_alert_state=_load_state, save_alert_state=_save_state,
+        fetch_queued_jobs=_fetch_queued,
     )
     if args.once:
         alerted = wd.run_once(now_epoch=int(time.time()))
