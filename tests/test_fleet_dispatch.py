@@ -97,7 +97,7 @@ def test_build_fleet_job_payload_happy():
     assert p["status"] == "queued"
 
 
-def test_build_fleet_job_payload_defaults_machine_macmini():
+def test_build_fleet_job_payload_preserves_existing_machine_default():
     p = build_fleet_job_payload(
         {"skill": "aisearch", "url": "https://app.clickup.com/t/abc"},
         requested_by="m:member", role="member")

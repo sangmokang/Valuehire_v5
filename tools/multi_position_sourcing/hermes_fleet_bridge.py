@@ -13,6 +13,7 @@ fleet_dispatch.dispatch_fleet_command(단일출처)를 그대로 감싼다.
 
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -26,7 +27,20 @@ FLEET_PLUGIN_COMMANDS: tuple[str, ...] = FLEET_COMMANDS  # ("fleet-run","fleet-r
 
 # fleet-run 전용 완화 규칙(2026-07-13 사장님 요청) — "/fleet-run <url>" 만 줘도 동작하게.
 # 다른 명령(status/resume/cancel)은 여전히 엄격 key:value 만 받는다(대상이 애매해질 여지 없음).
-_FLEET_RUN_DEFAULT_SKILL = "humansearch"
+_FLEET_RUN_DEFAULT_SKILL = "aisearch"
+
+_MACHINE_ALIASES: dict[str, str] = {
+    "win": "winpc",
+    "windows": "winpc",
+    "윈도우": "winpc",
+    "윈도우pc": "winpc",
+    "맥미니": "macmini",
+    "mini": "macmini",
+    "맥북": "macbook",
+}
+_SEARCH_HOST_MARKERS: tuple[str, ...] = (
+    "linkedin.com", "saramin.co.kr", "jobkorea.co.kr",
+)
 
 # 레포 루트 기준 절대경로 — Hermes 게이트웨이 프로세스는 cwd 가 ~/.hermes 라
 # (실측: pid 5698, lsof cwd=/Users/kangsangmo/.hermes) 상대경로 "docs/search-access.md" 는
@@ -34,7 +48,7 @@ _FLEET_RUN_DEFAULT_SKILL = "humansearch"
 _DEFAULT_ACCESS_DOC = Path(__file__).resolve().parents[2] / "docs" / "search-access.md"
 
 _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
-    "fleet-run": frozenset({"skill", "url", "machine"}),
+    "fleet-run": frozenset({"skill", "url", "machine", "channels", "idempotency"}),
     "fleet-status": frozenset(),
     "fleet-resume": frozenset({"job"}),
     "fleet-cancel": frozenset({"job"}),
@@ -58,6 +72,8 @@ def _classify_bare_fleet_run_token(token: str) -> tuple[str, str] | None:
         return ("skill", token)
     if token in FLEET_MACHINES:
         return ("machine", token)
+    if token.lower() in _MACHINE_ALIASES:
+        return ("machine", _MACHINE_ALIASES[token.lower()])
     return None
 
 
@@ -69,13 +85,19 @@ def _set_option_once(options: dict[str, str], field: str, value: str, command: s
     options[field] = value
 
 
-def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, str]:
+def _is_search_url(url: str) -> bool:
+    low = url.lower()
+    return any(marker in low for marker in _SEARCH_HOST_MARKERS)
+
+
+def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
     """``key:value key2:value2`` 형태를 허용. 모르는 명령/필드는 조용히 무시하지 않고 거부.
 
     fleet-run 만 예외로, ``key:value`` 가 아닌 맨 토큰도 URL/스킬/머신으로 자동 인식한다
     (2026-07-13 사장님 요청 — "그냥 /fleet-run 하고 링크만 주면 서치하도록"). skill 생략 시
-    기본값 humansearch, machine 생략은 기존처럼 하위(build_fleet_job_payload)에서 macmini
-    기본값을 채운다. url 은 필수 — fleet-run 인데 끝까지 url 이 안 잡히면 명확히 거부한다.
+    기본값 aisearch, machine 생략은 하위(build_fleet_job_payload)의 기존 fleet 기본값과
+    account binding 정책에 맡긴다. url 은 필수 — fleet-run 인데 끝까지 url 이 안 잡히면
+    명확히 거부한다.
     """
     if command not in FLEET_PLUGIN_COMMANDS:
         raise HermesFleetBridgeError(f"알 수 없는 fleet 명령: {command!r}")
@@ -85,7 +107,8 @@ def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, str]:
     except ValueError as exc:
         # 따옴표 안 닫힘 등 shlex 파싱 실패 — 원본 ValueError 를 그대로 새지 않게 감싼다.
         raise HermesFleetBridgeError(f"입력을 파싱할 수 없음: {exc}") from exc
-    options: dict[str, str] = {}
+    options: dict[str, Any] = {}
+    bare_urls: list[str] = []
     for token in tokens:
         key = None
         if ":" in token:
@@ -98,16 +121,117 @@ def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, str]:
             classified = _classify_bare_fleet_run_token(token)
             if classified is not None:
                 field, value = classified
+                if field == "url":
+                    bare_urls.append(value)
+                    continue
                 _set_option_once(options, field, value, command)
                 continue
         if key is not None:
             raise HermesFleetBridgeError(f"'{command}' 에 허용 안 된 필드: {key!r}")
         raise HermesFleetBridgeError(f"형식 오류(키:값 아님): {token!r}")
     if command == "fleet-run":
+        if bare_urls:
+            position_urls = [url for url in bare_urls if not _is_search_url(url)]
+            if len(position_urls) > 1:
+                raise HermesFleetBridgeError("한 fleet job에는 포지션 URL을 하나만 지정할 수 있습니다")
+            if "url" in options:
+                if position_urls:
+                    raise HermesFleetBridgeError("url 필드와 포지션 URL을 중복 지정할 수 없습니다")
+            else:
+                position_url = position_urls[0] if position_urls else bare_urls[0]
+                options["url"] = position_url
+            search_urls = [url for url in bare_urls if _is_search_url(url)]
+            if search_urls:
+                options["params"] = {"search_urls": search_urls}
         options.setdefault("skill", _FLEET_RUN_DEFAULT_SKILL)
+        params = dict(options.get("params") or {})
+        raw_channels = options.pop("channels", "")
+        if raw_channels:
+            channels = tuple(dict.fromkeys(x for x in raw_channels.split(",") if x))
+            if not channels or any(x not in {"saramin", "jobkorea"} for x in channels):
+                raise HermesFleetBridgeError("channels 는 saramin,jobkorea 만 허용합니다")
+            params["channels"] = list(channels)
+        idempotency = options.pop("idempotency", "")
+        if idempotency:
+            if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", idempotency):
+                raise HermesFleetBridgeError("idempotency 형식 오류")
+            params["idempotency_key"] = idempotency
+        if raw_channels or idempotency:
+            params.setdefault("execution", "live")
+            params.setdefault("channels", ["saramin", "jobkorea"])
+        if params:
+            options["params"] = params
         if "url" not in options:
             raise HermesFleetBridgeError("fleet-run 에는 url(ClickUp 등 포지션 링크)이 필요합니다")
     return options
+
+
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
+_NATURAL_TRIGGERS: tuple[str, ...] = (
+    "aisearch", "humansearch", "휴먼서치", "사람인", "잡코리아", "후보", "찾아", "서치",
+)
+_FOLLOWUP_TRIGGERS: tuple[str, ...] = ("계속해", "잡코리아도", "사람인부터", "방금 포지션")
+
+
+def natural_fleet_command_text(
+    text: str,
+    *,
+    context_url: str = "",
+    context_channels: Sequence[str] = (),
+    message_id: str = "",
+) -> str | None:
+    """일반 Discord 문장을 Hermes slash command로 좁게 변환한다.
+
+    알려진 채용 URL 또는 명시적인 humansearch 트리거가 있고 URL이 실제로 있을 때만
+    변환한다. 일반 대화나 URL 없는 ``win``은 실행하지 않는다(fail-closed).
+    """
+    raw = (text or "").strip()
+    if not raw or raw.startswith("/"):
+        return None
+    urls = [match.group(0).rstrip(".,);]}") for match in _URL_IN_TEXT_RE.finditer(raw)]
+    low = raw.lower()
+    words = set(re.findall(r"[A-Za-z0-9가-힣_-]+", low))
+    explicit_machine = next(
+        (canonical for canonical in FLEET_MACHINES if canonical in words), ""
+    )
+    alias_machine = next(
+        (canonical for alias, canonical in _MACHINE_ALIASES.items() if alias in words), ""
+    )
+    machine = explicit_machine or alias_machine
+    followup = any(trigger in low for trigger in _FOLLOWUP_TRIGGERS) or raw.lower() in {
+        "win", "windows", "윈도우", "윈도우pc", "winpc"
+    }
+    clickup_urls = [url for url in urls if "app.clickup.com" in url.lower()]
+    if not clickup_urls and context_url and (followup or any(t in low for t in _NATURAL_TRIGGERS)):
+        urls = [context_url, *urls]
+        clickup_urls = [context_url]
+    if not urls:
+        return None
+    if len(clickup_urls) != 1:
+        return None
+    known_url = bool(clickup_urls)
+    if not known_url and not any(trigger in low for trigger in _NATURAL_TRIGGERS) and not followup:
+        return None
+
+    mentions_saramin = "사람인" in raw or any("saramin.co.kr" in url.lower() for url in urls)
+    mentions_jobkorea = "잡코리아" in raw or any("jobkorea.co.kr" in url.lower() for url in urls)
+    if mentions_saramin and not mentions_jobkorea:
+        channels = ("saramin",)
+    elif mentions_jobkorea and not mentions_saramin:
+        channels = ("jobkorea",)
+    elif mentions_saramin and mentions_jobkorea:
+        channels = ("saramin", "jobkorea")
+    elif context_channels and followup:
+        channels = tuple(context_channels)
+    else:
+        channels = ("saramin", "jobkorea")
+
+    parts = ["/fleet-run", "aisearch", *urls, f"channels:{','.join(channels)}"]
+    if machine:
+        parts.append(machine)
+    if message_id:
+        parts.append(f"idempotency:discord:{message_id}")
+    return " ".join(parts)
 
 
 def dispatch_hermes_fleet_command(

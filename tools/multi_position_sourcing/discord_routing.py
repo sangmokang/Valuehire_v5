@@ -258,9 +258,9 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
             "type": 1,
             "contexts": [0, 1],
             "options": [
-                {"name": "skill", "description": "Search skill.", "type": 3, "required": True,
+                {"name": "url", "description": "Position or search URL.", "type": 3, "required": True},
+                {"name": "skill", "description": "Search skill (default: humansearch).", "type": 3, "required": False,
                  "choices": [{"name": s, "value": s} for s in ("humansearch", "aisearch", "url")]},
-                {"name": "url", "description": "Position URL (ClickUp/Wanted).", "type": 3, "required": True},
                 {"name": "machine", "description": "Target machine.", "type": 3, "required": False,
                  "choices": [{"name": m, "value": m} for m in ("macmini", "macbook", "winpc")]},
             ],

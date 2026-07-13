@@ -75,7 +75,7 @@ def log(msg: str) -> None:
         f.write(line + "\n")
 
 
-def human_delay(lo: float = 20.0, hi: float = 45.0) -> None:
+def human_delay(lo: float = 180.0, hi: float = 420.0) -> None:
     time.sleep(random.uniform(lo, hi))
 
 
@@ -361,8 +361,7 @@ def process_profile(tab, card: dict, idx: int) -> dict:
     try:
         tab.screenshot(str(shot))
     except Exception as e:
-        log(f"  screenshot fail: {e}")
-        shot = Path("")
+        raise RuntimeError("profile screenshot save failed; traversal must not advance") from e
     tenures = build_tenures(info.get("dates", []))
     prof = CapturedProfile(
         profile_url=card["url"],
@@ -379,21 +378,31 @@ def process_profile(tab, card: dict, idx: int) -> dict:
         evidence_paths=(str(shot),) if shot else (),
         employment_history=tenures,
     )
-    match = score_humansearch(prof, POSITION)
+    from tools.multi_position_sourcing.profile_archive_store import ProfileArchiveStore
+
+    hard_exclude = runner_hard_exclude(prof)
+    receipt = ProfileArchiveStore().save(
+        profile_url=card["url"], channel="linkedin_rps", position_id=POSITION.position_id,
+        scenario="humansearch", page=1, candidate_index=idx, screenshot_path=shot,
+        resume_text=prof.visible_text, hard_exclude_reason=hard_exclude or "",
+    )
+    match = None if hard_exclude else score_humansearch(prof, POSITION)
     return {
         "idx": idx,
         "name": name,
         "url": card["url"],
         # 러너면 하드제외(PC-C3a): 캡처 직후 적용 — 프리랜서·단기이직·전문대면 results.json 제외.
-        "hard_exclude": runner_hard_exclude(prof),
+        "hard_exclude": hard_exclude,
         "otw": info.get("otw", False),
         "headline": _clean(info.get("headline", "")),
         "education": education,
-        "score": match.score,
-        "breakdown": match.score_breakdown,
-        "why_fit": list(match.why_fit),
-        "why_not": list(match.why_not),
+        "score": match.score if match else 0,
+        "breakdown": match.score_breakdown if match else {},
+        "why_fit": list(match.why_fit) if match else [],
+        "why_not": list(match.why_not) if match else [f"hard_exclude:{hard_exclude}"],
         "screenshot": str(shot),
+        "db_row_id": receipt.row_id,
+        "save_status": "saved",
         # 재채점용 원시 필드(채점 상수 변경 시 재오픈 없이 offline re-score 가능)
         "summary": prof.summary,
         "visible_text": prof.visible_text,

@@ -80,6 +80,23 @@ def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
     assert json.loads(result) == {"action": "status", "jobs": []}
 
 
+def test_natural_discord_search_is_rewritten_to_fleet_run() -> None:
+    plugin = _load_plugin_module()
+    event = _discord_event("814353841088757800")
+    event.text = (
+        "humansearch https://app.clickup.com/t/abc "
+        "https://www.jobkorea.co.kr/Search/?stext=cto win"
+    )
+    result = plugin._capture_gateway_identity(event=event)
+    assert result == {
+        "action": "rewrite",
+        "text": (
+            "/fleet-run aisearch https://app.clickup.com/t/abc "
+            "https://www.jobkorea.co.kr/Search/?stext=cto channels:jobkorea winpc"
+        ),
+    }
+
+
 def test_plugin_loads_correctly_even_when_hermes_own_tools_package_is_already_imported() -> None:
     # 라이브 적대검증(2026-07-13)에서 실제 발견한 버그의 재현: Hermes 자신도 최상위
     # 패키지 이름 "tools" 를 쓴다. 우리 플러그인이 "tools.multi_position_sourcing..." 로

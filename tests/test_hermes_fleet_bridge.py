@@ -8,6 +8,7 @@ from tools.multi_position_sourcing.hermes_fleet_bridge import (
     FLEET_PLUGIN_COMMANDS,
     HermesFleetBridgeError,
     dispatch_hermes_fleet_command,
+    natural_fleet_command_text,
     parse_hermes_fleet_args,
 )
 
@@ -139,11 +140,13 @@ def test_default_access_doc_resolves_regardless_of_process_cwd(monkeypatch, tmp_
     assert result["action"] == "status"
 
 
-def test_bare_url_alone_defaults_skill_humansearch_and_machine_macmini() -> None:
+def test_bare_url_alone_defaults_skill_aisearch_without_forcing_winpc() -> None:
     # 사장님 요청(2026-07-13): "그냥 /fleet-run 하고 클릭업 링크만 주면 서치하도록" —
-    # skill:/machine: 없이 URL 하나만 줘도 humansearch/macmini 기본값으로 등록돼야 한다.
+    # skill:/machine: 없이 URL 하나만 줘도 aisearch/winpc 기본값으로 등록돼야 한다.
     options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc")
-    assert options == {"skill": "humansearch", "url": "https://app.clickup.com/t/abc"}
+    assert options["skill"] == "aisearch"
+    assert options["url"] == "https://app.clickup.com/t/abc"
+    assert "machine" not in options
 
 
 def test_bare_url_dispatches_end_to_end_with_defaults() -> None:
@@ -152,7 +155,7 @@ def test_bare_url_dispatches_end_to_end_with_defaults() -> None:
         "fleet-run", "https://app.clickup.com/t/abc", gateway_user_id=OWNER, queue=queue
     )
     assert result["action"] == "enqueued"
-    assert queue.enqueued[0]["skill"] == "humansearch"
+    assert queue.enqueued[0]["skill"] == "aisearch"
     assert queue.enqueued[0]["machine"] == "macmini"
     assert queue.enqueued[0]["position_url"] == "https://app.clickup.com/t/abc"
 
@@ -164,7 +167,12 @@ def test_bare_url_with_explicit_skill_override_still_works() -> None:
 
 def test_bare_machine_token_overrides_default() -> None:
     options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc winpc")
-    assert options == {"skill": "humansearch", "url": "https://app.clickup.com/t/abc", "machine": "winpc"}
+    assert options == {"skill": "aisearch", "url": "https://app.clickup.com/t/abc", "machine": "winpc"}
+
+
+def test_win_alias_maps_to_winpc() -> None:
+    options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc win")
+    assert options["machine"] == "winpc"
 
 
 def test_bare_skill_token_also_accepted() -> None:
@@ -179,9 +187,93 @@ def test_bare_url_conflicting_with_explicit_url_key_is_rejected() -> None:
         )
 
 
-def test_two_bare_urls_is_rejected_not_last_one_wins() -> None:
-    with pytest.raises(HermesFleetBridgeError):
+def test_clickup_and_linkedin_urls_preserve_search_url_in_params() -> None:
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc https://www.linkedin.com/search/results/people/?keywords=cto",
+    )
+    assert options["url"] == "https://app.clickup.com/t/abc"
+    assert options["params"] == {
+        "search_urls": ["https://www.linkedin.com/search/results/people/?keywords=cto"]
+    }
+
+
+def test_two_position_urls_are_rejected_not_silently_dropped() -> None:
+    with pytest.raises(HermesFleetBridgeError, match="포지션 URL"):
         parse_hermes_fleet_args("fleet-run", "https://a.test https://b.test")
+
+
+def test_linkedin_only_uses_existing_default_account_binding() -> None:
+    queue = FakeQueue()
+    result = dispatch_hermes_fleet_command(
+        "fleet-run",
+        "https://www.linkedin.com/search/results/people/?keywords=cto",
+        gateway_user_id=OWNER,
+        queue=queue,
+    )
+    assert result["action"] == "enqueued"
+    assert queue.enqueued[0]["machine"] == "macmini"
+
+
+def test_natural_humansearch_message_rewrites_with_urls_and_win_alias() -> None:
+    rewritten = natural_fleet_command_text(
+        "humansearch https://app.clickup.com/t/abc "
+        "https://www.linkedin.com/search/results/people/?keywords=cto win"
+    )
+    assert rewritten == (
+        "/fleet-run aisearch https://app.clickup.com/t/abc "
+        "https://www.linkedin.com/search/results/people/?keywords=cto "
+        "channels:saramin,jobkorea winpc"
+    )
+
+
+def test_portal_url_or_win_without_position_context_does_not_enqueue() -> None:
+    assert natural_fleet_command_text(
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
+    ) is None
+    assert natural_fleet_command_text("win") is None
+
+
+def test_unrelated_url_does_not_hijack_normal_chat() -> None:
+    assert natural_fleet_command_text("참고해줘 https://example.com/article") is None
+
+
+def test_followup_uses_recent_context_for_30_minute_store_contract() -> None:
+    rewritten = natural_fleet_command_text(
+        "잡코리아도", context_url="https://app.clickup.com/t/abc",
+        context_channels=("saramin",), message_id="123456789",
+    )
+    assert rewritten == (
+        "/fleet-run aisearch https://app.clickup.com/t/abc channels:jobkorea "
+        "idempotency:discord:123456789"
+    )
+
+
+def test_win_followup_requires_context_and_routes_only_when_explicit() -> None:
+    assert natural_fleet_command_text("win") is None
+    rewritten = natural_fleet_command_text(
+        "win", context_url="https://app.clickup.com/t/abc", context_channels=("saramin",)
+    )
+    assert rewritten and rewritten.endswith("channels:saramin winpc")
+
+
+def test_no_win_token_never_injects_winpc() -> None:
+    rewritten = natural_fleet_command_text(
+        "후보 찾아줘 https://app.clickup.com/t/abc"
+    )
+    assert rewritten and "winpc" not in rewritten
+
+
+def test_channels_and_idempotency_become_job_params() -> None:
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc channels:saramin,jobkorea idempotency:discord:42",
+    )
+    assert options["params"] == {
+        "channels": ["saramin", "jobkorea"],
+        "idempotency_key": "discord:42",
+        "execution": "live",
+    }
 
 
 def test_fleet_run_without_any_url_is_rejected_with_clear_message() -> None:

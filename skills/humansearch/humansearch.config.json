@@ -62,7 +62,7 @@
     "applies_before_scoring": true,
     "channels_with_school_cut": ["saramin", "jobkorea"],
     "linkedin_skips_school_cut": "open-to-work 가중 점수제 — 학교는 가중치로 반영, 하드 제외 안 함",
-    "freelancer_markers": ["freelance", "freelancer", "프리랜서", "개인사업자", "independent contractor", "외주", "contract worker"],
+    "freelancer_markers": ["freelance", "freelancer", "프리랜서", "개인사업자", "독립계약자", "independent contractor", "외주", "contract worker"],
     "frequent_job_change": {
       "min_short_hops": 2,
       "short_tenure_months": 12,
