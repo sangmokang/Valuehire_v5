@@ -120,7 +120,19 @@ def dispatch_fleet_command(
         return {"action": "enqueued", "job": job}
 
     if invocation.command_name == "fleet-status":
-        return {"action": "status", "jobs": q.recent(10)}
+        out: dict[str, Any] = {"action": "status", "jobs": q.recent(10)}
+        # SOT30 인수기준 3 — 머신별 heartbeat 나이(초). 일꾼 생존을 명령 한 번으로.
+        fetch_hb = getattr(q, "heartbeats_epoch", None)
+        if callable(fetch_hb):
+            import time as _time
+
+            from .fleet_heartbeat import heartbeat_ages
+            try:
+                out["heartbeats"] = heartbeat_ages(
+                    fetch_hb(), now_epoch=int(_time.time()))
+            except Exception as exc:  # noqa: BLE001 — 표시 실패를 숨기지 않되 status 는 살림
+                out["heartbeats"] = {"error": str(exc)[:200]}
+        return out
 
     # resume / cancel — owner 확정됨
     job_id = _parse_job_id(invocation.options)

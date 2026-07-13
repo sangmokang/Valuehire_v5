@@ -29,6 +29,24 @@ _PAUSE_MARKER = "PAUSED_FOR_HUMAN:"
 # 기본 보고 채널 = 사장님 DM 채널(scripts/discord_command_listener.py 와 동일)
 DEFAULT_REPORT_CHANNEL = "1512503041448743092"
 
+# QA-2(2026-07-13): 캡차/2FA 로 paused_for_human 이 되면 계정락이 풀리는데, 곧바로
+# 다음 잡을 claim 하면 사장님이 캡차를 푸는 크롬/계정에 자동화가 재진입한다(SOT29 §2·§4).
+# 서버측 락 유지(DB 마이그레이션)는 후속 — 워커측 쿨다운으로 먼저 막는다.
+PAUSE_COOLDOWN_SECONDS = 600
+_RELEASE_RETRY_ATTEMPTS = 3
+_RELEASE_RETRY_BACKOFF = (2, 10)
+
+
+def sleep_seconds_after(status: str, poll_seconds: int) -> int:
+    """loop 이 run_once 결과별로 쉬는 시간(순수) — 뮤테이션 방지용 단일 출처."""
+    if status == "idle":
+        return poll_seconds
+    if status == "error":
+        return min(poll_seconds, 15)
+    if status == "paused_for_human":
+        return PAUSE_COOLDOWN_SECONDS
+    return 0
+
 
 def machine_from_env(environ: Mapping[str, str]) -> str:
     """VALUEHIRE_MACHINE 필수 + 화이트리스트 — 무효면 기동 거부."""
@@ -76,33 +94,40 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     )
 
 
-def parse_worker_output(stdout: str, exit_code: int) -> dict[str, str]:
-    """claude 출력 → 상태 판정. PAUSED 마커 > exit code > 빈 출력 불신."""
+def parse_worker_output(stdout: str, exit_code: int, stderr: str = "") -> dict[str, str]:
+    """claude 출력 → 상태 판정. PAUSED 마커 > exit code > 빈 출력 불신.
+
+    QA-3(2026-07-13): 마커 탐지는 *stdout 에서만* 한다 — 비정상 종료 시 stderr
+    (긴 트레이스백)가 뒤에 붙어 15줄 창에서 정당한 PAUSED 를 밀어내고 캡차를
+    failed(종결·재개불가)로 오판하던 결함 봉인. stderr 는 실패 요약에만 쓴다.
+    """
     text = (stdout or "").strip()
     # V1 2R: 실패 방향 설계 — 진짜 PAUSED 를 놓치는 것(캡차인데 자동 진행)이
     # 인용 오탐(불필요한 사람 호출)보다 훨씬 위험하다. 그래서:
-    #  - 마지막 15개 비공백 줄 안에서 '줄 시작' 마커면 paused (후행 stderr/로그 허용)
+    #  - 마지막 15개 비공백 줄 안에서 '줄 시작' 마커면 paused (후행 로그 허용)
     #  - 줄 중간 인용은 절대 매칭 안 됨, 출력 앞부분의 인용은 15줄 창 밖이라 무시
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     for line in reversed(lines[-15:]):
         if line.startswith(_PAUSE_MARKER):
             reason = line[len(_PAUSE_MARKER):].strip() or "(사유 미기재)"
             return {"status": "paused_for_human", "reason": reason}
+    err = (stderr or "").strip()
+    combined = (text + ("\n" + err if err else "")).strip()
     if exit_code != 0:
         return {"status": "failed", "reason": f"exit={exit_code}",
-                "summary": text[-_SUMMARY_LIMIT:]}
+                "summary": combined[-_SUMMARY_LIMIT:]}
     if not text:
         return {"status": "failed", "reason": "빈 출력 — 성공으로 치지 않음"}
     return {"status": "done", "summary": text[-_SUMMARY_LIMIT:]}
 
 
-def _run_claude(prompt: str, timeout: int) -> tuple[str, int]:
-    """claude -p 실행(레포 루트). 반환: (stdout, exit_code)."""
+def _run_claude(prompt: str, timeout: int) -> tuple[str, str, int]:
+    """claude -p 실행(레포 루트). 반환: (stdout, stderr, exit_code) — QA-3 로 분리."""
     proc = subprocess.run(
         ["claude", "-p", prompt],
         cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
     )
-    return (proc.stdout or "") + (("\n" + proc.stderr) if proc.returncode != 0 else ""), proc.returncode
+    return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 
 def _load_env_line(key: str) -> str:
@@ -126,6 +151,48 @@ def _load_env_line(key: str) -> str:
                 if line.startswith(key + "="):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
     return ""
+
+
+AUTH_BACKOFF_SECONDS: tuple[int, ...] = (60, 300, 900)  # SOT30 S3 재시도 백오프
+
+
+def wait_until_authenticated(
+    probe: Callable[[], tuple[str, str]],
+    *,
+    notify: Callable[[str], None],
+    sleep: Callable[[float], None],
+    max_attempts: int | None = None,
+) -> bool:
+    """SOT30 S3 — 기동 인증 게이트. 죽은 열쇠(401)로 조용히 폴링루프에 들어가지 않는다.
+
+    probe() → (분류, 상세). "ok" 면 True. "credential_error" 는 첫 발견 시 1회만
+    명시 경보(notify — 같은 원인 스팸 금지)하고 백오프 재시도(크래시루프 금지).
+    probe 예외도 삼키지 않고 로그 후 재시도. max_attempts 소진 시 False.
+    """
+    attempts = 0
+    credential_alerted = False
+    while True:
+        attempts += 1
+        try:
+            status, detail = probe()
+        except Exception as exc:  # noqa: BLE001 — 프로브 예외 = 재시도성(네트워크 등)
+            status, detail = "server_error", str(exc)[:200]
+        if status == "ok":
+            return True
+        if status == "credential_error" and not credential_alerted:
+            credential_alerted = True
+            try:
+                notify(
+                    f"🚨 함대 워커 기동 실패 — Supabase 자격증명 오류: {detail}\n"
+                    f".env.local 열쇠 교체 전까지 잡을 집어갈 수 없습니다"
+                    f"(백오프 재시도 중).")
+            except Exception as exc:  # noqa: BLE001 — 경보 실패가 게이트를 죽이면 안 됨
+                print(f"[fleet] 인증경보 전송 실패(fail-soft): {exc}", file=sys.stderr)
+        print(f"[fleet] 인증 프로브 {status}: {detail}", file=sys.stderr)
+        if max_attempts is not None and attempts >= max_attempts:
+            return False
+        backoff = AUTH_BACKOFF_SECONDS[min(attempts - 1, len(AUTH_BACKOFF_SECONDS) - 1)]
+        sleep(backoff)
 
 
 def discord_notify(job: Mapping[str, Any], text: str) -> None:
@@ -173,6 +240,33 @@ class FleetWorker:
         except Exception as exc:  # noqa: BLE001
             print(f"[fleet] notify 실패(fail-soft): {exc}", file=sys.stderr)
 
+    def _release(self, job: Mapping[str, Any], job_id: int, status: str, *,
+                 result_summary: str = "", error: str = "") -> Any:
+        """QA-4 — release 를 재시도로 감싼다. 일시 장애가 잡을 running 고아로 못 만들게.
+
+        최종 실패는 조용히 넘어가지 않는다: 고아 위험 경보 후 예외 재전파(loop 이
+        error 백오프로 흡수). ValueError(계약 위반)는 재시도 무의미 — 즉시 전파.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(_RELEASE_RETRY_ATTEMPTS):
+            try:
+                return self.queue.release(
+                    job_id, status, result_summary=result_summary, error=error)
+            except ValueError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — 네트워크/HTTP 일시 장애
+                last_exc = exc
+                if attempt < _RELEASE_RETRY_ATTEMPTS - 1:
+                    backoff = _RELEASE_RETRY_BACKOFF[
+                        min(attempt, len(_RELEASE_RETRY_BACKOFF) - 1)]
+                    print(f"[fleet] release 재시도 {attempt + 1}: {exc}", file=sys.stderr)
+                    time.sleep(backoff)
+        self._notify(job, (
+            f"🚨 잡 #{job_id} 상태보고(release {status}) 최종 실패 — running 고아 위험. "
+            f"수동 확인 필요: {last_exc}"))
+        assert last_exc is not None
+        raise last_exc
+
     def run_once(self, dry_run: bool = False) -> str:
         """큐에서 잡 1건 처리. 반환: idle|done|paused_for_human|failed."""
         job = self.queue.claim_next(self.machine)
@@ -182,37 +276,50 @@ class FleetWorker:
         try:
             prompt = build_job_prompt(job)
         except ValueError as exc:
-            self.queue.release(job_id, "failed", error=f"계약 위반 잡: {exc}")
+            self._release(job, job_id, "failed", error=f"계약 위반 잡: {exc}")
             self._notify(job, f"❌ 잡 #{job_id} 실패 — 계약 위반: {exc}")
             return "failed"
         if dry_run:
-            self.queue.release(job_id, "done", result_summary="dry-run — claude 미실행")
+            self._release(job, job_id, "done", result_summary="dry-run — claude 미실행")
             self._notify(job, f"🧪 잡 #{job_id} dry-run 완료 (claude 미실행)")
             return "done"
         try:
-            stdout, code = self.runner(prompt, self.timeout)
+            raw = self.runner(prompt, self.timeout)
         except subprocess.TimeoutExpired:
-            self.queue.release(job_id, "failed", error=f"claude 타임아웃({self.timeout}s)")
+            self._release(job, job_id, "failed", error=f"claude 타임아웃({self.timeout}s)")
             self._notify(job, f"⏱️ 잡 #{job_id} 실패 — {self.timeout}초 타임아웃")
             return "failed"
         except Exception as exc:  # noqa: BLE001 — V1: 어떤 예외든 잡을 running 고아로 두지 않는다
-            self.queue.release(job_id, "failed", error=f"runner 예외: {exc}")
+            self._release(job, job_id, "failed", error=f"runner 예외: {exc}")
             self._notify(job, f"❌ 잡 #{job_id} 실패 — 실행 예외: {exc}")
             return "failed"
-        result = parse_worker_output(stdout, code)
+        # QA-3: 신형 러너는 (stdout, stderr, code), 기존 러너/테스트는 (stdout, code)
+        # QA-7(자기 적대검증): 계약 밖 반환형이 예외로 새면 잡이 running 고아가 된다
+        # — 어떤 형태든 release(failed) 로 종결(fail-closed).
+        try:
+            if len(raw) == 3:
+                stdout, stderr, code = raw
+            else:
+                stdout, code = raw
+                stderr = ""
+        except (TypeError, ValueError) as exc:
+            self._release(job, job_id, "failed", error=f"러너 반환형 계약 위반: {exc}")
+            self._notify(job, f"❌ 잡 #{job_id} 실패 — 러너 반환형 계약 위반: {exc}")
+            return "failed"
+        result = parse_worker_output(stdout, code, stderr=stderr)
         if result["status"] == "paused_for_human":
-            self.queue.release(job_id, "paused_for_human", error=result["reason"])
+            self._release(job, job_id, "paused_for_human", error=result["reason"])
             self._notify(job, (
                 f"⏸️ 잡 #{job_id} 사람 개입 필요 ({self.machine}): {result['reason']}\n"
                 f"처리 후 /resume 으로 재개해 주세요."))
             return "paused_for_human"
         if result["status"] == "failed":
-            self.queue.release(job_id, "failed",
-                               error=result.get("reason", ""),
-                               result_summary=result.get("summary", ""))
+            self._release(job, job_id, "failed",
+                          error=result.get("reason", ""),
+                          result_summary=result.get("summary", ""))
             self._notify(job, f"❌ 잡 #{job_id} 실패 ({self.machine}): {result.get('reason','')}")
             return "failed"
-        self.queue.release(job_id, "done", result_summary=result["summary"])
+        self._release(job, job_id, "done", result_summary=result["summary"])
         self._notify(job, f"✅ 잡 #{job_id} 완료 ({self.machine}):\n{result['summary'][:1500]}")
         return "done"
 
@@ -228,6 +335,14 @@ class FleetWorker:
 
     def loop(self, poll_seconds: int = POLL_SECONDS, heartbeat_seconds: int = 60) -> None:
         print(f"[fleet] worker 시작 — machine={self.machine}")
+        # SOT30 S3: 폴링 전에 인증 프로브 — 죽은 열쇠가 15초 조용한 재시도로 위장 못 하게.
+        probe = getattr(self.queue, "probe_auth", None)
+        if callable(probe):
+            wait_until_authenticated(
+                probe,
+                notify=lambda text: self._notify({}, text),
+                sleep=time.sleep,
+            )
         # V1 결함1: 심장박동을 잡 처리와 분리 — 40분 잡 실행 중에도 계속 뛰게 별도 스레드.
         import threading
 
@@ -245,11 +360,11 @@ class FleetWorker:
                 except Exception as exc:  # noqa: BLE001 — 루프는 죽지 않는다(fail-soft)
                     print(f"[fleet] run_once 예외(fail-soft): {exc}", file=sys.stderr)
                     status = "error"
-                if status == "idle":
-                    time.sleep(poll_seconds)
-                elif status == "error":
-                    # V1: 예외 연발 시 hot-loop 방지 — 백오프 후 재시도
-                    time.sleep(min(poll_seconds, 15))
+                # QA-2: paused_for_human 직후 쿨다운 포함 — 캡차 처리 중 같은
+                # 계정으로 즉시 재claim(자동화 재진입, SOT29 §2·§4 위반) 금지.
+                delay = sleep_seconds_after(status, poll_seconds)
+                if delay:
+                    time.sleep(delay)
         finally:
             stop.set()
 

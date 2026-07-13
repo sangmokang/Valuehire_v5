@@ -29,6 +29,18 @@ def _fetch(now_epoch: int):
     return rows if isinstance(rows, list) else []
 
 
+def _fetch_queued(now_epoch: int):
+    """SOT30 S2 — queued 고착 판정용 잡 목록(조회 실패는 Watchdog 이 fail-soft 처리)."""
+    rows = JobQueueClient().queued_jobs()
+    return rows if isinstance(rows, list) else []
+
+
+def _fetch_running(now_epoch: int):
+    """QA-1 — running 고아(워커 급사) 판정용 잡 목록."""
+    rows = JobQueueClient().running_jobs()
+    return rows if isinstance(rows, list) else []
+
+
 def _load_state() -> dict[str, int]:
     if STATE_PATH.exists():
         try:
@@ -48,9 +60,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args(argv)
 
+    # SOT30 S3 — 기동 인증 프로브: 죽은 열쇠로 '경보 시스템 자신이 죽은 줄 모르는'
+    # 상태를 금지(fail-loud). --once 는 1회 판정, 상주는 백오프 재시도.
+    from tools.multi_position_sourcing.fleet_worker import wait_until_authenticated
+    authed = wait_until_authenticated(
+        JobQueueClient().probe_auth,
+        notify=health_notify,
+        sleep=time.sleep,
+        max_attempts=1 if args.once else None,
+    )
+    if not authed:
+        print("[watchdog] Supabase 인증 실패 — 열쇠 교체 필요", file=sys.stderr)
+        return 1
+
     wd = Watchdog(
         fetch_heartbeats=_fetch, notify=health_notify,
         load_alert_state=_load_state, save_alert_state=_save_state,
+        fetch_queued_jobs=_fetch_queued,
+        fetch_running_jobs=_fetch_running,
     )
     if args.once:
         alerted = wd.run_once(now_epoch=int(time.time()))

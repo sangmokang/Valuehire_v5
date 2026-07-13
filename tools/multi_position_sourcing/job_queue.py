@@ -157,6 +157,22 @@ def cancel_job_payload(job_id: int, reason: str = "") -> dict[str, Any]:
     return {"p_job_id": job_id, "p_reason": reason or ""}
 
 
+def classify_auth_probe(status: Any) -> str:
+    """SOT30 S3 — 프로브 HTTP 상태코드 분류(순수).
+
+    "ok"(2xx) / "credential_error"(401·403, 재시도 무의미·사람 개입) /
+    "server_error"(그 외 전부 — 재시도성). 비정수 입력은 절대 "ok" 로 위장하지
+    않는다(fail-closed) — bool 도 int 의 서브클래스라 명시 배제.
+    """
+    if not isinstance(status, int) or isinstance(status, bool):
+        return "server_error"
+    if 200 <= status < 300:
+        return "ok"
+    if status in (401, 403):
+        return "credential_error"
+    return "server_error"
+
+
 # ── HTTP 클라이언트 (테스트에서는 urlopen 을 mock) ────────────────────
 
 _URL_KEY = "NEXT_PUBLIC_SUPABASE_URL"
@@ -275,3 +291,44 @@ class JobQueueClient:
     def recent(self, limit: int = 10) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 50))
         return self._call("GET", f"/jobs?order=id.desc&limit={limit}")
+
+    def queued_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
+        """SOT30 S2 — watchdog 고착 판정용 queued 잡 목록(생성 오래된 것부터)."""
+        limit = max(1, min(int(limit), 100))
+        return self._call(
+            "GET",
+            "/jobs?status=eq.queued&select=id,machine,status,created_at"
+            f"&order=id.asc&limit={limit}")
+
+    def running_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
+        """QA-1 — watchdog running 고아 판정용 잡 목록(워커 급사 가시화)."""
+        limit = max(1, min(int(limit), 100))
+        return self._call(
+            "GET",
+            "/jobs?status=eq.running&select=id,machine,status,started_at"
+            f"&order=id.asc&limit={limit}")
+
+    def heartbeats_epoch(self) -> list[dict[str, Any]]:
+        """머신별 마지막 heartbeat(heartbeats_epoch RPC) — fleet-status 표시용."""
+        rows = self._call("POST", "/rpc/heartbeats_epoch", {})
+        return rows if isinstance(rows, list) else []
+
+    def probe_auth(self) -> tuple[str, str]:
+        """SOT30 S3 — 기동 인증 프로브(가벼운 GET 1회).
+
+        반환 (분류, 상세). 죽은 열쇠(401)가 '조용한 무응답'으로 위장하지 못하게
+        분류를 명시 반환한다. 네트워크 예외는 "server_error"(재시도성)로.
+        """
+        import urllib.error
+        try:
+            self._call("GET", "/jobs?select=id&limit=1")
+            return ("ok", "")
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode()[:200]
+            except Exception:  # noqa: BLE001 — 본문 못 읽어도 분류는 반환
+                pass
+            return (classify_auth_probe(exc.code), f"HTTP {exc.code} {detail}".strip())
+        except Exception as exc:  # noqa: BLE001 — URLError·타임아웃 등
+            return ("server_error", str(exc)[:200])
