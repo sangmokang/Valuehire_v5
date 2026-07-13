@@ -127,8 +127,8 @@ def _make_handler(command_name: str):
 
 _COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("fleet-run",
-     "skill:<humansearch|aisearch|url> url:<position URL> machine:<macmini|macbook|winpc>",
-     "Queue a Valuehire fleet search job."),
+     "<position URL> [machine] — 또는 skill:<humansearch|aisearch|url> url:<...> machine:<macmini|macbook|winpc>",
+     "Queue a Valuehire fleet search job. URL만 줘도 됨(기본 skill=humansearch)."),
     ("fleet-status", "", "Show recent Valuehire fleet jobs."),
     ("fleet-resume", "job:<id>", "(owner) Resume a paused fleet job."),
     ("fleet-cancel", "job:<id>", "(owner) Cancel a queued/paused fleet job."),
