@@ -241,3 +241,179 @@ class TestWaitUntilAuthenticated:
         ok = wait_until_authenticated(
             probe, notify=notes.append, sleep=sleeps.append)
         assert ok is True and len(sleeps) == 1
+
+
+# ═══ ultracode QA 확정 결함(2026-07-13) 재발 방지 ═══════════════════
+
+from tools.multi_position_sourcing.fleet_heartbeat import (  # noqa: E402
+    RUNNING_STALL_SECONDS,
+    stalled_running_jobs,
+)
+from tools.multi_position_sourcing.fleet_worker import (  # noqa: E402
+    PAUSE_COOLDOWN_SECONDS,
+    FleetWorker,
+    parse_worker_output,
+    sleep_seconds_after,
+)
+
+
+# ── QA-1: running 고아 잡 가시화(워커 급사 → 영구 running + 계정락 잔존) ──
+
+def _running_row(job_id=20, machine="macmini", age=RUNNING_STALL_SECONDS + 1):
+    return {"id": job_id, "machine": machine, "status": "running",
+            "started_at_epoch": NOW - age}
+
+
+class TestStalledRunningJobs:
+    def test_한도_초과_running_은_고아_의심(self):
+        out = stalled_running_jobs([_running_row()], now_epoch=NOW)
+        assert len(out) == 1 and out[0]["id"] == 20
+
+    def test_경계_정확히_한도는_아직_정상(self):
+        assert stalled_running_jobs(
+            [_running_row(age=RUNNING_STALL_SECONDS)], now_epoch=NOW) == []
+
+    def test_running_아니면_제외(self):
+        row = _running_row()
+        row["status"] = "queued"
+        assert stalled_running_jobs([row], now_epoch=NOW) == []
+
+    def test_시작시각_결손_fail_closed(self):
+        row = {"id": 21, "machine": "macmini", "status": "running"}
+        assert len(stalled_running_jobs([row], now_epoch=NOW)) == 1
+
+    def test_한도는_claude_타임아웃보다_길다(self):
+        # 40분 잡이 정상 실행 중인데 고아로 오판하면 안 된다.
+        from tools.multi_position_sourcing.fleet_worker import CLAUDE_TIMEOUT_SECONDS
+        assert RUNNING_STALL_SECONDS > CLAUDE_TIMEOUT_SECONDS
+
+    def test_watchdog_이_running_고아를_경보한다(self):
+        notes, state = [], {}
+        wd = Watchdog(
+            fetch_heartbeats=lambda now: [
+                {"machine": m, "beat_at_epoch": NOW} for m in ("macmini", "macbook", "winpc")],
+            notify=notes.append,
+            load_alert_state=lambda: dict(state),
+            save_alert_state=state.update,
+            fetch_running_jobs=lambda now: [_running_row(job_id=20)],
+        )
+        alerted = wd.run_once(now_epoch=NOW)
+        assert "job:20" in alerted
+        assert any("20" in n and "running" in n for n in notes)
+
+
+# ── QA-2: 캡차(일시정지) 직후 같은 계정 재진입 금지 — 쿨다운 ────────
+
+class TestPauseCooldown:
+    def test_paused_후_쿨다운_시간(self):
+        assert sleep_seconds_after("paused_for_human", 30) == PAUSE_COOLDOWN_SECONDS
+        assert PAUSE_COOLDOWN_SECONDS >= 300, "사람이 캡차 푸는 최소 여유"
+
+    def test_기존_상태별_대기시간_유지(self):
+        assert sleep_seconds_after("idle", 30) == 30
+        assert sleep_seconds_after("error", 30) == 15
+        assert sleep_seconds_after("error", 5) == 5
+        assert sleep_seconds_after("done", 30) == 0
+        assert sleep_seconds_after("failed", 30) == 0
+
+    def test_loop_가_paused_후_실제로_쉰다(self, monkeypatch):
+        sleeps: list[float] = []
+
+        class StopLoop(Exception):
+            pass
+
+        class Q:
+            calls = 0
+
+            def probe_auth(self):
+                return ("ok", "")
+
+            def claim_next(self, machine):
+                Q.calls += 1
+                if Q.calls == 1:
+                    return {"id": 1, "skill": "humansearch", "machine": "macmini",
+                            "position_url": "https://x.co/p", "requested_by": "u",
+                            "role": "owner", "params": {}}
+                raise StopLoop()
+
+            def release(self, *a, **k):
+                return {}
+
+        def fake_runner(prompt, timeout):
+            return ("PAUSED_FOR_HUMAN: 캡차", 0)
+
+        monkeypatch.setattr(
+            "tools.multi_position_sourcing.fleet_worker.time.sleep", sleeps.append)
+        w = FleetWorker("macmini", queue=Q(), runner=fake_runner,
+                        notifier=lambda j, t: None)
+        with pytest.raises(StopLoop):
+            w.loop(poll_seconds=30)
+        assert PAUSE_COOLDOWN_SECONDS in sleeps, "일시정지 직후 쿨다운 없이 재claim 금지"
+
+
+# ── QA-3: stderr 가 길어도 PAUSED 마커를 잃지 않는다 ────────────────
+
+class TestPausedMarkerNotDrownedByStderr:
+    def test_stderr_20줄이_마커를_밀어내지_못한다(self):
+        stdout = "작업 요약...\nPAUSED_FOR_HUMAN: 링크드인 캡차"
+        stderr = "\n".join(f"Traceback line {i}" for i in range(20))
+        result = parse_worker_output(stdout, 1, stderr=stderr)
+        assert result["status"] == "paused_for_human"
+        assert "캡차" in result["reason"]
+
+    def test_기존_2인자_호출_호환(self):
+        assert parse_worker_output("PAUSED_FOR_HUMAN: x", 0)["status"] == "paused_for_human"
+        assert parse_worker_output("", 0)["status"] == "failed"
+
+    def test_실패_요약에는_stderr_포함(self):
+        result = parse_worker_output("부분 출력", 1, stderr="RuntimeError: boom")
+        assert result["status"] == "failed"
+        assert "boom" in result.get("summary", "")
+
+
+# ── QA-4: release 실패가 잡을 조용한 running 고아로 두지 않는다 ─────
+
+class TestReleaseRetry:
+    def _worker(self, q, notes):
+        return FleetWorker("macmini", queue=q, runner=lambda p, t: ("요약 텍스트", 0),
+                           notifier=lambda j, t: notes.append(t))
+
+    def test_일시_장애는_재시도로_흡수(self, monkeypatch):
+        monkeypatch.setattr(
+            "tools.multi_position_sourcing.fleet_worker.time.sleep", lambda s: None)
+        notes: list[str] = []
+
+        class Q:
+            n = 0
+
+            def claim_next(self, m):
+                return {"id": 5, "skill": "humansearch", "machine": "macmini",
+                        "position_url": "https://x.co/p", "requested_by": "u",
+                        "role": "owner", "params": {}}
+
+            def release(self, *a, **k):
+                Q.n += 1
+                if Q.n < 3:
+                    raise OSError("network blip")
+                return {}
+
+        assert self._worker(Q(), notes).run_once() == "done"
+        assert Q.n == 3
+
+    def test_최종_실패시_고아_경보_후_예외(self, monkeypatch):
+        monkeypatch.setattr(
+            "tools.multi_position_sourcing.fleet_worker.time.sleep", lambda s: None)
+        notes: list[str] = []
+
+        class Q:
+            def claim_next(self, m):
+                return {"id": 6, "skill": "humansearch", "machine": "macmini",
+                        "position_url": "https://x.co/p", "requested_by": "u",
+                        "role": "owner", "params": {}}
+
+            def release(self, *a, **k):
+                raise OSError("supabase down")
+
+        with pytest.raises(Exception):
+            self._worker(Q(), notes).run_once()
+        assert any("고아" in n and "6" in n for n in notes), "최종 실패는 조용히 넘어가지 않는다"
