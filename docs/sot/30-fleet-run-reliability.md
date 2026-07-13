@@ -79,6 +79,33 @@
 6. 신규 순수함수(`stalled_queued_jobs` 등)는 RED→GREEN 테스트와 2패스 적대검증
    (자기반증 + 독립 2차)을 통과한다. (CLAUDE.md 불변식 5)
 
+## ultracode QA(2026-07-13) 확정 결함과 처치
+
+4관점(정확성·보안·운영신뢰성·스펙정합) 병렬 리뷰 + 발견건별 적대 반증(에이전트 16개)으로
+확정된 결함과 처치. 반증에서 기각된 5건(contextvar 신원 오염·is_dm 우회·SSRF·params
+인젝션·게이트웨이 훅 경합)은 실결함 아님으로 판정.
+
+| # | 확정 결함 | 심각도 | 처치 |
+|---|---|---|---|
+| QA-1 | 워커 급사 시 running 고아 + 계정락 잔존 → 머신 큐 조용한 영구 데드락 | high | `stalled_running_jobs`(3000s 초과) + watchdog 경보로 **가시화**. 자동 회수(lease/owner 강제종결 RPC)는 DB 마이그레이션 필요 — **후속 조각** |
+| QA-2 | paused_for_human 직후 같은 계정 잡 즉시 claim — 캡차 처리 중 자동화 재진입(SOT29 §2·§4 위반) | high | 워커측 쿨다운 `PAUSE_COOLDOWN_SECONDS=600`. 서버측 락 유지(claim_next 필터)는 DB 마이그레이션 — **후속 조각** |
+| QA-3 | 비정상 종료 시 stderr 가 stdout 에 붙어 PAUSED 마커가 15줄 창 밖으로 밀림 → 캡차를 failed(재개불가) 오판 | medium | `_run_claude` stdout/stderr 분리, 마커 탐지 stdout 한정, stderr 는 실패 요약에만 |
+| QA-4 | release 호출 자체가 실패하면 잡이 조용한 running 고아 | medium | release 재시도 3회(백오프) + 최종 실패 시 "고아 위험" 명시 경보 후 전파 |
+| QA-5 | fleet_worker_loop.sh 경로 무가드 → launchd 조용한 크래시루프 / plist 경로 하드코딩(`~/Valuehire_v5`) 머신별 드리프트 | medium | 스크립트에 명시 로그 + 자기위치 폴백 + 재시도(pc-k6 규율). plist 는 설치 시 머신별 경로 확인 필수 |
+| QA-6 | 401 시 워커·watchdog 무한 조용 재시도(S3 미구현이던 것) | high | S3 구현으로 해소 — 기동 인증 프로브 + 1회 경보 + 백오프(워커·watchdog 양쪽 배선) |
+
+검증: 신규 계약 테스트 50개(RED 먼저) + 기존 fleet 141개 회귀 0. 변이 5종
+(queued 필터 반전·쿨다운 제거·마커 결합 스캔 복원·running 필터 반전·재시도 제거) 전부 사살.
+
+## 후속 조각 (이 스펙의 범위 밖, 장부화)
+
+- **fleet-lease**: jobs 에 lease(만료 시 자동 재큐/failed + 계정락 정리) — QA-1 근본 해소.
+  DB 마이그레이션 + claim/heartbeat RPC 변경 필요.
+- **fleet-pause-lock**: paused_for_human 동안 account_locks 유지(또는 claim_next 가
+  같은 account_key 의 paused 잡 존재 시 skip) — QA-2 근본 해소. DB 마이그레이션.
+- **gateway-단일화 실행**: S1 은 운영 조치(사장님 승인 필요) — 맥북 pid 5846 구 게이트웨이
+  종료 + fleet 플러그인 게이트웨이 1개만 유지.
+
 ## 비범위
 
 - winpc worker 설치(별도 트랙).
