@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -70,14 +72,67 @@ def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
         calls.append((command, raw_args, gateway_user_id))
         return {"action": "status", "jobs": []}
 
-    monkeypatch.setattr(
-        "tools.multi_position_sourcing.hermes_fleet_bridge.dispatch_hermes_fleet_command",
-        fake_dispatch,
-    )
+    bridge = plugin._load_bridge_module()
+    monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
 
     result = ctx.commands["fleet-status"]["handler"]("")
     assert calls == [("fleet-status", "", "814353841088757800")]
     assert json.loads(result) == {"action": "status", "jobs": []}
+
+
+def test_plugin_loads_correctly_even_when_hermes_own_tools_package_is_already_imported() -> None:
+    # 라이브 적대검증(2026-07-13)에서 실제 발견한 버그의 재현: Hermes 자신도 최상위
+    # 패키지 이름 "tools" 를 쓴다. 우리 플러그인이 "tools.multi_position_sourcing..." 로
+    # import 하면, 이미 sys.modules 에 캐시된 Hermes 자신의 "tools" 가 우선돼
+    # "No module named 'tools.multi_position_sourcing'" 로 조용히 죽는다(gateway/run.py
+    # 의 except Exception 이 삼켜 실사용자에겐 무응답으로만 보임). 별도 서브프로세스에서
+    # 가짜 "tools" 패키지를 먼저 import 시켜 그 충돌 조건을 실제로 재현하고, 그래도
+    # 플러그인이 정상 동작하는지 확인한다.
+    script = textwrap.dedent(
+        f"""
+        import sys, types
+        # Hermes 자신의 tools 패키지 흉내 — 우리 코드와 무관한 내용물
+        fake_tools = types.ModuleType("tools")
+        fake_tools.__path__ = []
+        sys.modules["tools"] = fake_tools
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "valuehire_fleet_plugin_under_test", {str(PLUGIN_PATH)!r}
+        )
+        plugin = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plugin)
+
+        class FakeCtx:
+            def __init__(self):
+                self.hooks = {{}}
+                self.commands = {{}}
+            def register_hook(self, n, cb):
+                self.hooks.setdefault(n, []).append(cb)
+            def register_command(self, name, handler, description="", args_hint=""):
+                self.commands[name] = handler
+
+        ctx = FakeCtx()
+        plugin.register(ctx)
+
+        from types import SimpleNamespace
+        hook = ctx.hooks["pre_gateway_dispatch"][0]
+        hook(event=SimpleNamespace(
+            source=SimpleNamespace(
+                platform=SimpleNamespace(value="discord"),
+                user_id="814353841088757800",
+            )
+        ))
+        result = ctx.commands["fleet-status"]("")
+        assert "No module named" not in result, result
+        print("OK:", result[:80])
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "OK:" in proc.stdout
 
 
 def test_non_discord_platform_never_leaks_into_gateway_user_id() -> None:

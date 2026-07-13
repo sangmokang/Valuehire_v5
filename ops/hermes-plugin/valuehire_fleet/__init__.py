@@ -27,6 +27,7 @@ rather than assuming owner or member identity.
 from __future__ import annotations
 
 import contextvars
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -35,8 +36,44 @@ from pathlib import Path
 # whether this file is reached via the ~/.hermes/plugins/valuehire_fleet
 # symlink or the repo path directly — Path.resolve() follows symlinks.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+
+# 2026-07-13 라이브 적대검증에서 발견: Hermes 자신도 최상위 패키지 이름 "tools" 를 쓴다
+# (~/.hermes/hermes-agent/tools/). sys.path 순서는 상관없다 — 파이썬은 "tools" 를
+# 먼저 찾으면 sys.modules 캐시를 그대로 재사용하므로, Hermes 부팅 과정에서 이미
+# import 된 Hermes 자신의 tools 패키지가 우리 것을 가려버려
+# "No module named 'tools.multi_position_sourcing'" 로 죽는다(gateway/run.py 쪽
+# "Plugin command dispatch failed" 경고로 조용히 삼켜짐, 실사용자에겐 그냥 무응답).
+# "tools" 라는 이름을 아예 안 거치도록, 별명(alias)으로 직접 로드한다.
+_ALIAS = "_valuehire_multi_position_sourcing"
+
+
+def _load_bridge_module():
+    """``tools.multi_position_sourcing.hermes_fleet_bridge`` 를 별명 패키지로 로드.
+
+    ``sys.modules['tools']`` 충돌을 피하려고 "tools" 라는 이름을 아예 거치지 않는다.
+    이미 로드했으면(멱등) 캐시된 모듈을 그대로 반환한다.
+    """
+    bridge_name = f"{_ALIAS}.hermes_fleet_bridge"
+    if bridge_name in sys.modules:
+        return sys.modules[bridge_name]
+
+    pkg_dir = _REPO_ROOT / "tools" / "multi_position_sourcing"
+    if _ALIAS not in sys.modules:
+        pkg_spec = importlib.util.spec_from_file_location(
+            _ALIAS, pkg_dir / "__init__.py", submodule_search_locations=[str(pkg_dir)]
+        )
+        pkg_module = importlib.util.module_from_spec(pkg_spec)
+        sys.modules[_ALIAS] = pkg_module
+        pkg_spec.loader.exec_module(pkg_module)
+
+    mod_spec = importlib.util.spec_from_file_location(
+        bridge_name, pkg_dir / "hermes_fleet_bridge.py"
+    )
+    module = importlib.util.module_from_spec(mod_spec)
+    module.__package__ = _ALIAS
+    sys.modules[bridge_name] = module
+    mod_spec.loader.exec_module(module)
+    return module
 
 _GATEWAY_USER_ID: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "valuehire_fleet_gateway_user_id", default=""
@@ -70,17 +107,14 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
 
 def _make_handler(command_name: str):
     def _handler(raw_args: str) -> str:
-        from tools.multi_position_sourcing.hermes_fleet_bridge import (
-            HermesFleetBridgeError,
-            dispatch_hermes_fleet_command,
-        )
+        bridge = _load_bridge_module()
 
         gateway_user_id = _GATEWAY_USER_ID.get()
         try:
-            result = dispatch_hermes_fleet_command(
+            result = bridge.dispatch_hermes_fleet_command(
                 command_name, raw_args, gateway_user_id=gateway_user_id
             )
-        except HermesFleetBridgeError as exc:
+        except bridge.HermesFleetBridgeError as exc:
             return f"거부됨: {exc}"
         except Exception as exc:  # noqa: BLE001 — 마지막 방어선. 여기서 새면 Hermes 의
             # gateway/run.py 쪽 광역 except 가 조용히 로그만 남기고 무응답으로 삼켜, 원문
