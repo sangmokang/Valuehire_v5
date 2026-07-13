@@ -159,6 +159,24 @@ python3 -m unittest tests/test_multi_position_sourcing.py -v
 
 **SOT 불변식 재확인**: 위 어떤 동작도 **보안 챌린지를 자동 우회하거나 반복해서 두드리지 않습니다.** 보안 챌린지가 뜨면 멈추고 visible browser에서 사람이 해결한 뒤 같은 세션을 재검증합니다.
 
+## 사람이 직접 로그인하면 — 절대 끄지 마라 / 세션 유지 (SOT, 사장님 지시 2026-06-17)
+
+> **표준 프로세스 전문(런북): `docs/ai-search/portal-login-live-search-runbook-2026-06-17.md`** — 로그인→수집→선별→URL검증→codex/Claude 적대검증→디스코드까지 검증된 전 절차. 3사 로그인을 건드리는 모든 작업은 이 런북을 따른다.
+
+사장님이 visible browser에서 **직접 로그인하거나 보안챌린지를 해결하면, 그 로그인 세션을 절대 닫거나 버리지 않는다.** 운영자 개입은 비싸고 드물다 — 한 번 들어온 로그인은 최대한 오래 살린다.
+
+지킬 것:
+1. **사람 개입 대기를 시간가드로 자르지 마라.** preflight의 channel-level timeout이 human-intervention 대기보다 짧으면 사장님이 로그인하는 도중 창이 강제 종료된다(2026-06-17 실제 발생: `--channel-timeout-seconds 180` < `--human-timeout-seconds 240` → 180초에 잘림). 사람 개입이 켜져 있으면 channel timeout은 사람 timeout보다 길거나 `0`(비활성)이어야 한다. 포지션 로그인은 `--channel-timeout-seconds 0` + 충분한 `--human-timeout-seconds`로 띄운다.
+2. **human_intervention_ok 이후 세션을 유지한다.** 사람인/잡코리아 영속 프로필(`launch_persistent_context`)은 쿠키가 `~/.valuehire/portal_profiles/<site>/<worker>`에 디스크로 저장되어 다음 실행에 그대로 재사용된다 — 검색 워커는 이 저장 세션을 다시 연다(재로그인 강요 금지).
+3. **세션은 CDP(사장님 크롬, 9222) attach가 가장 안전하다.** CDP attach는 연결만 끊고 브라우저/탭은 닫지 않는다(링크드인이 이미 이 방식). 사람인·잡코리아 창도 사장님이 띄워둔 채 유지하려면 같은 프로세스에서 열고, 끝나도 `context.close()`를 호출하지 않는다(프로세스가 살아있는 동안 창 유지). 끄지마 = 디스크 세션 보존 + 가능하면 창도 유지.
+
+## 라이브 수집 안정성 (검증된 교훈 2026-06-17)
+
+- **LinkedIn Recruiter 결과는 JS 렌더가 느리다 — 검색 직후 1초만 기다리고 긁으면 0건이 나온다(실제 발생).** 결과 selector(`a[href*="/talent/profile/"]`)가 나타날 때까지 최대 ~15초 `wait_for_selector` + 스크롤 후 수집한다. selector 자체는 정상이며 문제는 대기 부족이었다. talent search는 `searchKeyword=` URL로 진입하고, `("A" OR "B") AND (지역)` Boolean으로 JD 전체를 포괄한다.
+- 사람인 talent-pool은 `main/tutorial` 페이지로 빠지거나 중간 인증 리다이렉트로 `login_redirect` not_ready 오탐이 날 수 있다 — 검색화면 마커(`input.search_input`/`#career_min`/`#career_max`) 도달을 직접 확인하고, 기업회원 URL(`ut=c`)로만 진입한다.
+- 채널이 막혀 0건이면 "후보 없음"이 아니라 **"채널 제한으로 미확보"**로 보고한다(원인 단정 금지 — 0건이 selector 탓인지 결과없음인지 증거 없이 단정하지 않는다).
+- 보낼 후보는 원시 수집 그대로가 아니라 **직무·지역·연차로 선별**해서만 내보낸다(원시 결과엔 직무 무관 후보가 섞인다). 보내는 모든 profile URL은 **실제로 열어 이름이 페이지에 있는지 확인**한 것만 쓴다(URL 절대 오류 금지).
+
 Mac Keychain 자격증명 계정:
 - 사람인: `valuehire.portal_credentials` / `saramin:username`, `saramin:password`
 - 잡코리아: `valuehire.portal_credentials` / `jobkorea:username`, `jobkorea:password`

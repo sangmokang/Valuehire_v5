@@ -22,6 +22,8 @@ artifacts/
 .claude/skills/**/.omc/
 logs/
 .playwright-mcp/
+.playwright-browsers/
+.valuehire/
 captures/
 node_modules/
 nohup.out
