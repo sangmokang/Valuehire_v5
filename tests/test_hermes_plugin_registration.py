@@ -81,6 +81,9 @@ def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
 
 
 def test_natural_discord_search_is_rewritten_to_fleet_run() -> None:
+    # 2026-07-14: 잡코리아 검색결과 URL이 섞여 있으면 humansearch로 바뀌어야 한다 —
+    # 예전엔 항상 aisearch로 고정돼 있었다(버그, tools/.../hermes_fleet_bridge.py
+    # _default_skill_for_urls 도입으로 수정).
     plugin = _load_plugin_module()
     event = _discord_event("814353841088757800")
     event.text = (
@@ -91,7 +94,7 @@ def test_natural_discord_search_is_rewritten_to_fleet_run() -> None:
     assert result == {
         "action": "rewrite",
         "text": (
-            "/fleet-run aisearch https://app.clickup.com/t/abc "
+            "/fleet-run humansearch https://app.clickup.com/t/abc "
             "https://www.jobkorea.co.kr/Search/?stext=cto channels:jobkorea winpc"
         ),
     }

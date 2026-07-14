@@ -90,14 +90,30 @@ def _is_search_url(url: str) -> bool:
     return any(marker in low for marker in _SEARCH_HOST_MARKERS)
 
 
+def _default_skill_for_urls(urls: Sequence[str]) -> str:
+    """URL 모양만으로 fleet-run 기본 skill을 고른다(2026-07-14 사장님 요청).
+
+    채용포털 검색결과 리스트(사람인/잡코리아/링크드인 검색결과, ``_is_search_url``)가
+    하나라도 섞여 있으면 humansearch(사람이 미리 준비한 결과를 순회·채점하는 스킬)를,
+    없으면 기존 기본값 aisearch를 쓴다. ``options.setdefault`` 뒤에서만 호출되므로
+    호출자가 ``skill:``을 명시했으면 이 함수는 아예 참조되지 않는다 — 명시 지정이
+    항상 이 추론보다 우선한다. natural_fleet_command_text(자연어 경로)와
+    parse_hermes_fleet_args(직접 명령 경로) 양쪽이 이 함수 하나만 참조해, 판정이
+    갈라지거나 한쪽만 배선되는 일이 없게 한다(단일 출처).
+    """
+    return "humansearch" if any(_is_search_url(u) for u in urls) else _FLEET_RUN_DEFAULT_SKILL
+
+
 def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
     """``key:value key2:value2`` 형태를 허용. 모르는 명령/필드는 조용히 무시하지 않고 거부.
 
     fleet-run 만 예외로, ``key:value`` 가 아닌 맨 토큰도 URL/스킬/머신으로 자동 인식한다
     (2026-07-13 사장님 요청 — "그냥 /fleet-run 하고 링크만 주면 서치하도록"). skill 생략 시
-    기본값 aisearch, machine 생략은 하위(build_fleet_job_payload)의 기존 fleet 기본값과
-    account binding 정책에 맡긴다. url 은 필수 — fleet-run 인데 끝까지 url 이 안 잡히면
-    명확히 거부한다.
+    기본값은 ``_default_skill_for_urls``가 정한다 — 검색결과 URL이 섞여 있으면
+    humansearch, 포지션 URL만 있으면 기존처럼 aisearch(2026-07-14 사장님 요청 — "채용포털
+    url 도 search list 를 주면 humansearch 가 발동되도록"). machine 생략은
+    하위(build_fleet_job_payload)의 기존 fleet 기본값과 account binding 정책에 맡긴다.
+    url 은 필수 — fleet-run 인데 끝까지 url 이 안 잡히면 명확히 거부한다.
     """
     if command not in FLEET_PLUGIN_COMMANDS:
         raise HermesFleetBridgeError(f"알 수 없는 fleet 명령: {command!r}")
@@ -143,7 +159,7 @@ def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
             search_urls = [url for url in bare_urls if _is_search_url(url)]
             if search_urls:
                 options["params"] = {"search_urls": search_urls}
-        options.setdefault("skill", _FLEET_RUN_DEFAULT_SKILL)
+        options.setdefault("skill", _default_skill_for_urls(bare_urls))
         params = dict(options.get("params") or {})
         raw_channels = options.pop("channels", "")
         if raw_channels:
@@ -226,7 +242,8 @@ def natural_fleet_command_text(
     else:
         channels = ("saramin", "jobkorea")
 
-    parts = ["/fleet-run", "aisearch", *urls, f"channels:{','.join(channels)}"]
+    skill = _default_skill_for_urls(urls)
+    parts = ["/fleet-run", skill, *urls, f"channels:{','.join(channels)}"]
     if machine:
         parts.append(machine)
     if message_id:
