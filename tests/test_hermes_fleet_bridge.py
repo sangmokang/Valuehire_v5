@@ -7,7 +7,9 @@ import pytest
 from tools.multi_position_sourcing.hermes_fleet_bridge import (
     FLEET_PLUGIN_COMMANDS,
     HermesFleetBridgeError,
+    _is_search_url,
     dispatch_hermes_fleet_command,
+    natural_fleet_command_text,
     parse_hermes_fleet_args,
 )
 
@@ -139,11 +141,13 @@ def test_default_access_doc_resolves_regardless_of_process_cwd(monkeypatch, tmp_
     assert result["action"] == "status"
 
 
-def test_bare_url_alone_defaults_skill_humansearch_and_machine_macmini() -> None:
+def test_bare_url_alone_defaults_skill_aisearch_without_forcing_winpc() -> None:
     # 사장님 요청(2026-07-13): "그냥 /fleet-run 하고 클릭업 링크만 주면 서치하도록" —
-    # skill:/machine: 없이 URL 하나만 줘도 humansearch/macmini 기본값으로 등록돼야 한다.
+    # skill:/machine: 없이 URL 하나만 줘도 aisearch/winpc 기본값으로 등록돼야 한다.
     options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc")
-    assert options == {"skill": "humansearch", "url": "https://app.clickup.com/t/abc"}
+    assert options["skill"] == "aisearch"
+    assert options["url"] == "https://app.clickup.com/t/abc"
+    assert "machine" not in options
 
 
 def test_bare_url_dispatches_end_to_end_with_defaults() -> None:
@@ -152,7 +156,7 @@ def test_bare_url_dispatches_end_to_end_with_defaults() -> None:
         "fleet-run", "https://app.clickup.com/t/abc", gateway_user_id=OWNER, queue=queue
     )
     assert result["action"] == "enqueued"
-    assert queue.enqueued[0]["skill"] == "humansearch"
+    assert queue.enqueued[0]["skill"] == "aisearch"
     assert queue.enqueued[0]["machine"] == "macmini"
     assert queue.enqueued[0]["position_url"] == "https://app.clickup.com/t/abc"
 
@@ -164,7 +168,12 @@ def test_bare_url_with_explicit_skill_override_still_works() -> None:
 
 def test_bare_machine_token_overrides_default() -> None:
     options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc winpc")
-    assert options == {"skill": "humansearch", "url": "https://app.clickup.com/t/abc", "machine": "winpc"}
+    assert options == {"skill": "aisearch", "url": "https://app.clickup.com/t/abc", "machine": "winpc"}
+
+
+def test_win_alias_maps_to_winpc() -> None:
+    options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc win")
+    assert options["machine"] == "winpc"
 
 
 def test_bare_skill_token_also_accepted() -> None:
@@ -179,9 +188,218 @@ def test_bare_url_conflicting_with_explicit_url_key_is_rejected() -> None:
         )
 
 
-def test_two_bare_urls_is_rejected_not_last_one_wins() -> None:
-    with pytest.raises(HermesFleetBridgeError):
+def test_clickup_and_linkedin_urls_preserve_search_url_in_params() -> None:
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc https://www.linkedin.com/search/results/people/?keywords=cto",
+    )
+    assert options["url"] == "https://app.clickup.com/t/abc"
+    assert options["params"] == {
+        "search_urls": ["https://www.linkedin.com/search/results/people/?keywords=cto"]
+    }
+
+
+def test_search_result_url_alongside_position_url_selects_humansearch() -> None:
+    # 2026-07-14 사장님 요청: 채용포털 검색결과 리스트 URL을 주면 humansearch가
+    # 자동으로 발동해야 한다 — 검색결과 판정(_is_search_url)은 이미 있었지만 skill
+    # 선택에 배선되어 있지 않았다(버그).
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc https://www.linkedin.com/search/results/people/?keywords=cto",
+    )
+    assert options["skill"] == "humansearch"
+
+
+def test_position_url_alone_without_search_url_stays_aisearch() -> None:
+    # 회귀 방지: 검색결과 URL이 전혀 없으면 기존 기본값(aisearch)이 그대로 유지돼야 한다.
+    options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc")
+    assert options["skill"] == "aisearch"
+
+
+def test_explicit_skill_override_wins_over_search_url_inference() -> None:
+    # 사용자가 skill:aisearch를 명시했으면, 검색결과 URL이 있어도 추론이 그걸 덮어쓰면
+    # 안 된다 — 명시 지정이 항상 이긴다.
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "skill:aisearch https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+    )
+    assert options["skill"] == "aisearch"
+
+
+def test_multiple_search_result_urls_all_preserved_for_humansearch_traversal() -> None:
+    # "URL 리스트를 순회" 요구사항: 검색결과 URL이 여러 개면 전부 순서대로 남아야 한다.
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=1 "
+        "https://www.jobkorea.co.kr/Corp/Person/Find?q=2",
+    )
+    assert options["skill"] == "humansearch"
+    assert options["params"]["search_urls"] == [
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=1",
+        "https://www.jobkorea.co.kr/Corp/Person/Find?q=2",
+    ]
+
+
+def test_search_result_url_dispatches_end_to_end_as_humansearch_job() -> None:
+    # 자연어/명령 두 경로가 아니라 실제 큐잉 결과(dispatch_hermes_fleet_command)까지
+    # humansearch로 들어가는지 — 배선이 절반만 되는 회귀를 잡는다.
+    queue = FakeQueue()
+    result = dispatch_hermes_fleet_command(
+        "fleet-run",
+        "https://app.clickup.com/t/abc "
+        "https://www.linkedin.com/search/results/people/?keywords=cto",
+        gateway_user_id=OWNER,
+        queue=queue,
+    )
+    assert result["action"] == "enqueued"
+    assert queue.enqueued[0]["skill"] == "humansearch"
+
+
+def test_is_search_url_rejects_query_string_and_lookalike_domain() -> None:
+    # 2026-07-14 Codex Rescue 적대검증 발견: 마커 문자열이 URL 아무데나(쿼리 문자열,
+    # 유사 도메인) 있어도 True였다 — 호스트명이 진짜 그 도메인/서브도메인일 때만 True여야 함.
+    assert _is_search_url("https://app.clickup.com/t/abc?source=jobkorea.co.kr") is False
+    assert _is_search_url("https://linkedin.com.evil.example/not-a-search") is False
+    assert _is_search_url("https://example.test/?next=https://www.jobkorea.co.kr/Search/") is False
+    assert _is_search_url("https://www.linkedin.com/search/results/people/?keywords=cto") is True
+    assert _is_search_url("https://saramin.co.kr/") is True
+
+
+def test_position_url_with_incidental_marker_in_query_stays_aisearch() -> None:
+    # fix6: 쿼리 문자열에 우연히 마커가 들어간 포지션 URL이 humansearch로 잘못 바뀌던
+    # 회귀(counter-AC 위반)를 잡는다.
+    options = parse_hermes_fleet_args(
+        "fleet-run", "https://app.clickup.com/t/abc?source=jobkorea.co.kr"
+    )
+    assert options["skill"] == "aisearch"
+
+
+def test_natural_language_explicit_skill_prefix_wins_over_search_url_inference() -> None:
+    # 2026-07-14 Codex Rescue 적대검증 발견: 자연어 경로는 문장 속 "skill:aisearch" 명시를
+    # 무시하고 검색결과 URL이 있다는 이유로 humansearch로 덮어썼다 — 직접 명령 경로(이미
+    # 명시 지정을 존중)와 판정이 갈라져 있던 결함.
+    rewritten = natural_fleet_command_text(
+        "skill:aisearch로 찾아줘 https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=x"
+    )
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run aisearch ")
+
+
+def test_natural_language_explicit_skill_prefix_wins_without_search_url() -> None:
+    # 반대 방향: 검색결과 URL이 없는데 "skill:humansearch"를 명시했으면 그것도 존중해야
+    # 한다 — 예전엔 URL 없다는 이유로 조용히 aisearch로 덮어썼다.
+    rewritten = natural_fleet_command_text(
+        "skill:humansearch로 찾아줘 https://app.clickup.com/t/abc"
+    )
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run humansearch ")
+
+
+def test_natural_language_bare_skill_word_wins_over_search_url_inference() -> None:
+    # "skill:" 접두사 없이 그냥 "aisearch"라는 단어만 문장에 있어도(직접 명령 경로의
+    # bare skill 토큰과 동등하게) 검색결과 URL 추론보다 우선해야 한다.
+    rewritten = natural_fleet_command_text(
+        "aisearch로 찾아줘 https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=x"
+    )
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run aisearch ")
+
+
+def test_natural_language_search_url_end_to_end_selects_humansearch() -> None:
+    # natural_fleet_command_text 가 만든 문자열을 다시 parse_hermes_fleet_args 에
+    # 태워도 humansearch 로 귀결되는지 — 두 진입점이 같은 판정을 쓰는지 확인.
+    rewritten = natural_fleet_command_text(
+        "이 링크 사람인에서 찾아줘 https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=x"
+    )
+    assert rewritten is not None
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["skill"] == "humansearch"
+
+
+def test_two_position_urls_are_rejected_not_silently_dropped() -> None:
+    with pytest.raises(HermesFleetBridgeError, match="포지션 URL"):
         parse_hermes_fleet_args("fleet-run", "https://a.test https://b.test")
+
+
+def test_linkedin_only_uses_existing_default_account_binding() -> None:
+    queue = FakeQueue()
+    result = dispatch_hermes_fleet_command(
+        "fleet-run",
+        "https://www.linkedin.com/search/results/people/?keywords=cto",
+        gateway_user_id=OWNER,
+        queue=queue,
+    )
+    assert result["action"] == "enqueued"
+    assert queue.enqueued[0]["machine"] == "macmini"
+
+
+def test_natural_humansearch_message_rewrites_with_urls_and_win_alias() -> None:
+    # 2026-07-14: 문장에 링크드인 검색결과 URL이 있으면 자연어 경로도 humansearch로
+    # 바뀌어야 한다 — 예전엔 "humansearch"라고 말해도 항상 "aisearch"로 굳어 있었다(버그).
+    rewritten = natural_fleet_command_text(
+        "humansearch https://app.clickup.com/t/abc "
+        "https://www.linkedin.com/search/results/people/?keywords=cto win"
+    )
+    assert rewritten == (
+        "/fleet-run humansearch https://app.clickup.com/t/abc "
+        "https://www.linkedin.com/search/results/people/?keywords=cto "
+        "channels:saramin,jobkorea winpc"
+    )
+
+
+def test_portal_url_or_win_without_position_context_does_not_enqueue() -> None:
+    assert natural_fleet_command_text(
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
+    ) is None
+    assert natural_fleet_command_text("win") is None
+
+
+def test_unrelated_url_does_not_hijack_normal_chat() -> None:
+    assert natural_fleet_command_text("참고해줘 https://example.com/article") is None
+
+
+def test_followup_uses_recent_context_for_30_minute_store_contract() -> None:
+    rewritten = natural_fleet_command_text(
+        "잡코리아도", context_url="https://app.clickup.com/t/abc",
+        context_channels=("saramin",), message_id="123456789",
+    )
+    assert rewritten == (
+        "/fleet-run aisearch https://app.clickup.com/t/abc channels:jobkorea "
+        "idempotency:discord:123456789"
+    )
+
+
+def test_win_followup_requires_context_and_routes_only_when_explicit() -> None:
+    assert natural_fleet_command_text("win") is None
+    rewritten = natural_fleet_command_text(
+        "win", context_url="https://app.clickup.com/t/abc", context_channels=("saramin",)
+    )
+    assert rewritten and rewritten.endswith("channels:saramin winpc")
+
+
+def test_no_win_token_never_injects_winpc() -> None:
+    rewritten = natural_fleet_command_text(
+        "후보 찾아줘 https://app.clickup.com/t/abc"
+    )
+    assert rewritten and "winpc" not in rewritten
+
+
+def test_channels_and_idempotency_become_job_params() -> None:
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc channels:saramin,jobkorea idempotency:discord:42",
+    )
+    assert options["params"] == {
+        "channels": ["saramin", "jobkorea"],
+        "idempotency_key": "discord:42",
+        "execution": "live",
+    }
 
 
 def test_fleet_run_without_any_url_is_rejected_with_clear_message() -> None:

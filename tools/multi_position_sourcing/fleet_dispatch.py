@@ -45,7 +45,7 @@ def owner_user_ids_from_env(env: object = None) -> tuple[str, ...]:
 
 
 def build_fleet_job_payload(
-    options: Mapping[str, str],
+    options: Mapping[str, Any],
     *,
     requested_by: str,
     role: str,
@@ -56,10 +56,13 @@ def build_fleet_job_payload(
     """
     skill = (options.get("skill") or "").strip()
     url = (options.get("url") or "").strip()
+    params = options.get("params") or {}
+    # SOT29 existing fleet default/account binding stays authoritative. Natural language
+    # may select winpc only through an explicit win/windows/윈도우/winpc token.
     machine = (options.get("machine") or "macmini").strip()
     return new_job_payload(
         machine=machine, skill=skill, position_url=url,
-        requested_by=requested_by, role=role,
+        requested_by=requested_by, role=role, params=params,
     )
 
 
@@ -117,6 +120,16 @@ def dispatch_fleet_command(
         if payload is None:
             return {"action": "error", "reason": "잡 페이로드 무효(스킬/URL/머신 확인)"}
         job = q.enqueue(payload)
+        try:
+            from .fleet_worker import discord_notify
+            discord_notify(
+                job if isinstance(job, Mapping) else payload,
+                f"📥 job enqueue 완료 — job #{(job or {}).get('id', '?')} "
+                f"machine={payload['machine']} skill={payload['skill']}",
+            )
+        except Exception:
+            # Queue success is authoritative; notification failures remain fail-soft.
+            pass
         return {"action": "enqueued", "job": job}
 
     if invocation.command_name == "fleet-status":

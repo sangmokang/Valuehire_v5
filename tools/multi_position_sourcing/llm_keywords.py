@@ -185,7 +185,10 @@ def inject_boolean_queries(
 
 # 사람인 인재검색 NOT(제외) 칸 기본값 — 신입·인턴·프리랜서는 이직제안 대상이 아니라
 # 항상 제외한다(skill SOT: saramin-talent-sourcing §6 NOT 칸). LLM 판단에 맡기지 않고 코드가 강제.
-DEFAULT_SARAMIN_EXCLUDE: tuple[str, ...] = ("신입", "인턴", "프리랜서")
+DEFAULT_SARAMIN_EXCLUDE: tuple[str, ...] = (
+    "신입", "인턴", "프리랜서", "freelancer", "freelance", "개인사업자",
+    "독립계약자", "contract worker", "외주",
+)
 
 
 def _build_saramin_prompt(position) -> str:

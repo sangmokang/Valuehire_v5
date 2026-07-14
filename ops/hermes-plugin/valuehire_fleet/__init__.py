@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextvars
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -83,6 +84,7 @@ _GATEWAY_USER_ID: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 # lists Discord snowflake IDs. A Telegram/WhatsApp numeric id must never be
 # silently treated as a Discord id (cross-platform identity conflation).
 _TRUSTED_PLATFORM = "discord"
+_POSITION_CONTEXT_STORE = None
 
 
 def _platform_name(source: object) -> str:
@@ -93,8 +95,25 @@ def _platform_name(source: object) -> str:
     return str(value).strip().lower()
 
 
+def _event_value(event: object, source: object, *names: str) -> str:
+    for owner in (event, source):
+        for name in names:
+            value = getattr(owner, name, None)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return ""
+
+
+def _position_context_store(bridge):
+    global _POSITION_CONTEXT_STORE
+    if _POSITION_CONTEXT_STORE is None:
+        module = __import__(f"{_ALIAS}.hermes_position_context", fromlist=["PositionContextStore"])
+        _POSITION_CONTEXT_STORE = module.PositionContextStore()
+    return _POSITION_CONTEXT_STORE
+
+
 def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_kwargs):
-    """``pre_gateway_dispatch`` hook — runs before command dispatch, has the event."""
+    """Capture identity and rewrite narrow natural search requests to fleet-run."""
     user_id = ""
     source = getattr(event, "source", None)
     if source is not None and _platform_name(source) == _TRUSTED_PLATFORM:
@@ -102,7 +121,28 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
         if raw:
             user_id = str(raw).strip()
     _GATEWAY_USER_ID.set(user_id)
-    return None  # None == {"action": "allow"} — never rewrite/skip the message here
+    if not user_id:
+        return None
+    bridge = _load_bridge_module()
+    channel_id = _event_value(event, source, "channel_id", "conversation_id", "thread_id") or "hermes-dm"
+    message_id = _event_value(event, source, "message_id", "event_id", "id")
+    store = _position_context_store(bridge)
+    context = store.get(user_id, channel_id)
+    text = getattr(event, "text", "") or ""
+    rewritten = bridge.natural_fleet_command_text(
+        text,
+        context_url=context.position_url if context else "",
+        context_channels=context.channels if context else (),
+        message_id=message_id,
+    )
+    if rewritten:
+        clickup = re.search(r"https?://app\.clickup\.com/[^\s<>]+", text, re.IGNORECASE)
+        if clickup:
+            channels_match = re.search(r"\bchannels:([^\s]+)", rewritten)
+            channels = channels_match.group(1).split(",") if channels_match else ("saramin", "jobkorea")
+            store.put(user_id, channel_id, clickup.group(0).rstrip(".,);]}"), channels)
+        return {"action": "rewrite", "text": rewritten}
+    return None
 
 
 def _make_handler(command_name: str):
@@ -127,8 +167,8 @@ def _make_handler(command_name: str):
 
 _COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("fleet-run",
-     "<position URL> [machine] — 또는 skill:<humansearch|aisearch|url> url:<...> machine:<macmini|macbook|winpc>",
-     "Queue a Valuehire fleet search job. URL만 줘도 됨(기본 skill=humansearch)."),
+     "<position/search URL...> [win|winpc|macmini|macbook]",
+     "Queue an AI search job. 기본 skill=aisearch; machine은 명시하거나 기존 fleet 기본값 사용."),
     ("fleet-status", "", "Show recent Valuehire fleet jobs."),
     ("fleet-resume", "job:<id>", "(owner) Resume a paused fleet job."),
     ("fleet-cancel", "job:<id>", "(owner) Cancel a queued/paused fleet job."),

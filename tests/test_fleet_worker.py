@@ -19,6 +19,7 @@ from tools.multi_position_sourcing.fleet_worker import (
     build_job_prompt,
     machine_from_env,
     parse_worker_output,
+    validate_aisearch_receipt,
 )
 
 
@@ -61,8 +62,36 @@ def test_build_job_prompt_contains_contract():
     assert "발송" in p and "하지 말" in p
     assert "로그아웃" in p and "삭제" in p
     assert "발동하지 말" in p
+    assert "params.search_urls" in p
+    assert "local secret store" in p
+    assert "FLEET_SEARCH_RECEIPT:" in p
     # 스킬 경로 금지 — 발동 문구 방식만
     assert "/mnt/skills" not in p
+
+
+def _receipt(*, pages=10, opened=2, saved=2):
+    channel = {
+        "login_verified": True, "query_verified": True,
+        "result_count_verified": True, "pages_visited": pages,
+        "last_page_reached": False, "opened_profiles": opened,
+        "saved_receipts": saved, "candidates": [],
+    }
+    import json
+    return "FLEET_SEARCH_RECEIPT:" + json.dumps(
+        {"channels": {"saramin": channel, "jobkorea": dict(channel)}}
+    )
+
+
+def test_aisearch_completion_receipt_rejects_one_page_and_save_mismatch():
+    with pytest.raises(ValueError, match="page 10"):
+        validate_aisearch_receipt(_receipt(pages=1), {})
+    with pytest.raises(ValueError, match="mismatch"):
+        validate_aisearch_receipt(_receipt(opened=2, saved=1), {})
+
+
+def test_aisearch_completion_receipt_accepts_ten_pages_with_equal_saves():
+    receipt = validate_aisearch_receipt(_receipt(), {})
+    assert receipt["channels"]["saramin"]["saved_receipts"] == 2
 
 
 def test_build_job_prompt_fail_closed():
@@ -257,7 +286,7 @@ def test_loop_script_and_plist_exist():
     sh = repo / "scripts" / "fleet_worker_loop.sh"
     plist = repo / "ops" / "launchd" / "com.valuehire.fleet-worker.plist"
     assert sh.exists(), "fleet_worker_loop.sh 없음"
-    assert "fleet_worker" in sh.read_text()
+    assert "fleet_worker" in sh.read_text(encoding="utf-8")
     assert plist.exists(), "launchd plist 초안 없음"
-    body = plist.read_text()
+    body = plist.read_text(encoding="utf-8")
     assert "VALUEHIRE_MACHINE" in body and "fleet_worker_loop.sh" in body

@@ -46,6 +46,7 @@ FREELANCER_MARKERS = (
     "freelancer",
     "프리랜서",
     "개인사업자",
+    "독립계약자",
     "independent contractor",
     "외주",
     "contract worker",

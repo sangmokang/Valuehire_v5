@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import os
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
+
+try:  # pragma: no cover - platform-specific branches are exercised via helpers
+    import fcntl as _fcntl
+except ImportError:  # Windows
+    _fcntl = None
+fcntl = _fcntl  # backward-compatible test/introspection alias on POSIX
+try:
+    import msvcrt as _msvcrt
+except ImportError:  # POSIX
+    _msvcrt = None
 
 from .models import CandidateResultCard, Channel
 from .portal_safety import safe_artifact_url, safe_exception_label
@@ -218,7 +227,7 @@ class PortalSearchAttempt:
 
 
 class ProfileLock:
-    """Cross-process exclusive profile lock backed by flock."""
+    """Cross-process exclusive profile lock (flock on POSIX, msvcrt on Windows)."""
 
     def __init__(self, config: PortalWorkerConfig) -> None:
         self.config = config
@@ -228,8 +237,8 @@ class ProfileLock:
         _ensure_real_profile_dir(self.config)
         handle = _open_real_profile_lock(self.config.lock_path)
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            _lock_handle(handle)
+        except (BlockingIOError, OSError) as exc:
             _close_failed_lock_acquire_handle(handle)
             raise ProfileLockError(
                 f"profile already locked for {self.config.channel}/{self.config.worker_id}"
@@ -254,7 +263,7 @@ class ProfileLock:
         handle = self._handle
         self._handle = None
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            _unlock_handle(handle)
         except Exception:
             pass
         try:
@@ -307,13 +316,38 @@ def _open_real_profile_lock(lock_path: Path) -> Any:
 
 def _close_failed_lock_acquire_handle(handle: Any) -> None:
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        _unlock_handle(handle)
     except Exception:
         pass
     try:
         handle.close()
     except Exception:
         pass
+
+
+def _lock_handle(handle: Any) -> None:
+    if _fcntl is not None:
+        _fcntl.flock(handle.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        return
+    if _msvcrt is None:
+        raise OSError("no supported file locking backend")
+    handle.seek(0)
+    # msvcrt cannot lock an empty range; ensure one byte exists first.
+    if not handle.read(1):
+        handle.seek(0)
+        handle.write("0")
+        handle.flush()
+    handle.seek(0)
+    _msvcrt.locking(handle.fileno(), _msvcrt.LK_NBLCK, 1)
+
+
+def _unlock_handle(handle: Any) -> None:
+    if _fcntl is not None:
+        _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
+        return
+    if _msvcrt is not None:
+        handle.seek(0)
+        _msvcrt.locking(handle.fileno(), _msvcrt.LK_UNLCK, 1)
 
 
 _CHROMIUM_SINGLETON_ARTIFACTS = ("SingletonLock", "SingletonSocket", "SingletonCookie")
@@ -378,8 +412,8 @@ async def _first_existing_locator(page: Any, channel: Channel, purpose: str) -> 
     return None
 
 
-async def _goto_search_surface(page: Any, channel: Channel, keyword: str) -> None:
-    if channel == "linkedin_rps" and keyword:
+async def _goto_search_surface(page: Any, channel: Channel, keyword: Any) -> None:
+    if channel == "linkedin_rps" and isinstance(keyword, str) and keyword:
         url = (
             "https://www.linkedin.com/talent/search?"
             f"searchKeyword={quote(keyword)}&start=0&uiOrigin=GLOBAL_SEARCH_HEADER"
@@ -431,7 +465,15 @@ async def collect_result_cards(page: Any, channel: Channel, *, limit: int = MAX_
     return tuple(cards)
 
 
-async def _submit_keyword_search(page: Any, channel: Channel, keyword: str) -> str:
+async def _submit_keyword_search(page: Any, channel: Channel, keyword: Any) -> str:
+    if isinstance(keyword, Mapping):
+        result = await apply_structured_search_plan(
+            page, channel, keyword,
+            career_min=keyword.get("career_min"), career_max=keyword.get("career_max"),
+        )
+        if not result.get("verified"):
+            raise RuntimeError("search input readback verification failed")
+        return "structured portal filters submitted and verified"
     if channel == "linkedin_rps":
         # The keyword is carried in the talent/search URL opened by _goto_search_surface,
         # so the search has already executed; result cards are collected afterwards. No
@@ -455,6 +497,82 @@ async def _submit_keyword_search(page: Any, channel: Channel, keyword: str) -> s
     if hasattr(page, "wait_for_timeout"):
         await page.wait_for_timeout(1000)
     return "keyword submitted on persistent portal context"
+
+
+async def _fill_chip_input(locator: Any, values: list[str]) -> None:
+    for value in values:
+        await locator.fill(value)
+        await locator.press("Enter")
+
+
+async def apply_structured_search_plan(
+    page: Any,
+    channel: Channel,
+    plan: Mapping[str, Any],
+    *,
+    career_min: int | None = None,
+    career_max: int | None = None,
+) -> dict[str, Any]:
+    """Apply the renderer's fields/chips plan and verify visible readback.
+
+    This is the live consumer of ``channel_search_render.render_search_for_session``.
+    It only touches search/filter controls; outreach controls are never selected.
+    """
+    kind = str(plan.get("kind") or "")
+    applied: list[str] = []
+    if channel == "saramin" and kind == "fields":
+        selectors = {
+            "include": "div.search_word_include input, input[name*='include']",
+            "default": "div.search_default input, input.search_input",
+            "exclude": "div.search_word_except input, input[name*='except']",
+        }
+        for field_name, selector in selectors.items():
+            values = [str(x).strip() for x in plan.get(field_name, ()) if str(x).strip()]
+            if not values:
+                continue
+            locator = page.locator(selector).first
+            if int(await _maybe_await(locator.count())) <= 0:
+                raise RuntimeError(f"saramin {field_name} selector missing")
+            await _fill_chip_input(locator, values)
+            applied.extend(values)
+    elif channel == "jobkorea" and kind == "chips":
+        values = [str(x).strip() for x in plan.get("chips", ()) if str(x).strip()]
+        locator = page.locator("#txtKeyword, input[placeholder*='키워드']").first
+        if int(await _maybe_await(locator.count())) <= 0:
+            raise RuntimeError("jobkorea keyword selector missing")
+        await _fill_chip_input(locator, values)
+        applied.extend(values)
+    else:
+        value = str(plan.get("value") or "").strip()
+        await _submit_keyword_search(page, channel, value)
+        return {"applied": [value] if value else [], "verified": bool(value)}
+
+    career_selectors = {
+        "saramin": ("#career_min", "#career_max"),
+        "jobkorea": ("#txtCareerStart", "#txtCareerEnd"),
+    }
+    for value, selector in zip((career_min, career_max), career_selectors[channel]):
+        if value is None:
+            continue
+        locator = page.locator(selector).first
+        if int(await _maybe_await(locator.count())) <= 0:
+            raise RuntimeError(f"{channel} career selector missing")
+        await locator.fill(str(value))
+
+    button_purpose = "search_button" if channel == "saramin" else "filter_search_button"
+    button = await _first_existing_locator(page, channel, button_purpose)
+    if button is None:
+        raise RuntimeError(f"{channel} search button selector missing")
+    await button.click()
+    if hasattr(page, "wait_for_timeout"):
+        await page.wait_for_timeout(1000)
+    body = ""
+    try:
+        body = str(await _maybe_await(page.locator("body").inner_text()) or "")
+    except Exception:
+        pass
+    missing = [value for value in applied if value.casefold() not in body.casefold()]
+    return {"applied": applied, "verified": not missing, "missing": missing}
 
 
 ReadyCheck = Callable[[Any], Awaitable[bool]]

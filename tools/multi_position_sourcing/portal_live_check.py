@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import base64
 import errno
-import fcntl
 import importlib.util
 import json
 import os
@@ -55,6 +54,8 @@ from .portal_worker import (
     ProfileLockError,
     SearchLivenessMonitor,
     _close_page_if_possible,
+    _lock_handle,
+    _unlock_handle,
     resolve_chrome_cdp_endpoint,
     validate_portal_profile_root,
 )
@@ -3157,8 +3158,8 @@ class _exclusive_artifact_profile_locks:
                 raise RuntimeError("artifact profile cleanup refused because a profile lock is a symlink")
             handle = _open_artifact_profile_lock(lock_path)
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
+                _lock_handle(handle)
+            except (BlockingIOError, OSError) as exc:
                 handle.close()
                 self._close_all()
                 raise RuntimeError("artifact profile cleanup refused because a profile is locked") from exc
@@ -3172,7 +3173,7 @@ class _exclusive_artifact_profile_locks:
         while self._handles:
             handle = self._handles.pop()
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                _unlock_handle(handle)
             finally:
                 handle.close()
 
@@ -3351,8 +3352,8 @@ class _exclusive_profile_deletion_lock:
         lock_path = self.profile_dir / ".profile.lock"
         handle = lock_path.open("a+", encoding="utf-8")
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            _lock_handle(handle)
+        except (BlockingIOError, OSError) as exc:
             handle.close()
             raise RuntimeError("profile deletion refused because the profile is locked") from exc
         self._handle = handle
@@ -3362,7 +3363,7 @@ class _exclusive_profile_deletion_lock:
         if self._handle is None:
             return
         try:
-            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+            _unlock_handle(self._handle)
         finally:
             self._handle.close()
             self._handle = None

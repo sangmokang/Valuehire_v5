@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 from datetime import date
-import fcntl
 import io
 import json
 from pathlib import Path
@@ -149,6 +148,8 @@ from tools.multi_position_sourcing.portal_worker import (
     ProfileLock,
     ProfileLockError,
     SearchLivenessMonitor,
+    _lock_handle,
+    _unlock_handle,
     clear_stale_singleton_locks,
     collect_result_cards,
     run_search_with_recovery,
@@ -1481,23 +1482,23 @@ sys.exit(0)
             opened.append(handle)
             return handle
 
-        def fake_flock(_fd: int, operation: int) -> None:
-            if operation & fcntl.LOCK_EX:
-                raise RuntimeError("flock failed with cookie-secret")
+        def fake_lock_handle(_handle: object) -> None:
+            raise RuntimeError("profile lock failed with cookie-secret")
 
         with TemporaryDirectory() as tmp:
             config = PortalWorkerConfig(channel="jobkorea", worker_id="worker-a", profile_root=tmp)
             with patch(
                 "tools.multi_position_sourcing.portal_worker._open_real_profile_lock",
                 fake_open_real_profile_lock,
-            ), patch("tools.multi_position_sourcing.portal_worker.fcntl.flock", fake_flock):
+            ), patch("tools.multi_position_sourcing.portal_worker._lock_handle", fake_lock_handle):
                 with self.assertRaisesRegex(ProfileLockError, "without exposing details") as raised:
                     ProfileLock(config).acquire()
 
             self.assertTrue(opened[0].closed)
             self.assertNotIn("cookie-secret", str(raised.exception))
             with ProfileLock(config):
-                lock_text = config.lock_path.read_text(encoding="utf-8")
+                pass
+            lock_text = config.lock_path.read_text(encoding="utf-8")
 
         self.assertIn("channel=jobkorea", lock_text)
         self.assertNotIn("cookie-secret", lock_text)
@@ -3361,14 +3362,14 @@ sys.exit(0)
             profile_dir.mkdir(parents=True)
             lock_path = profile_dir / ".profile.lock"
             with lock_path.open("a+", encoding="utf-8") as handle:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _lock_handle(handle)
                 try:
                     payload = cleanup_artifact_profiles_payload(
                         artifact_root=root,
                         confirm_delete_artifact_profiles=str(root / "portal_profiles"),
                     )
                 finally:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    _unlock_handle(handle)
 
             self.assertEqual(payload["status"], "failed")
             self.assertFalse(payload["deleted"])

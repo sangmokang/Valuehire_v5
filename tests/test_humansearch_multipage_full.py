@@ -7,6 +7,19 @@ import pytest
 from tools.multi_position_sourcing import humansearch_cdp_run as hcr
 
 
+def test_profile_delay_draws_fresh_180_to_420_seconds(monkeypatch):
+    values = iter((180.0, 231.5, 419.9))
+    calls = []
+    monkeypatch.setattr(hcr.random, "uniform", lambda lo, hi: (calls.append((lo, hi)), next(values))[1])
+    sleeps = []
+    monkeypatch.setattr(hcr.time, "sleep", sleeps.append)
+    hcr.human_delay()
+    hcr.human_delay()
+    hcr.human_delay()
+    assert calls == [(180.0, 420.0)] * 3
+    assert sleeps == [180.0, 231.5, 419.9]
+
+
 class FakeTab:
     def __init__(self) -> None:
         self.closed = False
