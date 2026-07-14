@@ -66,6 +66,18 @@ def build_fleet_job_payload(
     )
 
 
+def _route_linkedin_machine(queue: Any) -> str:
+    """이슈 D — LinkedIn 로그인 머신 라우팅(조회 실패 = macmini 폴백, fail-safe)."""
+    import time
+
+    from .fleet_heartbeat import pick_linkedin_machine
+    try:
+        rows = queue.linkedin_ready_machines()
+        return pick_linkedin_machine(rows, now_epoch=int(time.time()))
+    except Exception:  # noqa: BLE001 — 라우팅 조회 실패가 enqueue 를 막으면 안 됨
+        return "macmini"
+
+
 def is_owner(
     invocation: DiscordInvocation,
     *,
@@ -115,8 +127,15 @@ def dispatch_fleet_command(
                 "reason": f"{invocation.command_name} 은 owner 전용입니다"}
 
     if invocation.command_name == "fleet-run":
+        options = dict(invocation.options or {})
+        # 이슈 D(2026-07-15 사장님 승인, SOT29 §2 개정): LinkedIn 잡(skill=url)이
+        # 머신 미지정이면 heartbeat 의 로그인 상태로 라우팅. 조회 실패/미검출 =
+        # macmini 폴백(fail-safe) — 명시 machine 은 절대 덮어쓰지 않는다.
+        if (options.get("skill") or "").strip() == "url" \
+                and not (options.get("machine") or "").strip():
+            options["machine"] = _route_linkedin_machine(q)
         payload = build_fleet_job_payload(
-            invocation.options or {}, requested_by=_requested_by(invocation, role), role=role)
+            options, requested_by=_requested_by(invocation, role), role=role)
         if payload is None:
             return {"action": "error", "reason": "잡 페이로드 무효(스킬/URL/머신 확인)"}
         job = q.enqueue(payload)

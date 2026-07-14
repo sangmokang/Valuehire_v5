@@ -1,0 +1,75 @@
+{
+  "claim_id": "linkedin-login-machine-routing",
+  "mode": "code-change",
+  "risk": "L3",
+  "spec": "docs/prompts/discord-fleet-linkedin-handoff-and-agent-routing-goal-2026-07-15.md §5 (이슈 D) — 사장님 승인 2026-07-15: SOT29 §2 'macmini 전용' 개정, 로그인 머신 라우팅",
+  "generator": {
+    "author": "Claude (this session)",
+    "claim": "heartbeat 에 linkedin_rps_logged_in 동봉(로컬 포털 상태파일 24h 신선도, 미래날짜 거부, fail-closed False). 마이그레이션: 컬럼+3인자 record_heartbeat+linkedin_ready_machines RPC, 레거시 2인자는 flag=false 리셋 재정의. dispatch: skill=url·머신 미지정 → 로그인 머신 라우팅(INV8 우선순위, 미검출/조회실패=macmini 폴백, 명시 머신 불가침). url 잡은 좌석 공유 락(portal:linkedin_rps) — 라우팅으로 머신이 갈라져도 동시 2머신 불가. 후속 잡은 좌석 락 비상속. SOT29 md+json 개정.",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_heartbeat.py",
+      "tools/multi_position_sourcing/fleet_dispatch.py",
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "tools/multi_position_sourcing/job_queue.py",
+      "supabase/migrations/20260715_fleet_linkedin_routing.sql",
+      "docs/sot/29-fleet-control.md",
+      "docs/sot/29-fleet-control.json",
+      "tests/test_fleet_heartbeat.py",
+      "tests/test_fleet_dispatch.py",
+      "tests/test_fleet_worker.py"
+    ],
+    "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider",
+    "exit_code": 0,
+    "output": "1472 passed, 4 xfailed, 14 subtests passed in 36.54s (HEAD 0903b0c)",
+    "red_evidence": "RED 1차(8 failed) + V1 blocker RED(3 failed) + 파급 RED(1 failed) — 전부 구현 전 실패 확인 후 커밋",
+    "mutation_evidence": "뮤턴트 4종(로그인 조건 무력화·신선도 완화·라우팅 분기 무력화·flag 상수화) 전부 사살",
+    "live_evidence": "라이브 Supabase 마이그레이션 적용·실 DB RPC 실행은 배포 시 수동 단계(아래 known_limitations). 배선: dispatch_fleet_command 단일 창구(hermes 포함 전 경로 위임 확인) → _route_linkedin_machine → pick_linkedin_machine"
+  },
+  "v1": {
+    "author": "Codex fresh session (판정 companion result 직접 회수)",
+    "first_verdict": "fail (blocker 3)",
+    "counterexamples_found": [
+      "BLOCKER(회귀): 라우팅으로 머신이 갈라지면 url 잡 계정락이 portal:winpc/portal:macmini 로 분열 — LinkedIn 좌석 1개 동시 2머신 실행 가능",
+      "BLOCKER: 레거시 2인자 record_heartbeat 가 beat 만 갱신 — 낡은 linkedin=true 가 '신선한 로그인'으로 영구 위장",
+      "BLOCKER: 미래 시각 generated_at(2099년) 상태파일이 무한 신뢰됨(음수 나이 미거부)"
+    ],
+    "final_verdict": "pass-on-code (fail-closed 표기는 자기 샌드박스에 tmp/PG 부재로 전체스위트·실DB 증거를 자기 손으로 못 얻은 것 — 코드 반증 0건 명시)",
+    "repro": "재검증(HEAD 0903b0c): 좌석 락 probe — url 잡 2건 모두 portal:linkedin_rps, 후속 aisearch 는 portal:winpc. 미래날짜 2099→False, -299s 시계오차→True. blocker 집중 테스트 4 passed. 마이그레이션 semantic true→false 전환 확인(정적)"
+  },
+  "t": {
+    "author": "T(기계 판정) = 생성자 환경 pytest + GitHub CI",
+    "adjudication": "V1 이 환경 제약으로 못 얻은 전체스위트 증거를 동일 커밋(0903b0c)에서 재실행으로 보충: 1472 passed, 4 xfailed, exit 0. V1 의 남은 2건은 코드 결함이 아니라 증거 획득 환경 문제로 판정. CI verify 2job 이 merge 게이트에서 재검증"
+  },
+  "v2": {
+    "author": "Claude reset session (goal §5 + verdict + 코드만 열람)",
+    "verdict": "pass",
+    "what_v1_missed": "스펙 위반 없음. 잠재 관찰 2건: (1) new_job_payload 에 명시 account_key 를 주면 url 좌석 키를 우회 가능하나 프로덕션 호출 경로 전수 조사 결과 도달 불가(API 레벨 footgun), (2) followup:url 잡은 라우팅 없이 부모 머신 상속하지만 좌석 키는 유지되어 불변식 성립",
+    "independent_repro": "pytest 1472 passed, 4 xfailed 비트 단위 재현(T 와 일치). 인수 재도출: 신선도 경계 -300/-299/86400/86401 정확, 라우팅 우선순위·폴백 전부 확인, url 잡 모든 실경로(dispatch 명시/라우팅, hermes 슬래시/자연어, followup) portal:linkedin_rps 종결. 마이그레이션 순서 — 어떤 표준 러너도 20260715 를 마지막 적용, 신규 DB 에서 구식 2인자 동작 불가"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "1차 구현: url 잡도 portal:<machine> 기본 계정락",
+      "root_cause": "SOT29 §2 의 존재 이유(좌석 1개 보호)를 라우팅이 우회 — macmini 고정이 사라지는 순간 머신별 락은 좌석을 못 지킴",
+      "repro": "V1 probe: winpc/macmini 각각 다른 account_key 로 동시 락 가능",
+      "next_change": "skill=url 은 default_account_key 에서 좌석 공유 키 반환"
+    },
+    {
+      "attempt": "1차 마이그레이션: 2인자 함수 원본 유지",
+      "root_cause": "구버전 워커가 flag 를 갱신 못 하면서 beat 만 갱신 → stale true 영구화",
+      "repro": "V1 정적 분석",
+      "next_change": "2인자 재정의로 flag=false 리셋(fail-closed)"
+    },
+    {
+      "attempt": "1차 신선도 검사: 초과 나이만 거부",
+      "root_cause": "미래 시각 파일(시계 튐/조작)의 나이가 음수라 통과",
+      "repro": "generated_at=2099 → True",
+      "next_change": "age < -300s 도 거부"
+    }
+  ],
+  "known_limitations": [
+    "Supabase 마이그레이션(20260715_fleet_linkedin_routing.sql) 실 DB 적용은 배포 시 수동 단계 — 적용 전까지 워커는 레거시 2인자 폴백으로 심장박동 유지, 라우팅은 항상 macmini 폴백(현행과 동일 동작). 적용 후부터 로그인 라우팅 활성",
+    "포털 상태파일 신선도 24h 는 프리플라이트 주기 가정 — 세션이 더 짧게 만료되면 stale true 가능(로그인 실패 시 워커가 어차피 paused_for_human 으로 안전)"
+  ],
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행"
+}

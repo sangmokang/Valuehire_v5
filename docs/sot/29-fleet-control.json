@@ -16,7 +16,7 @@
   },
   "invariants": {
     "INV1_account_machine_binding": "같은 포털 계정을 여러 머신에서 동시에 돌리지 않는다. account_key 로 계정 글로벌 락(한 시점 한 머신).",
-    "INV2_linkedin_single_seat": "LinkedIn Recruiter 시트가 1개면 LinkedIn 잡은 macmini 전용.",
+    "INV2_linkedin_single_seat": "LinkedIn 잡(skill=url)은 heartbeat linkedin_rps_logged_in 이 참인 머신으로 라우팅(2026-07-15 승인 개정). 다중이면 INV8 신뢰도 순, 미검출·조회실패면 macmini 폴백. account_key 글로벌 락으로 같은 계정 동시 2머신은 여전히 불가.",
     "INV3_profile_preserve": "각 머신 --user-data-dir 디버그 프로필은 삭제·초기화 금지. 일시정지 중 크롬 탭/프로필 유지.",
     "INV4_send_gate": "어떤 Discord 명령도 아웃리치 발송을 트리거하지 못한다(SOT28). 큐엔 검색 스킬(humansearch/aisearch/url)만.",
     "INV5_owner_only": "fleet-resume·fleet-cancel 은 owner(명시적 OWNER_USER_IDS) 전용. 멤버 연락처와 분리.",

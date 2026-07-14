@@ -68,8 +68,15 @@ def _valid_url(url: Any) -> bool:
     return port is None or 0 < port <= 65535
 
 
+# 이슈 D(V1 blocker 수용): LinkedIn Recruiter 좌석은 1개 — 로그인 머신 라우팅으로
+# 머신이 갈라져도 skill=url 잡은 이 공유 키로 글로벌 락을 걸어 동시 2머신 실행을 막는다.
+LINKEDIN_RPS_ACCOUNT_KEY = "portal:linkedin_rps"
+
+
 def default_account_key(skill: str, machine: str) -> str:
-    """계정↔머신 1:1 기본 정책 — 명시 account_key 없으면 머신 바인딩 키."""
+    """계정 락 기본 정책 — LinkedIn 잡(url)은 좌석 공유 키, 그 외는 머신 바인딩 키."""
+    if skill == "url":
+        return LINKEDIN_RPS_ACCOUNT_KEY
     return f"portal:{machine}"
 
 
@@ -319,6 +326,11 @@ class JobQueueClient:
         """머신별 마지막 heartbeat(heartbeats_epoch RPC) — fleet-status 표시용."""
         rows = self._call("POST", "/rpc/heartbeats_epoch", {})
         return rows if isinstance(rows, list) else []
+
+    def linkedin_ready_machines(self) -> list:
+        """이슈 D — heartbeat 의 LinkedIn 로그인 상태 조회(라우팅용, epoch 초)."""
+        rows = self._call("POST", "/rpc/linkedin_ready_machines", {})
+        return list(rows) if isinstance(rows, list) else []
 
     def probe_auth(self) -> tuple[str, str]:
         """SOT30 S3 — 기동 인증 프로브(가벼운 GET 1회).
