@@ -575,3 +575,14 @@ def test_record_heartbeat_falls_back_to_legacy_rpc(monkeypatch):
     w.record_heartbeat()  # 예외 전파 없이
     assert len(calls) == 2
     assert "p_linkedin_rps_logged_in" not in calls[1]
+
+
+def test_followup_uses_own_skill_account_key_not_parents_seat_lock():
+    """url 부모(좌석 공유 락)의 후속 aisearch 는 자기 스킬 기본 키(portal:<machine>)를
+    써야 한다 — LinkedIn 좌석 락을 불필요하게 잡으면 다른 링크드인 잡을 막는다."""
+    job = _job(skill="url", params={"followup_skill": "aisearch"},
+               account_key="portal:linkedin_rps")
+    q = FakeQueue(job)
+    w = _worker(q, lambda p, timeout: ("준비 완료", 0), [])
+    assert w.run_once() == "done"
+    assert q.enqueued[0]["account_key"] == "portal:macmini"

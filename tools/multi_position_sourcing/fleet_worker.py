@@ -499,7 +499,9 @@ class FleetWorker:
             machine=job.get("machine") or self.machine, skill=followup,
             position_url=job.get("position_url"),
             requested_by=job.get("requested_by"), role=job.get("role"),
-            params=params, account_key=str(job.get("account_key") or ""),
+            # 이슈 D 파급 수정: 부모(url) 좌석 공유 락을 상속하지 않는다 — 후속 잡은
+            # 자기 스킬의 기본 계정 키(default_account_key)로 락을 건다.
+            params=params, account_key="",
         )
         if payload is None:
             self._notify(job, (

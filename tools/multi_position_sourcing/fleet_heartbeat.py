@@ -71,7 +71,12 @@ def linkedin_rps_logged_in_from_status(
     if not isinstance(payload, Mapping):
         return False
     gen_epoch = _iso_to_epoch(payload.get("generated_at"))
-    if gen_epoch is None or (now_epoch - gen_epoch) > max_age_seconds:
+    if gen_epoch is None:
+        return False
+    age = now_epoch - gen_epoch
+    # V1 blocker 수용: 미래 시각(음수 나이)도 거부 — 시계 튐/조작 파일이 무한 신뢰되는 것 차단.
+    # 정상 시계 오차만 허용(300s).
+    if age < -300 or age > max_age_seconds:
         return False
     sessions = payload.get("portal_sessions")
     if not isinstance(sessions, Sequence):
