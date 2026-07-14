@@ -5,3 +5,6 @@ pytest>=9,<10
 # 일부 테스트가 가져오는 소스 모듈이 import 시점에 playwright를 당긴다(브라우저 실행은 안 함 — 가짜 매니저 사용).
 # CI에서 ModuleNotFoundError 방지용. 브라우저 바이너리(playwright install)는 불필요.
 playwright==1.60.0
+# Windows에는 OpenSSL CLI가 기본 제공되지 않는다. 포털 세션 스냅샷을
+# OpenSSL 호환 AES-256-CTR 형식으로 암복호화하는 런타임 백엔드다.
+cryptography>=45,<47

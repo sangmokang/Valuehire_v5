@@ -209,10 +209,10 @@ def _env_config() -> tuple[str, str]:
         if not env.exists():
             continue
         found: dict[str, str] = {}
-        for line in env.read_text().splitlines():
+        for line in env.read_text(encoding="utf-8").splitlines():
             for key in (_URL_KEY, _SRK_KEY):
                 if line.startswith(key + "="):
-                    found[key] = line.split("=", 1)[1].strip()
+                    found[key] = line.split("=", 1)[1].strip().strip('"').strip("'")
         if found.get(_URL_KEY) and found.get(_SRK_KEY):
             return found[_URL_KEY], found[_SRK_KEY]
     raise RuntimeError(

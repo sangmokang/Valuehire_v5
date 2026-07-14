@@ -19,11 +19,20 @@ from .models import Channel
 from .portal_keychain import add_generic_password
 from .portal_worker import _close_page_if_possible, _goto_search_surface
 
+try:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+except ImportError:  # POSIX can continue to use the OpenSSL CLI.
+    hashes = Cipher = algorithms = modes = PBKDF2HMAC = None  # type: ignore[assignment]
+
 SnapshotKind = Literal["current", "last_known_good"]
 SnapshotValidator = Callable[[Mapping[str, object]], bool | Awaitable[bool]]
 
 PAYLOAD_VERSION = b"VHSS1"
 TAG_BYTES = 32
+OPENSSL_SALTED_MAGIC = b"Salted__"
+OPENSSL_PBKDF2_ITERATIONS = 10_000
 PORTAL_STORAGE_DOMAINS: dict[Channel, tuple[str, ...]] = {
     "saramin": ("saramin.co.kr",),
     "jobkorea": ("jobkorea.co.kr",),
@@ -105,6 +114,13 @@ def _run_openssl_enc(
     data: bytes,
     decrypt: bool,
 ) -> bytes:
+    if os.name == "nt":
+        return _run_openssl_compatible_cipher(
+            passphrase=passphrase,
+            data=data,
+            decrypt=decrypt,
+        )
+
     read_fd, write_fd = os.pipe()
     try:
         os.write(write_fd, passphrase + b"\n")
@@ -139,6 +155,38 @@ def _run_openssl_enc(
     if result.returncode != 0:
         raise SessionEncryptionError("OpenSSL session encryption operation failed")
     return result.stdout
+
+
+def _run_openssl_compatible_cipher(*, passphrase: bytes, data: bytes, decrypt: bool) -> bytes:
+    """Use OpenSSL's salted PBKDF2/AES-256-CTR wire format without its CLI.
+
+    This keeps Windows snapshots compatible with the existing POSIX OpenSSL backend
+    while avoiding argv, temporary-file, and unsupported ``pass_fds`` secret paths.
+    """
+    if any(value is None for value in (hashes, Cipher, algorithms, modes, PBKDF2HMAC)):
+        raise SessionEncryptionError("cryptography backend is required on Windows")
+    if decrypt:
+        if not data.startswith(OPENSSL_SALTED_MAGIC) or len(data) <= len(OPENSSL_SALTED_MAGIC) + 8:
+            raise SessionEncryptionError("OpenSSL session encryption payload is malformed")
+        salt = data[len(OPENSSL_SALTED_MAGIC) : len(OPENSSL_SALTED_MAGIC) + 8]
+        source = data[len(OPENSSL_SALTED_MAGIC) + 8 :]
+    else:
+        salt = secrets.token_bytes(8)
+        source = data
+
+    derivation = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=48,
+        salt=salt,
+        iterations=OPENSSL_PBKDF2_ITERATIONS,
+    )
+    key_and_iv = derivation.derive(passphrase)
+    cipher = Cipher(algorithms.AES(key_and_iv[:32]), modes.CTR(key_and_iv[32:]))
+    operation = cipher.decryptor() if decrypt else cipher.encryptor()
+    transformed = operation.update(source) + operation.finalize()
+    if decrypt:
+        return transformed
+    return OPENSSL_SALTED_MAGIC + salt + transformed
 
 
 @dataclass(frozen=True)

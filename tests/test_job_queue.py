@@ -280,7 +280,7 @@ def test_env_config_pairs_from_same_file(tmp_path, monkeypatch):
 def test_migration_file_contains_core_ddl():
     candidates = sorted((REPO / "supabase" / "migrations").glob("*fleet_jobs*.sql"))
     assert candidates, "fleet_jobs 마이그레이션 SQL 이 없습니다"
-    raw = candidates[-1].read_text()
+    raw = candidates[-1].read_text(encoding="utf-8")
     # V2 지적: 주석의 문구만으로 니들이 충족되면 실제 SQL 회귀를 못 잡는다 — '--' 주석 제거 후 매칭
     sql = "\n".join(line.split("--", 1)[0] for line in raw.splitlines())
     for needle in (

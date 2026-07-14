@@ -36,6 +36,7 @@ LINKEDIN_SINGLE_WORKER_ID = "default"
 
 CHROME_CDP_ENDPOINT_ENV = "VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT"
 DEFAULT_CHROME_CDP_ENDPOINT = "http://127.0.0.1:9222"
+WINDOWS_LOCK_OFFSET = 1024 * 1024
 
 
 def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
@@ -304,6 +305,8 @@ def _reject_unsafe_profile_path(path: Path) -> None:
 def _open_real_profile_lock(lock_path: Path) -> Any:
     if lock_path.is_symlink():
         raise ProfileLockError("profile lock path must not be a symlink")
+    if os.name == "nt":
+        return _open_windows_shared_delete_lock(lock_path)
     flags = os.O_RDWR | os.O_CREAT
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -311,6 +314,44 @@ def _open_real_profile_lock(lock_path: Path) -> Any:
         fd = os.open(lock_path, flags, 0o600)
     except OSError as exc:
         raise ProfileLockError("profile lock path must be a real file") from exc
+    return os.fdopen(fd, "r+", encoding="utf-8")
+
+
+def _open_windows_shared_delete_lock(lock_path: Path) -> Any:
+    """Open a Windows lock file without preventing owner-confirmed profile cleanup."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    handle = create_file(
+        str(lock_path),
+        0x80000000 | 0x40000000,  # GENERIC_READ | GENERIC_WRITE
+        0x00000001 | 0x00000002 | 0x00000004,  # FILE_SHARE_READ | WRITE | DELETE
+        None,
+        4,  # OPEN_ALWAYS
+        0x00000080,  # FILE_ATTRIBUTE_NORMAL
+        None,
+    )
+    invalid_handle = ctypes.c_void_p(-1).value
+    if handle == invalid_handle:
+        error = ctypes.get_last_error()
+        raise OSError(error, "failed to open Windows profile lock")
+    try:
+        fd = _msvcrt.open_osfhandle(handle, os.O_RDWR)
+    except Exception:
+        kernel32.CloseHandle(handle)
+        raise
     return os.fdopen(fd, "r+", encoding="utf-8")
 
 
@@ -331,13 +372,10 @@ def _lock_handle(handle: Any) -> None:
         return
     if _msvcrt is None:
         raise OSError("no supported file locking backend")
-    handle.seek(0)
-    # msvcrt cannot lock an empty range; ensure one byte exists first.
-    if not handle.read(1):
-        handle.seek(0)
-        handle.write("0")
-        handle.flush()
-    handle.seek(0)
+    # Lock a byte beyond the metadata rather than byte zero. Windows range locks
+    # also block reads of the locked range, unlike flock; the offset keeps the
+    # human-readable owner metadata inspectable while preserving exclusivity.
+    handle.seek(WINDOWS_LOCK_OFFSET)
     _msvcrt.locking(handle.fileno(), _msvcrt.LK_NBLCK, 1)
 
 
@@ -346,7 +384,7 @@ def _unlock_handle(handle: Any) -> None:
         _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
         return
     if _msvcrt is not None:
-        handle.seek(0)
+        handle.seek(WINDOWS_LOCK_OFFSET)
         _msvcrt.locking(handle.fileno(), _msvcrt.LK_UNLCK, 1)
 
 

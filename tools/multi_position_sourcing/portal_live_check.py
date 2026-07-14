@@ -55,6 +55,7 @@ from .portal_worker import (
     SearchLivenessMonitor,
     _close_page_if_possible,
     _lock_handle,
+    _open_real_profile_lock,
     _unlock_handle,
     resolve_chrome_cdp_endpoint,
     validate_portal_profile_root,
@@ -3179,6 +3180,11 @@ class _exclusive_artifact_profile_locks:
 
 
 def _open_artifact_profile_lock(lock_path: Path) -> Any:
+    if os.name == "nt":
+        try:
+            return _open_real_profile_lock(lock_path)
+        except ProfileLockError as exc:
+            raise RuntimeError("artifact profile cleanup refused because a profile lock is invalid") from exc
     flags = os.O_RDWR | os.O_CREAT
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -3350,7 +3356,7 @@ class _exclusive_profile_deletion_lock:
 
     def __enter__(self) -> "_exclusive_profile_deletion_lock":
         lock_path = self.profile_dir / ".profile.lock"
-        handle = lock_path.open("a+", encoding="utf-8")
+        handle = _open_real_profile_lock(lock_path)
         try:
             _lock_handle(handle)
         except (BlockingIOError, OSError) as exc:

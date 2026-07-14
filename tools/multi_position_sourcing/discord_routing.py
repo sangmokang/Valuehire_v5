@@ -253,14 +253,19 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
             "contexts": [0, 1],
         },
         {
+            # 2026-07-13: 이 native Discord 슬래시커맨드 스키마가 실제로 라이브에서
+            # 쓰이는지는 이 저장소만으로 확인 불가(interaction 수신 핸들러가 레포에 없음
+            # — 실제 실행은 ops/hermes-plugin 의 텍스트 기반 register_command 경로로
+            # 보인다). 다만 아래 설명 문구는 실제 코드 기본값(hermes_fleet_bridge.
+            # _FLEET_RUN_DEFAULT_SKILL = "aisearch")과 반드시 맞아야 하므로 문서만 정정.
             "name": "fleet-run",
-            "description": "Queue a Valuehire fleet search job (humansearch/aisearch/url).",
+            "description": "Queue a Valuehire fleet search job (aisearch/humansearch/url).",
             "type": 1,
             "contexts": [0, 1],
             "options": [
                 {"name": "url", "description": "Position or search URL.", "type": 3, "required": True},
-                {"name": "skill", "description": "Search skill (default: humansearch).", "type": 3, "required": False,
-                 "choices": [{"name": s, "value": s} for s in ("humansearch", "aisearch", "url")]},
+                {"name": "skill", "description": "Search skill (default: aisearch).", "type": 3, "required": False,
+                 "choices": [{"name": s, "value": s} for s in ("aisearch", "humansearch", "url")]},
                 {"name": "machine", "description": "Target machine.", "type": 3, "required": False,
                  "choices": [{"name": m, "value": m} for m in ("macmini", "macbook", "winpc")]},
             ],

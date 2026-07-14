@@ -242,8 +242,8 @@ def test_worker_loop_records_heartbeat():
 def test_watchdog_script_and_plist_exist():
     sh = REPO / "scripts" / "fleet_watchdog.py"
     plist = REPO / "ops" / "launchd" / "com.valuehire.fleet-watchdog.plist"
-    assert sh.exists() and "Watchdog" in sh.read_text()
-    assert plist.exists() and "fleet_watchdog.py" in plist.read_text()
+    assert sh.exists() and "Watchdog" in sh.read_text(encoding="utf-8")
+    assert plist.exists() and "fleet_watchdog.py" in plist.read_text(encoding="utf-8")
 
 
 def test_sot29_fleet_control_doc_integrity():
@@ -251,7 +251,7 @@ def test_sot29_fleet_control_doc_integrity():
     doc = REPO / "docs" / "sot" / "29-fleet-control.json"
     md = REPO / "docs" / "sot" / "29-fleet-control.md"
     assert doc.exists() and md.exists()
-    d = json.loads(doc.read_text())
+    d = json.loads(doc.read_text(encoding="utf-8"))
     assert d["sot_id"] == 29
     inv = d["invariants"]
     # 핵심 불변식이 문서에 실재하는지(계정 바인딩·발송 게이트·owner 전용·stale 경보)
@@ -262,13 +262,16 @@ def test_sot29_fleet_control_doc_integrity():
     assert set(d["machines"]) == {"macmini", "winpc", "macbook"}
     # CLAUDE.md 에서 링크(배선)
     claude_md = REPO / "CLAUDE.md"
-    assert "29-fleet-control" in claude_md.read_text()
+    assert "29-fleet-control" in claude_md.read_text(encoding="utf-8")
 
 
 def test_migration_has_heartbeat_table():
     cands = sorted((REPO / "supabase" / "migrations").glob("*heartbeat*.sql"))
     assert cands, "heartbeat 마이그레이션 없음"
-    sql = "\n".join(l.split("--", 1)[0] for l in cands[-1].read_text().splitlines()).lower()
+    sql = "\n".join(
+        line.split("--", 1)[0]
+        for line in cands[-1].read_text(encoding="utf-8").splitlines()
+    ).lower()
     for needle in ("create table if not exists public.machine_heartbeats",
                    "record_heartbeat", "service_role", "enable row level security"):
         assert needle in sql, f"'{needle}' 누락"

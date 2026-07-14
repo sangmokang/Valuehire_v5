@@ -2460,7 +2460,7 @@ sys.exit(0)
             target_dir.mkdir()
             (target_dir / "marker").write_text("profile", encoding="utf-8")
             symlink_path = root / "symlink-profile"
-            symlink_path.symlink_to(target_dir, target_is_directory=True)
+            self.symlink_or_skip(symlink_path, target_dir, target_is_directory=True)
 
             with self.assertRaisesRegex(RuntimeError, "real profile directory"):
                 delete_profile_dir_if_confirmed(
@@ -9290,6 +9290,20 @@ Example format, not a real contact:
             command_names,
         )
 
+    def test_fleet_run_skill_option_defaults_and_lists_aisearch_first(self) -> None:
+        # 2026-07-13: 이 payload 의 skill 설명이 "default: humansearch" 로 남아 있었다
+        # (실제 기본값은 hermes_fleet_bridge._FLEET_RUN_DEFAULT_SKILL = "aisearch",
+        # 2026-07-13 변경). 이 native 슬래시커맨드 스키마가 실제로 어떤 라이브 경로에서
+        # 쓰이는지는 이 저장소만으로 확인되지 않으므로(§ 상단 comment 참고), 이 테스트는
+        # "문서가 실제 기본값과 일치한다"만 보장한다 — job #22 재현이나 UI 동작 확정은
+        # 아니다.
+        fleet_run = next(
+            p for p in discord_slash_command_payloads() if p["name"] == "fleet-run"
+        )
+        skill_option = next(o for o in fleet_run["options"] if o["name"] == "skill")
+        self.assertIn("default: aisearch", skill_option["description"])
+        self.assertEqual(skill_option["choices"][0]["value"], "aisearch")
+
     def test_timeout_recovery_uses_discord_jd_before_clickup_retry(self) -> None:
         payload = build_timeout_recovery_payload(
             discord_report=(
@@ -9316,6 +9330,18 @@ Example format, not a real contact:
 
 
 class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
+    def symlink_or_skip(
+        self,
+        link: Path,
+        target: Path,
+        *,
+        target_is_directory: bool = False,
+    ) -> None:
+        try:
+            link.symlink_to(target, target_is_directory=target_is_directory)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"symlink unavailable: {exc}")
+
     def test_storage_state_encryption_round_trips_without_plaintext_cookie(self) -> None:
         encryptor = OpenSslSessionEncryptor(StaticSessionKeyProvider(b"x" * 32))
         plaintext = json.dumps(
@@ -11516,7 +11542,7 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
             (profile / "Default" / "Cookies").write_text("login-secret-2")
             (profile / "Local State").write_text("{}")
             # Stale Chromium singleton artifacts left by a crashed run.
-            (profile / "SingletonLock").symlink_to("somehost-12345")
+            self.symlink_or_skip(profile / "SingletonLock", Path("somehost-12345"))
             (profile / "SingletonCookie").write_text("x")
             (profile / "SingletonSocket").write_text("x")
 
@@ -11543,7 +11569,7 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
             profile = config.profile_dir
             profile.mkdir(parents=True, exist_ok=True)
             (profile / "Cookies").write_text("login-secret")
-            (profile / "SingletonLock").symlink_to("somehost-999")
+            self.symlink_or_skip(profile / "SingletonLock", Path("somehost-999"))
 
             context = FakeContext(available_selectors={'input[name="searchword"]', 'button[name="search"]'})
             worker = PortalWorker(config, playwright=FakePlaywright(context))

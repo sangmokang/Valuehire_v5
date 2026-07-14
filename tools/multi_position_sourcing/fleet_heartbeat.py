@@ -186,7 +186,7 @@ def _load_env_line(key: str) -> str:
     for base in bases:
         env = base / ".env.local"
         if env.exists():
-            for line in env.read_text().splitlines():
+            for line in env.read_text(encoding="utf-8").splitlines():
                 if line.startswith(key + "="):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
     return ""
