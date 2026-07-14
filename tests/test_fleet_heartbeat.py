@@ -343,3 +343,26 @@ def test_linkedin_migration_and_sot29_amended():
     js = (REPO / "docs" / "sot" / "29-fleet-control.json").read_text(encoding="utf-8")
     assert "macmini 전용" not in js
     assert "linkedin_rps_logged_in" in js
+
+
+def test_future_dated_status_rejected():
+    """V1(Codex) blocker 수용 — 미래 시각 generated_at(시계 튐/조작)은 신뢰하지 않는다."""
+    from tools.multi_position_sourcing.fleet_heartbeat import (
+        linkedin_rps_logged_in_from_status,
+    )
+    future = {"generated_at": "2099-01-01T00:00:00Z",
+              "portal_sessions": [{"channel": "linkedin_rps", "ready": True}]}
+    assert linkedin_rps_logged_in_from_status(future, now_epoch=1_800_000_000) is False
+
+
+def test_legacy_two_arg_heartbeat_resets_linkedin_flag_in_migration():
+    """V1(Codex) blocker 수용 — 구버전 워커(2인자 RPC)가 beat 만 갱신하면
+    낡은 linkedin=true 가 '신선한 로그인'으로 영구 위장된다. 새 마이그레이션이
+    2인자 함수를 재정의해 flag 를 false 로 리셋해야 한다(fail-closed)."""
+    sql = (REPO / "supabase" / "migrations" / "20260715_fleet_linkedin_routing.sql"
+           ).read_text(encoding="utf-8").lower()
+    assert "record_heartbeat(p_machine text, p_worker_pid integer)" in sql, \
+        "2인자 record_heartbeat 재정의 누락"
+    two_arg = sql.split("record_heartbeat(p_machine text, p_worker_pid integer)", 1)[1]
+    assert "linkedin_rps_logged_in = false" in two_arg.split("$$;")[0].replace("\n", " "), \
+        "2인자 경로가 linkedin 플래그를 false 로 리셋하지 않음"

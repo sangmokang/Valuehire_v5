@@ -289,3 +289,33 @@ def test_non_url_skill_keeps_existing_default():
     assert result["action"] == "enqueued"
     assert q.enqueued[0]["machine"] == "macmini"
     assert not q.linkedin_calls
+
+
+def test_url_jobs_share_single_linkedin_seat_lock():
+    """V1(Codex) blocker 수용 — 라우팅으로 머신이 갈라져도 LinkedIn 좌석은 1개다.
+    skill=url 잡은 머신 무관 공유 account_key 로 글로벌 락이 걸려야 동시 2머신 실행이 막힌다."""
+    import time
+    now = int(time.time())
+    q1 = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
+                               "linkedin_rps_logged_in": True}])
+    dispatch_fleet_command(
+        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
+        authorized_users=_users(), config=_config(), queue=q1)
+    q2 = _routing_queue(rows=[{"machine": "macmini", "beat_at_epoch": now - 5,
+                               "linkedin_rps_logged_in": True}])
+    dispatch_fleet_command(
+        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/2"}),
+        authorized_users=_users(), config=_config(), queue=q2)
+    k1, k2 = q1.enqueued[0]["account_key"], q2.enqueued[0]["account_key"]
+    assert q1.enqueued[0]["machine"] == "winpc"
+    assert q2.enqueued[0]["machine"] == "macmini"
+    assert k1 == k2, f"좌석 락 키가 머신 따라 갈라짐: {k1} vs {k2}"
+    assert "linkedin" in k1
+
+
+def test_non_url_jobs_keep_machine_bound_account_key():
+    q = _routing_queue()
+    dispatch_fleet_command(
+        _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}),
+        authorized_users=_users(), config=_config(), queue=q)
+    assert q.enqueued[0]["account_key"] == "portal:macmini"
