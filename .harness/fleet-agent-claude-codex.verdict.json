@@ -6,16 +6,36 @@
   "generator": {
     "author": "Claude (this session)",
     "claim": "fleet-run agent:claude|codex 명시 필드 + 자연어 본문(URL 제외) 'codex' 단어 → agent=codex. new_job_payload 는 FLEET_AGENTS 화이트리스트 밖 agent 거부(None). FleetWorker 는 runner 미주입+agent=codex 일 때만 _run_codex(['codex','exec',prompt]) 선택 — 미지정/claude 는 기존과 100% 동일, 주입 runner 항상 우선(하위호환).",
-    "changed_files": ["tools/multi_position_sourcing/hermes_fleet_bridge.py", "tools/multi_position_sourcing/job_queue.py", "tools/multi_position_sourcing/fleet_worker.py", "tests/test_hermes_fleet_bridge.py", "tests/test_job_queue.py", "tests/test_fleet_worker.py"],
+    "changed_files": [
+      "tools/multi_position_sourcing/hermes_fleet_bridge.py",
+      "tools/multi_position_sourcing/job_queue.py",
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "tests/test_hermes_fleet_bridge.py",
+      "tests/test_job_queue.py",
+      "tests/test_fleet_worker.py"
+    ],
     "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider",
     "exit_code": 0,
-    "output": "1451 passed, 4 xfailed, 14 subtests passed in 38.90s",
+    "output": "1454 passed, 4 xfailed, 14 subtests passed in 38.37s",
     "red_evidence": "RED 커밋 시점 신규 4 failed / 149 passed — 구현 전 실패 직접 확인",
     "mutation_evidence": "뮤턴트 3종(자연어 codex 분기 무력화·큐 agent 검증 제거·_run_codex→_run_claude 치환) 전부 사살(각 1 failed)",
     "live_evidence": "라이브 codex 실행 스펙상 범위 밖(subprocess mock 검증). 3개 fleet 머신 codex 설치·인증은 goal §2 범위 밖(사장님 수동, 별도 이슈). 배선: parse→params.agent→new_job_payload→run_once 러너 선택 사슬"
   },
-  "v1": {"author": "Codex fresh session", "verdict": "PENDING"},
-  "v2": {"author": "Claude reset session", "verdict": "PENDING"},
+  "v1": {
+    "author": "Codex fresh session (판정은 companion result 로 직접 회수 — 중계 에이전트 빈 응답 2회)",
+    "first_verdict": "fail (minor 3)",
+    "counterexamples_found": [
+      "MINOR(회귀): 'precodexpost' 등 라틴 토큰 속 부분문자열이 agent:codex 오탐",
+      "MINOR: __bool__=False 인 주입 러너가 무시되고 subprocess 직행",
+      "MINOR(회귀): codex 잡 타임아웃이 'claude 타임아웃'으로 오표기"
+    ],
+    "final_verdict": "pass",
+    "repro": "재검증: precodexpost→agent 없음, codex로→agent:codex, falsy 러너 1회 호출·subprocess 0, codex 타임아웃 'codex 타임아웃(9s)', codex 바이너리 부재→failed+명확한 에러. RED 3f13fae→fix 71b3b54 확인, 워크트리 무변경, 테스트 약화 없음"
+  },
+  "v2": {
+    "author": "Claude reset session",
+    "verdict": "PENDING"
+  },
   "failed_attempts": [],
   "three_way_agree": false,
   "status": "진행중 — V1 대기"
