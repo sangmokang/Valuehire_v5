@@ -538,3 +538,40 @@ def test_injected_runner_signature_unchanged_by_badge():
     w = _worker(q, lambda p, timeout: (prompts.append(p) or ("ok", 0)), [])
     assert w.run_once() == "done"
     assert len(prompts) == 1
+
+
+# ── 이슈 D(2026-07-15 승인) — heartbeat 에 LinkedIn 로그인 상태 동봉 ──
+
+def test_record_heartbeat_sends_linkedin_flag(monkeypatch):
+    from tools.multi_position_sourcing import fleet_worker as fw
+    monkeypatch.setattr(fw, "read_linkedin_login_flag", lambda *a, **k: True)
+    calls = []
+    class Q:
+        def _call(self, method, path, payload=None):
+            calls.append((method, path, payload))
+            return []
+        def claim_next(self, machine):
+            return None
+    w = FleetWorker(machine="macmini", queue=Q(), notifier=lambda j, t: None)
+    w.record_heartbeat()
+    assert calls and calls[0][1] == "/rpc/record_heartbeat"
+    assert calls[0][2]["p_linkedin_rps_logged_in"] is True
+
+
+def test_record_heartbeat_falls_back_to_legacy_rpc(monkeypatch):
+    """마이그레이션 전 DB(3인자 RPC 없음)에서도 심장박동은 계속 뛰어야 한다."""
+    from tools.multi_position_sourcing import fleet_worker as fw
+    monkeypatch.setattr(fw, "read_linkedin_login_flag", lambda *a, **k: False)
+    calls = []
+    class Q:
+        def _call(self, method, path, payload=None):
+            calls.append(payload)
+            if "p_linkedin_rps_logged_in" in (payload or {}):
+                raise RuntimeError("PGRST202 function not found")
+            return []
+        def claim_next(self, machine):
+            return None
+    w = FleetWorker(machine="macmini", queue=Q(), notifier=lambda j, t: None)
+    w.record_heartbeat()  # 예외 전파 없이
+    assert len(calls) == 2
+    assert "p_linkedin_rps_logged_in" not in calls[1]

@@ -26,7 +26,8 @@ REPO = Path(__file__).resolve().parents[1]
 
 def test_heartbeat_payload():
     p = heartbeat_payload("macmini", worker_pid=4242, now_iso="2026-07-11T00:00:00Z")
-    assert p == {"machine": "macmini", "beat_at": "2026-07-11T00:00:00Z", "worker_pid": 4242}
+    assert p == {"machine": "macmini", "beat_at": "2026-07-11T00:00:00Z", "worker_pid": 4242,
+                 "linkedin_rps_logged_in": False}
 
 
 @pytest.mark.parametrize("machine", ["", "laptop", "MACMINI", None])
@@ -272,3 +273,73 @@ def test_migration_has_heartbeat_table():
     for needle in ("create table if not exists public.machine_heartbeats",
                    "record_heartbeat", "service_role", "enable row level security"):
         assert needle in sql, f"'{needle}' 누락"
+
+
+# ── 이슈 D(2026-07-15, 사장님 SOT29 §2 개정 승인) — LinkedIn 로그인 머신 라우팅 ──
+
+def test_heartbeat_payload_carries_linkedin_flag():
+    p = heartbeat_payload("winpc", worker_pid=1, now_iso="2026-07-15T00:00:00Z",
+                          linkedin_rps_logged_in=True)
+    assert p["linkedin_rps_logged_in"] is True
+
+
+def test_linkedin_flag_from_portal_status():
+    from tools.multi_position_sourcing.fleet_heartbeat import (
+        linkedin_rps_logged_in_from_status,
+    )
+    now = 1_800_000_000
+    fresh = {"kind": "portal_session_preflight",
+             "generated_at": "2027-01-15T08:00:00Z",
+             "portal_sessions": [{"channel": "linkedin_rps", "ready": True}]}
+    import datetime
+    gen_epoch = int(datetime.datetime(2027, 1, 15, 8, 0, tzinfo=datetime.timezone.utc).timestamp())
+    assert linkedin_rps_logged_in_from_status(fresh, now_epoch=gen_epoch + 60) is True
+    # 오래된 파일(기본 24h 초과)은 신뢰하지 않는다
+    assert linkedin_rps_logged_in_from_status(fresh, now_epoch=gen_epoch + 86401) is False
+    not_ready = {"generated_at": "2027-01-15T08:00:00Z",
+                 "portal_sessions": [{"channel": "linkedin_rps", "ready": False}]}
+    assert linkedin_rps_logged_in_from_status(not_ready, now_epoch=gen_epoch + 60) is False
+    # 채널 누락·깨진 payload·깨진 날짜 = False (fail-closed)
+    assert linkedin_rps_logged_in_from_status({"portal_sessions": []}, now_epoch=now) is False
+    assert linkedin_rps_logged_in_from_status(None, now_epoch=now) is False
+    assert linkedin_rps_logged_in_from_status(
+        {"generated_at": "not-a-date",
+         "portal_sessions": [{"channel": "linkedin_rps", "ready": True}]},
+        now_epoch=now) is False
+
+
+def test_pick_linkedin_machine_priority_and_fallback():
+    from tools.multi_position_sourcing.fleet_heartbeat import pick_linkedin_machine
+    now = 1_800_000_000
+    rows = [
+        {"machine": "macbook", "beat_at_epoch": now - 10, "linkedin_rps_logged_in": True},
+        {"machine": "winpc", "beat_at_epoch": now - 10, "linkedin_rps_logged_in": True},
+    ]
+    # SOT29 INV8 신뢰도 우선순위: macmini > winpc > macbook
+    assert pick_linkedin_machine(rows, now_epoch=now) == "winpc"
+    rows.append({"machine": "macmini", "beat_at_epoch": now - 10, "linkedin_rps_logged_in": True})
+    assert pick_linkedin_machine(rows, now_epoch=now) == "macmini"
+    # 아무도 로그인 안 됨 → macmini 폴백(무동작보다 낫다, 사장님 승인 설계)
+    assert pick_linkedin_machine([], now_epoch=now) == "macmini"
+    # stale heartbeat(5분 초과)는 제외
+    stale = [{"machine": "winpc", "beat_at_epoch": now - 301, "linkedin_rps_logged_in": True}]
+    assert pick_linkedin_machine(stale, now_epoch=now) == "macmini"
+    # 깨진 행은 무시(fail-closed)
+    junk = [{"machine": "winpc", "linkedin_rps_logged_in": True},
+            {"beat_at_epoch": now, "linkedin_rps_logged_in": True}]
+    assert pick_linkedin_machine(junk, now_epoch=now) == "macmini"
+
+
+def test_linkedin_migration_and_sot29_amended():
+    mig = REPO / "supabase" / "migrations" / "20260715_fleet_heartbeat_linkedin.sql"
+    assert mig.exists(), "heartbeat linkedin 컬럼 마이그레이션 없음"
+    sql = mig.read_text(encoding="utf-8")
+    assert "linkedin_rps_logged_in" in sql
+    assert "p_linkedin_rps_logged_in" in sql
+    assert "linkedin_ready_machines" in sql
+    md = (REPO / "docs" / "sot" / "29-fleet-control.md").read_text(encoding="utf-8")
+    assert "macmini` 전용" not in md, "SOT29 §2 macmini 전용 조항이 아직 개정 안 됨"
+    assert "linkedin_rps_logged_in" in md
+    js = (REPO / "docs" / "sot" / "29-fleet-control.json").read_text(encoding="utf-8")
+    assert "macmini 전용" not in js
+    assert "linkedin_rps_logged_in" in js

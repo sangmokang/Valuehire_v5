@@ -228,3 +228,64 @@ def test_dispatch_wrong_command_returns_none():
     assert dispatch_fleet_command(
         _inv("register-position", user_id=OWNER_ID, is_dm=True),
         authorized_users=_users(), config=_config(), queue=q, owner_role_ids=(OWNER_ROLE,)) is None
+
+
+# ── 이슈 D(2026-07-15 승인) — skill=url 머신 미지정 → 로그인 머신 라우팅 ──
+
+def _routing_queue(rows=None, raise_rpc=False):
+    q = FakeQueue()
+    q.linkedin_calls = []
+    def linkedin_ready_machines():
+        q.linkedin_calls.append(1)
+        if raise_rpc:
+            raise RuntimeError("rpc down")
+        return rows or []
+    q.linkedin_ready_machines = linkedin_ready_machines
+    return q
+
+
+def test_url_job_without_machine_routes_to_logged_in_machine():
+    import time
+    now = int(time.time())
+    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
+                              "linkedin_rps_logged_in": True}])
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
+        authorized_users=_users(), config=_config(), queue=q)
+    assert result["action"] == "enqueued"
+    assert q.enqueued[0]["machine"] == "winpc"
+    assert q.linkedin_calls, "라우팅 조회가 실제로 호출돼야 함"
+
+
+def test_url_job_routing_rpc_failure_falls_back_to_macmini():
+    q = _routing_queue(raise_rpc=True)
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
+        authorized_users=_users(), config=_config(), queue=q)
+    assert result["action"] == "enqueued"
+    assert q.enqueued[0]["machine"] == "macmini"
+
+
+def test_url_job_explicit_machine_not_overridden():
+    import time
+    now = int(time.time())
+    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
+                              "linkedin_rps_logged_in": True}])
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={"skill": "url", "machine": "macbook",
+                                   "url": "https://career.wrtn.io/ko/o/1"}),
+        authorized_users=_users(), config=_config(), queue=q)
+    assert result["action"] == "enqueued"
+    assert q.enqueued[0]["machine"] == "macbook"
+    assert not q.linkedin_calls, "명시 머신이면 라우팅 조회 안 함"
+
+
+def test_non_url_skill_keeps_existing_default():
+    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": 9_999_999_999,
+                              "linkedin_rps_logged_in": True}])
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}),
+        authorized_users=_users(), config=_config(), queue=q)
+    assert result["action"] == "enqueued"
+    assert q.enqueued[0]["machine"] == "macmini"
+    assert not q.linkedin_calls
