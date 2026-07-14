@@ -1,0 +1,65 @@
+{
+  "claim_id": "linkedin-url-aisearch-handoff",
+  "mode": "code-change",
+  "risk": "L3",
+  "spec": "docs/prompts/discord-fleet-linkedin-handoff-and-agent-routing-goal-2026-07-15.md §1 (이슈 A)",
+  "generator": {
+    "author": "Claude (this session)",
+    "claim": "자연어 '링크드인/linkedin'+포지션 URL 1개(검색결과 URL 없음, 명시 skill 없음) → skill=url + followup:aisearch. followup 필드/params.followup_skill 은 파서·큐 이중 화이트리스트(fail-closed). done release 시 후속 잡 정확히 1건(followup_skill 미전파=1단계 체이닝, idempotency_key 파생, dry-run 제외). 사람인/잡코리아=aisearch 직행, Win 별칭 대소문자 무관, DEFAULT_REPORT_CHANNEL==DM_CHANNEL 리터럴 가드.",
+    "changed_files": [
+      "tools/multi_position_sourcing/hermes_fleet_bridge.py",
+      "tools/multi_position_sourcing/job_queue.py",
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "tests/test_hermes_fleet_bridge.py",
+      "tests/test_job_queue.py",
+      "tests/test_fleet_worker.py"
+    ],
+    "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider",
+    "exit_code": 0,
+    "output": "1443 passed, 4 xfailed, 14 subtests passed in 38.22s",
+    "red_evidence": "RED 커밋 1차(신규 5 failed/137 passed) + V1 반증 RED(2 failed) — 구현 전 실패 직접 확인 후 커밋",
+    "mutation_evidence": "뮤턴트 3종(링크드인 분기 무력화·큐 검증 제거·pop→get 전파) 전부 테스트가 사살(3/1/1 failed). 부산물: pyc 캐시 스테일 이슈 발견 → 이후 검증은 PYTHONDONTWRITEBYTECODE=1 고정",
+    "live_evidence": "라이브 Discord 실행 범위 밖(pytest 레벨). 배선: natural→parse→new_job_payload→run_once done→_enqueue_followup 호출 사슬 grep + V1 인메모리 유니크 인덱스 큐로 end-to-end 재현(2행 저장)"
+  },
+  "v1": {
+    "author": "Codex fresh session ×2 (1차 잡 80분 무응답 → 취소, 중간 소견 회수 후 타임박스 재실행)",
+    "first_verdict": "fail (blocker)",
+    "counterexamples_found": [
+      "BLOCKER: 부모 idempotency_key 를 후속 잡이 그대로 복사 → fleet_job_idempotency 유니크 인덱스 충돌 → 후속 aisearch 조용히 유실(main 은 aisearch 직접 큐잉이라 회귀)",
+      "MINOR: 비화이트리스트 초장문 followup 스킬명일 때 음수 슬라이스로 160자 초과 중간 키 생성(저장은 어차피 거부 — fail-closed 유지)"
+    ],
+    "final_verdict": "pass",
+    "repro": "discord:42 repro — 후속 잡 키 discord:42:followup:aisearch 로 저장(2행), 160자 캡 정확(139+21), 키 없는 부모→키 미추가, S*151 무효 스킬→enqueue 0·무효 경보, 두 포지션 URL 케이스는 main 과 동일(회귀 아님) 판정"
+  },
+  "v2": {
+    "author": "Claude reset session (goal §1 + verdict + 코드만 열람)",
+    "verdict": "pass",
+    "what_v1_missed": "판정 뒤집는 것 없음. 스펙 부합 관찰 2건: (1) 링크드인 규칙은 ClickUp 게이트를 우회하지만 사람인/잡코리아 직행은 여전히 ClickUp URL 필요(기존 게이트, main 동일), (2) 링크드인 단어+포지션 URL 이면 '찾아' 같은 동사 없이도 발동(문언상 스펙 그대로 — 발동면 확대 관찰)",
+    "independent_repro": "pytest 145 passed in 0.27s (fresh pyc). 인수기준 10건 원라이너 전부 재현 + 신규 엣지 8건: URL 안 linkedin 단어만→미발동, 후속 잡 재체이닝 불가(1단계 증명), channels 후속 전파(sane), LINKEDIN 대문자, 160자 키 경계, enqueue 예외 fail-soft, context_url 조합, 동사 없는 발동(관찰). diff 6파일 한정·FLEET_SKILLS 불변·테스트 약화 0"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "1차 구현: _enqueue_followup 이 부모 params 에서 followup_skill 만 pop",
+      "root_cause": "idempotency_key 가 params 에 남아 후속 잡에 복사 → DB 유니크 인덱스 충돌로 후속 유실. 순수 mock 큐 테스트는 유니크 제약을 모사하지 않아 못 잡음",
+      "repro": "V1 인메모리 유니크 큐: attempted_key=discord:42, persisted_followups=0",
+      "next_change": "파생 키(부모키:followup:스킬, 160자 캡) + 유니크 충돌 재현 테스트"
+    },
+    {
+      "attempt": "1차 V1 검증 잡(task-mrl2wzdv)",
+      "root_cause": "80분 무응답 고착(마지막 로그 후 침묵) — 광범위 스윕 프롬프트가 과도",
+      "repro": "companion status: running 1h30m, 로그 최종기록 20:13Z vs 현재 21:34Z",
+      "next_change": "취소 후 중간 소견 2건을 회수해 타임박스(10분)·정조준 재실행"
+    },
+    {
+      "attempt": "뮤턴트 revert 후 전체 테스트 1건 실패",
+      "root_cause": "pop→get 뮤턴트가 같은 파일 크기·같은 초 내 revert 되어 __pycache__ 스테일 바이트코드가 잔존",
+      "repro": "파일은 pop 인데 테스트는 get 동작 — pycache 삭제 후 정상",
+      "next_change": "검증 실행에 PYTHONDONTWRITEBYTECODE=1 -p no:cacheprovider 고정"
+    }
+  ],
+  "known_limitations": [
+    "release(done) 가 DB 에는 커밋됐지만 응답 유실로 재시도가 ValueError 로 끝나면 후속 잡 미발사 — 기존 release/알림 규약과 동종의 at-least-once 공백(V1 판정: minor, 회귀 아님). 근본 해소는 fleet-lease 후속 과제와 함께"
+  ],
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행"
+}
