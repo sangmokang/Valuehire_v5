@@ -197,14 +197,14 @@ def main() -> None:
                 last = page_last
                 _save_last(last)
             for m in cmds:
-                content = m["content"].strip()
+                raw = m["content"]
+                content = raw.strip()  # 표시·킬스위치 판정용 — 프롬프트는 raw 그대로(verbatim, V1 반증 수용)
                 if is_kill_command(content):
                     _save_last(m["id"])
                     _send("🛑 명령 다리 정지합니다.")
                     return
-                agent, prompt = select_agent_and_prompt(content)
-                tag = "" if agent == "claude" else f"({agent})"
-                _send(f"⏳ 접수{tag}: {content[:120]} — 실행 중…")
+                agent, prompt = select_agent_and_prompt(raw)
+                _send(f"⏳ 접수({agent}): {content[:120]} — 실행 중…")
                 result = _run_agent(agent, prompt)
                 _send(f"✅ 결과:\n{result[:5500]}")
                 # V1(Codex): 실행 *완료 후* 저장 — 중간에 죽으면 재실행(유실 금지, at-least-once)
