@@ -19,6 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 FLEET_MACHINES: tuple[str, ...] = ("macmini", "macbook", "winpc")
 FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url")
 FLEET_ROLES: tuple[str, ...] = ("owner", "member")
+FLEET_AGENTS: tuple[str, ...] = ("claude", "codex")  # 이슈 B — 실행 엔진 화이트리스트
 
 # 상태 전이 화이트리스트 — 여기 없는 전이는 전부 거부.
 ALLOWED_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -108,6 +109,9 @@ def new_job_payload(
         return None
     # 이슈 A(2026-07-15): followup_skill 도 화이트리스트만 — 큐 입구에서 fail-closed
     if "followup_skill" in params and params["followup_skill"] not in FLEET_SKILLS:
+        return None
+    # 이슈 B(2026-07-15): 실행 엔진도 화이트리스트만 — claude|codex 외 거부
+    if "agent" in params and params["agent"] not in FLEET_AGENTS:
         return None
     if not isinstance(account_key, str) or any(ch.isspace() for ch in account_key):
         return None  # V1 2R: dict 등 비문자열 account_key 가 DB 경계까지 흘러가는 것 차단

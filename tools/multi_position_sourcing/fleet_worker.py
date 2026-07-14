@@ -211,6 +211,15 @@ def _run_claude(prompt: str, timeout: int) -> tuple[str, str, int]:
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 
+def _run_codex(prompt: str, timeout: int) -> tuple[str, str, int]:
+    """codex exec 실행(레포 루트) — 이슈 B(2026-07-15). claude -p 와 동형 계약."""
+    proc = subprocess.run(
+        ["codex", "exec", prompt],
+        cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
+    )
+    return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
+
+
 def _load_env_line(key: str) -> str:
     """os.environ 우선, 없으면 REPO 부터 홈까지 상위 순회(.env.local) — 워크트리 대응."""
     import os
@@ -325,6 +334,9 @@ class FleetWorker:
         self.machine = machine
         self.queue = queue if queue is not None else JobQueueClient()
         self.runner = runner or _run_claude
+        # 이슈 B: runner 주입 시 그 러너가 항상 우선(기존 테스트 하위호환).
+        # 미주입일 때만 job.params.agent 로 claude|codex 선택.
+        self._runner_injected = runner is not None
         self.notifier = notifier or discord_notify
         self.timeout = timeout
 
@@ -381,8 +393,11 @@ class FleetWorker:
         self._notify(job, (
             f"▶️ 잡 #{job_id} 실행 시작 ({self.machine}, skill={job.get('skill')}) — "
             f"position: {job.get('position_url')}"))
+        runner = self.runner
+        if not self._runner_injected and (job.get("params") or {}).get("agent") == "codex":
+            runner = _run_codex  # 이슈 B — agent 미지정/claude 는 기존 경로 그대로
         try:
-            raw = self.runner(prompt, self.timeout)
+            raw = runner(prompt, self.timeout)
         except subprocess.TimeoutExpired:
             self._release(job, job_id, "failed", error=f"claude 타임아웃({self.timeout}s)")
             self._notify(job, f"⏱️ 잡 #{job_id} 실패 — {self.timeout}초 타임아웃")
