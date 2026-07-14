@@ -7,6 +7,7 @@ import pytest
 from tools.multi_position_sourcing.hermes_fleet_bridge import (
     FLEET_PLUGIN_COMMANDS,
     HermesFleetBridgeError,
+    _is_search_url,
     dispatch_hermes_fleet_command,
     natural_fleet_command_text,
     parse_hermes_fleet_args,
@@ -254,6 +255,58 @@ def test_search_result_url_dispatches_end_to_end_as_humansearch_job() -> None:
     )
     assert result["action"] == "enqueued"
     assert queue.enqueued[0]["skill"] == "humansearch"
+
+
+def test_is_search_url_rejects_query_string_and_lookalike_domain() -> None:
+    # 2026-07-14 Codex Rescue 적대검증 발견: 마커 문자열이 URL 아무데나(쿼리 문자열,
+    # 유사 도메인) 있어도 True였다 — 호스트명이 진짜 그 도메인/서브도메인일 때만 True여야 함.
+    assert _is_search_url("https://app.clickup.com/t/abc?source=jobkorea.co.kr") is False
+    assert _is_search_url("https://linkedin.com.evil.example/not-a-search") is False
+    assert _is_search_url("https://example.test/?next=https://www.jobkorea.co.kr/Search/") is False
+    assert _is_search_url("https://www.linkedin.com/search/results/people/?keywords=cto") is True
+    assert _is_search_url("https://saramin.co.kr/") is True
+
+
+def test_position_url_with_incidental_marker_in_query_stays_aisearch() -> None:
+    # fix6: 쿼리 문자열에 우연히 마커가 들어간 포지션 URL이 humansearch로 잘못 바뀌던
+    # 회귀(counter-AC 위반)를 잡는다.
+    options = parse_hermes_fleet_args(
+        "fleet-run", "https://app.clickup.com/t/abc?source=jobkorea.co.kr"
+    )
+    assert options["skill"] == "aisearch"
+
+
+def test_natural_language_explicit_skill_prefix_wins_over_search_url_inference() -> None:
+    # 2026-07-14 Codex Rescue 적대검증 발견: 자연어 경로는 문장 속 "skill:aisearch" 명시를
+    # 무시하고 검색결과 URL이 있다는 이유로 humansearch로 덮어썼다 — 직접 명령 경로(이미
+    # 명시 지정을 존중)와 판정이 갈라져 있던 결함.
+    rewritten = natural_fleet_command_text(
+        "skill:aisearch로 찾아줘 https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=x"
+    )
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run aisearch ")
+
+
+def test_natural_language_explicit_skill_prefix_wins_without_search_url() -> None:
+    # 반대 방향: 검색결과 URL이 없는데 "skill:humansearch"를 명시했으면 그것도 존중해야
+    # 한다 — 예전엔 URL 없다는 이유로 조용히 aisearch로 덮어썼다.
+    rewritten = natural_fleet_command_text(
+        "skill:humansearch로 찾아줘 https://app.clickup.com/t/abc"
+    )
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run humansearch ")
+
+
+def test_natural_language_bare_skill_word_wins_over_search_url_inference() -> None:
+    # "skill:" 접두사 없이 그냥 "aisearch"라는 단어만 문장에 있어도(직접 명령 경로의
+    # bare skill 토큰과 동등하게) 검색결과 URL 추론보다 우선해야 한다.
+    rewritten = natural_fleet_command_text(
+        "aisearch로 찾아줘 https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=x"
+    )
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run aisearch ")
 
 
 def test_natural_language_search_url_end_to_end_selects_humansearch() -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import urllib.parse
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -86,8 +87,19 @@ def _set_option_once(options: dict[str, str], field: str, value: str, command: s
 
 
 def _is_search_url(url: str) -> bool:
-    low = url.lower()
-    return any(marker in low for marker in _SEARCH_HOST_MARKERS)
+    """호스트명 기준으로만 판정한다(2026-07-14, Codex Rescue 적대검증에서 발견한 결함 수정).
+
+    이전엔 URL 문자열 전체에서 마커가 *어디든* 나오면 True였다 — 그래서
+    ``https://app.clickup.com/t/abc?source=jobkorea.co.kr``(쿼리 문자열에 마커가 우연히
+    들어간 포지션 링크)나 ``https://linkedin.com.evil.example/...``(도메인 뒤에 마커
+    문자열을 붙인 유사 도메인)까지 검색결과 URL로 오판했다. 호스트명이 마커와 정확히
+    같거나 그 서브도메인일 때만 True로 좁힌다.
+    """
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == marker or host.endswith("." + marker) for marker in _SEARCH_HOST_MARKERS)
 
 
 def _default_skill_for_urls(urls: Sequence[str]) -> str:
@@ -187,6 +199,35 @@ _NATURAL_TRIGGERS: tuple[str, ...] = (
     "aisearch", "humansearch", "휴먼서치", "사람인", "잡코리아", "후보", "찾아", "서치",
 )
 _FOLLOWUP_TRIGGERS: tuple[str, ...] = ("계속해", "잡코리아도", "사람인부터", "방금 포지션")
+_EXPLICIT_SKILL_IN_TEXT_RE = re.compile(r"skill:(aisearch|humansearch)")
+# 뒤에 \b 를 안 붙인다: Python 정규식의 \b 는 유니코드 인식이라 "aisearch로"처럼 한글
+# 조사가 바로 붙으면(h·로 둘 다 \w) 경계로 안 잡혀 매치가 깨진다 — 실측 재현됨.
+
+
+def _explicit_skill_from_natural_text(low: str) -> str | None:
+    """자연어 문장 안에 명시적으로 적힌 skill을 찾는다(2026-07-14, Codex Rescue 발견 결함 수정).
+
+    이전엔 자연어 경로가 URL 모양만으로 skill을 정해서, 사용자가 문장 안에
+    ``skill:aisearch`` 라고 명시하거나 그냥 "aisearch"/"humansearch" 단어를 직접 썼어도
+    검색결과 URL 유무에 따라 그 지정을 조용히 덮어썼다(직접 명령 경로는 명시 지정을
+    존중하는데 자연어 경로만 안 그래서 두 진입점 판정이 갈라짐). ``skill:xxx`` 형태를
+    최우선으로, 그다음 "aisearch"/"humansearch" 단어가 문장에 단독으로(둘 다는 아니고)
+    있으면 그것도 명시 지정으로 본다. ``words``(단어 集合) 대신 ``low`` 부분 문자열로
+    찾는다 — "aisearch로"처럼 한글 조사가 바로 붙으면 단어 추출 정규식이 "aisearch로"를
+    한 토큰으로 묶어버려 "aisearch"가 集合에 안 남는다(실측 재현됨; _NATURAL_TRIGGERS가
+    이미 같은 이유로 부분 문자열 검사를 쓰는 것과 동일한 이유). "url"은 자연어에서 흔한
+    일반 단어라 오탐 위험이 커서 명시 지정 대상에서 뺀다.
+    """
+    match = _EXPLICIT_SKILL_IN_TEXT_RE.search(low)
+    if match:
+        return match.group(1)
+    has_aisearch = "aisearch" in low
+    has_humansearch = "humansearch" in low
+    if has_aisearch and not has_humansearch:
+        return "aisearch"
+    if has_humansearch and not has_aisearch:
+        return "humansearch"
+    return None
 
 
 def natural_fleet_command_text(
@@ -242,7 +283,7 @@ def natural_fleet_command_text(
     else:
         channels = ("saramin", "jobkorea")
 
-    skill = _default_skill_for_urls(urls)
+    skill = _explicit_skill_from_natural_text(low) or _default_skill_for_urls(urls)
     parts = ["/fleet-run", skill, *urls, f"channels:{','.join(channels)}"]
     if machine:
         parts.append(machine)
