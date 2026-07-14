@@ -368,3 +368,30 @@ def test_default_report_channel_equals_owner_dm_channel():
     from scripts.discord_command_listener import DM_CHANNEL
     from tools.multi_position_sourcing.fleet_worker import DEFAULT_REPORT_CHANNEL
     assert DEFAULT_REPORT_CHANNEL == DM_CHANNEL
+
+
+def test_followup_derives_new_idempotency_key_no_unique_collision():
+    """V1(Codex) 반증 수용 — 부모 잡의 idempotency_key 를 후속 잡이 그대로 복사하면
+    fleet_job_idempotency 유니크 인덱스와 충돌해 후속 잡이 조용히 유실된다(회귀).
+    후속 잡은 파생 키(부모키:followup:스킬)를 써야 하고, 형식 캡(160자)도 지켜야 한다."""
+    job = _job(skill="url", params={
+        "followup_skill": "aisearch", "idempotency_key": "discord:42"})
+    q = FakeQueue(job)
+    w = _worker(q, lambda p, timeout: ("라이브서치 준비 완료", 0), [])
+    assert w.run_once() == "done"
+    assert len(q.enqueued) == 1
+    key = q.enqueued[0]["params"].get("idempotency_key")
+    assert key and key != "discord:42", "부모 키 그대로 복사 금지(유니크 충돌 → 후속 유실)"
+    assert key == "discord:42:followup:aisearch"
+    assert len(key) <= 160
+
+
+def test_followup_idempotency_key_capped_at_160():
+    long_key = "k" * 155
+    job = _job(skill="url", params={
+        "followup_skill": "aisearch", "idempotency_key": long_key})
+    q = FakeQueue(job)
+    w = _worker(q, lambda p, timeout: ("ok", 0), [])
+    assert w.run_once() == "done"
+    key = q.enqueued[0]["params"]["idempotency_key"]
+    assert len(key) <= 160 and key != long_key
