@@ -23,7 +23,8 @@ handled by `valuehire_fleet`, with authorization and queue logic delegated to th
 ## Acceptance criteria
 
 1. PR #96 targeted fleet tests pass locally.
-2. `~/.hermes/plugins/valuehire_fleet` is a symlink to this worktree's tracked plugin directory.
+2. `~/.hermes/plugins/valuehire_fleet` is a symlink to the clean `deploy/hermes-live` worktree's
+   tracked plugin directory.
 3. `valuehire_fleet` is present exactly once in `plugins.enabled`.
 4. Hermes Gateway restarts once and logs a successful Discord connection without plugin load error.
 5. A local plugin registration smoke check exposes the four fleet commands and natural-message hook.
@@ -51,8 +52,28 @@ handled by `valuehire_fleet`, with authorization and queue logic delegated to th
 ## Verification ledger
 
 - Targeted tests: PASS, 91 tests.
-- Live plugin link: pending.
-- Hermes config: pending.
-- Gateway restart and log check: pending.
-- Local command registration smoke: pending.
-
+- PR #96: MERGED as `f29c0df`; GitHub `verify` passed twice before merge.
+- Live plugin link: PASS, points to
+  `/Users/kangsangmo/Desktop/Valuehire_v5-hermes-live/ops/hermes-plugin/valuehire_fleet`.
+- Queue secret source: PASS, deploy worktree `.env.local` links to the existing v5 `.env.local`;
+  values were never copied or printed.
+- Hermes config: PASS, `plugins.enabled` contains `valuehire_fleet` exactly once alongside `valuehire`.
+- Gateway restart: PASS, one service restart; PID changed from `3352` to `32113` and Discord reconnected
+  as `hermes_v5#7466`.
+- Plugin discovery: PASS, Hermes reports both `valuehire` and `valuehire_fleet` enabled.
+- Local command registration smoke: PASS, four fleet commands plus `pre_gateway_dispatch` registered.
+- Discord API readback: PASS, global commands contain `fleet-run`, `fleet-status`, `fleet-resume`, and
+  `fleet-cancel`.
+- Natural-message smoke: PASS, `aisearch <ClickUp URL> win` rewrites to one `/fleet-run aisearch ...
+  winpc` command with an idempotency key; no queue insert was executed.
+- Queue readback: PASS, `fleet-status` returned `action=status` and 10 recent jobs after the deploy
+  worktree secret link was added.
+- Worker availability: BLOCKED for end-to-end search. Heartbeat ages at verification time were about
+  `macmini=82h`, `macbook=41m`, `winpc=2h`; recent jobs were `macmini queued=7/cancelled=1` and
+  `macbook failed=2`. This Mac is a MacBook Pro, so it must not consume the `macmini` queue.
+- Remote Win PC recovery: NOT VERIFIED. Local Tailscale status did not return and was terminated;
+  no remote scheduler or portal action was attempted.
+- External adversarial review: NOT AVAILABLE. The first Claude run produced no output for over four
+  minutes and was terminated; two bounded retries ended at their turn limits without a verdict.
+  Empty output was not treated as PASS. Existing PR adversarial evidence plus CI and local tests were
+  reproduced, and the missing deploy `.env.local` wiring was found and corrected during local attack.
