@@ -33,10 +33,12 @@
     "repro": "재검증: precodexpost→agent 없음, codex로→agent:codex, falsy 러너 1회 호출·subprocess 0, codex 타임아웃 'codex 타임아웃(9s)', codex 바이너리 부재→failed+명확한 에러. RED 3f13fae→fix 71b3b54 확인, 워크트리 무변경, 테스트 약화 없음"
   },
   "v2": {
-    "author": "Claude reset session",
-    "verdict": "PENDING"
+    "author": "Claude reset session (goal §2 + verdict + 코드만 열람)",
+    "verdict": "pass",
+    "what_v1_missed": "스펙 위반 없음. 관찰 2건: (1) codex 잡 프롬프트에 '추가 파라미터: {agent: codex}' 노출(기존 params 직렬화 — 외관상), (2) 자연어 'CODEX' 는 소문자화로 인정되나 명시 필드 agent:CODEX 는 거부(비대칭이지만 fail-closed)",
+    "independent_repro": "pytest 156 passed in 0.28s. 인수기준 5건 전부 독립 재현(subprocess argv codex exec/claude -p, agent 미지정 프롬프트 main 과 byte-identical, gpt4→None). 신규 엣지 8건: 대문자, URL 쿼리 속 codex 미발동, agent:claude 명시, 중복 필드 fail-closed, 이슈 A+B 조합(followup 이 agent 상속 — sane), skill 무관 동작"
   },
   "failed_attempts": [],
-  "three_way_agree": false,
-  "status": "진행중 — V1 대기"
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행"
 }
