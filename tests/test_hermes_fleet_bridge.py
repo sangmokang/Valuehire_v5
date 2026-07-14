@@ -519,3 +519,42 @@ def test_linkedin_word_with_search_url_does_not_force_url_skill() -> None:
     assert rewritten is not None
     assert rewritten.startswith("/fleet-run humansearch ")
     assert "followup:" not in rewritten
+
+
+# ── 이슈 B(2026-07-15 goal §2) — fleet 잡 agent 선택(claude|codex) ──
+
+def test_natural_codex_word_selects_codex_agent() -> None:
+    rewritten = natural_fleet_command_text(
+        "codex로 이 포지션 찾아줘 https://app.clickup.com/t/abc")
+    assert rewritten is not None
+    assert "agent:codex" in rewritten
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["params"]["agent"] == "codex"
+
+
+def test_natural_without_codex_word_has_no_agent_key() -> None:
+    rewritten = natural_fleet_command_text(
+        "이 포지션 찾아줘 https://app.clickup.com/t/abc")
+    assert rewritten is not None
+    assert "agent:" not in rewritten
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert "agent" not in (options.get("params") or {})
+
+
+def test_codex_inside_url_only_does_not_select_codex() -> None:
+    # URL 문자열 안의 codex 는 트리거 아님 — 본문 단어만
+    rewritten = natural_fleet_command_text(
+        "이 포지션 찾아줘 https://app.clickup.com/t/codex99")
+    assert rewritten is not None
+    assert "agent:" not in rewritten
+
+
+def test_explicit_agent_field_validated() -> None:
+    options = parse_hermes_fleet_args(
+        "fleet-run", "https://app.clickup.com/t/abc agent:codex")
+    assert options["params"]["agent"] == "codex"
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args(
+            "fleet-run", "https://app.clickup.com/t/abc agent:gpt4")
