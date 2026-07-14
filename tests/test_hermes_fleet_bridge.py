@@ -198,6 +198,77 @@ def test_clickup_and_linkedin_urls_preserve_search_url_in_params() -> None:
     }
 
 
+def test_search_result_url_alongside_position_url_selects_humansearch() -> None:
+    # 2026-07-14 사장님 요청: 채용포털 검색결과 리스트 URL을 주면 humansearch가
+    # 자동으로 발동해야 한다 — 검색결과 판정(_is_search_url)은 이미 있었지만 skill
+    # 선택에 배선되어 있지 않았다(버그).
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc https://www.linkedin.com/search/results/people/?keywords=cto",
+    )
+    assert options["skill"] == "humansearch"
+
+
+def test_position_url_alone_without_search_url_stays_aisearch() -> None:
+    # 회귀 방지: 검색결과 URL이 전혀 없으면 기존 기본값(aisearch)이 그대로 유지돼야 한다.
+    options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc")
+    assert options["skill"] == "aisearch"
+
+
+def test_explicit_skill_override_wins_over_search_url_inference() -> None:
+    # 사용자가 skill:aisearch를 명시했으면, 검색결과 URL이 있어도 추론이 그걸 덮어쓰면
+    # 안 된다 — 명시 지정이 항상 이긴다.
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "skill:aisearch https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+    )
+    assert options["skill"] == "aisearch"
+
+
+def test_multiple_search_result_urls_all_preserved_for_humansearch_traversal() -> None:
+    # "URL 리스트를 순회" 요구사항: 검색결과 URL이 여러 개면 전부 순서대로 남아야 한다.
+    options = parse_hermes_fleet_args(
+        "fleet-run",
+        "https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=1 "
+        "https://www.jobkorea.co.kr/Corp/Person/Find?q=2",
+    )
+    assert options["skill"] == "humansearch"
+    assert options["params"]["search_urls"] == [
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=1",
+        "https://www.jobkorea.co.kr/Corp/Person/Find?q=2",
+    ]
+
+
+def test_search_result_url_dispatches_end_to_end_as_humansearch_job() -> None:
+    # 자연어/명령 두 경로가 아니라 실제 큐잉 결과(dispatch_hermes_fleet_command)까지
+    # humansearch로 들어가는지 — 배선이 절반만 되는 회귀를 잡는다.
+    queue = FakeQueue()
+    result = dispatch_hermes_fleet_command(
+        "fleet-run",
+        "https://app.clickup.com/t/abc "
+        "https://www.linkedin.com/search/results/people/?keywords=cto",
+        gateway_user_id=OWNER,
+        queue=queue,
+    )
+    assert result["action"] == "enqueued"
+    assert queue.enqueued[0]["skill"] == "humansearch"
+
+
+def test_natural_language_search_url_end_to_end_selects_humansearch() -> None:
+    # natural_fleet_command_text 가 만든 문자열을 다시 parse_hermes_fleet_args 에
+    # 태워도 humansearch 로 귀결되는지 — 두 진입점이 같은 판정을 쓰는지 확인.
+    rewritten = natural_fleet_command_text(
+        "이 링크 사람인에서 찾아줘 https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search?q=x"
+    )
+    assert rewritten is not None
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["skill"] == "humansearch"
+
+
 def test_two_position_urls_are_rejected_not_silently_dropped() -> None:
     with pytest.raises(HermesFleetBridgeError, match="포지션 URL"):
         parse_hermes_fleet_args("fleet-run", "https://a.test https://b.test")
@@ -216,12 +287,14 @@ def test_linkedin_only_uses_existing_default_account_binding() -> None:
 
 
 def test_natural_humansearch_message_rewrites_with_urls_and_win_alias() -> None:
+    # 2026-07-14: 문장에 링크드인 검색결과 URL이 있으면 자연어 경로도 humansearch로
+    # 바뀌어야 한다 — 예전엔 "humansearch"라고 말해도 항상 "aisearch"로 굳어 있었다(버그).
     rewritten = natural_fleet_command_text(
         "humansearch https://app.clickup.com/t/abc "
         "https://www.linkedin.com/search/results/people/?keywords=cto win"
     )
     assert rewritten == (
-        "/fleet-run aisearch https://app.clickup.com/t/abc "
+        "/fleet-run humansearch https://app.clickup.com/t/abc "
         "https://www.linkedin.com/search/results/people/?keywords=cto "
         "channels:saramin,jobkorea winpc"
     )
