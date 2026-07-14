@@ -106,6 +106,9 @@ def new_job_payload(
         json.dumps(params, allow_nan=False)
     except (TypeError, ValueError):
         return None
+    # 이슈 A(2026-07-15): followup_skill 도 화이트리스트만 — 큐 입구에서 fail-closed
+    if "followup_skill" in params and params["followup_skill"] not in FLEET_SKILLS:
+        return None
     if not isinstance(account_key, str) or any(ch.isspace() for ch in account_key):
         return None  # V1 2R: dict 등 비문자열 account_key 가 DB 경계까지 흘러가는 것 차단
     return {

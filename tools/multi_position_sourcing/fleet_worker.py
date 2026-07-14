@@ -17,7 +17,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .job_queue import FLEET_MACHINES, FLEET_SKILLS, JobQueueClient, _valid_url
+from .job_queue import (
+    FLEET_MACHINES,
+    FLEET_SKILLS,
+    JobQueueClient,
+    _valid_url,
+    new_job_payload,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -420,7 +426,50 @@ class FleetWorker:
                 return "failed"
         self._release(job, job_id, "done", result_summary=result["summary"])
         self._notify(job, f"✅ 잡 #{job_id} 완료 ({self.machine}):\n{result['summary'][:1500]}")
+        self._enqueue_followup(job)
         return "done"
+
+    def _enqueue_followup(self, job: Mapping[str, Any]) -> None:
+        """이슈 A(2026-07-15 goal §1): done 종결 잡의 params.followup_skill 을 1건 자동 enqueue.
+
+        체이닝은 1단계 고정 — 후속 잡 params 에는 followup_skill 을 심지 않는다(무한 체인
+        방지). failed/paused_for_human 경로에서는 호출되지 않는다. fail-soft: 후속 enqueue
+        실패가 이미 done 인 원 잡을 되돌리지 못하므로 경보만 남긴다.
+        """
+        params = dict(job.get("params") or {})
+        followup = params.pop("followup_skill", None)
+        if not followup:
+            return
+        # V1 2R(minor) 수용: 화이트리스트 밖 followup 은 키 파생 전에 차단 —
+        # 비정상 긴 스킬명이 음수 슬라이스(160-len(suffix)<0)를 만들 여지 원천 제거.
+        if followup not in FLEET_SKILLS:
+            self._notify(job, (
+                f"⚠️ 잡 #{job.get('id')} 후속 스킬 무효({str(followup)[:40]!r}) — 체이닝 생략"))
+            return
+        # V1(Codex) 반증 수용: 부모의 idempotency_key 를 그대로 복사하면
+        # fleet_job_idempotency 유니크 인덱스와 충돌해 후속 잡이 조용히 유실된다.
+        # 파생 키(부모키:followup:스킬, 160자 캡)로 교체 — 재발사 시 dedup 은 유지.
+        parent_key = params.get("idempotency_key")
+        if parent_key:
+            suffix = f":followup:{followup}"
+            params["idempotency_key"] = parent_key[:160 - len(suffix)] + suffix
+        payload = new_job_payload(
+            machine=job.get("machine") or self.machine, skill=followup,
+            position_url=job.get("position_url"),
+            requested_by=job.get("requested_by"), role=job.get("role"),
+            params=params, account_key=str(job.get("account_key") or ""),
+        )
+        if payload is None:
+            self._notify(job, (
+                f"⚠️ 잡 #{job.get('id')} 후속({followup}) 페이로드 무효 — 체이닝 생략"))
+            return
+        try:
+            nxt = self.queue.enqueue(payload)
+            nxt_id = (nxt or {}).get("id", "?") if isinstance(nxt, Mapping) else "?"
+            self._notify(job, (
+                f"🔗 잡 #{job.get('id')} 후속 잡 enqueue — skill={followup} (잡 #{nxt_id})"))
+        except Exception as exc:  # noqa: BLE001 — 후속 실패가 워커를 죽이면 안 됨
+            self._notify(job, f"⚠️ 잡 #{job.get('id')} 후속 잡 enqueue 실패: {exc}")
 
     def record_heartbeat(self) -> None:
         """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지)."""

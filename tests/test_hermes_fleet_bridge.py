@@ -440,3 +440,82 @@ def test_unexpected_internal_error_is_reported_not_leaked_as_raw_exception(monke
     )
     assert result["action"] == "error"
     assert "boom" in result["reason"]
+
+
+# ── 이슈 A(2026-07-15 goal §1) — "링크드인" 트리거 → url→aisearch 순차 핸드오프 ──
+
+def test_linkedin_word_with_position_url_routes_url_skill_with_followup() -> None:
+    rewritten = natural_fleet_command_text(
+        "https://career.wrtn.io/ko/o/172878 이 포지션 링크드인에서 찾아")
+    assert rewritten is not None
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["skill"] == "url"
+    assert options["url"] == "https://career.wrtn.io/ko/o/172878"
+    assert options["params"]["followup_skill"] == "aisearch"
+
+
+def test_linkedin_english_word_case_insensitive_same_routing() -> None:
+    rewritten = natural_fleet_command_text(
+        "https://career.wrtn.io/ko/o/172878 position LinkedIn search please")
+    assert rewritten is not None
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["skill"] == "url"
+    assert options["params"]["followup_skill"] == "aisearch"
+
+
+def test_saramin_jobkorea_words_go_straight_to_aisearch_without_followup() -> None:
+    # 링크드인과 달리 사전 준비(/url) 스킬이 없으므로 aisearch 직행 — 우선순위 고정
+    rewritten = natural_fleet_command_text(
+        "이 포지션 사람인이랑 잡코리아에서 찾아줘 https://app.clickup.com/t/abc")
+    assert rewritten is not None
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["skill"] == "aisearch"
+    assert "followup_skill" not in (options.get("params") or {})
+    assert options["params"]["channels"] == ["saramin", "jobkorea"]
+
+
+def test_explicit_skill_overrides_linkedin_rule() -> None:
+    rewritten = natural_fleet_command_text(
+        "skill:aisearch 링크드인 말고 이걸로 찾아줘 https://app.clickup.com/t/abc")
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run aisearch ")
+    assert "followup:" not in rewritten
+
+
+def test_win_alias_and_linkedin_rule_apply_together() -> None:
+    rewritten = natural_fleet_command_text(
+        "Win 에서 링크드인 찾아줘 https://career.wrtn.io/ko/o/172878")
+    assert rewritten is not None
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["skill"] == "url"
+    assert options["machine"] == "winpc"
+    assert options["params"]["followup_skill"] == "aisearch"
+
+
+def test_bare_token_win_any_case_maps_to_winpc() -> None:
+    # 이미 대소문자 무관 동작 — 회귀 방지 고정(goal §1 확인 항목)
+    from tools.multi_position_sourcing.hermes_fleet_bridge import (
+        _classify_bare_fleet_run_token,
+    )
+    assert _classify_bare_fleet_run_token("Win") == ("machine", "winpc")
+    assert _classify_bare_fleet_run_token("WIN") == ("machine", "winpc")
+
+
+def test_followup_field_rejects_unknown_skill() -> None:
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args(
+            "fleet-run", "https://app.clickup.com/t/abc followup:sendmail")
+
+
+def test_linkedin_word_with_search_url_does_not_force_url_skill() -> None:
+    # 검색결과 URL이 섞이면(사람이 준비한 리스트) 기존 humansearch 추론 유지 — 규칙 미적용
+    rewritten = natural_fleet_command_text(
+        "링크드인에서 찾아줘 https://app.clickup.com/t/abc "
+        "https://www.linkedin.com/search/results/people/?keywords=cto")
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run humansearch ")
+    assert "followup:" not in rewritten

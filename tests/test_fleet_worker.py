@@ -197,6 +197,11 @@ class FakeQueue:
         self.job = job
         self.released = []
         self.machine_asked = None
+        self.enqueued = []
+
+    def enqueue(self, payload):
+        self.enqueued.append(payload)
+        return {"id": 99, **payload}
 
     def claim_next(self, machine):
         self.machine_asked = machine
@@ -322,3 +327,84 @@ def test_run_once_dry_run_has_no_start_notify():
     w = _worker(q, lambda p, timeout: (_ for _ in ()).throw(AssertionError("불려선 안 됨")), notes)
     assert w.run_once(dry_run=True) == "done"
     assert all("▶️" not in t for _, t in notes), f"dry-run 에 시작 알림 금지: {notes}"
+
+
+# ── 이슈 A(2026-07-15 goal §1) — done release 시 followup_skill 1단계 체이닝 ──
+
+def test_done_release_enqueues_followup_once_without_propagation():
+    job = _job(skill="url", params={"followup_skill": "aisearch"})
+    q = FakeQueue(job)
+    notes = []
+    w = _worker(q, lambda p, timeout: ("링크드인 라이브서치 준비 완료", 0), notes)
+    assert w.run_once() == "done"
+    assert len(q.enqueued) == 1, f"후속 잡 정확히 1건: {q.enqueued}"
+    nxt = q.enqueued[0]
+    assert nxt["skill"] == "aisearch"
+    assert nxt["position_url"] == job["position_url"]
+    assert nxt["machine"] == job["machine"]
+    assert nxt["requested_by"] == job["requested_by"]
+    assert "followup_skill" not in nxt["params"], "1단계 체이닝 고정 — 무한 체인 방지"
+
+
+def test_failed_and_paused_release_do_not_enqueue_followup():
+    # cancelled 는 워커 release 경로가 아님(cancel_job 전용) — release 3종 중 비-done 검증
+    for output in (("PAUSED_FOR_HUMAN: 캡차", 0), ("", 1)):
+        q = FakeQueue(_job(skill="url", params={"followup_skill": "aisearch"}))
+        w = _worker(q, lambda p, timeout, _o=output: _o, [])
+        status = w.run_once()
+        assert status in ("paused_for_human", "failed")
+        assert q.enqueued == [], f"{status} 에서 후속 enqueue 금지"
+
+
+def test_job_without_followup_never_enqueues():
+    q = FakeQueue(_job())
+    w = _worker(q, lambda p, timeout: ("후보 5명 등록 완료", 0), [])
+    assert w.run_once() == "done"
+    assert q.enqueued == []
+
+
+def test_default_report_channel_equals_owner_dm_channel():
+    # goal §1 회귀 가드 — 값이 갈라지면 캡차/로그인 알림이 사장님 DM 밖으로 샌다
+    from scripts.discord_command_listener import DM_CHANNEL
+    from tools.multi_position_sourcing.fleet_worker import DEFAULT_REPORT_CHANNEL
+    assert DEFAULT_REPORT_CHANNEL == DM_CHANNEL
+
+
+def test_followup_derives_new_idempotency_key_no_unique_collision():
+    """V1(Codex) 반증 수용 — 부모 잡의 idempotency_key 를 후속 잡이 그대로 복사하면
+    fleet_job_idempotency 유니크 인덱스와 충돌해 후속 잡이 조용히 유실된다(회귀).
+    후속 잡은 파생 키(부모키:followup:스킬)를 써야 하고, 형식 캡(160자)도 지켜야 한다."""
+    job = _job(skill="url", params={
+        "followup_skill": "aisearch", "idempotency_key": "discord:42"})
+    q = FakeQueue(job)
+    w = _worker(q, lambda p, timeout: ("라이브서치 준비 완료", 0), [])
+    assert w.run_once() == "done"
+    assert len(q.enqueued) == 1
+    key = q.enqueued[0]["params"].get("idempotency_key")
+    assert key and key != "discord:42", "부모 키 그대로 복사 금지(유니크 충돌 → 후속 유실)"
+    assert key == "discord:42:followup:aisearch"
+    assert len(key) <= 160
+
+
+def test_followup_idempotency_key_capped_at_160():
+    long_key = "k" * 155
+    job = _job(skill="url", params={
+        "followup_skill": "aisearch", "idempotency_key": long_key})
+    q = FakeQueue(job)
+    w = _worker(q, lambda p, timeout: ("ok", 0), [])
+    assert w.run_once() == "done"
+    key = q.enqueued[0]["params"]["idempotency_key"]
+    assert len(key) <= 160 and key != long_key
+
+
+def test_followup_invalid_skill_is_blocked_before_key_derivation():
+    """V1 2R(minor) — 화이트리스트 밖 followup 은 키 파생 전에 차단(음수 슬라이스 원천 제거).
+    비정상 값이어도 enqueue 0건 + 예외 없음(fail-closed)."""
+    job = _job(skill="url", params={
+        "followup_skill": "S" * 151, "idempotency_key": "P" * 200})
+    q = FakeQueue(job)
+    notes = []
+    w = _worker(q, lambda p, timeout: ("ok", 0), notes)
+    assert w.run_once() == "done"
+    assert q.enqueued == []
+    assert any("후속 스킬 무효" in t for _, t in notes)

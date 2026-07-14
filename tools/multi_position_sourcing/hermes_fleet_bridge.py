@@ -49,7 +49,7 @@ _SEARCH_HOST_MARKERS: tuple[str, ...] = (
 _DEFAULT_ACCESS_DOC = Path(__file__).resolve().parents[2] / "docs" / "search-access.md"
 
 _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
-    "fleet-run": frozenset({"skill", "url", "machine", "channels", "idempotency"}),
+    "fleet-run": frozenset({"skill", "url", "machine", "channels", "idempotency", "followup"}),
     "fleet-status": frozenset(),
     "fleet-resume": frozenset({"job"}),
     "fleet-cancel": frozenset({"job"}),
@@ -184,6 +184,12 @@ def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
             if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", idempotency):
                 raise HermesFleetBridgeError("idempotency 형식 오류")
             params["idempotency_key"] = idempotency
+        # 이슈 A(2026-07-15): url→aisearch 순차 핸드오프 — 후속 스킬도 화이트리스트만
+        followup = options.pop("followup", "")
+        if followup:
+            if followup not in FLEET_SKILLS:
+                raise HermesFleetBridgeError(f"followup 은 {FLEET_SKILLS} 만 허용합니다")
+            params["followup_skill"] = followup
         if raw_channels or idempotency:
             params.setdefault("execution", "live")
             params.setdefault("channels", ["saramin", "jobkorea"])
@@ -264,10 +270,24 @@ def natural_fleet_command_text(
         clickup_urls = [context_url]
     if not urls:
         return None
-    if len(clickup_urls) != 1:
+    # 이슈 A(2026-07-15): "링크드인/linkedin" + 포지션 URL(검색결과 URL 아님) 1개 →
+    # url 스킬로 RPS 라이브서치를 먼저 준비하고 aisearch 를 후속 발사(1단계 체이닝).
+    # 단어 검사는 URL 을 걷어낸 본문에서만 — linkedin.com 링크 자체는 트리거가 아니다.
+    # 명시 skill 지정이 있으면 규칙 미적용(기존 "명시 우선" 원칙).
+    explicit_skill = _explicit_skill_from_natural_text(low)
+    position_urls = [url for url in urls if not _is_search_url(url)]
+    low_no_urls = _URL_IN_TEXT_RE.sub(" ", raw).lower()
+    linkedin_handoff = (
+        explicit_skill is None
+        and len(position_urls) == 1
+        and len(position_urls) == len(urls)
+        and ("링크드인" in low_no_urls or "linkedin" in low_no_urls)
+    )
+    if not linkedin_handoff and len(clickup_urls) != 1:
         return None
     known_url = bool(clickup_urls)
-    if not known_url and not any(trigger in low for trigger in _NATURAL_TRIGGERS) and not followup:
+    if (not known_url and not any(trigger in low for trigger in _NATURAL_TRIGGERS)
+            and not followup and not linkedin_handoff):
         return None
 
     mentions_saramin = "사람인" in raw or any("saramin.co.kr" in url.lower() for url in urls)
@@ -283,8 +303,11 @@ def natural_fleet_command_text(
     else:
         channels = ("saramin", "jobkorea")
 
-    skill = _explicit_skill_from_natural_text(low) or _default_skill_for_urls(urls)
+    skill = explicit_skill or (
+        "url" if linkedin_handoff else _default_skill_for_urls(urls))
     parts = ["/fleet-run", skill, *urls, f"channels:{','.join(channels)}"]
+    if linkedin_handoff:
+        parts.append("followup:aisearch")
     if machine:
         parts.append(machine)
     if message_id:
