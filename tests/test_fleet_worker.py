@@ -236,8 +236,8 @@ def test_run_once_done_path():
     assert len(calls) == 1 and "humansearch 스킬" in calls[0]
     jid, status, summary, error = q.released[0]
     assert (jid, status) == (7, "done") and "후보 5명" in summary
-    assert notes and "7" in notes[0][1]   # 보고문에 잡 번호
-    assert "완료" in notes[0][1]           # 한국어 보고
+    assert notes and "7" in notes[-1][1]   # 보고문에 잡 번호(최종 알림)
+    assert "완료" in notes[-1][1]           # 한국어 보고
 
 
 def test_run_once_paused_path():
@@ -247,7 +247,7 @@ def test_run_once_paused_path():
     assert w.run_once() == "paused_for_human"
     jid, status, _, error = q.released[0]
     assert status == "paused_for_human" and "캡차" in error
-    assert notes and "캡차" in notes[0][1]
+    assert notes and "캡차" in notes[-1][1]
 
 
 def test_run_once_timeout_becomes_failed():
@@ -290,3 +290,35 @@ def test_loop_script_and_plist_exist():
     assert plist.exists(), "launchd plist 초안 없음"
     body = plist.read_text(encoding="utf-8")
     assert "VALUEHIRE_MACHINE" in body and "fleet_worker_loop.sh" in body
+
+
+# ── 이슈 C(2026-07-15 goal §3) — claim 직후 "▶️ 실행 시작" 중간 알림 ──
+
+def test_run_once_start_notify_before_done():
+    q = FakeQueue(_job())
+    notes = []
+    w = _worker(q, lambda p, timeout: ("후보 5명 등록 완료", 0), notes)
+    assert w.run_once() == "done"
+    assert len(notes) == 2, f"알림 2건(시작→완료) 기대: {notes}"
+    start, final = notes[0][1], notes[1][1]
+    assert start.startswith("▶️") and "실행 시작" in start
+    assert "#7" in start and "macmini" in start and "humansearch" in start
+    assert "https://app.clickup.com/t/86ey4umzk" in start
+    assert "✅" in final
+
+
+def test_run_once_start_notify_before_paused():
+    q = FakeQueue(_job())
+    notes = []
+    w = _worker(q, lambda p, timeout: ("PAUSED_FOR_HUMAN: 캡차", 0), notes)
+    assert w.run_once() == "paused_for_human"
+    assert notes[0][1].startswith("▶️") and "실행 시작" in notes[0][1]
+    assert "⏸️" in notes[1][1]
+
+
+def test_run_once_dry_run_has_no_start_notify():
+    q = FakeQueue(_job())
+    notes = []
+    w = _worker(q, lambda p, timeout: (_ for _ in ()).throw(AssertionError("불려선 안 됨")), notes)
+    assert w.run_once(dry_run=True) == "done"
+    assert all("▶️" not in t for _, t in notes), f"dry-run 에 시작 알림 금지: {notes}"
