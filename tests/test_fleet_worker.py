@@ -452,3 +452,40 @@ def test_injected_runner_wins_over_agent_param():
     w = _worker(q, runner, [])
     assert w.run_once() == "done"
     assert len(prompts) == 1
+
+
+def test_falsy_injected_runner_still_wins(monkeypatch):
+    # V1(Codex) 반증 수용 — __bool__ 이 False 인 주입 러너도 '주입'으로 존중
+    calls = _capture_subprocess(monkeypatch)
+
+    class FalsyRunner:
+        def __init__(self):
+            self.calls = []
+        def __bool__(self):
+            return False
+        def __call__(self, prompt, timeout):
+            self.calls.append(prompt)
+            return ("ok", 0)
+
+    runner = FalsyRunner()
+    q = FakeQueue(_job(params={"agent": "codex"}))
+    w = FleetWorker(machine="macmini", queue=q, runner=runner,
+                    notifier=lambda job, text: None)
+    assert w.run_once() == "done"
+    assert len(runner.calls) == 1, "주입 러너가 불려야 함"
+    assert calls == [], "subprocess 직접 실행 금지"
+
+
+def test_timeout_error_names_selected_agent(monkeypatch):
+    # V1(Codex) 반증 수용 — codex 잡 타임아웃이 'claude 타임아웃'으로 오표기되면 안 됨
+    from tools.multi_position_sourcing import fleet_worker as fw
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=9)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    q = FakeQueue(_job(params={"agent": "codex"}))
+    w = FleetWorker(machine="macmini", queue=q, notifier=lambda job, text: None)
+    assert w.run_once() == "failed"
+    err = q.released[0][3]
+    assert "타임아웃" in err and "claude" not in err
+    assert "codex" in err

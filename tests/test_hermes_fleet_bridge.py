@@ -558,3 +558,14 @@ def test_explicit_agent_field_validated() -> None:
     with pytest.raises(HermesFleetBridgeError):
         parse_hermes_fleet_args(
             "fleet-run", "https://app.clickup.com/t/abc agent:gpt4")
+
+
+def test_codex_embedded_in_latin_token_does_not_trigger() -> None:
+    # V1(Codex) 반증 수용 — 라틴 토큰 속 부분문자열은 오탐("codex로" 조사는 허용)
+    rewritten = natural_fleet_command_text(
+        "precodexpost 이 포지션 찾아줘 https://app.clickup.com/t/abc")
+    assert rewritten is not None
+    assert "agent:" not in rewritten
+    rewritten2 = natural_fleet_command_text(
+        "codex로 이 포지션 찾아줘 https://app.clickup.com/t/abc")
+    assert rewritten2 is not None and "agent:codex" in rewritten2
