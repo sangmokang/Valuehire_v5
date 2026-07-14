@@ -41,8 +41,10 @@
     "adjudication": "V1 이 환경 제약으로 못 얻은 전체스위트 증거를 동일 커밋(0903b0c)에서 재실행으로 보충: 1472 passed, 4 xfailed, exit 0. V1 의 남은 2건은 코드 결함이 아니라 증거 획득 환경 문제로 판정. CI verify 2job 이 merge 게이트에서 재검증"
   },
   "v2": {
-    "author": "Claude reset session",
-    "verdict": "PENDING"
+    "author": "Claude reset session (goal §5 + verdict + 코드만 열람)",
+    "verdict": "pass",
+    "what_v1_missed": "스펙 위반 없음. 잠재 관찰 2건: (1) new_job_payload 에 명시 account_key 를 주면 url 좌석 키를 우회 가능하나 프로덕션 호출 경로 전수 조사 결과 도달 불가(API 레벨 footgun), (2) followup:url 잡은 라우팅 없이 부모 머신 상속하지만 좌석 키는 유지되어 불변식 성립",
+    "independent_repro": "pytest 1472 passed, 4 xfailed 비트 단위 재현(T 와 일치). 인수 재도출: 신선도 경계 -300/-299/86400/86401 정확, 라우팅 우선순위·폴백 전부 확인, url 잡 모든 실경로(dispatch 명시/라우팅, hermes 슬래시/자연어, followup) portal:linkedin_rps 종결. 마이그레이션 순서 — 어떤 표준 러너도 20260715 를 마지막 적용, 신규 DB 에서 구식 2인자 동작 불가"
   },
   "failed_attempts": [
     {
@@ -68,6 +70,6 @@
     "Supabase 마이그레이션(20260715_fleet_linkedin_routing.sql) 실 DB 적용은 배포 시 수동 단계 — 적용 전까지 워커는 레거시 2인자 폴백으로 심장박동 유지, 라우팅은 항상 macmini 폴백(현행과 동일 동작). 적용 후부터 로그인 라우팅 활성",
     "포털 상태파일 신선도 24h 는 프리플라이트 주기 가정 — 세션이 더 짧게 만료되면 stale true 가능(로그인 실패 시 워커가 어차피 paused_for_human 으로 안전)"
   ],
-  "three_way_agree": false,
-  "status": "진행중 — V2 대기"
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행"
 }
