@@ -133,10 +133,32 @@ def _save_last(last_id: str) -> None:
     save_last_atomic(STATE, last_id)
 
 
-def _run_claude(prompt: str) -> str:
+_AGENT_COMMANDS: dict[str, tuple[str, ...]] = {
+    "claude": ("claude", "-p"),
+    "codex": ("codex", "exec"),
+}
+
+
+def select_agent_and_prompt(content: str) -> tuple[str, str]:
+    """DM 원문 → (agent, prompt). 순수 함수(이슈 F, 2026-07-15 사장님 지시).
+
+    'codex:' 접두어(대소문자·앞뒤 공백 무관)일 때만 agent=codex 로 전환하고 접두어를
+    벗겨낸 나머지를 프롬프트로 쓴다. 문장 중간의 "codex"/"코덱스" 단어는 오탐 방지를
+    위해 무시한다(접두어 위치가 아니면 트리거 안 됨). 접두어가 없으면 agent=claude,
+    프롬프트는 원문을 1바이트도 재구성하지 않는다 — 여기가 안전 템플릿(이슈 A/B)과
+    반대로 verbatim 이 목적인 지점이다.
+    """
+    stripped = content.lstrip()
+    if stripped[:6].lower() == "codex:":
+        return "codex", stripped[6:].strip()
+    return "claude", content
+
+
+def _run_agent(agent: str, prompt: str) -> str:
+    cmd = list(_AGENT_COMMANDS[agent]) + [prompt]
     try:
         p = subprocess.run(
-            ["claude", "-p", prompt], cwd=str(REPO), capture_output=True,
+            cmd, cwd=str(REPO), capture_output=True,
             text=True, timeout=CLAUDE_TIMEOUT,
         )
         out = (p.stdout or "").strip() or (p.stderr or "").strip() or "(응답 없음)"
@@ -144,7 +166,11 @@ def _run_claude(prompt: str) -> str:
     except subprocess.TimeoutExpired:
         return "⏱️ 시간 초과(20분) — 작업이 길면 터미널에서 이어서 확인 필요"
     except FileNotFoundError:
-        return "❌ claude CLI 를 찾을 수 없음"
+        return f"❌ {agent} CLI 를 찾을 수 없음"
+
+
+def _run_claude(prompt: str) -> str:
+    return _run_agent("claude", prompt)
 
 
 LOCK = Path.home() / ".valuehire" / "discord_cmd_bridge.lock"
@@ -176,8 +202,10 @@ def main() -> None:
                     _save_last(m["id"])
                     _send("🛑 명령 다리 정지합니다.")
                     return
-                _send(f"⏳ 접수: {content[:120]} — 실행 중…")
-                result = _run_claude(content)
+                agent, prompt = select_agent_and_prompt(content)
+                tag = "" if agent == "claude" else f"({agent})"
+                _send(f"⏳ 접수{tag}: {content[:120]} — 실행 중…")
+                result = _run_agent(agent, prompt)
                 _send(f"✅ 결과:\n{result[:5500]}")
                 # V1(Codex): 실행 *완료 후* 저장 — 중간에 죽으면 재실행(유실 금지, at-least-once)
                 last = m["id"]
