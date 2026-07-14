@@ -302,3 +302,15 @@ def test_migration_file_contains_core_ddl():
         "'paused_for_human') then\n    delete from public.account_locks",
     ):
         assert needle in sql.lower(), f"마이그레이션에 '{needle}' 누락"
+
+
+# ── 이슈 A(2026-07-15 goal §1) — params.followup_skill 검증 ──
+
+def test_new_job_payload_validates_followup_skill():
+    base = dict(machine="macmini", skill="url",
+                position_url="https://career.wrtn.io/ko/o/172878",
+                requested_by="814353841088757800:owner", role="owner")
+    ok = new_job_payload(**base, params={"followup_skill": "aisearch"})
+    assert ok is not None
+    assert ok["params"]["followup_skill"] == "aisearch"
+    assert new_job_payload(**base, params={"followup_skill": "not-a-skill"}) is None
