@@ -395,3 +395,16 @@ def test_followup_idempotency_key_capped_at_160():
     assert w.run_once() == "done"
     key = q.enqueued[0]["params"]["idempotency_key"]
     assert len(key) <= 160 and key != long_key
+
+
+def test_followup_invalid_skill_is_blocked_before_key_derivation():
+    """V1 2R(minor) — 화이트리스트 밖 followup 은 키 파생 전에 차단(음수 슬라이스 원천 제거).
+    비정상 값이어도 enqueue 0건 + 예외 없음(fail-closed)."""
+    job = _job(skill="url", params={
+        "followup_skill": "S" * 151, "idempotency_key": "P" * 200})
+    q = FakeQueue(job)
+    notes = []
+    w = _worker(q, lambda p, timeout: ("ok", 0), notes)
+    assert w.run_once() == "done"
+    assert q.enqueued == []
+    assert any("후속 스킬 무효" in t for _, t in notes)

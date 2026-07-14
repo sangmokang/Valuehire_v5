@@ -440,6 +440,12 @@ class FleetWorker:
         followup = params.pop("followup_skill", None)
         if not followup:
             return
+        # V1 2R(minor) 수용: 화이트리스트 밖 followup 은 키 파생 전에 차단 —
+        # 비정상 긴 스킬명이 음수 슬라이스(160-len(suffix)<0)를 만들 여지 원천 제거.
+        if followup not in FLEET_SKILLS:
+            self._notify(job, (
+                f"⚠️ 잡 #{job.get('id')} 후속 스킬 무효({str(followup)[:40]!r}) — 체이닝 생략"))
+            return
         # V1(Codex) 반증 수용: 부모의 idempotency_key 를 그대로 복사하면
         # fleet_job_idempotency 유니크 인덱스와 충돌해 후속 잡이 조용히 유실된다.
         # 파생 키(부모키:followup:스킬, 160자 캡)로 교체 — 재발사 시 dedup 은 유지.
