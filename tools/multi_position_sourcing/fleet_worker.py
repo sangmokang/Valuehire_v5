@@ -202,20 +202,27 @@ def parse_worker_output(stdout: str, exit_code: int, stderr: str = "") -> dict[s
     return {"status": "done", "summary": text[-_SUMMARY_LIMIT:]}
 
 
-def _run_claude(prompt: str, timeout: int) -> tuple[str, str, int]:
-    """claude -p 실행(레포 루트). 반환: (stdout, stderr, exit_code) — QA-3 로 분리."""
+def _run_claude(prompt: str, timeout: int,
+                env: Mapping[str, str] | None = None) -> tuple[str, str, int]:
+    """claude -p 실행(레포 루트). 반환: (stdout, stderr, exit_code) — QA-3 로 분리.
+
+    env=None 이면 부모 환경 상속(기존과 동일). 이슈 E: 워커가 배지 env 를 넘긴다.
+    """
     proc = subprocess.run(
         ["claude", "-p", prompt],
         cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
+        env=dict(env) if env is not None else None,
     )
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 
-def _run_codex(prompt: str, timeout: int) -> tuple[str, str, int]:
+def _run_codex(prompt: str, timeout: int,
+               env: Mapping[str, str] | None = None) -> tuple[str, str, int]:
     """codex exec 실행(레포 루트) — 이슈 B(2026-07-15). claude -p 와 동형 계약."""
     proc = subprocess.run(
         ["codex", "exec", prompt],
         cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
+        env=dict(env) if env is not None else None,
     )
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
@@ -347,6 +354,14 @@ class FleetWorker:
         except Exception as exc:  # noqa: BLE001
             print(f"[fleet] notify 실패(fail-soft): {exc}", file=sys.stderr)
 
+    def _busy_badge_env(self, job: Mapping[str, Any], agent_label: str) -> dict[str, str]:
+        """이슈 E: 브라우저 '자동화 사용중' 배지용 env — os.environ 상속 + 배지 2키."""
+        import os
+        env = dict(os.environ)
+        env["VH_BUSY_TASK"] = f"fleet #{job.get('id')} ({job.get('skill')})"
+        env["VH_BUSY_AGENT"] = agent_label
+        return env
+
     def _release(self, job: Mapping[str, Any], job_id: int, status: str, *,
                  result_summary: str = "", error: str = "") -> Any:
         """QA-4 — release 를 재시도로 감싼다. 일시 장애가 잡을 running 고아로 못 만들게.
@@ -400,7 +415,14 @@ class FleetWorker:
             runner = _run_codex  # 이슈 B — agent 미지정/claude 는 기존 경로 그대로
             agent_label = "codex"
         try:
-            raw = runner(prompt, self.timeout)
+            if self._runner_injected:
+                raw = runner(prompt, self.timeout)
+            else:
+                # 이슈 E(사장님 라벨 승인): raw_cdp 배지가 실제 작업명을 보여주도록
+                # 서브프로세스 env 에 VH_BUSY_TASK/VH_BUSY_AGENT 주입(프로세스 스코프 —
+                # 잡 종료와 함께 소멸, 다음 잡 잔존 없음). 주입 러너 계약(2인자)은 불변.
+                raw = runner(prompt, self.timeout,
+                             env=self._busy_badge_env(job, agent_label))
         except subprocess.TimeoutExpired:
             # V1 반증 수용: 선택된 엔진 이름으로 표기(codex 잡을 claude 로 오표기 금지)
             self._release(job, job_id, "failed", error=f"{agent_label} 타임아웃({self.timeout}s)")

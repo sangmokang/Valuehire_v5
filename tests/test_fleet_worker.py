@@ -489,3 +489,52 @@ def test_timeout_error_names_selected_agent(monkeypatch):
     err = q.released[0][3]
     assert "타임아웃" in err and "claude" not in err
     assert "codex" in err
+
+
+# ── 이슈 E(2026-07-15 goal §6, 사장님 라벨 승인) — 자동화 사용중 배지 env 주입 ──
+
+def test_default_runner_env_carries_busy_badge_claude(monkeypatch):
+    """기본 러너 실행 시 subprocess env 에 VH_BUSY_TASK='fleet #<id> (<skill>)' 와
+    VH_BUSY_AGENT 가 실려야 raw_cdp 배지(🤖 자동화 사용중)가 실제 작업명을 보여준다."""
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        return SimpleNamespace(stdout="후보 정리 완료", stderr="", returncode=0)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    q = FakeQueue(_job())
+    w = FleetWorker(machine="macmini", queue=q, notifier=lambda job, text: None)
+    assert w.run_once() == "done"
+    env = captured["env"]
+    assert env is not None, "기본 러너는 배지 env 를 주입해야 함"
+    assert env["VH_BUSY_TASK"] == "fleet #7 (humansearch)"
+    assert env["VH_BUSY_AGENT"] == "claude"
+    assert "PATH" in env, "os.environ 상속 유지(전체 교체 금지)"
+
+
+def test_default_runner_env_busy_agent_codex(monkeypatch):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["env"] = kwargs.get("env")
+        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    q = FakeQueue(_job(params={"agent": "codex"}))
+    w = FleetWorker(machine="macmini", queue=q, notifier=lambda job, text: None)
+    assert w.run_once() == "done"
+    assert captured["cmd"][:2] == ["codex", "exec"]
+    assert captured["env"]["VH_BUSY_AGENT"] == "codex"
+    assert captured["env"]["VH_BUSY_TASK"] == "fleet #7 (humansearch)"
+
+
+def test_injected_runner_signature_unchanged_by_badge():
+    # 주입 러너는 (prompt, timeout) 2인자 그대로 — 배지 주입은 기본 러너 한정
+    q = FakeQueue(_job())
+    prompts = []
+    w = _worker(q, lambda p, timeout: (prompts.append(p) or ("ok", 0)), [])
+    assert w.run_once() == "done"
+    assert len(prompts) == 1
