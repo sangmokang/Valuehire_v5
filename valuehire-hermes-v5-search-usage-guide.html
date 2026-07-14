@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Hermes v5 AI Search 사용법 | Valuehire</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --paper: #ffffff;
+      --ink: #162033;
+      --muted: #657084;
+      --line: #dce4ef;
+      --navy: #11224a;
+      --blue: #2f5bea;
+      --blue-soft: #eef3ff;
+      --green: #147a52;
+      --green-soft: #ebfaf3;
+      --amber: #9a5b08;
+      --amber-soft: #fff7e8;
+      --red: #b42318;
+      --red-soft: #fff1f0;
+      --code: #0e172a;
+      --shadow: 0 18px 50px rgba(24, 39, 75, 0.09);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(47, 91, 234, 0.10), transparent 27rem),
+        var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", Arial, sans-serif;
+      line-height: 1.68;
+    }
+
+    .hero {
+      background: linear-gradient(130deg, #0d1a3b 0%, #183d8f 58%, #2f5bea 100%);
+      color: #fff;
+      padding: 54px 24px 72px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 360px;
+      height: 360px;
+      right: -100px;
+      top: -150px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 50%;
+      box-shadow: 0 0 0 54px rgba(255,255,255,0.04), 0 0 0 108px rgba(255,255,255,0.03);
+    }
+    .hero-inner { max-width: 1100px; margin: 0 auto; position: relative; z-index: 1; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.09);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: .02em;
+    }
+    h1 {
+      margin: 19px 0 10px;
+      font-size: clamp(2rem, 5vw, 3.45rem);
+      line-height: 1.12;
+      letter-spacing: -0.045em;
+    }
+    .hero p { max-width: 810px; margin: 0; color: #dbe7ff; font-size: 17px; }
+
+    main { max-width: 1100px; margin: -38px auto 72px; padding: 0 20px; position: relative; z-index: 2; }
+    section, .toc {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 26px;
+      margin: 18px 0;
+    }
+    h2 { margin: 0 0 12px; font-size: 25px; letter-spacing: -0.035em; }
+    h3 { margin: 20px 0 8px; font-size: 18px; letter-spacing: -0.02em; }
+    p { margin: 8px 0; }
+    a { color: var(--blue); }
+    code { font-family: "Cascadia Mono", Consolas, Menlo, monospace; }
+    .muted { color: var(--muted); }
+
+    .toc { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 18px; }
+    .toc a {
+      text-decoration: none;
+      color: #33415c;
+      background: #f6f8fc;
+      border: 1px solid var(--line);
+      padding: 7px 11px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .toc a:hover { color: var(--blue); border-color: #b8c8ff; background: var(--blue-soft); }
+
+    .alert {
+      border: 1px solid;
+      border-radius: 16px;
+      padding: 18px;
+      margin: 14px 0;
+    }
+    .alert h2, .alert h3 { margin-top: 0; }
+    .danger { background: var(--red-soft); border-color: #ffc7c2; }
+    .warning { background: var(--amber-soft); border-color: #f2d49a; }
+    .success { background: var(--green-soft); border-color: #aee4cc; }
+    .info { background: var(--blue-soft); border-color: #c3d2ff; }
+    .red { color: var(--red); font-weight: 800; }
+    .green { color: var(--green); font-weight: 800; }
+    .amber { color: var(--amber); font-weight: 800; }
+
+    .status-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 11px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+    .badge.bad { color: var(--red); border-color: #f2b8b3; background: #fff8f7; }
+    .badge.good { color: var(--green); border-color: #aee4cc; background: #f5fffa; }
+    .badge.wait { color: var(--amber); border-color: #e9ce97; background: #fffbf2; }
+
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .mini {
+      border: 1px solid var(--line);
+      background: #fbfcfe;
+      border-radius: 15px;
+      padding: 17px;
+    }
+    .mini h3 { margin-top: 0; }
+
+    .command {
+      position: relative;
+      background: var(--code);
+      color: #e8edf8;
+      border-radius: 14px;
+      padding: 17px 92px 17px 17px;
+      margin: 10px 0;
+      overflow-wrap: anywhere;
+      min-height: 58px;
+    }
+    .command code { white-space: pre-wrap; word-break: break-word; }
+    .copy {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      border: 1px solid #405071;
+      background: #1d2a43;
+      color: #fff;
+      padding: 7px 10px;
+      border-radius: 9px;
+      cursor: pointer;
+      font-weight: 750;
+    }
+    .copy:hover { background: #2e4166; }
+    .copy:focus-visible { outline: 3px solid #8eabff; outline-offset: 2px; }
+
+    .steps { counter-reset: guide-step; }
+    .step { display: grid; grid-template-columns: 42px 1fr; gap: 13px; margin: 18px 0; }
+    .step::before {
+      counter-increment: guide-step;
+      content: counter(guide-step);
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: var(--blue);
+      color: #fff;
+      font-weight: 900;
+    }
+    .step h3 { margin: 2px 0 5px; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { text-align: left; vertical-align: top; padding: 11px 12px; border-bottom: 1px solid var(--line); }
+    th { background: #f3f6fb; color: #37435a; font-size: 14px; }
+    td code { color: #233f9d; font-weight: 700; }
+    .table-wrap { overflow-x: auto; }
+
+    .json {
+      background: #101827;
+      color: #dce6fa;
+      padding: 16px;
+      border-radius: 14px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    ul, ol { padding-left: 22px; }
+    li + li { margin-top: 5px; }
+    kbd {
+      border: 1px solid #cbd5e1;
+      border-bottom-width: 2px;
+      background: #fff;
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    footer { max-width: 1100px; margin: 0 auto 44px; padding: 0 20px; color: var(--muted); font-size: 14px; }
+
+    @media (max-width: 780px) {
+      .grid, .three { grid-template-columns: 1fr; }
+      .hero { padding: 38px 18px 62px; }
+      main { padding: 0 13px; }
+      section { padding: 20px; }
+      .command { padding-right: 17px; padding-top: 55px; }
+      .copy { left: 10px; right: auto; }
+    }
+    @media print {
+      body { background: white; }
+      .hero { background: white; color: black; padding: 18px 0 25px; }
+      .hero p { color: #444; }
+      main { margin: 0; padding: 0; max-width: none; }
+      section, .toc { box-shadow: none; break-inside: avoid; }
+      .copy { display: none; }
+      .command { padding: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <span class="eyebrow">VALUEHIRE · HERMES v5</span>
+      <h1>Discord AI Search 사용법</h1>
+      <p>ClickUp 포지션 링크 하나로 사람인·잡코리아 후보 검색을 요청하고, 정상 접수 여부와 오류 상황을 정확히 판단하는 실사용 가이드입니다. 자연어 인식 로직은 방금 83개 자동 검사로 재확인했습니다.</p>
+    </div>
+  </header>
+
+  <main>
+    <nav class="toc" aria-label="문서 목차">
+      <a href="#verify">코드 검증 결과</a>
+      <a href="#current">이전 점검 기록</a>
+      <a href="#quick">바로 쓰기</a>
+      <a href="#commands">명령 모음</a>
+      <a href="#response">정상 응답</a>
+      <a href="#trouble">오류 대응</a>
+      <a href="#meaning">용어 구분</a>
+      <a href="#operator">운영 체크</a>
+    </nav>
+
+    <section id="verify" class="alert success">
+      <h2>코드 검증 결과 (방금 이 컴퓨터에서 재확인)</h2>
+      <p>자연어 문장을 <code>/fleet-run</code>으로 바꿔주는 로직과, 그 뒤 실제 큐에 넣는 로직만 따로 떼어 자동 검사를 방금 다시 돌렸습니다. <strong>83개 검사 전부 통과</strong>했습니다.</p>
+      <div class="command">
+        <code id="verify-cmd">pytest tests/test_hermes_fleet_bridge.py tests/test_hermes_plugin_registration.py tests/test_fleet_dispatch.py tests/test_fleet_worker.py</code>
+        <button class="copy" type="button" onclick="copyText('verify-cmd', this)">복사</button>
+      </div>
+      <div class="grid three">
+        <div class="mini">
+          <h3 class="green">확인된 것</h3>
+          <ul>
+            <li>ClickUp 링크만 줘도 인식</li>
+            <li>"사람인", "잡코리아", "win" 같은 한글 단어 인식</li>
+            <li>"/aisearch 링크", "/humansearch 링크"도 인식</li>
+            <li>관계 없는 대화·링크는 무시(오작동 방지)</li>
+            <li>보낸 사람이 등록 안 된 사람이면 거부</li>
+          </ul>
+        </div>
+        <div class="mini">
+          <h3 class="amber">이 컴퓨터에서 확인 못 한 것</h3>
+          <ul>
+            <li>실제 Discord 봇이 이 코드를 쓰고 있는지</li>
+            <li>지금 이 순간 봇이 정상 응답하는지</li>
+            <li>이 검사는 Windows 작업 컴퓨터에서 돌렸고, Discord 봇은 다른(맥) 컴퓨터에서 돌기 때문입니다</li>
+          </ul>
+        </div>
+        <div class="mini">
+          <h3>결론</h3>
+          <p class="muted">"자연어로 입력하면 코드가 그걸 알아듣고 올바른 명령으로 바꿔주는가" — 이 질문에는 <strong>네, 코드는 맞게 동작합니다</strong>라고 답할 수 있습니다. "지금 Discord에서 실제로 되는가"는 아래 <a href="#current">이전 점검 기록</a>과 별개로, 봇이 도는 컴퓨터에서 <code>/fleet-status</code>로 한 번 더 찔러봐야 확실합니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="current" class="alert danger">
+      <h2>이전 점검 기록: 잡 22는 정상 Windows AI Search가 아니었습니다</h2>
+      <p class="muted">아래는 오늘(2026-07-13) 이전 시점에 실 운영 Discord 봇을 직접 확인했던 기록입니다. 이번 재검증은 코드 자체만 다시 돌린 것이라, 잡 22가 지금 어떤 상태인지는 이 기록과 별개로 <code>/fleet-status</code>로 다시 확인이 필요합니다.</p>
+      <div class="status-row">
+        <span class="badge bad">job 22 · queued</span>
+        <span class="badge bad">machine: macmini</span>
+        <span class="badge bad">skill: humansearch</span>
+        <span class="badge bad">params: {}</span>
+      </div>
+      <p><strong>올바른 목표값</strong>은 <code>machine=winpc</code>, <code>skill=aisearch</code>, <code>channels=[saramin,jobkorea]</code>, <code>execution=live</code>입니다.</p>
+      <p>macmini heartbeat는 약 <strong>61시간 44분</strong> 오래됐고 winpc heartbeat는 없습니다. 따라서 잡 22는 현재 자동으로 시작될 상태가 아닙니다.</p>
+      <p class="red">잡 22를 기다리거나 같은 요청을 반복 전송하지 마세요. 먼저 아래 취소 명령으로 정리하는 것이 안전합니다.</p>
+      <div class="command">
+        <code id="cancel22">/fleet-cancel job:22</code>
+        <button class="copy" type="button" onclick="copyText('cancel22', this)">복사</button>
+      </div>
+    </section>
+
+    <section id="quick">
+      <h2>가장 쉬운 사용법</h2>
+      <div class="steps">
+        <div class="step">
+          <div>
+            <h3>Hermes v5 봇과 개인 DM을 엽니다</h3>
+            <p>서버 공개 채널이 아니라 <strong>hermes_v5 앱과의 개인 대화</strong>에서 입력합니다.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>ClickUp 링크와 <code>win</code>을 한 메시지로 보냅니다</h3>
+            <p>사람인과 잡코리아를 모두 검색하는 가장 안전하고 명확한 입력입니다.</p>
+            <div class="command">
+              <code id="quick1">https://app.clickup.com/t/9018789656/86ey35mg3 사람인 잡코리아 win</code>
+              <button class="copy" type="button" onclick="copyText('quick1', this)">복사</button>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>접수 JSON의 네 필드를 확인합니다</h3>
+            <p><code>machine=winpc</code>, <code>skill=aisearch</code>, 두 채널, <code>status=queued</code>가 보여야 합니다.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="alert warning">
+        <h3>배포 전 주의</h3>
+        <p>현재 실제 Hermes gateway에는 새 자연어 라우터가 적용되지 않은 것으로 확인됩니다. 운영 배포가 끝나기 전에는 위 문장도 구 배선으로 처리될 수 있습니다. 응답 JSON이 기대값과 다르면 즉시 중단하고 반복 전송하지 마세요.</p>
+      </div>
+    </section>
+
+    <section id="commands">
+      <h2>복사해서 쓰는 입력 예시</h2>
+      <div class="grid">
+        <div class="mini">
+          <h3>사람인 + 잡코리아</h3>
+          <p class="muted">권장 기본값</p>
+          <div class="command">
+            <code id="cmd-both">https://app.clickup.com/t/9018789656/86ey35mg3 사람인 잡코리아 win</code>
+            <button class="copy" type="button" onclick="copyText('cmd-both', this)">복사</button>
+          </div>
+        </div>
+        <div class="mini">
+          <h3>사람인만</h3>
+          <p class="muted">한 채널만 먼저 확인할 때</p>
+          <div class="command">
+            <code id="cmd-saramin">https://app.clickup.com/t/9018789656/86ey35mg3 사람인부터 win</code>
+            <button class="copy" type="button" onclick="copyText('cmd-saramin', this)">복사</button>
+          </div>
+        </div>
+        <div class="mini">
+          <h3>잡코리아만</h3>
+          <p class="muted">한 채널만 지정할 때</p>
+          <div class="command">
+            <code id="cmd-jobkorea">https://app.clickup.com/t/9018789656/86ey35mg3 잡코리아 win</code>
+            <button class="copy" type="button" onclick="copyText('cmd-jobkorea', this)">복사</button>
+          </div>
+        </div>
+        <div class="mini">
+          <h3>명시적 slash 명령</h3>
+          <p class="muted">자연어 hook 대신 직접 접수</p>
+          <div class="command">
+            <code id="cmd-slash">/fleet-run https://app.clickup.com/t/9018789656/86ey35mg3 win</code>
+            <button class="copy" type="button" onclick="copyText('cmd-slash', this)">복사</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>하려는 일</th><th>입력</th><th>기대 결과</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>최근 상태 확인</td><td><code>/fleet-status</code></td><td>최근 잡과 머신별 heartbeat 표시</td></tr>
+            <tr><td>잘못 접수된 잡 취소</td><td><code>/fleet-cancel job:22</code></td><td>queued 또는 paused 잡 취소</td></tr>
+            <tr><td>사람 인증 후 재개</td><td><code>/fleet-resume job:&lt;id&gt;</code></td><td>paused_for_human → queued</td></tr>
+            <tr><td>최근 포지션으로 Windows 실행</td><td><code>win</code></td><td>같은 DM의 30분 이내 포지션 문맥이 하나일 때만 실행</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted"><code>win</code> 한 단어는 최근 포지션 문맥이 없거나 모호하면 실행되지 않는 것이 정상입니다.</p>
+    </section>
+
+    <section id="response">
+      <h2>정상 접수 응답 판별법</h2>
+      <p>아래 핵심 모양과 같아야 합니다. job id와 시각은 매번 달라집니다.</p>
+      <pre class="json"><code>{
+  "action": "enqueued",
+  "job": {
+    "machine": "winpc",
+    "skill": "aisearch",
+    "position_url": "https://app.clickup.com/t/...",
+    "params": {
+      "channels": ["saramin", "jobkorea"],
+      "execution": "live"
+    },
+    "status": "queued"
+  }
+}</code></pre>
+
+      <div class="grid three">
+        <div class="mini">
+          <h3 class="green">정상</h3>
+          <ul>
+            <li><code>winpc</code></li>
+            <li><code>aisearch</code></li>
+            <li>원하는 채널 목록</li>
+            <li><code>queued</code></li>
+          </ul>
+        </div>
+        <div class="mini">
+          <h3 class="red">잘못 접수</h3>
+          <ul>
+            <li>ClickUp인데 <code>macmini</code></li>
+            <li><code>humansearch</code></li>
+            <li><code>params: {}</code></li>
+            <li>같은 메시지에 응답 2개</li>
+          </ul>
+        </div>
+        <div class="mini">
+          <h3 class="amber">아직 시작 전</h3>
+          <ul>
+            <li><code>queued</code>는 접수만 된 상태</li>
+            <li><code>started_at: null</code></li>
+            <li>heartbeat가 stale이면 대기 고착</li>
+            <li>worker claim 후 <code>running</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="trouble">
+      <h2>“애플리케이션이 응답하지 않았어요”가 보일 때</h2>
+      <div class="steps">
+        <div class="step">
+          <div>
+            <h3>같은 요청을 바로 다시 누르지 않습니다</h3>
+            <p>Discord 응답만 늦고 서버에는 이미 잡이 만들어졌을 수 있습니다. 반복하면 중복 잡 위험이 있습니다.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3><code>/fleet-status</code>를 한 번 실행합니다</h3>
+            <p>방금 시각의 잡이 있으면 원 요청은 접수된 것입니다. machine·skill·params까지 확인합니다.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>잘못된 queued 잡이면 취소합니다</h3>
+            <div class="command">
+              <code id="cmd-cancel-generic">/fleet-cancel job:&lt;잘못된 job id&gt;</code>
+              <button class="copy" type="button" onclick="copyText('cmd-cancel-generic', this)">복사</button>
+            </div>
+          </div>
+        </div>
+        <div class="step">
+          <div>
+            <h3>운영자에게 다음 네 가지만 전달합니다</h3>
+            <ul>
+              <li>보낸 원문 한 줄</li>
+              <li>표시된 job id</li>
+              <li>응답의 machine / skill</li>
+              <li>메시지를 보낸 시각</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="alert info">
+        <h3>“Unknown command”와 enqueue JSON이 같이 오면</h3>
+        <p>같은 Discord 봇 토큰으로 구 gateway와 새 gateway가 동시에 응답하는 상태입니다. 입력 문제가 아니라 운영 gateway 중복 문제이므로 더 보내지 말고 운영자에게 알립니다.</p>
+      </div>
+    </section>
+
+    <section id="meaning">
+      <h2><code>aisearch</code>와 <code>humansearch</code> 구분</h2>
+      <div class="grid">
+        <div class="mini">
+          <h3><code>aisearch</code> — 지금 필요한 기능</h3>
+          <ul>
+            <li>입력: ClickUp 포지션 링크</li>
+            <li>JD를 읽고 검색어·동의어 생성</li>
+            <li>사람인 OR/AND/NOT 직접 입력</li>
+            <li>잡코리아 키워드 칩 직접 입력</li>
+            <li>기본 머신: <code>winpc</code></li>
+          </ul>
+        </div>
+        <div class="mini">
+          <h3><code>humansearch</code> — 다른 기능</h3>
+          <ul>
+            <li>이미 만들어진 검색 결과 화면 순회용</li>
+            <li>검색어 생성·필터 입력 기능 아님</li>
+            <li>LinkedIn 기존 검색 URL 등에 사용</li>
+            <li>ClickUp 링크만 주는 새 검색에는 사용하지 않음</li>
+            <li>잡 22가 잘못 들어간 이유를 보여주는 신호</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>입력 종류</th><th>기본 머신</th><th>기본 skill</th></tr></thead>
+          <tbody>
+            <tr><td>ClickUp + 사람인/잡코리아</td><td><code>winpc</code></td><td><code>aisearch</code></td></tr>
+            <tr><td>사람인/잡코리아 검색 URL + win</td><td><code>winpc</code></td><td><code>aisearch</code></td></tr>
+            <tr><td>LinkedIn 검색 URL만</td><td><code>macmini</code></td><td>기존 검색 순회 계약에 따름</td></tr>
+            <tr><td>명시적 <code>macbook</code>/<code>macmini</code>/<code>winpc</code></td><td>명시값 우선</td><td>요청 계약에 따름</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="operator">
+      <h2>운영 준비가 끝났는지 확인하는 기준</h2>
+      <div class="alert warning">
+        <h3>현재는 아래 세 항목이 미완료입니다</h3>
+        <ol>
+          <li>실제 Hermes 호스트에 최신 <code>valuehire_fleet</code> 플러그인 symlink·활성화</li>
+          <li>winpc의 Supabase 응답 및 stale하지 않은 heartbeat</li>
+          <li>Chrome connector 또는 승인된 전용 CDP 프로필</li>
+        </ol>
+      </div>
+
+      <div class="grid three">
+        <div class="mini">
+          <h3>Hermes</h3>
+          <ul>
+            <li>gateway 정확히 1개</li>
+            <li>플러그인 load 오류 0</li>
+            <li>자연어 → fleet-run rewrite</li>
+            <li>동일 message id 중복 0</li>
+          </ul>
+        </div>
+        <div class="mini">
+          <h3>Windows worker</h3>
+          <ul>
+            <li>task Running</li>
+            <li>heartbeat 2분 이내</li>
+            <li>machine=<code>winpc</code></li>
+            <li>고정 keepalive Disabled</li>
+          </ul>
+        </div>
+        <div class="mini">
+          <h3>브라우저</h3>
+          <ul>
+            <li>사람인 로그인 marker 정상</li>
+            <li>잡코리아 로그인 marker 정상</li>
+            <li>captcha/2FA 우회 없음</li>
+            <li>외부 발송 0건</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="alert success">
+      <h2>한 줄 요약</h2>
+      <p><strong>Hermes v5 DM에 “ClickUp 링크 + 사람인 잡코리아 + win”을 한 번만 보내고, 응답이 <code>winpc / aisearch / channels / queued</code>인지 확인하세요.</strong></p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Valuehire Hermes v5 AI Search 사용 가이드 · 점검 기준 2026-07-13 KST</p>
+    <p>비밀번호·쿠키·토큰·후보 연락처는 이 문서와 Discord 응답에 기록하지 않습니다.</p>
+  </footer>
+
+  <script>
+    async function copyText(id, button) {
+      const value = document.getElementById(id).textContent.trim();
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (_) {
+        const area = document.createElement('textarea');
+        area.value = value;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        area.remove();
+      }
+      const original = button.textContent;
+      button.textContent = '복사됨';
+      setTimeout(() => { button.textContent = original; }, 1200);
+    }
+  </script>
+</body>
+</html>
