@@ -49,7 +49,7 @@ _SEARCH_HOST_MARKERS: tuple[str, ...] = (
 _DEFAULT_ACCESS_DOC = Path(__file__).resolve().parents[2] / "docs" / "search-access.md"
 
 _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
-    "fleet-run": frozenset({"skill", "url", "machine", "channels", "idempotency", "followup"}),
+    "fleet-run": frozenset({"skill", "url", "machine", "channels", "idempotency", "followup", "agent"}),
     "fleet-status": frozenset(),
     "fleet-resume": frozenset({"job"}),
     "fleet-cancel": frozenset({"job"}),
@@ -190,6 +190,12 @@ def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
             if followup not in FLEET_SKILLS:
                 raise HermesFleetBridgeError(f"followup 은 {FLEET_SKILLS} 만 허용합니다")
             params["followup_skill"] = followup
+        # 이슈 B(2026-07-15): 실행 엔진 선택 — claude|codex 만(fail-closed)
+        agent = options.pop("agent", "")
+        if agent:
+            if agent not in ("claude", "codex"):
+                raise HermesFleetBridgeError("agent 는 claude|codex 만 허용합니다")
+            params["agent"] = agent
         if raw_channels or idempotency:
             params.setdefault("execution", "live")
             params.setdefault("channels", ["saramin", "jobkorea"])
@@ -308,6 +314,12 @@ def natural_fleet_command_text(
     parts = ["/fleet-run", skill, *urls, f"channels:{','.join(channels)}"]
     if linkedin_handoff:
         parts.append("followup:aisearch")
+    # 이슈 B(2026-07-15): 본문(URL 제외)에 "codex" 단어가 있으면 codex 엔진 선택.
+    # URL 안 문자열은 트리거 아님(low_no_urls). V1 반증 수용: 라틴 토큰 속
+    # 부분문자열("precodexpost")은 오탐 — 양옆이 영숫자가 아닐 때만 단어로 인정
+    # ("codex로" 같은 한글 조사는 계속 허용). 미지정 시 기존 claude 그대로.
+    if re.search(r"(?<![a-z0-9])codex(?![a-z0-9])", low_no_urls):
+        parts.append("agent:codex")
     if machine:
         parts.append(machine)
     if message_id:

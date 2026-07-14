@@ -314,3 +314,16 @@ def test_new_job_payload_validates_followup_skill():
     assert ok is not None
     assert ok["params"]["followup_skill"] == "aisearch"
     assert new_job_payload(**base, params={"followup_skill": "not-a-skill"}) is None
+
+
+# ── 이슈 B(2026-07-15 goal §2) — params.agent 검증 ──
+
+def test_new_job_payload_validates_agent():
+    base = dict(machine="macmini", skill="aisearch",
+                position_url="https://app.clickup.com/t/abc",
+                requested_by="814353841088757800:owner", role="owner")
+    ok = new_job_payload(**base, params={"agent": "codex"})
+    assert ok is not None and ok["params"]["agent"] == "codex"
+    ok2 = new_job_payload(**base, params={"agent": "claude"})
+    assert ok2 is not None
+    assert new_job_payload(**base, params={"agent": "gpt4"}) is None

@@ -408,3 +408,84 @@ def test_followup_invalid_skill_is_blocked_before_key_derivation():
     assert w.run_once() == "done"
     assert q.enqueued == []
     assert any("후속 스킬 무효" in t for _, t in notes)
+
+
+# ── 이슈 B(2026-07-15 goal §2) — agent 별 러너 선택(claude -p | codex exec) ──
+
+def _capture_subprocess(monkeypatch):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(stdout="후보 정리 완료", stderr="", returncode=0)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    return calls
+
+
+def test_runner_default_uses_codex_exec_for_agent_codex(monkeypatch):
+    calls = _capture_subprocess(monkeypatch)
+    q = FakeQueue(_job(params={"agent": "codex"}))
+    w = FleetWorker(machine="macmini", queue=q,
+                    notifier=lambda job, text: None)
+    assert w.run_once() == "done"
+    assert len(calls) == 1
+    assert calls[0][:2] == ["codex", "exec"]
+
+
+def test_runner_default_uses_claude_p_when_agent_unspecified(monkeypatch):
+    calls = _capture_subprocess(monkeypatch)
+    q = FakeQueue(_job())
+    w = FleetWorker(machine="macmini", queue=q,
+                    notifier=lambda job, text: None)
+    assert w.run_once() == "done"
+    assert calls[0][:2] == ["claude", "-p"]
+
+
+def test_injected_runner_wins_over_agent_param():
+    # 기존 테스트 하위호환 — runner 주입 시 agent 무시(주입이 항상 우선)
+    q = FakeQueue(_job(params={"agent": "codex"}))
+    prompts = []
+    def runner(prompt, timeout):
+        prompts.append(prompt)
+        return ("ok", 0)
+    w = _worker(q, runner, [])
+    assert w.run_once() == "done"
+    assert len(prompts) == 1
+
+
+def test_falsy_injected_runner_still_wins(monkeypatch):
+    # V1(Codex) 반증 수용 — __bool__ 이 False 인 주입 러너도 '주입'으로 존중
+    calls = _capture_subprocess(monkeypatch)
+
+    class FalsyRunner:
+        def __init__(self):
+            self.calls = []
+        def __bool__(self):
+            return False
+        def __call__(self, prompt, timeout):
+            self.calls.append(prompt)
+            return ("ok", 0)
+
+    runner = FalsyRunner()
+    q = FakeQueue(_job(params={"agent": "codex"}))
+    w = FleetWorker(machine="macmini", queue=q, runner=runner,
+                    notifier=lambda job, text: None)
+    assert w.run_once() == "done"
+    assert len(runner.calls) == 1, "주입 러너가 불려야 함"
+    assert calls == [], "subprocess 직접 실행 금지"
+
+
+def test_timeout_error_names_selected_agent(monkeypatch):
+    # V1(Codex) 반증 수용 — codex 잡 타임아웃이 'claude 타임아웃'으로 오표기되면 안 됨
+    from tools.multi_position_sourcing import fleet_worker as fw
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=9)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    q = FakeQueue(_job(params={"agent": "codex"}))
+    w = FleetWorker(machine="macmini", queue=q, notifier=lambda job, text: None)
+    assert w.run_once() == "failed"
+    err = q.released[0][3]
+    assert "타임아웃" in err and "claude" not in err
+    assert "codex" in err
