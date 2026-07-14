@@ -371,6 +371,10 @@ class FleetWorker:
             self._release(job, job_id, "done", result_summary="dry-run — claude 미실행")
             self._notify(job, f"🧪 잡 #{job_id} dry-run 완료 (claude 미실행)")
             return "done"
+        # 이슈 C(2026-07-15 goal §3): claim~완료 사이 공백 메움 — 실행 직전 1회, fail-soft(_notify)
+        self._notify(job, (
+            f"▶️ 잡 #{job_id} 실행 시작 ({self.machine}, skill={job.get('skill')}) — "
+            f"position: {job.get('position_url')}"))
         try:
             raw = self.runner(prompt, self.timeout)
         except subprocess.TimeoutExpired:
