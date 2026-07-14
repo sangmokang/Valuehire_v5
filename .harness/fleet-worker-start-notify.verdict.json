@@ -1,0 +1,24 @@
+{
+  "claim_id": "fleet-worker-start-notify",
+  "mode": "code-change",
+  "risk": "L2",
+  "spec": "docs/prompts/discord-fleet-linkedin-handoff-and-agent-routing-goal-2026-07-15.md §3 (이슈 C)",
+  "generator": {
+    "author": "Claude (this session)",
+    "claim": "run_once가 claim+프롬프트 성공 직후(dry_run 제외) ▶️ 실행 시작 알림 1회를 fail-soft(_notify)로 발송. 알림 순서 시작→최종(done/failed/paused).",
+    "changed_files": ["tools/multi_position_sourcing/fleet_worker.py", "tests/test_fleet_worker.py"],
+    "command": "/Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest tests/ -q (verify.sh)",
+    "exit_code": 0,
+    "output": "1427 passed, 4 xfailed, 14 subtests passed in 37.32s",
+    "red_evidence": "RED 커밋 시점 신규 테스트 2 failed, 21 passed — 구현 부재가 곧 뮤턴트 증거",
+    "live_evidence": "라이브 Discord 발송은 범위 밖(pytest 레벨). 배선: run_once 실행 직전 self._notify 호출(기존 notifier 규약 재사용)"
+  },
+  "v1": {
+    "author": "Codex fresh session (codex:codex-rescue) — 1차 응답 빈 본문이라 재요청 후 본문 확보",
+    "verdict": "pass",
+    "repro": "pytest 23 passed exit 0. 라이브 반증 시도: 계약위반 잡 start_count=0, notifier 예외 발생시켜도 잡 done 완주(fail-soft 실증), idle 알림 0, dry_run ▶️ 없음, done/failed/paused 각각 시작→최종 2건 순서·문구 일치. notes[0]→notes[-1] 수정은 약화 아닌 스펙 적응으로 판정"
+  },
+  "failed_attempts": [],
+  "three_way_agree": true,
+  "status": "G+V1 일치(L2) — 배송 진행"
+}
