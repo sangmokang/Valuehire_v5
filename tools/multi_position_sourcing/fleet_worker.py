@@ -440,6 +440,13 @@ class FleetWorker:
         followup = params.pop("followup_skill", None)
         if not followup:
             return
+        # V1(Codex) 반증 수용: 부모의 idempotency_key 를 그대로 복사하면
+        # fleet_job_idempotency 유니크 인덱스와 충돌해 후속 잡이 조용히 유실된다.
+        # 파생 키(부모키:followup:스킬, 160자 캡)로 교체 — 재발사 시 dedup 은 유지.
+        parent_key = params.get("idempotency_key")
+        if parent_key:
+            suffix = f":followup:{followup}"
+            params["idempotency_key"] = parent_key[:160 - len(suffix)] + suffix
         payload = new_job_payload(
             machine=job.get("machine") or self.machine, skill=followup,
             position_url=job.get("position_url"),
