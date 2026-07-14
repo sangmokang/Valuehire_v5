@@ -1,0 +1,49 @@
+{
+  "claim_id": "discord-dm-shell-frontend-codex",
+  "mode": "code-change",
+  "risk": "L3",
+  "spec": "docs/prompts/discord-fleet-linkedin-handoff-and-agent-routing-goal-2026-07-15.md §7 (이슈 F)",
+  "generator": {
+    "author": "Claude (prior session RED/GREEN 24695b8/f7d3df8 + this session V1-fix a5e288a/5bbaef2)",
+    "claim": "Discord DM 오너 브리지에 codex: 접두어 agent 선택 추가. 접두어 파싱 외 원문 무재구성(verbatim), subprocess 인자 [claude,-p,prompt]/[codex,exec,prompt], 접수 메시지에 agent 상시 표시. OWNER_ID 게이트·킬스위치·단일인스턴스락·at-least-once 저장 순서 불변.",
+    "changed_files": [
+      "scripts/discord_command_listener.py",
+      "tests/test_discord_command_listener.py"
+    ],
+    "command": "/Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest tests/ -q",
+    "exit_code": 0,
+    "output": "1424 passed, 4 xfailed, 14 subtests passed in 35.29s",
+    "red_evidence": "RED 커밋 24695b8/a5e288a 시점에 구현 부재로 테스트 실패 확인 (a5e288a RED: 1 failed, 13 passed)",
+    "mutation_evidence": "수동 mutant: select_agent_and_prompt 접두어 분기를 if False 로 반전 → 2 failed (test_f_codex_prefix_*) → revert 후 GREEN. 테스트가 관측 동작을 실제 감시함",
+    "live_evidence": "라이브 Discord 실행은 스펙상 범위 밖(pytest 레벨 검증). 배선: main() L205~208 select_agent_and_prompt/_run_agent 호출부 grep 확인 — 고아 0"
+  },
+  "v1": {
+    "author": "Codex fresh session (codex:codex-rescue)",
+    "first_verdict": "fail",
+    "counterexamples_found": [
+      "main()이 content.strip() 후 라우팅 → claude 경로 프롬프트 바깥 공백 유실(verbatim 위반)",
+      "접수 메시지에 claude agent 미표시"
+    ],
+    "final_verdict": "pass",
+    "repro": "main-loop monkeypatch repro: argv=[[claude,-p,'  keep  internal  \\nformatting  ']] byte-equal, 접수(claude)/접수(codex) 표시 확인, 킬스위치 subprocess 0회, 안전장치 로직 main과 byte-identical, 테스트 약화 없음",
+    "command": "pytest tests/test_discord_command_listener.py -q",
+    "exit_code": 0,
+    "output": "14 passed, 1 warning in 0.06s"
+  },
+  "v2": {
+    "author": "Claude reset session (goal §7 + verdict + 코드만 열람, 대화 맥락 없음)",
+    "verdict": "pass",
+    "what_v1_missed": "스펙 위반 없음. 미규정 마이너 2건 노트: 'codex:' 빈 본문 → ('codex',''), codex 본문 양끝 strip(스펙 인수기준과 일치)",
+    "independent_repro": "pytest 14 passed exit 0 + 인수기준 6건 원라이너 재현 + main() 통합 repro(verbatim byte-equal, 접수(codex) 표시, codex: 봇 정지 → subprocess 0회) + git diff main 안전장치 무변경 + 신규 엣지 8건(한국어 접두어 미트리거, 비오너 codex: 무시, 10k자 verbatim 등) 전부 통과"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "1차 구현(f7d3df8): main()에서 content.strip() 재사용 + claude 무표시 tag",
+      "root_cause": "기존 코드의 .strip()이 verbatim 불변식과 충돌하는 걸 순수함수 테스트만으로는 못 잡음(main 루프 통합 경로 미검증)",
+      "repro": "select_agent_and_prompt 는 통과하지만 main() 경유 시 argv 프롬프트가 strip됨 (V1 repro)",
+      "next_change": "main 루프 통합 테스트 추가(RED a5e288a) + raw 라우팅/agent 상시 표시(5bbaef2)"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "3자 일치 — 배송 진행"
+}
