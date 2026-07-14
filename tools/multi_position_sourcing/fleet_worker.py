@@ -333,9 +333,10 @@ class FleetWorker:
             raise RuntimeError(f"unknown machine: {machine!r}")
         self.machine = machine
         self.queue = queue if queue is not None else JobQueueClient()
-        self.runner = runner or _run_claude
         # 이슈 B: runner 주입 시 그 러너가 항상 우선(기존 테스트 하위호환).
+        # V1 반증 수용: falsy 콜러블도 '주입'이다 — truthiness 아닌 None 판정.
         # 미주입일 때만 job.params.agent 로 claude|codex 선택.
+        self.runner = _run_claude if runner is None else runner
         self._runner_injected = runner is not None
         self.notifier = notifier or discord_notify
         self.timeout = timeout
@@ -394,12 +395,15 @@ class FleetWorker:
             f"▶️ 잡 #{job_id} 실행 시작 ({self.machine}, skill={job.get('skill')}) — "
             f"position: {job.get('position_url')}"))
         runner = self.runner
+        agent_label = "claude"
         if not self._runner_injected and (job.get("params") or {}).get("agent") == "codex":
             runner = _run_codex  # 이슈 B — agent 미지정/claude 는 기존 경로 그대로
+            agent_label = "codex"
         try:
             raw = runner(prompt, self.timeout)
         except subprocess.TimeoutExpired:
-            self._release(job, job_id, "failed", error=f"claude 타임아웃({self.timeout}s)")
+            # V1 반증 수용: 선택된 엔진 이름으로 표기(codex 잡을 claude 로 오표기 금지)
+            self._release(job, job_id, "failed", error=f"{agent_label} 타임아웃({self.timeout}s)")
             self._notify(job, f"⏱️ 잡 #{job_id} 실패 — {self.timeout}초 타임아웃")
             return "failed"
         except Exception as exc:  # noqa: BLE001 — V1: 어떤 예외든 잡을 running 고아로 두지 않는다

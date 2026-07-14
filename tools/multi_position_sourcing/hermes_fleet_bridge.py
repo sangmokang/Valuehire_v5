@@ -315,8 +315,10 @@ def natural_fleet_command_text(
     if linkedin_handoff:
         parts.append("followup:aisearch")
     # 이슈 B(2026-07-15): 본문(URL 제외)에 "codex" 단어가 있으면 codex 엔진 선택.
-    # URL 안 문자열은 트리거 아님(low_no_urls) — 미지정 시 기존 claude 그대로.
-    if "codex" in low_no_urls:
+    # URL 안 문자열은 트리거 아님(low_no_urls). V1 반증 수용: 라틴 토큰 속
+    # 부분문자열("precodexpost")은 오탐 — 양옆이 영숫자가 아닐 때만 단어로 인정
+    # ("codex로" 같은 한글 조사는 계속 허용). 미지정 시 기존 claude 그대로.
+    if re.search(r"(?<![a-z0-9])codex(?![a-z0-9])", low_no_urls):
         parts.append("agent:codex")
     if machine:
         parts.append(machine)
