@@ -17,7 +17,10 @@
   스스로 깨고, LinkedIn 은 시트 라이선스라 약관 위반이다.
 - 각 머신의 크롬 디버그 프로필에는 **그 머신 전용 계정만** 로그인한다.
 - 잡의 `account_key`(기본 `portal:<machine>`)로 **계정 글로벌 락**을 건다 — 같은 계정은 한 시점에 한 머신만.
-- **LinkedIn Recruiter 시트가 1개뿐이면 LinkedIn 잡은 `macmini` 전용**으로 묶는다(맥미니가 최상 신뢰도).
+- **LinkedIn 잡(skill=url)은 heartbeat 의 `linkedin_rps_logged_in` 상태를 보고 로그인된 머신으로
+  라우팅한다**(2026-07-15 사장님 승인 개정 — 이전 "macmini 전용" 조항 대체). 로그인 머신이 여럿이면
+  INV8 신뢰도 순(macmini > winpc > macbook), **아무도 로그인 안 돼 있거나 조회 실패면 macmini 폴백**.
+  계정 글로벌 락(account_key)은 그대로라 같은 계정 동시 2머신 실행은 여전히 불가능하다.
 - IP 일관성: 3대가 같은 사무실 공유기 뒤면 충족. 흩어지면 맥미니를 Tailscale exit node 로 출구 통일.
 
 ## 3. 크롬 로그인 프로필 보존 (삭제·초기화 금지)

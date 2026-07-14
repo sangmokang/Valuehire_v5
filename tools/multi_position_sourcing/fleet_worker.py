@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .fleet_heartbeat import read_linkedin_login_flag
 from .job_queue import (
     FLEET_MACHINES,
     FLEET_SKILLS,
@@ -513,10 +514,27 @@ class FleetWorker:
             self._notify(job, f"⚠️ 잡 #{job.get('id')} 후속 잡 enqueue 실패: {exc}")
 
     def record_heartbeat(self) -> None:
-        """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지)."""
+        """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지).
+
+        이슈 D: 로컬 포털 상태 파일에서 LinkedIn 로그인 여부를 읽어 동봉한다.
+        마이그레이션 전 DB(3인자 RPC 없음)면 기존 2인자 RPC 로 폴백 — 라우팅 정보는
+        못 실어도 심장박동 자체는 절대 끊기지 않는다.
+        """
         import os
         try:
+            flag = read_linkedin_login_flag(REPO, now_epoch=int(time.time()))
+        except Exception:  # noqa: BLE001 — 상태 파일 문제로 heartbeat 를 막지 않는다
+            flag = False
+        try:
             self.queue._call(  # noqa: SLF001 — 내부 RPC 재사용(재발명 금지)
+                "POST", "/rpc/record_heartbeat",
+                {"p_machine": self.machine, "p_worker_pid": os.getpid(),
+                 "p_linkedin_rps_logged_in": bool(flag)})
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[fleet] heartbeat(3인자) 실패 — 레거시 폴백: {exc}", file=sys.stderr)
+        try:
+            self.queue._call(  # noqa: SLF001
                 "POST", "/rpc/record_heartbeat",
                 {"p_machine": self.machine, "p_worker_pid": os.getpid()})
         except Exception as exc:  # noqa: BLE001 — heartbeat 실패가 워커를 죽이면 안 됨

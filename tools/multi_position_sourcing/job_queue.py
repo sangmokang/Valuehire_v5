@@ -320,6 +320,11 @@ class JobQueueClient:
         rows = self._call("POST", "/rpc/heartbeats_epoch", {})
         return rows if isinstance(rows, list) else []
 
+    def linkedin_ready_machines(self) -> list:
+        """이슈 D — heartbeat 의 LinkedIn 로그인 상태 조회(라우팅용, epoch 초)."""
+        rows = self._call("POST", "/rpc/linkedin_ready_machines", {})
+        return list(rows) if isinstance(rows, list) else []
+
     def probe_auth(self) -> tuple[str, str]:
         """SOT30 S3 — 기동 인증 프로브(가벼운 GET 1회).
 

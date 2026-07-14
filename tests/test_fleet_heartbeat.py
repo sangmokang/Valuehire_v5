@@ -331,7 +331,7 @@ def test_pick_linkedin_machine_priority_and_fallback():
 
 
 def test_linkedin_migration_and_sot29_amended():
-    mig = REPO / "supabase" / "migrations" / "20260715_fleet_heartbeat_linkedin.sql"
+    mig = REPO / "supabase" / "migrations" / "20260715_fleet_linkedin_routing.sql"
     assert mig.exists(), "heartbeat linkedin 컬럼 마이그레이션 없음"
     sql = mig.read_text(encoding="utf-8")
     assert "linkedin_rps_logged_in" in sql
