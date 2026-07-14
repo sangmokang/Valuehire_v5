@@ -1,0 +1,24 @@
+{
+  "claim_id": "fleet-worker-busy-badge",
+  "mode": "code-change",
+  "risk": "L2",
+  "spec": "docs/prompts/discord-fleet-linkedin-handoff-and-agent-routing-goal-2026-07-15.md §6 (이슈 E) — 사장님 라벨 승인(2026-07-15): 실제 스킬+잡번호",
+  "generator": {
+    "author": "Claude (this session)",
+    "claim": "기본 러너(_run_claude/_run_codex) 실행 시 subprocess env 에 VH_BUSY_TASK='fleet #<id> (<skill>)'+VH_BUSY_AGENT 주입(os.environ 상속 유지, 프로세스 스코프 — 잡 종료와 함께 소멸). 주입 러너 2인자 계약 불변, env=None 이면 기존과 동일 상속.",
+    "changed_files": ["tools/multi_position_sourcing/fleet_worker.py", "tests/test_fleet_worker.py"],
+    "command": "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider",
+    "exit_code": 0,
+    "output": "1457 passed, 4 xfailed, 14 subtests passed in 38.35s",
+    "red_evidence": "RED 커밋 시점 신규 2 failed / 36 passed — env 미주입 상태에서 실패 직접 확인(= 뮤턴트 증거)",
+    "live_evidence": "raw_cdp.py:55-56 이 자식 프로세스에서 두 키를 읽는 배선 확인. 라이브 브라우저 배지 표출은 fleet 머신 운영 중 확인 사항"
+  },
+  "v1": {
+    "author": "Codex fresh session",
+    "verdict": "pass",
+    "repro": "38 passed in 0.17s. 실제 자식 프로세스로 env 전달 실증, 부모 os.environ 비오염, dry_run 배지 없음, 타임아웃/예외 경로 정상, 주입 러너 kwargs 0, discord_command_listener 의 동명 _run_claude 는 별개 모듈로 무영향"
+  },
+  "failed_attempts": [],
+  "three_way_agree": true,
+  "status": "G+V1 일치(L2) — 배송 진행"
+}
