@@ -130,3 +130,31 @@ def test_f_run_agent_dispatches_correct_subprocess_command(monkeypatch) -> None:
     assert captured["cmd"] == ["claude", "-p", "hello"]
     dcl._run_agent("codex", "hello")
     assert captured["cmd"] == ["codex", "exec", "hello"]
+
+
+def test_f_v1_main_loop_verbatim_prompt_and_agent_tag(monkeypatch) -> None:
+    """V1(Codex) 반증 수용 — main 루프가 프롬프트를 바깥 공백까지 그대로 전달하고,
+    접수 메시지에 선택된 agent(claude 포함)를 표시한다."""
+    from types import SimpleNamespace
+
+    from scripts import discord_command_listener as dcl
+
+    raw = "  keep  internal  \nformatting  "
+    sent: list[str] = []
+    argv: list[list[str]] = []
+    msgs = [
+        {"id": "101", "author": {"id": dcl.OWNER_ID}, "content": raw},
+        {"id": "102", "author": {"id": dcl.OWNER_ID}, "content": "봇 정지"},
+    ]
+    monkeypatch.setattr(dcl, "acquire_single_instance_lock", lambda *a: True)
+    monkeypatch.setattr(dcl, "_load_last", lambda: "100")
+    monkeypatch.setattr(dcl, "_api", lambda *a, **k: msgs)
+    monkeypatch.setattr(dcl, "_send", sent.append)
+    monkeypatch.setattr(dcl, "_save_last", lambda _last: None)
+    monkeypatch.setattr(
+        dcl.subprocess, "run",
+        lambda cmd, **kw: (argv.append(cmd) or SimpleNamespace(stdout="ok", stderr="")),
+    )
+    dcl.main()
+    assert argv == [["claude", "-p", raw]]  # 원문 그대로 — 앞뒤 공백도 재구성 금지
+    assert any(s.startswith("⏳ 접수(claude):") for s in sent)
