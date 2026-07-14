@@ -77,3 +77,8 @@ handled by `valuehire_fleet`, with authorization and queue logic delegated to th
   minutes and was terminated; two bounded retries ended at their turn limits without a verdict.
   Empty output was not treated as PASS. Existing PR adversarial evidence plus CI and local tests were
   reproduced, and the missing deploy `.env.local` wiring was found and corrected during local attack.
+- Audit-branch full pre-push suite: `1410 passed, 6 failed, 2 skipped, 4 xfailed, 14 subtests passed`.
+  The failures are environment-only and unrelated to this documentation change: one existing test
+  rejects any checkout path containing `Desktop`, and five tests cannot import Playwright from the
+  Hermes Python environment. The targeted fleet suite remains `91 passed`; remote CI is the final
+  gate for the audit-only pull request.
