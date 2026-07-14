@@ -215,23 +215,107 @@ def test_linkedin_only_uses_existing_default_account_binding() -> None:
     assert queue.enqueued[0]["machine"] == "macmini"
 
 
-def test_natural_humansearch_message_rewrites_with_urls_and_win_alias() -> None:
+def test_clickup_plus_linkedin_url_rewrites_to_humansearch() -> None:
     rewritten = natural_fleet_command_text(
         "humansearch https://app.clickup.com/t/abc "
         "https://www.linkedin.com/search/results/people/?keywords=cto win"
     )
     assert rewritten == (
-        "/fleet-run aisearch https://app.clickup.com/t/abc "
+        "/fleet-run humansearch https://app.clickup.com/t/abc "
         "https://www.linkedin.com/search/results/people/?keywords=cto "
-        "channels:saramin,jobkorea winpc"
+        "winpc"
     )
 
 
-def test_portal_url_or_win_without_position_context_does_not_enqueue() -> None:
+def test_direct_linkedin_url_rewrites_to_humansearch_without_fake_channels() -> None:
+    rewritten = natural_fleet_command_text(
+        "https://www.linkedin.com/search/results/people/?keywords=cto"
+    )
+    assert rewritten == (
+        "/fleet-run humansearch "
+        "https://www.linkedin.com/search/results/people/?keywords=cto"
+    )
+
+
+def test_direct_linkedin_profile_url_also_rewrites_to_humansearch() -> None:
+    profile_url = "https://www.linkedin.com/in/example-candidate"
+    assert natural_fleet_command_text(profile_url) == (
+        f"/fleet-run humansearch {profile_url}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("url", "channel"),
+    (
+        (
+            "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "saramin",
+        ),
+        ("https://www.jobkorea.co.kr/Corp/Person/Find", "jobkorea"),
+    ),
+)
+def test_direct_korean_portal_url_rewrites_to_humansearch(
+    url: str, channel: str
+) -> None:
+    rewritten = natural_fleet_command_text(f"{url} win", message_id="42")
+    assert rewritten == (
+        f"/fleet-run humansearch {url} channels:{channel} winpc "
+        "idempotency:discord:42"
+    )
+
+
+def test_direct_search_url_uses_recent_clickup_context_when_available() -> None:
+    search_url = "https://www.linkedin.com/search/results/people/?keywords=cto"
+    rewritten = natural_fleet_command_text(
+        search_url,
+        context_url="https://app.clickup.com/t/abc",
+        context_channels=("saramin", "jobkorea"),
+    )
+    assert rewritten == (
+        "/fleet-run humansearch https://app.clickup.com/t/abc "
+        f"{search_url}"
+    )
+
+
+def test_direct_portal_url_dispatch_contract_preserves_search_urls() -> None:
+    search_url = "https://www.linkedin.com/search/results/people/?keywords=cto"
+    rewritten = natural_fleet_command_text(search_url, message_id="777")
+    assert rewritten is not None
+    options = parse_hermes_fleet_args(
+        "fleet-run", rewritten.removeprefix("/fleet-run ")
+    )
+    assert options == {
+        "skill": "humansearch",
+        "url": search_url,
+        "params": {
+            "search_urls": [search_url],
+            "idempotency_key": "discord:777",
+            "execution": "live",
+        },
+    }
+
+
+def test_win_without_position_context_does_not_enqueue() -> None:
+    assert natural_fleet_command_text("win") is None
+
+
+def test_unsupported_url_does_not_enqueue_even_with_humansearch_word() -> None:
+    assert natural_fleet_command_text(
+        "humansearch https://example.com/search/results/people"
+    ) is None
+    assert natural_fleet_command_text(
+        "humansearch https://example.com/?next=linkedin.com/in/example"
+    ) is None
+
+
+def test_portal_url_is_not_required_to_have_clickup_context() -> None:
     assert natural_fleet_command_text(
         "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
-    ) is None
-    assert natural_fleet_command_text("win") is None
+    ) == (
+        "/fleet-run humansearch "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search "
+        "channels:saramin"
+    )
 
 
 def test_unrelated_url_does_not_hijack_normal_chat() -> None:
@@ -262,6 +346,69 @@ def test_no_win_token_never_injects_winpc() -> None:
         "후보 찾아줘 https://app.clickup.com/t/abc"
     )
     assert rewritten and "winpc" not in rewritten
+
+
+def test_slash_aisearch_lookalike_still_rewrites_to_fleet_run() -> None:
+    # 2026-07-13 실사고: "/aisearch <url>" 는 실제 등록된 Hermes 명령이 아닌데
+    # (등록 명령은 fleet-run/status/resume/cancel 뿐) 예전엔 맨 앞 "/" 만 보고
+    # 통째로 None 을 반환해 자연어 변환을 못 타고 Hermes 일반 채팅으로 새서
+    # skill 이 aisearch 대신 humansearch 로 잘못 추측·큐잉됐다(job #22).
+    rewritten = natural_fleet_command_text(
+        "/aisearch https://app.clickup.com/t/9018789656/86ey35mg3"
+    )
+    assert rewritten == (
+        "/fleet-run aisearch https://app.clickup.com/t/9018789656/86ey35mg3 "
+        "channels:saramin,jobkorea"
+    )
+    # 대소문자·앞뒤 공백에도 흔들리지 않는다.
+    rewritten_upper = natural_fleet_command_text(
+        "  /AISEARCH   https://app.clickup.com/t/9018789656/86ey35mg3  "
+    )
+    assert rewritten_upper == rewritten
+
+
+def test_slash_humansearch_lookalike_still_rewrites_to_fleet_run() -> None:
+    rewritten = natural_fleet_command_text(
+        "/humansearch https://app.clickup.com/t/9018789656/86ey35mg3"
+    )
+    assert rewritten == (
+        "/fleet-run aisearch https://app.clickup.com/t/9018789656/86ey35mg3 "
+        "channels:saramin,jobkorea"
+    )
+
+
+def test_actually_registered_fleet_commands_are_not_rewritten() -> None:
+    # fleet-run/status/resume/cancel 은 Hermes 가 이미 직접 dispatch 한다 —
+    # pre_gateway_dispatch 훅에서 또 재작성하면 이중 처리가 된다.
+    for command in FLEET_PLUGIN_COMMANDS:
+        assert natural_fleet_command_text(
+            f"/{command} https://app.clickup.com/t/abc"
+        ) is None
+    # 대소문자를 바꿔도 여전히 재작성하면 안 된다(등록 명령은 원래 Hermes 가 직접 처리).
+    assert natural_fleet_command_text(
+        "/FLEET-RUN https://app.clickup.com/t/abc"
+    ) is None
+
+
+def test_unregistered_slash_command_is_ignored_even_with_clickup_url() -> None:
+    # 2026-07-13 Codex Rescue 2차 적대검증에서 발견: 첫 버전의 수정은 "등록된 4개
+    # 명령이 아니면 다 통과"라서, "/help <클릭업 링크>"처럼 이 플러그인과 무관한 명령
+    # (Hermes 게이트웨이 자체의 /help 등)에 우연히 클릭업 링크가 섞이면 의도치 않게
+    # 진짜 fleet job 으로 하이재킹됐다. aisearch/humansearch 두 lookalike 만 명시
+    # 허용목록으로 뚫어야 하고, 그 외 "/무엇" 은 원래처럼 전부 거부해야 한다.
+    assert natural_fleet_command_text("/help please") is None
+    assert natural_fleet_command_text("/help https://example.com/article") is None
+    assert natural_fleet_command_text(
+        "/help https://app.clickup.com/t/abc"
+    ) is None
+    # 오타/구두점이 붙은 등록 명령 근사치도 재작성하지 않는다(등록 명령도 아니고
+    # 허용목록에도 없으므로 그대로 거부).
+    assert natural_fleet_command_text(
+        "/fleet-run, https://app.clickup.com/t/abc"
+    ) is None
+    assert natural_fleet_command_text(
+        "/unknown-plugin-command https://app.clickup.com/t/abc"
+    ) is None
 
 
 def test_channels_and_idempotency_become_job_params() -> None:

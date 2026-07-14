@@ -17,6 +17,7 @@ import re
 import shlex
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlparse
 
 from .access import DiscordAuthorizedUser, load_authorized_discord_users
 from .discord_routing import DiscordAccessConfig, DiscordInvocation
@@ -86,8 +87,11 @@ def _set_option_once(options: dict[str, str], field: str, value: str, command: s
 
 
 def _is_search_url(url: str) -> bool:
-    low = url.lower()
-    return any(marker in low for marker in _SEARCH_HOST_MARKERS)
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return any(host == marker or host.endswith(f".{marker}") for marker in _SEARCH_HOST_MARKERS)
 
 
 def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
@@ -158,7 +162,11 @@ def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
             params["idempotency_key"] = idempotency
         if raw_channels or idempotency:
             params.setdefault("execution", "live")
-            params.setdefault("channels", ["saramin", "jobkorea"])
+            # aisearch는 채널 생략 시 양쪽 포털 검색이 기존 기본값이다. 반면
+            # humansearch는 params.search_urls가 실행 대상을 결정하므로 LinkedIn URL에
+            # 존재하지 않는 saramin/jobkorea 채널을 idempotency 때문에 주입하지 않는다.
+            if options.get("skill") == "aisearch":
+                params.setdefault("channels", ["saramin", "jobkorea"])
         if params:
             options["params"] = params
         if "url" not in options:
@@ -172,6 +180,19 @@ _NATURAL_TRIGGERS: tuple[str, ...] = (
 )
 _FOLLOWUP_TRIGGERS: tuple[str, ...] = ("계속해", "잡코리아도", "사람인부터", "방금 포지션")
 
+# "/" 로 시작하는 문장은 원래 전부 거부한다(다른 실제 명령 — 이 플러그인의 4개 fleet
+# 명령은 물론, Hermes 게이트웨이 자체의 /help·/new·/model 같은 명령까지 — 을 자연어로
+# 잘못 재해석해 이중 처리하지 않기 위해). 그런데 "aisearch"/"humansearch" 는 스킬
+# 이름 그 자체라 사람이 자연스럽게 "/aisearch <url>" 로 치기 쉬운데, 실제로는 등록된
+# 명령이 아니다(등록 명령은 fleet-run/status/resume/cancel 뿐). 예전엔 맨 앞 "/" 만
+# 보고 통째로 무시당해 자연어 변환을 못 타고 Hermes 일반 LLM 채팅으로 새서, 그 채팅이
+# skill 을 추측(aisearch 대신 humansearch)해 잘못 큐잉했다(2026-07-13 발견, job #22).
+# 그래서 이 두 스킬 이름 lookalike 만 명시 허용목록으로 뚫는다 — "등록 안 된 건 다
+# 통과"가 아니라 "이 두 개만 예외" 라서, /help·다른 플러그인 명령·오타 같은 임의의
+# "/무엇 <clickup url>" 이 의도치 않게 실제 fleet job 으로 하이재킹되지 않는다
+# (Codex Rescue 2차 적대검증에서 최초 버전의 이 과실 발견·수정).
+_SLASH_TRIGGER_ALIASES = frozenset(f"/{name}" for name in ("aisearch", "humansearch"))
+
 
 def natural_fleet_command_text(
     text: str,
@@ -182,11 +203,15 @@ def natural_fleet_command_text(
 ) -> str | None:
     """일반 Discord 문장을 Hermes slash command로 좁게 변환한다.
 
-    알려진 채용 URL 또는 명시적인 humansearch 트리거가 있고 URL이 실제로 있을 때만
-    변환한다. 일반 대화나 URL 없는 ``win``은 실행하지 않는다(fail-closed).
+    ClickUp 포지션 URL만 있으면 새 검색을 만드는 ``aisearch``로, LinkedIn·사람인·
+    잡코리아 검색 URL이 하나라도 직접 주어지면 기존 검색 결과를 순회하는
+    ``humansearch``로 변환한다. 일반 대화나 URL 없는 ``win``은 실행하지 않는다
+    (fail-closed).
     """
     raw = (text or "").strip()
-    if not raw or raw.startswith("/"):
+    if not raw:
+        return None
+    if raw.startswith("/") and raw.split(None, 1)[0].lower() not in _SLASH_TRIGGER_ALIASES:
         return None
     urls = [match.group(0).rstrip(".,);]}") for match in _URL_IN_TEXT_RE.finditer(raw)]
     low = raw.lower()
@@ -202,31 +227,52 @@ def natural_fleet_command_text(
         "win", "windows", "윈도우", "윈도우pc", "winpc"
     }
     clickup_urls = [url for url in urls if "app.clickup.com" in url.lower()]
-    if not clickup_urls and context_url and (followup or any(t in low for t in _NATURAL_TRIGGERS)):
+    direct_search_urls = [url for url in urls if _is_search_url(url)]
+    if (
+        not clickup_urls
+        and context_url
+        and (direct_search_urls or followup or any(t in low for t in _NATURAL_TRIGGERS))
+    ):
         urls = [context_url, *urls]
         clickup_urls = [context_url]
     if not urls:
         return None
-    if len(clickup_urls) != 1:
+    search_urls = [url for url in urls if _is_search_url(url)]
+    if len(clickup_urls) > 1:
         return None
-    known_url = bool(clickup_urls)
-    if not known_url and not any(trigger in low for trigger in _NATURAL_TRIGGERS) and not followup:
+    # ClickUp/지원 포털 이외 URL이 섞이면 그것을 포지션 URL로 추측하지 않는다.
+    # 직접 포털 URL만 있는 경우에는 parse_hermes_fleet_args가 첫 검색 URL을
+    # position_url 겸 params.search_urls로 보존한다.
+    if any(url not in clickup_urls and url not in search_urls for url in urls):
+        return None
+    if not clickup_urls and not search_urls:
         return None
 
-    mentions_saramin = "사람인" in raw or any("saramin.co.kr" in url.lower() for url in urls)
-    mentions_jobkorea = "잡코리아" in raw or any("jobkorea.co.kr" in url.lower() for url in urls)
+    skill = "humansearch" if search_urls else "aisearch"
+    if skill == "humansearch":
+        # humansearch는 이미 만들어진 검색 URL만 순회한다. LinkedIn은 channels 옵션의
+        # 허용값(saramin/jobkorea)에 없으므로 URL로만 전달하고 가짜 채널을 주입하지 않는다.
+        mentions_saramin = any("saramin.co.kr" in url.lower() for url in search_urls)
+        mentions_jobkorea = any("jobkorea.co.kr" in url.lower() for url in search_urls)
+    else:
+        mentions_saramin = "사람인" in raw
+        mentions_jobkorea = "잡코리아" in raw
     if mentions_saramin and not mentions_jobkorea:
         channels = ("saramin",)
     elif mentions_jobkorea and not mentions_saramin:
         channels = ("jobkorea",)
     elif mentions_saramin and mentions_jobkorea:
         channels = ("saramin", "jobkorea")
-    elif context_channels and followup:
+    elif skill == "aisearch" and context_channels and followup:
         channels = tuple(context_channels)
-    else:
+    elif skill == "aisearch":
         channels = ("saramin", "jobkorea")
+    else:
+        channels = ()
 
-    parts = ["/fleet-run", "aisearch", *urls, f"channels:{','.join(channels)}"]
+    parts = ["/fleet-run", skill, *urls]
+    if channels:
+        parts.append(f"channels:{','.join(channels)}")
     if machine:
         parts.append(machine)
     if message_id:

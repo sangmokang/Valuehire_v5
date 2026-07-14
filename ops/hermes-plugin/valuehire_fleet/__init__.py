@@ -139,7 +139,10 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
         clickup = re.search(r"https?://app\.clickup\.com/[^\s<>]+", text, re.IGNORECASE)
         if clickup:
             channels_match = re.search(r"\bchannels:([^\s]+)", rewritten)
-            channels = channels_match.group(1).split(",") if channels_match else ("saramin", "jobkorea")
+            # ClickUp-only aisearch rewrite always carries channels. A ClickUp +
+            # LinkedIn humansearch rewrite deliberately has no saramin/jobkorea
+            # channels, so preserve an empty context instead of inventing both.
+            channels = channels_match.group(1).split(",") if channels_match else ()
             store.put(user_id, channel_id, clickup.group(0).rstrip(".,);]}"), channels)
         return {"action": "rewrite", "text": rewritten}
     return None

@@ -91,7 +91,7 @@ def test_natural_discord_search_is_rewritten_to_fleet_run() -> None:
     assert result == {
         "action": "rewrite",
         "text": (
-            "/fleet-run aisearch https://app.clickup.com/t/abc "
+            "/fleet-run humansearch https://app.clickup.com/t/abc "
             "https://www.jobkorea.co.kr/Search/?stext=cto channels:jobkorea winpc"
         ),
     }
