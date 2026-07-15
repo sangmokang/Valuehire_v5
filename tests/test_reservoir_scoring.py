@@ -155,9 +155,14 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
                 self.assertEqual(self._breakdown(education=education)["education"], 10)
 
     def test_professional_associate_degree_is_not_bachelor_signal(self) -> None:
-        self.assertEqual(
-            self._breakdown(education="OO전문대학 전문학사")["education"], 5
-        )
+        for education in ("OO전문대학 전문학사", "OO전문대학교 졸업"):
+            with self.subTest(education=education):
+                self.assertEqual(self._breakdown(education=education)["education"], 5)
+
+    def test_dotted_english_degree_wording_gets_full_education_weight(self) -> None:
+        for education in ("B.S.", "B.A.", "M.S.", "Ph.D."):
+            with self.subTest(education=education):
+                self.assertEqual(self._breakdown(education=education)["education"], 10)
 
     def test_short_english_fragments_do_not_create_degree_match(self) -> None:
         for education in ("Williams College", "Baruch College"):
@@ -167,6 +172,9 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
     def test_company_tier_uses_evidence_and_signal_ratio(self) -> None:
         self.assertEqual(
             self._breakdown(current_or_past_companies=())["company_tier"], 0
+        )
+        self.assertEqual(
+            self._breakdown(current_or_past_companies=("", "  "))["company_tier"], 0
         )
         self.assertEqual(
             self._breakdown(current_or_past_companies=("무명컴퍼니",))["company_tier"], 5
@@ -192,6 +200,11 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
     def test_university_alias_requires_a_token_match(self) -> None:
         self.assertEqual(
             self._breakdown(education="Smith College Bachelor")["university_tier"], 4
+        )
+
+    def test_university_signal_is_nfkc_normalized(self) -> None:
+        self.assertEqual(
+            self._breakdown(education="ＫＡＩＳＴ 컴퓨터공학 학사")["university_tier"], 8
         )
 
     def test_korean_and_english_degree_wording_stay_in_same_sot24_band(self) -> None:
