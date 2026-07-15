@@ -1,7 +1,7 @@
 {
   "generator": {
     "engine": "Codex primary self-adversarial review",
-    "head": "52222265ccff626f2b87e1ad149912b4229f8821",
+    "head": "877fe3d5b59c682e3a7a2934e27febbe28fedc21",
     "verdict": "PASS",
     "evidence": "15/15 polarity controls passed; production scoring call graph traced"
   },
@@ -52,7 +52,7 @@
   "command": {
     "focused": "/Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest tests/test_reservoir_scoring.py -q",
     "full": "PATH=/Volumes/SSD/valuehire_v5/.venv/bin:$PATH ./verify.sh",
-    "diff": "git diff --check 1f99e70",
+    "diff": "git diff --check origin/main",
     "wiring": "rg -n '_education_score|_company_tier_score|_university_tier_score|score_profile_for_position|top_matches_for_profile' tools/multi_position_sourcing tests/test_reservoir_scoring.py"
   },
   "exit_code": {
