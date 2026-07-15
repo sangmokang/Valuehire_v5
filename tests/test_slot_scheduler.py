@@ -407,19 +407,19 @@ def test_linkedin_rps_capacity_cannot_be_raised_by_caller():
 
 
 @pytest.mark.parametrize(
-    "resource_class,account_key",
+    "resource_class,account_key,capacity",
     [
-        ("linkedin_rps", "portal:linkedin-alias"),
-        ("browser", "portal:linkedin_rps"),
+        ("linkedin_rps", "portal:linkedin-alias", 2),
+        ("browser", "portal:linkedin_rps", 1),
     ],
 )
-def test_linkedin_rps_resource_and_account_key_are_canonical_pair(resource_class, account_key):
+def test_linkedin_rps_resource_and_account_key_are_canonical_pair(resource_class, account_key, capacity):
     with pytest.raises(ValueError):
         plan_dispatches(
             [job("a", 1, 1, resource_class=resource_class, account_key=account_key)],
             [slot("s", "m", resource_class=resource_class, account_key=account_key)],
             requester_states=states("a"),
-            account_capacities={account_key: 2},
+            account_capacities={account_key: capacity},
         )
 
 
