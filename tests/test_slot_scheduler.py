@@ -347,6 +347,47 @@ def test_busy_sibling_slot_blocks_new_machine_dispatch(busy_fresh):
     assert plan == ()
 
 
+@pytest.mark.parametrize("human_fresh", [True, False])
+def test_human_active_sibling_blocks_entire_machine(human_fresh):
+    plan = plan_dispatches(
+        [job("a", 1, 1)],
+        [
+            slot("human", "m1", state="human_active", fresh=human_fresh),
+            slot("ready", "m1"),
+        ],
+        requester_states=states("a"),
+        account_capacities={"portal:saramin": 1},
+    )
+    assert plan == ()
+
+
+def test_busy_slots_are_a_lower_bound_for_account_running_count():
+    plan = plan_dispatches(
+        [job("a", 1, 1)],
+        [
+            slot("busy", "m1", state="busy"),
+            slot("ready", "m2"),
+        ],
+        requester_states=states("a"),
+        account_capacities={"portal:saramin": 1},
+    )
+    assert plan == ()
+
+
+@pytest.mark.parametrize("stale_state", ["ready", "parked", "offline"])
+def test_stale_observation_blocks_same_account_globally(stale_state):
+    plan = plan_dispatches(
+        [job("a", 1, 1)],
+        [
+            slot("stale", "m1", state=stale_state, fresh=False),
+            slot("ready", "m2"),
+        ],
+        requester_states=states("a"),
+        account_capacities={"portal:saramin": 1},
+    )
+    assert plan == ()
+
+
 def test_linkedin_rps_capacity_cannot_be_raised_by_caller():
     rps_jobs = [
         job("a", 1, 1, resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
@@ -362,6 +403,23 @@ def test_linkedin_rps_capacity_cannot_be_raised_by_caller():
             rps_slots,
             requester_states=states("a", "b"),
             account_capacities={"portal:linkedin_rps": 2},
+        )
+
+
+@pytest.mark.parametrize(
+    "resource_class,account_key",
+    [
+        ("linkedin_rps", "portal:linkedin-alias"),
+        ("browser", "portal:linkedin_rps"),
+    ],
+)
+def test_linkedin_rps_resource_and_account_key_are_canonical_pair(resource_class, account_key):
+    with pytest.raises(ValueError):
+        plan_dispatches(
+            [job("a", 1, 1, resource_class=resource_class, account_key=account_key)],
+            [slot("s", "m", resource_class=resource_class, account_key=account_key)],
+            requester_states=states("a"),
+            account_capacities={account_key: 2},
         )
 
 
@@ -411,6 +469,35 @@ def test_capability_values_match_with_exact_json_types():
         plan_dispatches(
             [job("a", 1, 1)],
             [slot("s", "m", capabilities={"opaque": object()})],
+            requester_states=states("a"),
+            account_capacities={"portal:saramin": 1},
+        )
+
+
+def test_unhashable_slot_state_is_rejected_as_malformed_input():
+    malformed = slot("s", "m")
+    object.__setattr__(malformed, "state", [])
+    with pytest.raises(ValueError):
+        plan_dispatches(
+            [job("a", 1, 1)],
+            [malformed],
+            requester_states=states("a"),
+            account_capacities={"portal:saramin": 1},
+        )
+
+
+@pytest.mark.parametrize(
+    "jobs,slots",
+    [
+        ([job("a", index + 1, index) for index in range(513)], [slot("s", "m")]),
+        ([job("a", 1, 1)], [slot(f"s{index}", f"m{index}") for index in range(17)]),
+    ],
+)
+def test_planner_rejects_unbounded_work_sets(jobs, slots):
+    with pytest.raises(ValueError):
+        plan_dispatches(
+            jobs,
+            slots,
             requester_states=states("a"),
             account_capacities={"portal:saramin": 1},
         )
