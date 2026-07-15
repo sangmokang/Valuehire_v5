@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM 하니스 &amp; 루프 엔지니어링 — Valuehire_v5 실전 코드 강의</title>
+<style>
+:root{
+  --paper:#FAF9F4; --ink:#22261E; --muted:#68705F; --line:#DFDDD0;
+  --green:#2F6B4F; --green-soft:#E5F0E9; --red:#AF4038; --red-soft:#F6E5E3;
+  --amber:#8F7327; --amber-soft:#F4EDDA; --code-bg:#F1EFE6; --chip:#ECEAE0;
+  --link:#2F6B4F;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#161A14; --ink:#E7E9DF; --muted:#9AA18F; --line:#2E332A;
+    --green:#82C4A0; --green-soft:#1F2E25; --red:#E29188; --red-soft:#342220;
+    --amber:#D5B76A; --amber-soft:#2E2915; --code-bg:#1E2219; --chip:#252A20;
+    --link:#82C4A0;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#161A14; --ink:#E7E9DF; --muted:#9AA18F; --line:#2E332A;
+  --green:#82C4A0; --green-soft:#1F2E25; --red:#E29188; --red-soft:#342220;
+  --amber:#D5B76A; --amber-soft:#2E2915; --code-bg:#1E2219; --chip:#252A20;
+  --link:#82C4A0;
+}
+:root[data-theme="light"]{
+  --paper:#FAF9F4; --ink:#22261E; --muted:#68705F; --line:#DFDDD0;
+  --green:#2F6B4F; --green-soft:#E5F0E9; --red:#AF4038; --red-soft:#F6E5E3;
+  --amber:#8F7327; --amber-soft:#F4EDDA; --code-bg:#F1EFE6; --chip:#ECEAE0;
+  --link:#2F6B4F;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:"Apple SD Gothic Neo","Pretendard","Noto Sans KR",system-ui,sans-serif;
+  line-height:1.75; font-size:16.5px;
+  -webkit-font-smoothing:antialiased;
+}
+main{max-width:47rem; margin:0 auto; padding:0 1.25rem 6rem}
+a{color:var(--link); text-decoration-thickness:1px; text-underline-offset:3px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--green); outline-offset:2px}
+h1,h2,h3{line-height:1.3; text-wrap:balance}
+h1{font-size:2rem; font-weight:800; letter-spacing:-0.01em; margin:.4em 0 .3em}
+h2{font-size:1.45rem; font-weight:800; margin:0 0 .4em}
+h3{font-size:1.08rem; font-weight:700; margin:2em 0 .5em}
+p{margin:.7em 0}
+header.hero{padding:4rem 0 1.5rem; border-bottom:1px solid var(--line); margin-bottom:2rem}
+.kicker{font-size:.78rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--green); margin:0}
+.lede{color:var(--muted); font-size:1.05rem; margin-top:.6rem}
+.rg{display:inline-flex; gap:.4rem; align-items:center; font-size:.8rem; font-weight:700; margin-top:1rem}
+.rg .r,.rg .g{padding:.1rem .55rem; border-radius:99px}
+.rg .r{background:var(--red-soft); color:var(--red)}
+.rg .g{background:var(--green-soft); color:var(--green)}
+.rg .arrow{color:var(--muted)}
+nav.toc{margin:2rem 0 3rem; border:1px solid var(--line); border-radius:10px; padding:1.1rem 1.3rem}
+nav.toc .toc-title{font-size:.78rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 .6rem}
+nav.toc ol{margin:0; padding-left:1.2rem}
+nav.toc li{margin:.25rem 0}
+nav.toc .lv{font-size:.72rem; font-weight:700; margin-left:.45rem; padding:.05rem .45rem; border-radius:99px; vertical-align:1px; white-space:nowrap}
+.lv1{background:var(--green-soft); color:var(--green)}
+.lv2{background:var(--amber-soft); color:var(--amber)}
+.lv3{background:var(--red-soft); color:var(--red)}
+section.part{margin:3.5rem 0; padding-top:1rem; border-top:2px solid var(--line)}
+.part-no{font-size:.78rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin:0 0 .2rem}
+.lesson{margin:2.4rem 0; padding:1.3rem 1.4rem; border:1px solid var(--line); border-radius:12px}
+.lesson h3{margin-top:0}
+.lesson .why{color:var(--muted); font-size:.95rem; margin-top:-.3rem}
+code{font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.86em}
+p code, li code, td code{background:var(--code-bg); padding:.1em .35em; border-radius:4px}
+code.ref{
+  background:var(--chip); border:1px solid var(--line); border-radius:6px;
+  padding:.12em .5em; font-size:.8em; white-space:nowrap;
+}
+pre{
+  background:var(--code-bg); border:1px solid var(--line); border-radius:10px;
+  padding:1rem 1.1rem; overflow-x:auto; line-height:1.55; font-size:.83rem; margin:1rem 0;
+}
+pre code{background:none; padding:0}
+.label{display:inline-block; font-size:.72rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; margin:1.1rem 0 .2rem}
+.label.code-l{color:var(--green)}
+.label.theme-l{color:var(--amber)}
+.label.break-l{color:var(--red)}
+.exercise{background:var(--red-soft); border-radius:8px; padding:.7rem 1rem; font-size:.93rem}
+.exercise strong{color:var(--red)}
+table{border-collapse:collapse; width:100%; font-size:.9rem; margin:1rem 0}
+.table-wrap{overflow-x:auto}
+th,td{text-align:left; padding:.5rem .7rem; border-bottom:1px solid var(--line); vertical-align:top}
+th{font-size:.78rem; letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
+td:first-child{white-space:nowrap}
+.callout{border-left:3px solid var(--amber); background:var(--amber-soft); padding:.8rem 1.1rem; border-radius:0 8px 8px 0; margin:1.2rem 0; font-size:.95rem}
+.callout.green{border-color:var(--green); background:var(--green-soft)}
+.callout.red{border-color:var(--red); background:var(--red-soft)}
+ul,ol{padding-left:1.3rem}
+li{margin:.3rem 0}
+footer{margin-top:4rem; padding-top:1.5rem; border-top:1px solid var(--line); color:var(--muted); font-size:.85rem}
+.updates li{font-size:.9rem}
+figure{margin:1.5rem 0}
+figcaption{font-size:.8rem; color:var(--muted); margin-top:.4rem}
+.flow{display:flex; flex-wrap:wrap; gap:.45rem; align-items:center; font-size:.82rem; font-weight:600}
+.flow .node{background:var(--chip); border:1px solid var(--line); border-radius:8px; padding:.3rem .7rem; white-space:nowrap}
+.flow .gate{background:var(--green-soft); border-color:var(--green); color:var(--green)}
+.flow .stop{background:var(--red-soft); border-color:var(--red); color:var(--red)}
+.flow .sep{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<header class="hero">
+  <p class="kicker">Valuehire_v5 · 실전 코드 강의</p>
+  <h1>LLM 하니스 &amp; 루프 엔지니어링</h1>
+  <p class="lede">교재는 이 저장소 자신이다. 모든 개념은 실제로 돌아가는 파일:줄에서 출발하고,
+  이 문서가 인용한 경로는 <code>./verify.sh</code>가 실존을 검사한다 — 코드가 바뀌어 인용이 낡으면 이 문서가 RED가 된다.</p>
+  <p class="rg"><span class="r">RED</span><span class="arrow">→</span><span class="g">GREEN</span><span class="arrow">— 이 두 색이 이 과정 전체의 문법이다.</span></p>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <p class="toc-title">학습 지도 — 7부 과정</p>
+  <ol>
+    <li><a href="#part0">오리엔테이션: 왜 하니스인가</a><span class="lv lv1">입문</span></li>
+    <li><a href="#part1">LLM 호출의 계약화</a><span class="lv lv1">입문</span></li>
+    <li><a href="#part2">결정론 채점기 — LLM을 심판석에서 내리기</a><span class="lv lv2">중급</span></li>
+    <li><a href="#part3">Loop Engineering I: 순회 루프</a><span class="lv lv2">중급</span></li>
+    <li><a href="#part4">Loop Engineering II: 워커 루프와 함대</a><span class="lv lv2">중급</span></li>
+    <li><a href="#part5">하니스 조이기 I: fail-closed 발송 게이트</a><span class="lv lv3">고급</span></li>
+    <li><a href="#part6">하니스 조이기 II: Generate-Verify 분리</a><span class="lv lv3">고급</span></li>
+    <li><a href="#part7">진화 루프: 하니스는 실패에서 자란다</a><span class="lv lv3">고급</span></li>
+  </ol>
+</nav>
+
+<!-- ================================================================ -->
+<section class="part" id="part0">
+  <p class="part-no">0부 · 입문</p>
+  <h2>오리엔테이션: 왜 하니스인가</h2>
+
+  <p>LLM은 같은 입력에 다른 출력을 낸다. 이 <strong>변동성(variance)</strong>이 LLM 시스템 품질 문제의 뿌리다.
+  하니스 엔지니어링의 목적은 <code class="ref" data-ref="docs/harness.md">docs/harness.md:3</code>에 한 문장으로 박혀 있다:</p>
+
+  <blockquote><p>"목적은 단 하나: 출력의 변동성을 줄여 재현 가능하게 만든다."</p></blockquote>
+
+  <p>모델을 더 똑똑하게 만드는 게 아니라, <strong>모델을 둘러싼 구조물(게이트·검증·루프)</strong>로 출력의 분산을 좁힌다.
+  이 저장소의 하니스는 문서가 아니라 배관이다:</p>
+
+  <div class="table-wrap"><table>
+    <tr><th>게이트</th><th>명령</th><th>기계 강제 지점</th></tr>
+    <tr><td>0 시작자격</td><td><code>make red-ledger</code></td><td><code class="ref" data-ref="scripts/harness/red-ledger.sh">scripts/harness/red-ledger.sh</code> — 미해결 RED 있으면 exit 1, 새 작업 금지</td></tr>
+    <tr><td>2 격리</td><td><code>make task NAME=x</code></td><td><code class="ref" data-ref="scripts/harness/task.sh">scripts/harness/task.sh</code> — worktree 강제, main 읽기 전용</td></tr>
+    <tr><td>4a 검증</td><td><code>./verify.sh</code></td><td><code class="ref" data-ref="verify.sh">verify.sh</code> — pytest 단일 수렴, exit 0만 GREEN</td></tr>
+    <tr><td>5 배송</td><td><code>make ship</code></td><td><code class="ref" data-ref="scripts/harness/ship.sh">scripts/harness/ship.sh</code> — main이면 즉시 거부, verify 재실행 후 PR</td></tr>
+    <tr><td>CI</td><td>push/PR</td><td><code class="ref" data-ref=".github/workflows/verify.yml">.github/workflows/verify.yml</code> — 초록 없이 merge 불가</td></tr>
+  </table></div>
+
+  <div class="callout green">
+    <strong>핵심 관점.</strong> "게이트를 늘리지 않는다"가 설계 원칙이다
+    (<code class="ref" data-ref="docs/harness.md">docs/harness.md:101</code> 단일 verify 게이트 원칙).
+    스킬·문서·배관이 늘어도 검사는 전부 <code>./verify.sh</code> 하나로 수렴한다.
+    검증 통로가 하나면 우회로가 없다.
+  </div>
+
+  <p class="label theme-l">학습 테마</p>
+  <ul>
+    <li>Anthropic <em>Building Effective Agents</em> — 단순성·투명성·도구 설계(ACI). 우리 하니스와의 정렬표는
+      <code class="ref" data-ref="docs/harness-engineering.md">docs/harness-engineering.md</code> §5.</li>
+    <li>워크플로 vs 에이전트: 정형 작업은 게이트 워크플로로, 모델 판단이 필요한 곳만 자율에 맡긴다.</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="part1">
+  <p class="part-no">1부 · 입문</p>
+  <h2>LLM 호출의 계약화</h2>
+  <p>이 저장소가 LLM을 부르는 곳은 놀랄 만큼 적다. 부르는 곳마다 <strong>입출력 계약</strong>이 있고,
+  계약 위반의 종착지는 언제나 "예외 → 차단"이지 "대충 통과"가 아니다.</p>
+
+  <div class="lesson">
+    <h3>1.1 — LLM 클라이언트는 함수 하나다</h3>
+    <p class="why">왜: 호출 지점이 흩어지면 비용·모델·에러 처리가 제각각이 된다.</p>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/llm_keywords.py">tools/multi_position_sourcing/llm_keywords.py:329</code> — 운영용 클라이언트는 <code>claude -p</code> 서브프로세스를 감싼 클로저다:</p>
+<pre><code>def claude_keyword_client(*, model: str = "haiku", ...) -> LLMClient:
+    """운영용 LLM 클라이언트 — 로컬 claude -p 호출(비용 헌법: 저가 모델 기본)."""
+    def _call(prompt: str) -> str:
+        if shutil.which("claude") is None:
+            raise KeywordGenerationError("claude CLI를 찾지 못했습니다.")
+        result = run_command(["claude", "-p", "--model", model, prompt], ...)
+        if result.returncode != 0:
+            raise KeywordGenerationError(f"claude -p 실패(rc={result.returncode}): ...")
+        return result.stdout or ""
+    return _call</code></pre>
+    <ul>
+      <li><strong>비용 헌법</strong>: 기본 모델이 <code>haiku</code>. 키워드 생성 같은 기계적 작업에 비싼 모델을 쓰지 않는다.</li>
+      <li><strong>주입 가능(run_command 인자)</strong>: 테스트는 진짜 LLM 없이 fake로 조립·파싱을 검증한다.</li>
+      <li>API 키 대신 로컬 CLI(Max 구독) — 돈이 새는 경로 자체를 만들지 않는다.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>의존성 주입으로 LLM을 테스트 가능하게 만들기 · LLM 게이트웨이 패턴 · 모델 티어 라우팅(싼 모델 기본, 비싼 모델은 근거 있을 때만)</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> <code>claude</code> CLI가 없는 머신에서 무슨 일이 일어나는가?
+    조용한 빈 결과인가, 시끄러운 예외인가? (답: <code>KeywordGenerationError</code> — "0건 검색 위험"을 예외로 승격)</p>
+  </div>
+
+  <div class="lesson">
+    <h3>1.2 — 구조화 출력: 파싱이 아니라 검문</h3>
+    <p class="why">왜: LLM의 JSON은 "아마도 JSON"이다. 믿는 순간 시스템이 LLM의 변동성을 물려받는다.</p>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/llm_keywords.py">tools/multi_position_sourcing/llm_keywords.py:78</code>의 <code>_extract_json_object</code> + <code>:95</code>의 <code>_clean_keywords</code>:</p>
+<pre><code>def _clean_keywords(raw_keywords) -> tuple[str, ...]:
+    if not isinstance(raw_keywords, list):
+        raise KeywordGenerationError('"keywords"가 리스트가 아닙니다.')
+    seen: set[str] = set(); ordered: list[str] = []
+    for item in raw_keywords:
+        if not isinstance(item, str): continue
+        kw = item.strip()
+        if not kw or kw in seen: continue
+        seen.add(kw); ordered.append(kw)
+    if not ordered:
+        raise KeywordGenerationError("LLM이 유효한 키워드를 하나도 내지 않았습니다 (0건 검색 위험).")
+    return tuple(ordered)</code></pre>
+    <p>검문 4단: ① 최상위가 객체인가 ② 필드가 리스트인가 ③ 원소별 타입·공백·중복 정리 ④ <strong>정리 후 0건이면 예외</strong>.
+    LLM 출력은 신뢰 경계(trust boundary) 밖의 입력으로 취급된다 — 사용자 입력과 똑같이.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>Structured output / JSON Schema 강제 · 신뢰 경계로서의 LLM · "빈 성공"을 실패로 승격하기</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> LLM이 <code>{"keywords": ["", "  ", 42]}</code>를 반환하면?
+    각 단계에서 무엇이 걸러지고 최종적으로 어떤 예외가 나는지 추적해 보라.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>1.3 — LLM을 통째로 워커로 쓰기: claude -p / codex exec 동형 계약</h3>
+    <p class="why">왜: 함대(fleet) 워커는 프롬프트 하나로 스킬 전체를 위임한다. 이때 계약은 "출력 텍스트"가 아니라 "영수증(receipt)"이다.</p>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/fleet_worker.py">tools/multi_position_sourcing/fleet_worker.py:206</code> — 두 에이전트가 같은 시그니처를 공유한다:</p>
+<pre><code>def _run_claude(prompt, timeout, env=None) -> tuple[str, str, int]:
+    proc = subprocess.run(["claude", "-p", prompt], cwd=str(REPO), ...)
+    return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
+
+def _run_codex(prompt, timeout, env=None) -> tuple[str, str, int]:
+    """codex exec 실행(레포 루트) — claude -p 와 동형 계약."""
+    proc = subprocess.run(["codex", "exec", prompt], cwd=str(REPO), ...)</code></pre>
+    <p>그리고 <code>validate_aisearch_receipt</code>
+    (<code class="ref" data-ref="tools/multi_position_sourcing/fleet_worker.py">fleet_worker.py:136</code>)가
+    stdout에서 <strong>기계 영수증</strong>(등록 건수·URL)을 파싱해 검증한다. "Done"이라는 말은 완료의 증거가 아니다 —
+    영수증 없는 실행은 실패로 처리된다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>에이전트 실행의 증거 계약(receipt pattern) · 멀티 에이전트 추상화(동형 인터페이스) · 타임아웃을 계약에 포함하기</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> 하위 에이전트가 "작업을 완료했습니다"라고 말만 하고 아무 것도 등록하지 않았다.
+    워커는 이를 done으로 기록하는가 failed로 기록하는가? receipt 검증 코드를 따라가 확인하라.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>1.4 — LLM 실패의 복구 계획도 코드다</h3>
+    <p class="why">왜: 타임아웃·사용량 한도는 "언젠가"가 아니라 "매일" 일어난다.</p>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/timeout_recovery.py">tools/multi_position_sourcing/timeout_recovery.py:160</code> —
+    <code>build_timeout_recovery_payload</code>는 실패 보고서에서 타임아웃 초·Claude 한도 감지·부작용 0 여부를 파싱해
+    <strong>재개 계획을 데이터로</strong> 만든다. 복구가 사람 기억이 아니라 함수 출력이다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>부분 실패의 분류(타임아웃 vs 한도 vs 차단) · 부작용 0 확인 후 재시도(idempotent retry) · 복구 계획의 구조화</li></ul>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="part2">
+  <p class="part-no">2부 · 중급</p>
+  <h2>결정론 채점기 — LLM을 심판석에서 내리기</h2>
+  <p>이 저장소에서 가장 반직관적인 설계 결정: <strong>후보 채점(85점 게이트의 입력)은 LLM이 하지 않는다.</strong>
+  순수 파이썬 결정론 코어가 한다. LLM은 검색어를 만들고 화면을 읽는 데 쓰이지만, 돈이 걸린 판정(발송 여부)의
+  숫자는 재현 가능한 코드가 만든다.</p>
+
+  <div class="lesson">
+    <h3>2.1 — 가중치는 단일 출처, 채점은 순수 함수</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/humansearch.py">tools/multi_position_sourcing/humansearch.py:34</code> —
+    사장님이 확정한 가중치(학력 0.30 / 직무적합 0.50 / 논리 0.10 / 이직안정 0.10)가 상수 하나로 박혀 있고,
+    <code>score_humansearch</code>(<code>:352</code>)가 "가중치는 SCORING_WEIGHTS 단일 출처"를 명시한다.</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/scoring.py">tools/multi_position_sourcing/scoring.py:144</code>의
+    <code>_weighted_portion_score(matched, total, weight)</code> — PR#110에서 "매칭 개수"가 아니라
+    <strong>matched/total 비율</strong>로 재설계된 부분 점수. 채점 로직의 변경이 곧 PR이고, 곧 테스트다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>LLM-as-judge의 함정(비재현·편향·프롬프트 민감성)과 결정론 대체 · 점수의 단일 출처 원칙 · 근거(evidence) 없는 점수에 상한 걸기</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> 같은 프로필을 두 번 채점하면 점수가 같은가? LLM 채점이라면 이 질문에 답할 수 있는가?
+    <code>score_humansearch</code>가 같은 입력에 다른 출력을 낼 수 있는 경로가 있는지 찾아보라.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>2.2 — 임베딩도 순수 파이썬: 저수지 모델</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/embed.py">tools/multi_position_sourcing/embed.py:38</code>
+    <code>embed_text</code> + <code>:52</code> <code>cosine_similarity</code> — numpy 없이(CI 제약) 프로필을 벡터화해
+    pgvector에 적재하고, <code class="ref" data-ref="tools/multi_position_sourcing/match.py">tools/multi_position_sourcing/match.py:46</code>
+    <code>match_jd_to_reservoir</code>가 JD 임베딩 top-K 코사인으로 1차 후보를 추린 뒤 <strong>결정론 채점으로 2차 정렬</strong>한다.</p>
+    <p>패턴: <em>싼 확률적 도구(벡터 검색)로 후보를 좁히고, 비싼 판정은 결정론으로.</em> 리트리벌과 판정의 분리다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>retrieve-then-rerank · 임베딩 기반 중복 판정 · 관측 로그를 경계마다 남기기(모듈 docstring의 line="index"/"match")</li></ul>
+  </div>
+
+  <div class="lesson">
+    <h3>2.3 — 하드 제외는 점수보다 먼저</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/humansearch.py">tools/multi_position_sourcing/humansearch.py:251</code>
+    <code>hard_exclude_reason</code> — 어떤 점수로도 뒤집을 수 없는 제외 사유(경쟁사 재직 등)는 점수 계산과 분리된 별도 축이다.
+    발송 게이트(5부)에서 <code>hard_excluded:*</code> 사유는 점수 85점을 이겨버린다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>점수와 자격(eligibility)의 분리 · 가산 로직으로 감점을 흉내내지 말 것(우회 가능성)</li></ul>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="part3">
+  <p class="part-no">3부 · 중급</p>
+  <h2>Loop Engineering I: 순회 루프</h2>
+  <p>루프 엔지니어링의 첫 질문은 "어떻게 도는가"가 아니라 <strong>"언제, 왜 멈추는가"</strong>다.
+  중단 조건이 없는 루프는 봇처럼 굴다가 차단당하거나(SOT 2 위반), 영원히 돈다.</p>
+
+  <div class="lesson">
+    <h3>3.1 — 순회 계획을 데이터(SOT)에서 읽는다</h3>
+    <p class="why">왜: "몇 페이지까지 돌지"를 코드에 하드코딩하면 채널마다 복사되고, 복사본은 어긋난다.</p>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/humansearch.py">tools/multi_position_sourcing/humansearch.py:153</code>
+    <code>plan_result_count_traversal</code> — 검색 결과 수를 <code class="ref" data-ref="docs/sot/22-talent-search-filters.json">docs/sot/22-talent-search-filters.json</code>의
+    채널별 밴드에 대입해 전수/부분/포기/조건추가를 결정하는 <strong>순수 함수</strong>:</p>
+<pre><code># 타입 fail-closed: int 만 허용. float(10.5)·str("10")·None·bool 은 거부.
+# bool 은 int 서브클래스라 type() 로 명시 거부한다(True 를 1명으로 오취급 방지).
+if type(result_count) is not int:
+    raise ValueError(f"result_count 는 int 여야 함(fail-closed): ...")
+...
+raise ValueError(f"result_count={result_count} 가 {channel} 밴드에 없음(fail-closed)")</code></pre>
+    <ul>
+      <li>밴드 경계를 SOT 파일에서 읽는다 — "RPS 상한(60)을 사람인(80)에 복사하면 61~80 GOLD가 잘린다"는 실제 사고 시나리오가 주석에 있다.</li>
+      <li><code>bool</code>이 <code>int</code>의 서브클래스라는 파이썬 함정을 명시적으로 막는다 — V1(Codex) 적대검증이 잡은 회귀.</li>
+      <li>해석 불가능한 입력은 조용히 기본값으로 가지 않고 <code>ValueError</code> — 루프의 첫 걸음부터 fail-closed.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>정책은 데이터, 실행은 코드(policy-as-data) · 순회 계획의 순수 함수화(테스트 가능) · 파이썬 타입 함정(bool⊂int, NaN)</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> <code>plan_result_count_traversal("saramin", True)</code>를 호출하면?
+    <code>result_count=10.0</code>은? SOT22에서 밴드 하나를 지우면? 세 경우 모두 명시적 예외가 나는지 확인하라.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>3.2 — 중복 방지: 정규화 → 원장 → TTL</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/dedup.py">tools/multi_position_sourcing/dedup.py:15</code>
+    <code>canonical_profile_url</code> — 같은 후보의 URL 변형(쿼리스트링·트래킹 파라미터)을 하나의 정본으로 접고,
+    <code>:49</code> <code>seen_within_ttl</code>이 시간창 안의 재방문을 걸러낸다.
+    발송 쪽 90일 중복은 별도 원장(<a href="#part5">5부</a>)이 지킨다 — <strong>순회 중복과 발송 중복은 다른 층위</strong>다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>정규화 키 설계(canonical key) · TTL 창 중복 제거 · 멱등성(idempotency): 루프를 두 번 돌려도 결과가 같게</li></ul>
+  </div>
+
+  <div class="lesson">
+    <h3>3.3 — 검색어 확장 루프: 갭을 찾아 다음 반복을 만든다</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/humansearch_keyword_expand.py">tools/multi_position_sourcing/humansearch_keyword_expand.py:112</code>
+    <code>expand_search_terms</code> — 사람이 건 검색어를 한↔영·띄어쓰기 변형으로 확장하고, JD 핵심 키워드 중
+    <strong>어떤 검색어도 덮지 못한 갭(missing)</strong>을 찾아 재검색 후보를 만든다.
+    루프의 다음 반복 입력을 이번 반복의 관측에서 생성하는 구조 — 이것이 루프 엔지니어링의 "자기 급유"다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>coverage-gap 기반 반복 · 탐색 공간의 체계적 소진 · 무한 확장 방지(변형 캡)</li></ul>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="part4">
+  <p class="part-no">4부 · 중급</p>
+  <h2>Loop Engineering II: 워커 루프와 함대</h2>
+  <p>순회 루프가 "한 작업 안의 반복"이라면, 워커 루프는 <strong>"작업들 사이의 반복"</strong>이다.
+  3대 머신(맥미니·맥북·윈도우)이 Supabase 큐를 폴링하며 <code>claude -p</code>로 스킬을 실행한다.</p>
+
+  <figure>
+    <div class="flow" role="img" aria-label="워커 루프 흐름도">
+      <span class="node">claim_next</span><span class="sep">→</span>
+      <span class="node gate">양보 판정 R4</span><span class="sep">→</span>
+      <span class="node">build_job_prompt</span><span class="sep">→</span>
+      <span class="node">claude -p / codex exec</span><span class="sep">→</span>
+      <span class="node gate">receipt 검증</span><span class="sep">→</span>
+      <span class="node">release(done|failed)</span><span class="sep">→</span>
+      <span class="node">Discord 보고</span>
+    </div>
+    <figcaption>run_once 한 사이클. 어느 단계가 죽어도 워커 프로세스는 살아서 다음 잡으로 간다.</figcaption>
+  </figure>
+
+  <div class="lesson">
+    <h3>4.1 — run_once: 한 번에 잡 하나, 상태는 넷</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/fleet_worker.py">tools/multi_position_sourcing/fleet_worker.py:396</code>:</p>
+<pre><code>def run_once(self, dry_run: bool = False) -> str:
+    """큐에서 잡 1건 처리. 반환: idle|done|paused_for_human|failed."""
+    job = self.queue.claim_next(self.machine)
+    if not job:
+        # 큐가 비었으면 미소진 변형을 1건만 enqueue — 회당 1건 자연 스로틀
+        self._enqueue_idle_variant()
+        return "idle"
+    ...
+    try:
+        prompt = build_job_prompt(job)
+    except ValueError as exc:
+        self._release(job, job_id, "failed", error=f"계약 위반 잡: {exc}")</code></pre>
+    <ul>
+      <li>루프의 반환값이 <strong>enum 4개</strong>(idle/done/paused_for_human/failed)로 닫혀 있다. 상태가 열려 있으면 관측이 불가능하다.</li>
+      <li>계약 위반 잡은 실행 전에 걸러 failed로 회수 — 나쁜 입력이 LLM까지 가지 않는다.</li>
+      <li>idle일 때 스스로 일감을 1건 만든다(<code>_enqueue_idle_variant</code>) — 심야에 미소진 검색 변형을 소진하는 <strong>자기 급유 루프</strong>. 단 "회당 1건"으로 스로틀.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>큐 기반 워커(at-least-once 전달) · 닫힌 상태 집합 · 백프레셔와 자연 스로틀</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> 워커 두 대가 동시에 같은 잡을 claim하면? <code class="ref" data-ref="tools/multi_position_sourcing/job_queue.py">tools/multi_position_sourcing/job_queue.py:141</code>의
+    <code>claim_next_job_payload</code>와 상태 전이 검증(<code>:137 is_valid_transition</code>)이 어떻게 이중 실행을 막는지 추적하라.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>4.2 — R4 양보-재개: 사람과 머신의 공존 판정</h3>
+    <p class="why">왜: 무인 워커가 사장님이 쓰는 크롬을 뺏으면 안 된다(SOT 2). 그런데 "사장님이 쓰는 중"을 어떻게 아는가?</p>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/owner_activity.py">tools/multi_position_sourcing/owner_activity.py:42</code>:</p>
+<pre><code>def compute_yield_decision(*, frontmost_is_chrome, os_idle_seconds, ...) -> bool:
+    """순수 결정: 무인 워커가 지금 양보(yield)해야 하는가?"""
+    if frontmost_is_chrome:
+        return True                       # 크롬이 앞창 = 사장님 사용 중
+    if os_idle_seconds is None:
+        return True                       # 판단 불가 → fail-closed 양보
+    return os_idle_seconds < idle_threshold_seconds</code></pre>
+    <ul>
+      <li>읽는 신호는 딱 둘 — 앞창 앱 이름, OS idle 초. 키입력·URL·쿠키는 <strong>설계적으로 안 읽는다</strong>(프라이버시가 계약에 있다).</li>
+      <li>신호를 못 읽으면 양보한다. "사장님을 앞지르지 않는다"의 fail-closed.</li>
+      <li>이 순수 함수가 <code class="ref" data-ref="tools/multi_position_sourcing/harvest_driver.py">tools/multi_position_sourcing/harvest_driver.py:50</code>
+      <code>decide_tick</code>의 단일 출처다 — "재구현 금지"가 주석에 명시돼 있다.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>human-in-the-loop 공존 설계 · 판정 로직의 단일 출처(재구현 금지) · 관측 최소화 원칙</li></ul>
+  </div>
+
+  <div class="lesson">
+    <h3>4.3 — 죽음을 계획하기: heartbeat, 좀비 회수, 재개 판정</h3>
+    <p class="label code-l">실제 코드</p>
+    <ul>
+      <li><code class="ref" data-ref="tools/multi_position_sourcing/fleet_heartbeat.py">tools/multi_position_sourcing/fleet_heartbeat.py</code> —
+      주기 heartbeat. 오래 침묵한 머신은 배차에서 빠진다: 죽은 워커에 잡이 쌓이는 것을 막는다.</li>
+      <li><code class="ref" data-ref="tools/multi_position_sourcing/harvest_driver.py">tools/multi_position_sourcing/harvest_driver.py:79</code>
+      <code>decide_resume</code> — 크래시 후 재시작 시 "이어서 할지, 처음부터 할지"가 함수다.</li>
+      <li><code class="ref" data-ref="tools/multi_position_sourcing/fleet_worker.py">tools/multi_position_sourcing/fleet_worker.py:49</code>
+      <code>sleep_seconds_after(status, poll_seconds)</code> — 다음 폴링 간격조차 상태의 함수다(실패 후엔 더 길게).</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>liveness vs readiness · lease 만료와 좀비 태스크 회수 · crash-only 설계(언제 죽어도 재개 가능)</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> 워커가 잡 실행 중 kill -9로 죽었다. 그 잡은 영원히 running인가?
+    누가, 언제, 어떤 조건으로 되돌리는지 코드에서 찾아라. 못 찾으면 그게 바로 다음 RED 테스트다.</p>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="part5">
+  <p class="part-no">5부 · 고급</p>
+  <h2>하니스 조이기 I: fail-closed 발송 게이트</h2>
+  <p>여기가 이 저장소에서 가장 단단히 조여진 곳이다. 돈과 평판이 걸린 액션(후보에게 제안 발송)은
+  <strong>단일 관문</strong>을 통과해야 하고, 관문은 "허용 사유"를 세지 않는다 — <strong>차단 사유가 0개일 때만</strong> 열린다.</p>
+
+  <div class="lesson">
+    <h3>5.1 — evaluate_send: 사유 0개일 때만 allowed</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/auto_send.py">tools/multi_position_sourcing/auto_send.py:238</code> —
+    SOT28(<code class="ref" data-ref="docs/sot/28-auto-send-policy.json">docs/sot/28-auto-send-policy.json</code>)의 유일한 발송 관문:</p>
+<pre><code># 점수: int 만 인정(bool 금지). None=미채점, 그 외 타입(float/NaN/str)=오염 — 전부 차단.
+# V1 critical 봉인: json 의 NaN 은 float — nan&lt;85 가 False 라 종전 코드는 통과시켰다.
+if request.score is None:
+    reasons.append("score_missing: 점수 없는 후보는 발송 금지(fail-closed)")
+elif not _strict_int(request.score):
+    reasons.append(f"score_invalid: 점수는 정수만 인정 — fail-closed")
+elif request.score &lt; min_score:
+    reasons.append(f"score_below_min: {request.score} &lt; {min_score}")
+...
+# 검문은 게이트가 직접 실행한다 — 자가신고 플래그 금지(V1 반례 6: 종이 게이트).
+check = precheck_inmail(request.body, profile_name=..., channel=...)
+reasons.extend(f"precheck_stop:{stop}" for stop in check.stops)
+...
+return SendDecision(allowed=not reasons, reasons=tuple(reasons))</code></pre>
+    <p>이 함수엔 적대검증이 잡아낸 실전 결함 두 개가 주석으로 봉인돼 있다:</p>
+    <ul>
+      <li><strong>NaN 우회</strong>: JSON의 NaN은 float이고 <code>nan &lt; 85</code>는 False — 종전 코드는 NaN 점수를 통과시켰다.
+      봉인: 정수만 인정(<code>_strict_int</code>, bool도 거부).</li>
+      <li><strong>종이 게이트</strong>: "precheck 통과했음" 플래그를 호출자가 자가신고하면 게이트는 종이다.
+      봉인: 게이트가 <code class="ref" data-ref="tools/multi_position_sourcing/inmail_precheck.py">inmail_precheck.py:247</code>의
+      검문을 <strong>직접 실행</strong>한다.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>fail-closed 설계(판단 불가=차단) · 사유 누적 패턴(첫 실패에서 멈추지 않고 전부 수집 — 관측성) · 자가신고 금지(게이트가 직접 검사)</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> <code>evaluate_send</code>를 우회해 발송 클릭에 도달하는 코드 경로가 존재하는가?
+    <code>grep -rn "plan_send_steps\|evaluate_send" tools/</code>로 호출자를 전수 추적하라. 우회로가 있으면 그게 SOT28 위반이자 다음 RED다.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>5.2 — 정책 파일 자체를 검문한다</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/auto_send.py">tools/multi_position_sourcing/auto_send.py:67</code>
+    <code>load_policy</code> — SOT28 JSON을 런타임에 읽되, <code>daily_cap</code>이 bool이거나 <code>dedupe_window_days</code>가
+    1 미만이면 <code>AutoSendPolicyError</code>. <strong>정책 파일이 오염되면 발송 전체가 선다.</strong>
+    킬스위치는 더 극단적이다 — env 변수가 <em>존재하기만 하면</em>(값 무관) 전 채널 정지.</p>
+    <ul>
+      <li>원장(<code>SendLedger</code>, <code>:126</code>)은 발송 본문을 저장하지 않는다 — sha256 해시만. 프라이버시가 스키마에 있다.</li>
+      <li>원장이 오염되면? <code>LedgerCorruptError</code> → 발송 이력 판단 불가 → 차단. 크래시가 아니라 <strong>의도된 안전 정지</strong>.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>구성/정책의 스키마 검증 · 킬스위치 설계(존재=정지, 값 파싱 금지) · 원장(ledger)과 감사 가능성 · 해시 저장(원문 비저장)</li></ul>
+  </div>
+
+  <div class="lesson">
+    <h3>5.3 — 기계 검문(precheck)은 사고의 화석이다</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tools/multi_position_sourcing/inmail_precheck.py">tools/multi_position_sourcing/inmail_precheck.py</code>의
+    모듈 docstring이 그대로 역사다: 2026-06-30 Movensys 사고 — 수신자 이름이 다른 사람("Rocha연구원님"),
+    "하니다" 오타, 필수 요소 누락. 이 사고의 각 증상이 검문 항목으로 승격됐다:
+    인사말↔프로필 이름 대조(<code>greeting_matches_profile:144</code>), 한글 자모 깨짐 감지(<code>hangul_jamo_broken:156</code>),
+    회사 브리핑 요소 개수(<code>count_briefing_elements:161</code>), 글자수 캡(<code>char_count:89</code>).</p>
+    <div class="callout red"><strong>원칙.</strong> LLM이 쓴 글을 사람에게 보내기 전, LLM이 아닌 코드가 검문한다.
+    "LLM으로 만든 것을 LLM으로 검사"는 같은 맹점을 공유한다 — 결정론 검문이 마지막 벽이다.</div>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>사고 → 검문 항목 승격(포스트모템의 기계화) · LLM 출력의 결정론 검문 · 골든 샘플 대조</li></ul>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="part6">
+  <p class="part-no">6부 · 고급</p>
+  <h2>하니스 조이기 II: Generate-Verify 분리</h2>
+  <p>하니스의 심장부. 불변식은 하나다 — <strong>만든 자는 검증하지 않는다.</strong>
+  생성자(G)가 만들고, 다른 도구(V1=Codex)가 깨고, 기억을 리셋한 검증자(V2=Claude)가 그 판정마저 깬다.
+  세 역할이 계약(T) 기준에서 일치해야 통과다.</p>
+
+  <div class="lesson">
+    <h3>6.1 — verdict 장부: 판정을 데이터로 남긴다</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="docs/engineering/group-session-batch.verdict.json">docs/engineering/group-session-batch.verdict.json</code> —
+    실제 장부의 골격:</p>
+<pre><code>{
+  "claim_id": "...", "risk": "L2",
+  "generator": {
+    "claim": "...", "changed_files": [...],
+    "red_evidence": "commit 2dc651a — 구현 전 ImportError로 전건 실패",
+    "command": "./verify.sh", "exit_code": 0,
+    "wiring_evidence": "hermes_fleet_bridge.py:366 → dispatch → session_batch; ...",
+    "test_quality": { "no_test_weakening": "기존 테스트 삭제/skip 추가 0 (git diff 확인)" }
+  },
+  "v1": { "author": "Codex Rescue (fresh 세션)", "verdict": ..., "refutation_attempts": [...] }
+}</code></pre>
+    <ul>
+      <li><code>red_evidence</code> — 테스트가 구현 <em>전에</em> 실패했다는 커밋 증거. RED 없는 GREEN은 무효.</li>
+      <li><code>wiring_evidence</code> — 프로덕션 진입점→새 코드 호출 그래프. "테스트만 import"는 고아 코드다.</li>
+      <li><code>no_test_weakening</code> — 기존 테스트를 지우거나 skip해서 만든 초록불을 명시적으로 부정.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>generator-verifier 분리 · 반증 의무(단순 PASS 무효 — "X를 Y로 깨려 했으나 실패" 필수) · 상관 블라인드스팟(G와 V가 같은 가정을 공유하는 위험)</li></ul>
+  </div>
+
+  <div class="lesson">
+    <h3>6.2 — 뮤테이션 점검: 테스트를 테스트한다</h3>
+    <p class="why">왜: 구현을 일부러 망가뜨렸는데도 초록이면, 그 테스트는 아무것도 지키고 있지 않다(tautology).</p>
+    <p class="label code-l">이 문서를 만든 날의 실전 사례 (2026-07-16, PR#119)</p>
+    <ul>
+      <li><code class="ref" data-ref="tests/test_harvest_driver.py">tests/test_harvest_driver.py</code>의
+      <code>assert "Desktop" not in str(root)</code> — 저장소가 바탕화면에 있는 맥에서는 구현이 정상이어도 항상 실패하는
+      <strong>환경 의존 단언</strong>이었다. 의도("env 드리프트 무시")를 직접 인코딩한 <code>root != drifted</code>로 교체.</li>
+      <li>교체가 테스트 약화가 아님을 증명하기 위해: 구현을 env 추종으로 고의 파괴 → FAIL 확인 → 원복 → PASS 확인.
+      V1(Codex)은 한 발 더 나가 <strong>이웃 단언을 무력화한 채</strong> 새 단언 단독으로 뮤테이션을 잡는지 격리 실험했다.</li>
+      <li>보너스 함정: 뮤테이션 실험 후 파일은 원복했지만 파이썬 <code>.pyc</code> 캐시가 뮤테이션 버전으로 남아
+      verify가 유령 실패를 냈다. <strong>검증자 위생</strong> — 뮤테이션 후엔 캐시도 원복 대상이다.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>mutation testing · tautology test 탐지 · 환경 의존 단언(머신·시간·로케일)의 냄새 · 바이트코드 캐시 무효화의 한계(크기 동일+mtime 충돌)</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> <code>tests/</code>에서 아무 테스트나 골라, 그 테스트가 지키는 구현 한 줄을 일부러 깨보라.
+    테스트가 초록이면 축하한다 — 방금 가짜 테스트를 발견했고, 그게 다음 RED 이슈다.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>6.3 — 배선 증명: 좋은 코드도 안 불리면 결함이다</h3>
+    <p class="label code-l">실제 코드</p>
+    <p><code class="ref" data-ref="tests/test_humansearch_r4_wiring.py">tests/test_humansearch_r4_wiring.py</code> —
+    R4 양보 로직이 프로덕션 진입점에서 실제로 호출되는지를 <strong>테스트가 단언</strong>한다.
+    "만들었다"와 "배선됐다"는 다른 명제이고, 후자만이 완료다.
+    동적 경로(이벤트 핸들러·DI)는 grep으로 증명할 수 없다 — 런타임 추적(실행 로그·영수증)이 필요하다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>wiring proof · 고아 코드(orphan) 탐지 · "테스트가 직접 import해서 통과"는 배선 증명이 아니다</li></ul>
+  </div>
+
+  <div class="lesson">
+    <h3>6.4 — 문서·스킬도 계약 테스트를 받는다</h3>
+    <p class="label code-l">실제 코드</p>
+    <ul>
+      <li><code class="ref" data-ref="tests/test_goal_coding_sot_preflight_prompt.py">tests/test_goal_coding_sot_preflight_prompt.py</code> —
+      문서가 인용한 파일 경로들이 실존하는지 pytest가 검사한다.</li>
+      <li><code class="ref" data-ref="tests/test_claude_skills_tracked.py">tests/test_claude_skills_tracked.py</code> —
+      스킬(SKILL.md)의 frontmatter·참조 경로 계약 검사.</li>
+      <li><code class="ref" data-ref="tests/test_channel_search_filters.py">tests/test_channel_search_filters.py</code> —
+      SOT22 JSON과 코드가 어긋나면(드리프트) 테스트가 감지한다.</li>
+      <li>그리고 <strong>지금 읽고 있는 이 문서</strong> —
+      <code class="ref" data-ref="tests/test_learning_curriculum_doc.py">tests/test_learning_curriculum_doc.py</code>가
+      본문의 모든 <code>data-ref</code> 인용 경로 실존과 앵커 무결성을 검사한다. 인용된 코드가 삭제·이동되면 이 문서가 RED가 되어
+      갱신을 강제한다. "지속 업데이트"가 선의가 아니라 기계다.</li>
+    </ul>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>docs-as-code와 계약 테스트 · SOT 드리프트 감지 · 살아있는 문서(living document)의 기계적 강제</li></ul>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="part7">
+  <p class="part-no">7부 · 고급</p>
+  <h2>진화 루프: 하니스는 실패에서 자란다</h2>
+  <p>가장 바깥의 루프. 게이트를 통과했는데 결함이 새어나오면(escaped defect), 그 결함을 잡는 검사를 <strong>먼저</strong> 추가한 뒤 고친다
+  (<code class="ref" data-ref="docs/harness.md">docs/harness.md:85</code> 게이트 6).
+  하니스의 단언은 이론이 아니라 운영 사고에서만 자란다.</p>
+
+  <div class="lesson">
+    <h3>7.1 — 사고의 화석화: 세 가지 실례</h3>
+    <div class="table-wrap"><table>
+      <tr><th>사고</th><th>승격된 기계 검사</th></tr>
+      <tr><td>Movensys 오발송(2026-06-30)</td><td><code class="ref" data-ref="tools/multi_position_sourcing/inmail_precheck.py">inmail_precheck.py</code> 이름 대조·자모 깨짐·요소 검문</td></tr>
+      <tr><td>NaN 점수 게이트 통과</td><td><code class="ref" data-ref="tools/multi_position_sourcing/auto_send.py">auto_send.py</code> <code>_strict_int</code> — 정수만 인정</td></tr>
+      <tr><td>Desktop 환경 의존 단언(2026-07-16)</td><td><code class="ref" data-ref="tests/test_harvest_driver.py">test_harvest_driver.py</code> 의도 직접 인코딩 + 뮤테이션 증명</td></tr>
+    </table></div>
+    <p>패턴은 동일하다: <strong>증상 → 재발을 기계로 봉인 → 주석에 사고 이력 명시</strong>. 주석의 "V1 critical 봉인" 같은 문구는
+    장식이 아니라, 이 단언을 지우면 무엇이 돌아오는지에 대한 경고다.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>7.2 — 자기확장 규칙: 대상이 늘면 검사도 는다</h3>
+    <p><code class="ref" data-ref="docs/harness.md">docs/harness.md:56</code> — "새 대상을 추가하면 그 대상의 verify 단언 + 픽스처를
+    <strong>같은 커밋에</strong> 추가한다." 새 사이트, 새 스킬, 새 문서 — 검사 없는 신규 대상은 존재할 수 없다.
+    하니스가 커버리지를 잃지 않고 자라는 유일한 방법이다.</p>
+    <p class="label theme-l">학습 테마</p>
+    <ul><li>golden set 회귀(9하니스 #8, <code class="ref" data-ref="docs/harness-engineering.md">docs/harness-engineering.md</code> §4) · 반복되는 사람 지적을 기계 검사로 승격(4b→4a) · A/B 하니스(<code class="ref" data-ref="tools/multi_position_sourcing/ab_harness.py">ab_harness.py</code>)로 전략 변경을 벤치 위에서 비교</li></ul>
+    <p class="label break-l">깨보기 연습</p>
+    <p class="exercise"><strong>공격:</strong> 최근 merge된 PR 3개를 골라 물어라 — "이 변경이 늘린 대상에, 같은 커밋의 검사가 있는가?"
+    없다면 자기확장 규칙 위반이고, 그것이 다음 RED다.</p>
+  </div>
+
+  <div class="lesson">
+    <h3>7.3 — 종합 실습: 나만의 하니스 조이기 체크리스트</h3>
+    <ol>
+      <li><strong>LLM 호출마다</strong>: 클라이언트 단일화? 출력 검문 4단? 빈 성공의 예외 승격? 실패 원인 분류?</li>
+      <li><strong>루프마다</strong>: 중단 조건 명시? 상태 enum 닫힘? 멱등 재실행? 자기 급유에 스로틀? 좀비 회수?</li>
+      <li><strong>게이트마다</strong>: fail-closed? 자가신고 금지? 정책 파일 검문? 킬스위치? 원장?</li>
+      <li><strong>검증마다</strong>: RED 먼저? 뮤테이션 증명? 배선 증명? G≠V? 판정 장부?</li>
+      <li><strong>사고마다</strong>: 검사로 화석화? 같은 커밋에? 주석에 이력?</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<section class="part" id="refs">
+  <p class="part-no">부록</p>
+  <h2>외부 학습 레퍼런스</h2>
+  <ul>
+    <li>Anthropic — <em>Building Effective Agents</em>: 워크플로 vs 에이전트, 단순성·투명성·ACI 원칙.
+      (<code class="ref" data-ref="docs/harness-engineering.md">docs/harness-engineering.md</code> §5가 우리 하니스와의 정렬표)</li>
+    <li>ReAct / plan-execute / reflection — 에이전트 루프의 고전 패턴. 우리 구현에서는 fleet 워커(plan=큐, execute=claude -p, reflect=receipt 검증)가 실물.</li>
+    <li>LLM-as-judge 문헌 — 편향(위치·장황함 선호)·비재현성 논의. 우리의 답: 돈이 걸린 판정은 결정론 채점(2부).</li>
+    <li>Mutation testing (Pitest·mutmut 계열) — 테스트의 테스트. 우리의 실전 적용은 6.2.</li>
+    <li>사이트 신뢰성 공학(SRE)의 crash-only·lease·heartbeat — 4부 함대 설계의 뿌리.</li>
+  </ul>
+  <p class="callout">※ 위 외부 항목의 상세 링크는 다음 업데이트에서 검증된 URL과 함께 보강한다.
+  (이 문서의 원칙상, 확인 못한 링크는 싣지 않는다.)</p>
+</section>
+
+<footer>
+  <h2 style="font-size:1.1rem">업데이트 로그 — 살아있는 문서</h2>
+  <ul class="updates">
+    <li><strong>2026-07-16 · 초판.</strong> 7부 커리큘럼. 인용 경로 계약 테스트
+    (<code class="ref" data-ref="tests/test_learning_curriculum_doc.py">tests/test_learning_curriculum_doc.py</code>)와 함께 배송.
+    같은 날 잡힌 환경 의존 단언 사고(PR#119)와 .pyc 캐시 함정을 6.2에 수록.</li>
+  </ul>
+  <p>이 문서의 인용이 낡으면 <code>./verify.sh</code>가 RED를 낸다. 새 패턴이 merge되면 이 문서에 레슨을 추가하는 것이
+  자기확장 규칙(7.2)의 적용이다. — Valuehire_v5 · LLM Harness &amp; Loop Engineering</p>
+</footer>
+
+</main>
+</body>
+</html>
