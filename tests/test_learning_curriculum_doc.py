@@ -83,7 +83,8 @@ def test_curriculum_doc_exists_and_parses(audit: _DocAudit) -> None:
 
 
 def test_all_cited_code_paths_exist(audit: _DocAudit) -> None:
-    missing = sorted({r for r in audit.refs if not (REPO / r).exists()})
+    # 파일만 인정 — 디렉토리 인용은 "코드 근거"로서 약해 거부(V1 minor-1)
+    missing = sorted({r for r in audit.refs if not (REPO / r).is_file()})
     assert not missing, (
         "강의 문서가 인용한 경로가 실존하지 않음 — 코드가 이동/삭제됐으면 문서를 갱신할 것: "
         + ", ".join(missing)
