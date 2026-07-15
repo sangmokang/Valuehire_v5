@@ -164,6 +164,7 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
             "OO전문대학 전문학사", "OO전문대학교 졸업", "전문\u200b학사",
             "전 문 학사", "2년제 대학 졸업", "3년제 대학교 졸업",
             "전문대졸", "2년제 대졸", "3년제 대졸", "전문\ufe0f학사",
+            "초대졸", "준학사", "비학사",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 5)
@@ -188,7 +189,7 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
                 self.assertEqual(self._breakdown(current_or_past_companies=companies)["company_tier"], expected)
 
     def test_company_alias_requires_a_token_match(self) -> None:
-        for company in ("LINEAR Labs", "LINE2D", "Toss2Go"):
+        for company in ("LINEAR Labs", "LINE2D", "Toss2Go", "Lineáris Labs"):
             with self.subTest(company=company):
                 self.assertEqual(self._breakdown(current_or_past_companies=(company,))["company_tier"], 5)
 
@@ -211,7 +212,7 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
 
     def test_university_alias_requires_a_token_match(self) -> None:
         for education in (
-            "Smith College Bachelor", "MIT2 Academy", "Brown Universitytown", "연세우유 사내교육",
+            "Smith College Bachelor", "MIT2 Academy", "MITé Academy", "Brown Universitytown", "연세우유 사내교육",
             "서울대입구 코딩학원", "고려대역 교육원", "한양대역 아카데미",
         ):
             with self.subTest(education=education):
