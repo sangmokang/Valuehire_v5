@@ -36,6 +36,7 @@ REQUIRED_PORTABLE_SKILLS = {
     "saramin-talent-sourcing",
     "jobkorea-talent-sourcing",
     "linkedin-rps-jd-set-builder",
+    "login",
     "harness",
 }
 
