@@ -320,6 +320,7 @@ class TestPauseCooldown:
 
     def test_loop_가_paused_후_실제로_쉰다(self, monkeypatch):
         sleeps: list[float] = []
+        now = [100.0]
 
         class StopLoop(BaseException):
             # loop 의 광역 except Exception 방어(의도된 fail-soft)에 잡히지 않고
@@ -346,10 +347,14 @@ class TestPauseCooldown:
         def fake_runner(prompt, timeout):
             return ("PAUSED_FOR_HUMAN: 캡차", 0)
 
+        def fake_sleep(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+
         monkeypatch.setattr(
-            "tools.multi_position_sourcing.fleet_worker.time.sleep", sleeps.append)
+            "tools.multi_position_sourcing.fleet_worker.time.sleep", fake_sleep)
         w = FleetWorker("macmini", queue=Q(), runner=fake_runner,
-                        notifier=lambda j, t: None)
+                        notifier=lambda j, t: None, clock=lambda: now[0])
         with pytest.raises(StopLoop):
             w.loop(poll_seconds=30)
         assert PAUSE_COOLDOWN_SECONDS in sleeps, "일시정지 직후 쿨다운 없이 재claim 금지"

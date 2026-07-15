@@ -41,8 +41,10 @@ class FakeQueue:
         self.jobs = list(jobs)
         self.released = []
         self.enqueued = []
+        self.claim_calls = 0
 
     def claim_next(self, machine):
+        self.claim_calls += 1
         return self.jobs.pop(0) if self.jobs else None
 
     def release(self, job_id, status, *, result_summary="", error=""):
@@ -82,7 +84,7 @@ class FakeClock:
         return self.now
 
 
-def _worker(queue, clock, pause_on_job_id=None):
+def _worker(queue, clock, pause_on_job_id=None, *, wall_clock=None, yield_state_path=None):
     def runner(prompt, timeout):
         if pause_on_job_id is not None and f"잡 #{pause_on_job_id}" in prompt:
             return ("PAUSED_FOR_HUMAN: 캡차", 0)
@@ -90,7 +92,8 @@ def _worker(queue, clock, pause_on_job_id=None):
 
     return FleetWorker(
         machine="macmini", queue=queue, runner=runner,
-        notifier=lambda job, text: None, clock=clock)
+        notifier=lambda job, text: None, clock=clock,
+        wall_clock=wall_clock, yield_state_path=yield_state_path)
 
 
 def test_paused_suspends_backlog_then_resumes_after_3min():
@@ -202,6 +205,146 @@ def test_yield_window_survives_worker_restart(tmp_path):
     w2._restore_yield_state()
     assert w2.run_once() == "idle", "재시작 후 3분 내 claim = 양보 위반(V1 F2)"
     assert q2.jobs, "잡이 소비되면 안 됨"
+
+
+def test_restart_preserves_pending_variants_and_does_not_revive_consumed_ones(tmp_path):
+    """#114 회귀: deadline뿐 아니라 아직 enqueue하지 않은 변형도 재기동 뒤 살아야 한다."""
+    state = tmp_path / "owner-yield-macmini.json"
+    clock = FakeClock()
+    wall = FakeClock(1_800_000_000.0)
+    q = FakeQueue([_group_job(7), _job(8)])
+    w = _worker(q, clock, pause_on_job_id=8,
+                wall_clock=wall, yield_state_path=state)
+
+    assert w.run_once() == "done"
+    assert w.run_once() == "paused_for_human"
+    saved = json.loads(state.read_text(encoding="utf-8"))
+    assert len(saved["variant_backlog"]) == 1
+
+    restarted_clock = FakeClock(5000.0)
+    restarted_queue = FakeQueue([])
+    restarted = _worker(
+        restarted_queue, restarted_clock, pause_on_job_id=None,
+        wall_clock=wall, yield_state_path=state)
+    assert len(restarted._variant_backlog) == 1, "재기동으로 변형 backlog 유실"
+    assert restarted.run_once() == "idle"
+    assert restarted_queue.claim_calls == 0, "남은 양보 시간 중 claim 금지"
+
+    restarted_clock.now += 181
+    wall.now += 181
+    assert restarted.run_once() == "idle"
+    assert len(restarted_queue.enqueued) == 1
+
+    final = _worker(
+        FakeQueue([]), FakeClock(9000.0), pause_on_job_id=None,
+        wall_clock=wall, yield_state_path=state)
+    assert final._variant_backlog == [], "이미 enqueue한 변형이 재기동 뒤 부활"
+
+
+def test_corrupt_backlog_cannot_cancel_a_valid_restart_yield(tmp_path):
+    state = tmp_path / "owner-yield-macmini.json"
+    state.write_text(json.dumps({
+        "machine": "macmini",
+        "yield_until_epoch": 1_800_000_120.0,
+        "variant_backlog": [{"skill": "url", "status": "queued"}],
+    }), encoding="utf-8")
+    clock = FakeClock(5000.0)
+    wall = FakeClock(1_800_000_000.0)
+    q = FakeQueue([_job(9)])
+    worker = _worker(
+        q, clock, pause_on_job_id=None,
+        wall_clock=wall, yield_state_path=state)
+
+    assert worker._variant_backlog == []
+    assert worker._yield_remaining() > 100
+    assert worker.run_once() == "idle"
+    assert q.claim_calls == 0, "손상된 backlog가 남은 양보 시간까지 취소하면 안 됨"
+
+
+def _valid_persisted_variant(keyword="보안"):
+    from tools.multi_position_sourcing.session_batch import variant_job_payload
+    payload = variant_job_payload(
+        _job(7),
+        {"channel": "saramin", "keyword": keyword, "filters": {}},
+        group_id="infra-security",
+    )
+    assert payload is not None
+    return payload
+
+
+def test_restart_accepts_six_variants_but_rejects_seven_without_dropping_deadline(tmp_path):
+    variants = [_valid_persisted_variant(f"보안-{index}") for index in range(7)]
+    for count, expected in ((6, 6), (7, 0)):
+        state = tmp_path / f"owner-yield-count-{count}.json"
+        state.write_text(json.dumps({
+            "schema_version": 2,
+            "machine": "macmini",
+            "yield_until_epoch": 1_800_000_120.0,
+            "variant_backlog": variants[:count],
+        }), encoding="utf-8")
+        worker = _worker(
+            FakeQueue([]), FakeClock(5000.0), pause_on_job_id=None,
+            wall_clock=FakeClock(1_800_000_000.0), yield_state_path=state)
+        assert len(worker._variant_backlog) == expected
+        assert worker._yield_remaining() == 120
+
+
+def test_restart_rejects_nonvariant_and_cross_machine_backlogs(tmp_path):
+    from tools.multi_position_sourcing.job_queue import new_job_payload
+    normal = new_job_payload(
+        machine="macmini", skill="humansearch",
+        position_url="https://app.clickup.com/t/TASK1",
+        requested_by=f"{OWNER_ID}:owner", role="owner", params={})
+    assert normal is not None
+    cross_machine = {**_valid_persisted_variant(),
+                     "machine": "winpc", "account_key": "portal:winpc"}
+
+    for index, bad_payload in enumerate((normal, cross_machine)):
+        state = tmp_path / f"owner-yield-bad-{index}.json"
+        state.write_text(json.dumps({
+            "schema_version": 2,
+            "machine": "macmini",
+            "yield_until_epoch": 1_800_000_120.0,
+            "variant_backlog": [bad_payload],
+        }), encoding="utf-8")
+        q = FakeQueue([_job(9)])
+        worker = _worker(
+            q, FakeClock(5000.0), pause_on_job_id=None,
+            wall_clock=FakeClock(1_800_000_000.0), yield_state_path=state)
+        assert worker._variant_backlog == []
+        assert worker._yield_remaining() == 120
+        assert worker.run_once() == "idle" and q.claim_calls == 0
+
+
+def test_legacy_or_unknown_schema_never_restores_a_backlog(tmp_path):
+    valid = _valid_persisted_variant()
+    for index, schema in enumerate((None, 99, 2.0, True)):
+        state_data = {
+            "machine": "macmini",
+            "yield_until_epoch": 1_800_000_120.0,
+            "variant_backlog": [valid],
+        }
+        if schema is not None:
+            state_data["schema_version"] = schema
+        state = tmp_path / f"owner-yield-schema-{index}.json"
+        state.write_text(json.dumps(state_data), encoding="utf-8")
+        worker = _worker(
+            FakeQueue([]), FakeClock(5000.0), pause_on_job_id=None,
+            wall_clock=FakeClock(1_800_000_000.0), yield_state_path=state)
+        assert worker._yield_remaining() == 120
+        assert worker._variant_backlog == []
+
+
+def test_legacy_deadline_only_state_remains_compatible(tmp_path):
+    state = tmp_path / "owner-yield-macmini.json"
+    state.write_text(json.dumps({
+        "yield_until_epoch": 1_800_000_120.0,
+    }), encoding="utf-8")
+    worker = _worker(
+        FakeQueue([]), FakeClock(5000.0), pause_on_job_id=None,
+        wall_clock=FakeClock(1_800_000_000.0), yield_state_path=state)
+    assert worker._yield_remaining() > 100
+    assert worker._variant_backlog == []
 
 
 def test_owner_probe_gates_claim():
