@@ -373,4 +373,27 @@ def test_capability_values_match_with_exact_json_types():
         )
 
 
+def test_slot_choice_preserves_maximum_future_matching_capacity():
+    plan = plan_dispatches(
+        [
+            job("a", 1, 0),
+            job("b", 2, 1, requirements={"x": 0}),
+            job("c", 3, 2, requirements={"y": 0}),
+        ],
+        [
+            slot("s0", "m0", capabilities={"x": 0}),
+            slot("s1", "m1", capabilities={"x": 1, "y": 0}),
+            slot("s2", "m2", capabilities={"y": 0}),
+        ],
+        requester_states=states("a", "b", "c"),
+        account_capacities={"portal:saramin": 3},
+    )
+    assert len(plan) == 3
+    assert [(d.job_id, d.machine_id) for d in plan] == [
+        (1, "m1"),
+        (2, "m0"),
+        (3, "m2"),
+    ]
+
+
 
