@@ -1,0 +1,87 @@
+{
+  "claim_id": "owner-yield-3min-107",
+  "mode": "code-change+sot-revision",
+  "risk": "L3",
+  "issue": "https://github.com/sangmokang/Valuehire_v5/issues/107",
+  "goal_doc": "docs/engineering/owner-yield-3min-goal-2026-07-15.md",
+  "owner_instruction": "2026-07-15 사장님 명시 지시: 'paused 후 자동 등록 전부 중단' 원칙 폐기. '내 눈치를 봐라 — 내가 쓸 동안은 멈췄다가 3분 뒤까지 이상이 없으면 계속 시작해.' 이 로직을 방해하는 코드 전부 삭제, 원칙을 SOT로 명문화. LinkedIn 로그인 기기(winpc/macmini/macbook 중 1) 탐색을 prompting.",
+  "generator": {
+    "author": "Claude (Fable 5)",
+    "claim": "3분 양보·자동 재개(INV9)를 단일 게이트(claim+enqueue)로 구현, 재시작 영속(~/.valuehire/fleet, 저장소 밖), macOS 사장님 활동 프로브 배선, idle 단일 신호(크롬 앞창 영구 양보 폐기), LinkedIn 로그인 머신 탐색 프롬프트 규칙 19 + fleet-status linkedin_ready 노출, SOT 3층(CLAUDE.md·SOT29·SOT30) 동기 개정.",
+    "changed_files": [
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "tools/multi_position_sourcing/owner_activity.py",
+      "tools/multi_position_sourcing/fleet_dispatch.py",
+      ".claude/skills/url/SKILL.md",
+      "docs/sot/29-fleet-control.json", "docs/sot/29-fleet-control.md",
+      "docs/sot/30-fleet-run-reliability.md", "CLAUDE.md",
+      "tests/test_owner_yield_3min.py", "tests/test_session_batch.py",
+      "tests/test_fleet_reliability.py", "tests/test_owner_activity.py",
+      "tests/test_autoresume_decision.py"
+    ],
+    "red_evidence": "commit fe6ddd5(1R ImportError 전건 실패) + 2R 회귀 9건 RED 재현(9 failed) + 3R 경로 회귀 RED(1 failed) 후 각각 수정",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "1505 passed, 4 xfailed, 14 subtests passed in 239.64s (V1 수정 반영 시점) / V2 격리 재현 173 passed(서브셋)",
+    "mutation_evidence": "① 3분 창 비교 반전(< → >=) → 2 failed → 원복 ② claim 게이트 무력화(and False) → 2 failed → 원복(16 passed)",
+    "wiring_evidence": "main() → FleetWorker(owner_probe=default_owner_probe(), yield_state_path=default_yield_state_path(machine)); loop → _post_status_delay; run_once 상단 yield/probe 게이트; hermes_fleet_bridge → dispatch_fleet_command fleet-status → linkedin_ready",
+    "spec_replacements_by_owner_order": [
+      "test_fleet_reliability: PAUSE_COOLDOWN_SECONDS >= 300 → == 180",
+      "test_session_batch: paused 영구 backlog 폐기 → 3분 양보(폐기 금지)",
+      "test_owner_activity/test_autoresume_decision: 크롬 앞창=영구 양보 → idle>=180 재개",
+      "사유: 전부 사장님 2026-07-15 명시 지시(테스트 약화 아님 — 스펙 자체 개정)"
+    ],
+    "r6_note": ".claude/skills/url/SKILL.md 본문 불릿 정합 수정(일반 로그인 리다이렉트를 STOP 대상에서 제외 — SOT26/불변식1 충돌 해소). frontmatter·트리거 무변경 경미 편집이라 skill-creator 전체 절차 생략."
+  },
+  "v1": {
+    "author": "Codex Rescue (agentId ae2e9b45b0a9e2454, fresh 세션)",
+    "verdict": "fail — 8건 → 전건 처리",
+    "findings_accepted_and_fixed": [
+      "F1 claim 게이트 부재(high) → run_once 상단 단일 게이트",
+      "F2 재시작 시 창 소실(high) → 벽시계 epoch 로컬 영속(fail-soft)",
+      "F3 owner_activity 미배선(high) → owner_probe 주입 게이트 + main() macOS 배선",
+      "F4 크롬 앞창 영구 양보(high) → idle 단일 신호(>=180 재개)",
+      "F5 고정 180초 이중 대기(medium) → 남은 창만큼 ceil 대기(_post_status_delay)",
+      "F6 프롬프트↔fleet-status 불일치(high) → linkedin_ready 노출 + 문구 정합",
+      "F7 url 스킬 로그인 리다이렉트 STOP(high) → STOP 대상 제외(SOT26 정합)",
+      "F8 SOT30 600초 잔존(medium) → INV9 supersede 명시"
+    ],
+    "findings_deferred": [
+      "Windows 사장님 활동 감지기(후속 이슈)",
+      "humansearch_cdp_run 양보 시 break 종료 → wait/재개 전환(후속 이슈)",
+      "DB(서버측) yield/pause 장벽 — #105 통합"
+    ],
+    "repro": "8건 전부 회귀 테스트로 RED 재현(9 failed) 후 수정, verify 1505 passed"
+  },
+  "v2": {
+    "author": "Claude reset 세션 (agentId af6eba1be0c1ed5e1) — goal+verdict 만 읽고 시작",
+    "verdict": "pass — 단 배송 전 필수 수정 1건(반영 완료: 306d256)",
+    "what_v1_missed": [
+      "default_yield_state_path 가 REPO/.fleet 에 런타임 상태를 써 pause 마다 워커 머신의 git 워크트리를 더럽힘(라이브 재현: ?? .fleet/, check-ignore exit 1). 테스트는 tmp_path 주입 해피패스라 초록"
+    ],
+    "independent_repro": "격리 detached 워크트리(HEAD): 173 passed in 188.32s / 오염된 원본 트리: 3 failed, 170 passed(제3 프로세스 미커밋 되돌림 — failed_attempts 참조)",
+    "resolution": "commit 306d256 — 상태 파일 ~/.valuehire/fleet/ 이전 + 회귀 test_yield_state_path_is_outside_repo"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "GREEN 커밋 전에 수동 뮤턴트 적용 후 git checkout 으로 원복",
+      "root_cause": "미커밋 구현이 함께 날아감",
+      "repro": "uncommitted 상태에서 git checkout -- <file>",
+      "next_change": "뮤턴트 검사는 반드시 GREEN 커밋 뒤에(2R부터 준수)"
+    },
+    {
+      "attempt": "V1 codex 1차 실행",
+      "root_cause": "루트 디스크 100%(ENOSPC)",
+      "repro": "df -h /System/Volumes/Data → Avail 315Mi",
+      "next_change": "npm/업데이터 캐시 정리 5GB 확보 후 재실행(크롬·플레이라이트 캐시 불가침)"
+    },
+    {
+      "attempt": "V2 중 워크트리에 제3 프로세스(코덱스 플러그인 백그라운드 app-server, 22:44 기동)의 미커밋 변경 발견 — V1 F6/F7/F8 되돌림 + 회귀 테스트 3개 삭제 + 본 verdict.json 삭제, 이후 수 초 내 편집 원복 반복",
+      "root_cause": "V1 백그라운드 잡이 판정 후에도 워크트리에 자체 수정을 계속 적용/원복(검증자 불변경 계약 위반 상태 잔존)",
+      "repro": "git status 5파일 M → 편집 직후 원복 / 커밋에 변경 미포함",
+      "next_change": "백그라운드 app-server PID 종료(사장님 터미널 불가침) → 출처 불명 변경 전량 폐기 → 유효 수정(상태 경로)만 회귀 테스트와 재작성·커밋. 이후 V1 백그라운드 잡은 판정 회수 즉시 종료 확인"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "3자 일치(G·V1 수정 반영·V2 pass) — 최종 verify 후 배송"
+}
