@@ -21,6 +21,10 @@ __all__ = [
 ]
 
 _READY_STATE = "ready"
+_LINKEDIN_RPS_RESOURCE = "linkedin_rps"
+_LINKEDIN_RPS_ACCOUNT = "portal:linkedin_rps"
+_MAX_JOBS = 512
+_MAX_SLOTS = 16
 _KNOWN_SLOT_STATES = frozenset(
     {
         "ready",
@@ -120,6 +124,13 @@ def _valid_mapping(value: object) -> bool:
     return isinstance(value, Mapping) and _valid_json_value(value)
 
 
+def _valid_resource_account_pair(resource_class: str, account_key: str) -> bool:
+    """Keep the globally single-seat LinkedIn lane on its canonical identity."""
+    return (resource_class == _LINKEDIN_RPS_RESOURCE) == (
+        account_key == _LINKEDIN_RPS_ACCOUNT
+    )
+
+
 def _capability_equal(actual: object, expected: object) -> bool:
     """JSON types are exact: in particular, boolean True is not numeric 1."""
     if type(actual) is not type(expected):
@@ -146,6 +157,11 @@ def _validate_inputs(
     next_dispatch_seq: int | None,
     max_dispatches: int | None,
 ) -> None:
+    if len(jobs) > _MAX_JOBS or len(slots) > _MAX_SLOTS:
+        raise ValueError(
+            f"planner input exceeds {_MAX_JOBS} jobs or {_MAX_SLOTS} slots"
+        )
+
     job_ids: set[int] = set()
     for candidate in jobs:
         if not isinstance(candidate, Job):
@@ -167,6 +183,10 @@ def _validate_inputs(
             raise ValueError("requested_machine must be None or a normalized string")
         if not _nonempty(candidate.account_key):
             raise ValueError("account_key must be a non-empty normalized string")
+        if not _valid_resource_account_pair(
+            candidate.resource_class, candidate.account_key
+        ):
+            raise ValueError("LinkedIn RPS resource and account key must be canonical")
 
     slot_ids: set[str] = set()
     for candidate in slots:
@@ -181,10 +201,14 @@ def _validate_inputs(
             raise ValueError("slot resource_class and account_key must be normalized strings")
         if not _valid_mapping(candidate.capabilities):
             raise ValueError("capabilities must have normalized string keys")
-        if candidate.state not in _KNOWN_SLOT_STATES:
+        if not isinstance(candidate.state, str) or candidate.state not in _KNOWN_SLOT_STATES:
             raise ValueError("unknown slot state")
         if not isinstance(candidate.fresh, bool):
             raise ValueError("fresh must be boolean")
+        if not _valid_resource_account_pair(
+            candidate.resource_class, candidate.account_key
+        ):
+            raise ValueError("LinkedIn RPS resource and account key must be canonical")
 
     if not isinstance(requester_states, Mapping):
         raise ValueError("requester_states must be a mapping")
@@ -199,7 +223,7 @@ def _validate_inputs(
     for account_key, capacity in account_capacities.items():
         if not _nonempty(account_key) or not _plain_int(capacity, minimum=1):
             raise ValueError("account capacities must be positive integers")
-        if account_key == "portal:linkedin_rps" and capacity != 1:
+        if account_key == _LINKEDIN_RPS_ACCOUNT and capacity != 1:
             raise ValueError("portal:linkedin_rps capacity is fixed at one")
     for account_key, running in account_running.items():
         if account_key not in account_capacities:
@@ -355,17 +379,34 @@ def plan_dispatches(
     used_machines: set[str] = {
         candidate.machine_id
         for candidate in known_slots
-        if candidate.state == "busy"
+        if candidate.state in {"busy", "human_active"}
     }
     account_counts = {key: 0 for key in account_capacities}
     account_counts.update(running_input)
-    challenged_accounts = {
-        candidate.account_key
-        for candidate in known_slots
-        if candidate.state == "challenge"
-    }
-    for account_key in challenged_accounts & account_capacities.keys():
-        account_counts[account_key] = account_capacities[account_key]
+
+    # A busy slot is direct evidence of at least one running mutation.  Treat
+    # distinct machines as the conservative lower bound even when a caller's
+    # separately aggregated running count is missing or stale.
+    busy_machines_by_account: dict[str, set[str]] = {}
+    for candidate in known_slots:
+        if candidate.state == "busy":
+            busy_machines_by_account.setdefault(candidate.account_key, set()).add(
+                candidate.machine_id
+            )
+    for account_key, machines in busy_machines_by_account.items():
+        if account_key in account_counts:
+            account_counts[account_key] = max(
+                account_counts[account_key], len(machines)
+            )
+
+    # Challenge and stale observations make account-wide mutation safety
+    # unknowable.  Fail closed until a fresh snapshot or recovery phase clears
+    # the condition; do not guess that another machine may safely take over.
+    for candidate in known_slots:
+        if (
+            candidate.state == "challenge" or not candidate.fresh
+        ) and candidate.account_key in account_counts:
+            account_counts[candidate.account_key] = account_capacities[candidate.account_key]
     dynamic_states = dict(requester_states)
     plan: list[Dispatch] = []
 
