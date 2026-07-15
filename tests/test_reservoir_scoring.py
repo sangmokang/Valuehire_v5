@@ -159,12 +159,14 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 10)
 
-    def test_professional_associate_degree_is_not_bachelor_signal(self) -> None:
+    def test_non_qualifying_degree_wording_is_not_a_positive_signal(self) -> None:
         for education in (
             "OO전문대학 전문학사", "OO전문대학교 졸업", "전문\u200b학사",
             "전 문 학사", "2년제 대학 졸업", "3년제 대학교 졸업",
             "전문대졸", "2년제 대졸", "3년제 대졸", "전문\ufe0f학사",
-            "초대졸", "준학사", "비학사", "비-학사", "비(非)학사", "학사 미취득",
+            "초대졸", "준학사", "비학사", "비-학사", "비(非)학사", "학사 미취득", "非학사",
+            "학사 학위 없음", "학사 학위 미보유", "학사 과정 중퇴", "석사 미취득", "대졸 아님",
+            "非박사", "박사 미소지", "대학교 졸업 아님", "4년제 졸업 미완료",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 5)
