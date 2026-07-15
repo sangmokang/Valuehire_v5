@@ -497,9 +497,13 @@ class FleetWorker:
         variants = gs.get("pending_variants")
         if not group_id or not isinstance(variants, list):
             return
-        from .session_batch import variant_job_payload
+        from .session_batch import MAX_PENDING_VARIANTS, variant_job_payload
         payloads = []
         for variant in variants:
+            # V1(Codex) 수용: 캡은 생성측만 믿지 않는다 — 큐를 우회해 변형이 6건 초과로
+            # 들어와도 소비측(워커)에서 다시 캡(심야 폭주 enqueue 차단, 이중 방벽).
+            if len(payloads) >= MAX_PENDING_VARIANTS:
+                break
             if isinstance(variant, Mapping):
                 payload = variant_job_payload(job, variant, group_id=group_id)
                 if payload is not None:

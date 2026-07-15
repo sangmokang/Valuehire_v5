@@ -61,4 +61,9 @@ variant_job_payload(base_job: Mapping, variant: Mapping, group_id: str) -> dict 
 - SOT24 밖 포지션 소스(ClickUp 라이브 조회).
 
 ## 적대 검증 로그
-(게이트 4b 에서 채움)
+- 패스 1(자기 반증): 순환 import·dry-run backlog 오적재·변형 잡 재적재·기존 FakeQueue 하위호환 공격 — 전부 방어 확인.
+- 패스 2(Codex Rescue, agentId aa1b9a81d3cdfb686): fail 판정 — 5건 발견.
+  - 수용 4건(각각 RED 회귀 테스트로 재현 후 수정): SOT24 URL 줄구분자 인젝션 → `_valid_url` 입구 거부 / 소비측 변형 캡 부재 → 워커 이중 캡 / 짧은 id 세그먼트 오매칭 → exact-first+마지막 세그먼트 / idempotency 키 절단 충돌 → sha256 suffix.
+  - 후속 1건: 계정 단위 pause 장벽(멀티 워커) → 이슈 #105 (QA-2 서버측 락 후속과 동일 묶음).
+- 기계 판정: `./verify.sh` exit 0 — `1488 passed, 4 xfailed, 14 subtests passed in 29.87s`.
+- 상세: `docs/engineering/group-session-batch.verdict.json`.

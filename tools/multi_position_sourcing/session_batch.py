@@ -11,13 +11,14 @@ disearch 로그인 세션 1회를 포지션 1개로 끝내지 않는다:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .grouping import group_positions
-from .job_queue import new_job_payload
+from .job_queue import _valid_url, new_job_payload
 from .models import Position
 
 REPO = Path(__file__).resolve().parents[2]
@@ -68,7 +69,10 @@ def _position_from_sot24(entry: Mapping[str, Any]) -> Position | None:
         _joined(entry.get("search_signals")),
         _joined(entry.get("product_context")),
     ))).strip()
-    if not position_id or not source_url.startswith("https://") or not jd_text:
+    # V1(Codex) 수용: URL 은 큐와 같은 검증(_valid_url) — 공백류·유니코드 줄구분자
+    # (U+2028 등)가 낀 URL 은 프롬프트 인젝션 벡터라 로더 입구에서 거부(fail-closed).
+    if not position_id or not _valid_url(source_url) \
+            or not source_url.startswith("https://") or not jd_text:
         return None
     seniority = _seniority_from_experience(str(entry.get("experience") or ""))
     must = entry.get("must_have")
@@ -108,15 +112,25 @@ def load_active_positions(path: str | Path | None = None) -> tuple[Position, ...
         return ()
 
 
-def _matches(position: Position, position_url: str) -> bool:
-    """잡 URL ↔ 포지션 매칭 — 정확 일치 또는 position_id 가 URL 경로 세그먼트로 등장."""
-    url = (position_url or "").strip()
+def _find_target(
+    positions: Sequence[Position], position_url: str,
+) -> Position | None:
+    """잡 URL ↔ 포지션 매칭. V1(Codex) 수용: 정확 URL 일치를 *전 포지션에 먼저* 시도하고,
+    폴백은 URL 의 *마지막* 경로 세그먼트 == position_id 만 인정한다 — 짧은 id('t')가
+    clickup.com/t/<id> 의 일반 세그먼트와 우연 일치해 엉뚱한 그룹을 고르는 오매칭 차단.
+    """
+    url = (position_url or "").strip().rstrip("/")
     if not url:
-        return False
-    if url.rstrip("/") == position.source_url.rstrip("/"):
-        return True
-    segments = [s for s in url.split("?")[0].split("/") if s]
-    return position.position_id in segments
+        return None
+    for p in positions:
+        if p.source_url.rstrip("/") == url:
+            return p
+    last_segment = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+    if last_segment:
+        for p in positions:
+            if p.position_id == last_segment:
+                return p
+    return None
 
 
 def group_session_params(
@@ -130,7 +144,7 @@ def group_session_params(
     positions = tuple(positions)
     if not positions:
         return None
-    target = next((p for p in positions if _matches(p, position_url)), None)
+    target = _find_target(positions, position_url)
     if target is None:
         return None
     groups = group_positions(positions)
@@ -173,11 +187,17 @@ def variant_job_payload(
     if not channel or not keyword or not group_id:
         return None
     filters = variant.get("filters")
+    # V1(Codex) 수용: 단순 [:160] 잘림은 긴 키워드 2종을 같은 키로 접어 unique index
+    # 충돌(후속 잡 조용한 유실)을 만든다 → 초과 시 가독 prefix + sha256 축약으로 유일성 보존.
+    raw_key = f"group:{group_id}:variant:{channel}:{keyword}"
+    if len(raw_key) > 160:
+        digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:32]
+        raw_key = f"{raw_key[:126]}:{digest}"
     params: dict[str, Any] = {
         "group_id": group_id,
         "variant": {"channel": channel, "keyword": keyword,
                     "filters": dict(filters) if isinstance(filters, Mapping) else {}},
-        "idempotency_key": f"group:{group_id}:variant:{channel}:{keyword}"[:160],
+        "idempotency_key": raw_key,
     }
     return new_job_payload(
         machine=base_job.get("machine"),
