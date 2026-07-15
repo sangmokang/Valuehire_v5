@@ -78,6 +78,16 @@ def _route_linkedin_machine(queue: Any) -> str:
         return "macmini"
 
 
+def _group_session_for_url(url: str) -> Optional[dict[str, Any]]:
+    """이슈 #104 — 진행 중 포지션(SOT24) 그룹핑. 실패가 enqueue 를 막으면 안 됨(fail-soft)."""
+    from . import session_batch
+    try:
+        return session_batch.group_session_params(
+            url, session_batch.load_active_positions())
+    except Exception:  # noqa: BLE001 — SOT24 깨짐/그룹핑 예외 = 그룹 세션 미첨부일 뿐
+        return None
+
+
 def is_owner(
     invocation: DiscordInvocation,
     *,
@@ -134,6 +144,14 @@ def dispatch_fleet_command(
         if (options.get("skill") or "").strip() == "url" \
                 and not (options.get("machine") or "").strip():
             options["machine"] = _route_linkedin_machine(q)
+        # 이슈 #104: humansearch 잡에 진행 중 포지션(SOT24) 그룹 세션을 동봉 —
+        # 같은 로그인 세션에서 유사 포지션 연속 검색 + idle 변형 자동 enqueue 의 원천.
+        if (options.get("skill") or "").strip() == "humansearch":
+            group_session = _group_session_for_url((options.get("url") or "").strip())
+            if group_session:
+                params = dict(options.get("params") or {})
+                params["group_session"] = group_session
+                options["params"] = params
         payload = build_fleet_job_payload(
             options, requested_by=_requested_by(invocation, role), role=role)
         if payload is None:

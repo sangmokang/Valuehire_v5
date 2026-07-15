@@ -348,6 +348,9 @@ class FleetWorker:
         self._runner_injected = runner is not None
         self.notifier = notifier or discord_notify
         self.timeout = timeout
+        # 이슈 #104: "방금" done 종결된 humansearch 그룹의 미소진 필터 변형 backlog.
+        # 큐 idle 일 때 1건씩 자동 enqueue(심야 지속). paused_for_human 시 전량 폐기.
+        self._variant_backlog: list[dict[str, Any]] = []
 
     def _notify(self, job: Mapping[str, Any], text: str) -> None:
         try:
@@ -394,6 +397,9 @@ class FleetWorker:
         """큐에서 잡 1건 처리. 반환: idle|done|paused_for_human|failed."""
         job = self.queue.claim_next(self.machine)
         if not job:
+            # 이슈 #104: 큐가 비었으면 방금 그룹의 미소진 변형을 1건만 enqueue —
+            # 회당 1건 자연 스로틀. 실행 자체는 다음 턴의 claim 경로(쿨다운·양보 포함)를 탄다.
+            self._enqueue_idle_variant()
             return "idle"
         job_id = job["id"]
         try:
@@ -448,6 +454,9 @@ class FleetWorker:
             return "failed"
         result = parse_worker_output(stdout, code, stderr=stderr)
         if result["status"] == "paused_for_human":
+            # 이슈 #104 + SOT29 §2: 캡차/2FA/사장님 개입 상황에서는 심야 자동
+            # enqueue 로 같은 계정에 재진입하지 않는다 — 변형 backlog 전량 폐기.
+            self._variant_backlog.clear()
             self._release(job, job_id, "paused_for_human", error=result["reason"])
             self._notify(job, (
                 f"⏸️ 잡 #{job_id} 사람 개입 필요 ({self.machine}): {result['reason']}\n"
@@ -469,7 +478,57 @@ class FleetWorker:
         self._release(job, job_id, "done", result_summary=result["summary"])
         self._notify(job, f"✅ 잡 #{job_id} 완료 ({self.machine}):\n{result['summary'][:1500]}")
         self._enqueue_followup(job)
+        self._remember_group_variants(job)
         return "done"
+
+    def _remember_group_variants(self, job: Mapping[str, Any]) -> None:
+        """이슈 #104: done 종결된 humansearch 잡의 group_session 변형을 backlog 로 기억.
+
+        "방금 그룹"만 유지 — 새 그룹 잡이 done 되면 이전 backlog 를 통째로 교체한다.
+        변형 잡 자체(params.variant, group_session 없음)는 backlog 를 만들지 않는다
+        (1단계 체인 — _enqueue_followup 과 동일한 무한 체인 방지 원칙).
+        """
+        if job.get("skill") != "humansearch":
+            return
+        gs = (job.get("params") or {}).get("group_session")
+        if not isinstance(gs, Mapping):
+            return
+        group_id = str(gs.get("group_id") or "")
+        variants = gs.get("pending_variants")
+        if not group_id or not isinstance(variants, list):
+            return
+        from .session_batch import MAX_PENDING_VARIANTS, variant_job_payload
+        payloads = []
+        for variant in variants:
+            # V1(Codex) 수용: 캡은 생성측만 믿지 않는다 — 큐를 우회해 변형이 6건 초과로
+            # 들어와도 소비측(워커)에서 다시 캡(심야 폭주 enqueue 차단, 이중 방벽).
+            if len(payloads) >= MAX_PENDING_VARIANTS:
+                break
+            if isinstance(variant, Mapping):
+                payload = variant_job_payload(job, variant, group_id=group_id)
+                if payload is not None:
+                    payloads.append(payload)
+        self._variant_backlog = payloads
+
+    def _enqueue_idle_variant(self) -> None:
+        """이슈 #104: idle 1회당 변형 1건 enqueue(심야 지속). 실패한 변형은 폐기(fail-soft).
+
+        pop 을 enqueue 보다 먼저 해 같은 변형의 무한 재시도(봇질)를 차단한다. 잡의
+        idempotency_key 파생 덕에 중복 재발사도 큐 계층에서 dedup 된다.
+        """
+        if not self._variant_backlog:
+            return
+        payload = self._variant_backlog.pop(0)
+        variant = (payload.get("params") or {}).get("variant") or {}
+        try:
+            nxt = self.queue.enqueue(payload)
+            nxt_id = (nxt or {}).get("id", "?") if isinstance(nxt, Mapping) else "?"
+            self._notify(payload, (
+                f"🌙 큐 idle — 그룹 변형 자동 enqueue (잡 #{nxt_id}) "
+                f"channel={variant.get('channel')} keyword={variant.get('keyword')} "
+                f"(남은 변형 {len(self._variant_backlog)}건)"))
+        except Exception as exc:  # noqa: BLE001 — 변형 enqueue 실패가 워커를 죽이면 안 됨
+            self._notify(payload, f"⚠️ 그룹 변형 자동 enqueue 실패(해당 변형 폐기): {exc}")
 
     def _enqueue_followup(self, job: Mapping[str, Any]) -> None:
         """이슈 A(2026-07-15 goal §1): done 종결 잡의 params.followup_skill 을 1건 자동 enqueue.

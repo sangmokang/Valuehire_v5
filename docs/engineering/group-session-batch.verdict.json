@@ -1,0 +1,59 @@
+{
+  "claim_id": "group-session-batch-104",
+  "mode": "code-change",
+  "risk": "L2",
+  "issue": "https://github.com/sangmokang/Valuehire_v5/issues/104",
+  "goal_doc": "docs/engineering/group-session-batch-goal-2026-07-15.md",
+  "generator": {
+    "author": "Claude (Fable 5)",
+    "claim": "disearch(fleet) humansearch 잡에 SOT24 진행 중 포지션의 group_positions() 그룹 세션을 동봉하고, 워커가 큐 idle 시 미소진 필터 변형을 1건씩 자동 enqueue(심야 지속). paused_for_human 시 backlog 폐기로 SOT29 양보 유지.",
+    "changed_files": [
+      "tools/multi_position_sourcing/session_batch.py",
+      "tools/multi_position_sourcing/fleet_dispatch.py",
+      "tools/multi_position_sourcing/fleet_worker.py",
+      "tests/test_session_batch.py"
+    ],
+    "red_evidence": "commit 2dc651a — 구현 전 tests/test_session_batch.py ImportError(모듈 부재)로 전건 실패",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "output": "1488 passed, 4 xfailed, 14 subtests passed in 29.87s",
+    "wiring_evidence": "hermes_fleet_bridge.py:366 → dispatch_fleet_command → _group_session_for_url → session_batch; scripts/fleet_worker_loop.sh → fleet_worker.main → loop → run_once → _enqueue_idle_variant",
+    "test_quality": {
+      "happy_path": true,
+      "edge_cases": "미매칭 URL·빈 포지션·SOT24 파일 없음·짧은 id 오매칭·8건 캡 우회·160자 키 절단",
+      "failure_paths": "그룹핑 예외 fail-soft·enqueue 예외 fail-soft(변형 폐기)·잘못된 base URL fail-closed",
+      "asserts_observable_behavior_only": true,
+      "no_test_weakening": "기존 테스트 삭제/skip 추가 0 (git diff 확인)"
+    }
+  },
+  "v1": {
+    "author": "Codex Rescue (agentId aa1b9a81d3cdfb686, fresh 세션)",
+    "verdict": "fail → 수정 후 재검증은 T(기계) 재실행으로 대체",
+    "findings_accepted": [
+      "SOT24 URL 유니코드 줄구분자 프롬프트 인젝션 → _valid_url 로더 입구 거부 + 회귀 테스트",
+      "소비측(워커) 변형 캡 부재 → MAX_PENDING_VARIANTS 이중 방벽 + 회귀 테스트",
+      "_matches 짧은 id 세그먼트 오매칭 → exact-first + 마지막 세그먼트 한정 + 회귀 테스트",
+      "idempotency 키 160자 절단 충돌 → sha256 축약 suffix + 회귀 테스트"
+    ],
+    "findings_deferred": [
+      "계정 단위 pause 장벽(멀티 워커) → 이슈 #105 (QA-2 서버측 락 후속과 동일 묶음, 현 배치 머신당 워커 1개라 실위험 낮음)"
+    ],
+    "repro": "V1 반례 4건을 회귀 테스트로 옮겨 수정 전 4 failed 재현 → 수정 후 통과"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "verify.sh 를 워크트리에서 직접 실행",
+      "root_cause": "워크트리에 .venv 부재 — verify.sh 인터프리터 자동탐색 실패",
+      "repro": "cd worktree && ./verify.sh → 'pytest를 가진 인터프리터를 찾지 못했습니다'",
+      "next_change": "메인 레포 .venv 심링크 후 실행(커밋에는 미포함)"
+    },
+    {
+      "attempt": "1차 전체 verify",
+      "root_cause": "test_portal_tab_guard 1건 실패 — 본 변경과 무관한 타이밍 플레이크(단독·재실행 모두 통과)",
+      "repro": "전체 스위트 병렬 실행 시 간헐 재현",
+      "next_change": "재실행으로 GREEN 확인(1488 passed), 플레이크 자체는 본 이슈 비범위"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "verify GREEN — 배송(PR) 단계"
+}
