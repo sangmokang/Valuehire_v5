@@ -23,12 +23,13 @@ from tools.multi_position_sourcing.owner_activity import (
 
 
 class ComputeYieldDecisionTests(unittest.TestCase):
-    def test_a_chrome_frontmost_yields(self) -> None:
-        # 크롬이 앞창이면 idle 과 무관하게 양보(True).
+    def test_a_chrome_frontmost_recent_or_unknown_yields(self) -> None:
+        # INV9(2026-07-15 사장님 지시, #107): 판단 신호는 idle. 크롬 앞창 + 최근 활동/판단불가는
+        # 양보하되, 크롬을 앞창에 둔 채 3분 이상 자리를 비우면 재개(구 "앞창=영구 양보" 폐기).
         self.assertTrue(
             compute_yield_decision(frontmost_is_chrome=True, os_idle_seconds=0.0)
         )
-        self.assertTrue(
+        self.assertFalse(
             compute_yield_decision(frontmost_is_chrome=True, os_idle_seconds=9999.0)
         )
         self.assertTrue(
@@ -88,7 +89,7 @@ def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedPro
 class OwnerActivitySnapshotTests(unittest.TestCase):
     """detect_owner_activity_snapshot 이 compute_yield_decision 계약으로 위임되는지(값 일치)."""
 
-    def test_chrome_frontmost_detected_regardless_of_idle(self) -> None:
+    def test_chrome_frontmost_long_idle_resumes_inv9(self) -> None:
         def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             if argv[0] == "osascript":
                 return _completed("Google Chrome\n")
@@ -96,9 +97,19 @@ class OwnerActivitySnapshotTests(unittest.TestCase):
 
         snapshot = detect_owner_activity_snapshot(system_name="Darwin", run_command=fake_run)
 
-        # 크롬 앞창 → idle 300s 여도 양보(True) — compute_yield_decision (a) 위임.
-        self.assertTrue(snapshot.owner_activity_detected)
+        # INV9(#107): 크롬을 앞창에 둔 채 3분 이상 자리 비움(idle 300s) → 재개(감지 False).
+        # 구 스펙("앞창=영구 양보")은 사장님 3분 자동 재개 지시로 폐기.
+        self.assertFalse(snapshot.owner_activity_detected)
         self.assertEqual(snapshot.foreground_app, "Google Chrome")
+
+    def test_chrome_frontmost_recent_activity_yields(self) -> None:
+        def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            if argv[0] == "osascript":
+                return _completed("Google Chrome\n")
+            return _completed('    "HIDIdleTime" = 1000000000\n')  # 1s idle
+
+        snapshot = detect_owner_activity_snapshot(system_name="Darwin", run_command=fake_run)
+        self.assertTrue(snapshot.owner_activity_detected)
 
     def test_non_chrome_recently_active_yields(self) -> None:
         def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:

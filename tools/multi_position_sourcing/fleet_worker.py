@@ -101,7 +101,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             "머신의 전용 크롬 프로필에서 로그인된 브라우저를 먼저 탐색·확인하고 그 세션을 "
             "그대로 쓸 것. 로그아웃 상태면 local secret store 로 자동 재로그인을 시도하고"
             "(비밀번호·쿠키·토큰 출력 금지), 2FA/캡차가 뜰 때만 사람을 부를 것. 이 머신에서 "
-            "끝내 로그인 세션을 못 찾으면 heartbeat(fleet-status)로 어느 머신이 로그인 "
+            "끝내 로그인 세션을 못 찾으면 fleet-status 의 linkedin_ready 로 어느 머신이 로그인 "
             "상태인지 확인해 그 머신명을 보고할 것.\n")
     return (
         f"[Valuehire 잡 #{job_id}] {skill} 스킬을 발동해 아래 작업을 수행해줘.\n"
@@ -353,6 +353,8 @@ class FleetWorker:
         notifier: Callable[[Mapping[str, Any], str], None] | None = None,
         timeout: int = CLAUDE_TIMEOUT_SECONDS,
         clock: Callable[[], float] | None = None,
+        owner_probe: Callable[[], bool] | None = None,
+        yield_state_path: Any = None,
     ) -> None:
         if machine not in FLEET_MACHINES:
             raise RuntimeError(f"unknown machine: {machine!r}")
@@ -371,7 +373,41 @@ class FleetWorker:
         # _backlog_resume_at 까지 정지 후 자동 재개(영구 중단 금지, 사장님 지시).
         self._variant_backlog: list[dict[str, Any]] = []
         self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
-        self._backlog_resume_at: float = 0.0
+        # V1 2R F1: 3분 양보 창은 enqueue 만이 아니라 claim 도 막는 단일 게이트다.
+        self._yield_until: float = 0.0
+        # V1 2R F3: 사장님 활동 프로브(눈치) — 주입식. None 이면 게이트 없음(테스트/미지원 OS).
+        # 프로덕션 배선은 main() 의 default_owner_probe() (macOS 전용, Windows 감지기는 후속).
+        self.owner_probe: Callable[[], bool] | None = owner_probe
+        # V1 2R F2: launchd 재기동이 양보 창을 지우지 못하게 벽시계 기반 로컬 영속(fail-soft).
+        self._yield_state_path = Path(yield_state_path) if yield_state_path else None
+        if self._yield_state_path is not None:
+            self._restore_yield_state()
+
+    def _persist_yield_state(self) -> None:
+        """V1 2R F2: 양보 창을 벽시계 epoch 로 저장 — 재기동 후에도 3분 눈치 유지(fail-soft)."""
+        if self._yield_state_path is None:
+            return
+        try:
+            remaining = max(0.0, self._yield_until - self._clock())
+            self._yield_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._yield_state_path.write_text(
+                json.dumps({"yield_until_epoch": time.time() + remaining}), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 — 영속 실패가 워커를 죽이면 안 됨
+            print(f"[fleet] yield 상태 저장 실패(fail-soft): {exc}", file=sys.stderr)
+
+    def _restore_yield_state(self) -> None:
+        """재기동 시 남은 양보 창 복원. 손상/과거 파일은 무시(fail-soft), 창은 180초 캡."""
+        try:
+            if self._yield_state_path is None or not self._yield_state_path.exists():
+                return
+            data = json.loads(self._yield_state_path.read_text(encoding="utf-8"))
+            remaining = float(data.get("yield_until_epoch", 0)) - time.time()
+            if remaining > 0:
+                self._yield_until = max(
+                    self._yield_until,
+                    self._clock() + min(remaining, OWNER_YIELD_RESUME_SECONDS))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[fleet] yield 상태 복원 실패(fail-soft): {exc}", file=sys.stderr)
 
     def _notify(self, job: Mapping[str, Any], text: str) -> None:
         try:
@@ -416,6 +452,19 @@ class FleetWorker:
 
     def run_once(self, dry_run: bool = False) -> str:
         """큐에서 잡 1건 처리. 반환: idle|done|paused_for_human|failed."""
+        # V1 2R F1(INV9): 마지막 사람 개입 신호 후 3분 창 안에서는 claim 도 하지 않는다
+        # — release 예외(15초 백오프)·--once 경로로 창이 우회되는 구멍 봉인.
+        if self._clock() < self._yield_until:
+            return "idle"
+        # V1 2R F3(INV9 '눈치'): 사장님 활동이 감지되는 동안은 claim/enqueue 모두 양보.
+        # 프로브 실패 = fail-closed 양보(사장님을 앞지르지 않는다, owner_activity 와 동일 정책).
+        if self.owner_probe is not None:
+            try:
+                owner_active = bool(self.owner_probe())
+            except Exception:  # noqa: BLE001
+                owner_active = True
+            if owner_active:
+                return "idle"
         job = self.queue.claim_next(self.machine)
         if not job:
             # 이슈 #104: 큐가 비었으면 방금 그룹의 미소진 변형을 1건만 enqueue —
@@ -479,7 +528,8 @@ class FleetWorker:
             # backlog 를 폐기하지 않고, 마지막 이상 신호로부터 180초 동안만 자동
             # enqueue 를 정지한다. 3분 뒤 이상이 없으면 자동 재개(영구 중단 금지).
             # pause 가 반복되면 그 시점부터 창이 다시 3분으로 연장된다.
-            self._backlog_resume_at = self._clock() + OWNER_YIELD_RESUME_SECONDS
+            self._yield_until = self._clock() + OWNER_YIELD_RESUME_SECONDS
+            self._persist_yield_state()
             self._release(job, job_id, "paused_for_human", error=result["reason"])
             self._notify(job, (
                 f"⏸️ 잡 #{job_id} 사람 개입 필요 ({self.machine}): {result['reason']}\n"
@@ -543,7 +593,7 @@ class FleetWorker:
             return
         # 이슈 #107(SOT29 INV9): 마지막 사람 개입 신호 후 3분이 지나기 전엔 양보(no-op).
         # 창이 지나면 아래 enqueue 로 자동 재개 — 별도 사람 조치 불필요.
-        if self._clock() < self._backlog_resume_at:
+        if self._clock() < self._yield_until:
             return
         payload = self._variant_backlog.pop(0)
         variant = (payload.get("params") or {}).get("variant") or {}
@@ -601,6 +651,14 @@ class FleetWorker:
         except Exception as exc:  # noqa: BLE001 — 후속 실패가 워커를 죽이면 안 됨
             self._notify(job, f"⚠️ 잡 #{job.get('id')} 후속 잡 enqueue 실패: {exc}")
 
+    def _post_status_delay(self, status: str, poll_seconds: int) -> int:
+        """V1 2R F5: paused 대기는 고정 180초가 아니라 *남은 창*만큼만(ceil, 0 하한)."""
+        import math
+        delay = sleep_seconds_after(status, poll_seconds)
+        if status == "paused_for_human":
+            delay = max(0, min(delay, math.ceil(self._yield_until - self._clock())))
+        return delay
+
     def record_heartbeat(self) -> None:
         """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지).
 
@@ -657,11 +715,29 @@ class FleetWorker:
                     status = "error"
                 # QA-2: paused_for_human 직후 쿨다운 포함 — 캡차 처리 중 같은
                 # 계정으로 즉시 재claim(자동화 재진입, SOT29 §2·§4 위반) 금지.
-                delay = sleep_seconds_after(status, poll_seconds)
+                delay = self._post_status_delay(status, poll_seconds)
                 if delay:
                     time.sleep(delay)
         finally:
             stop.set()
+
+
+def default_owner_probe() -> Callable[[], bool] | None:
+    """V1 2R F3 배선: macOS 는 owner_activity 감지기(앞창·idle 180초)로 눈치를 본다.
+
+    비-macOS(winpc)는 감지기 미구현 — None(게이트 없음). Windows 감지기는 후속 이슈.
+    (owner_activity 의 unsupported=fail-closed 를 그대로 쓰면 winpc 가 영구 정지하므로
+    워커 게이트에서는 '감지 불가 = 게이트 미적용'을 택한다 — INV9 의 자동 재개가 우선.)
+    """
+    import platform
+    if platform.system() != "Darwin":
+        return None
+    from .owner_activity import detect_owner_activity_snapshot
+    return lambda: detect_owner_activity_snapshot().owner_activity_detected
+
+
+def default_yield_state_path(machine: str) -> Path:
+    return REPO / ".fleet" / f"owner-yield-{machine}.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -675,7 +751,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     machine = machine_from_env(os.environ)
-    worker = FleetWorker(machine)
+    worker = FleetWorker(
+        machine, owner_probe=default_owner_probe(),
+        yield_state_path=default_yield_state_path(machine))
     if args.once:
         status = worker.run_once(dry_run=args.dry_run)
         print(f"[fleet] run_once → {status}")

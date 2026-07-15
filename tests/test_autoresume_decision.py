@@ -49,8 +49,10 @@ def test_idle_resumes_with_antibot_delay() -> None:
 # ----------------------------------------------------------------------------
 # 2. 크롬 점유/판단불가 → 양보 (PC-F1 fail-closed 상속)
 # ----------------------------------------------------------------------------
-def test_chrome_foreground_yields_regardless_of_idle() -> None:
-    for idle in (None, 0.0, 10.0, 10_000.0):
+def test_chrome_foreground_yields_only_while_recent_or_unknown() -> None:
+    # INV9(2026-07-15 사장님 지시, #107): 크롬 앞창이어도 idle>=180 이면 재개 —
+    # "앞창=영구 양보"는 3분 자동 재개를 방해하는 스펙이라 폐기(idle 단일 신호).
+    for idle in (None, 0.0, 10.0):
         decision = decide_resume(
             frontmost_is_chrome=True,
             os_idle_seconds=idle,
@@ -59,6 +61,9 @@ def test_chrome_foreground_yields_regardless_of_idle() -> None:
         )
         assert decision.resume is False
         assert decision.delay_ms == 0
+    resumed = decide_resume(
+        frontmost_is_chrome=True, os_idle_seconds=10_000.0, ticks_yielded=1, seed=1)
+    assert resumed.resume is True
 
 
 def test_unknown_idle_fails_closed_to_yield() -> None:
