@@ -7,6 +7,7 @@ work must enforce the same decisions atomically with leases and fencing.
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import math
 from typing import Mapping, Sequence
@@ -89,10 +90,50 @@ def _valid_created_at(value: object) -> bool:
     )
 
 
-def _valid_mapping(value: object) -> bool:
-    if not isinstance(value, Mapping):
+def _valid_json_value(value: object, seen: set[int] | None = None) -> bool:
+    """Accept only finite JSON-shaped values; reject cycles and opaque objects."""
+    if value is None or isinstance(value, (str, bool)):
+        return True
+    if isinstance(value, int):
+        return not isinstance(value, bool)
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if not isinstance(value, (Mapping, list)):
         return False
-    return all(_nonempty(key) for key in value)
+    visited = set() if seen is None else seen
+    identity = id(value)
+    if identity in visited:
+        return False
+    visited.add(identity)
+    try:
+        if isinstance(value, Mapping):
+            return all(
+                _nonempty(key) and _valid_json_value(item, visited)
+                for key, item in value.items()
+            )
+        return all(_valid_json_value(item, visited) for item in value)
+    finally:
+        visited.remove(identity)
+
+
+def _valid_mapping(value: object) -> bool:
+    return isinstance(value, Mapping) and _valid_json_value(value)
+
+
+def _capability_equal(actual: object, expected: object) -> bool:
+    """JSON types are exact: in particular, boolean True is not numeric 1."""
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, Mapping):
+        return (
+            set(actual) == set(expected)  # type: ignore[arg-type]
+            and all(_capability_equal(actual[key], value) for key, value in expected.items())  # type: ignore[index]
+        )
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(  # type: ignore[arg-type]
+            _capability_equal(left, right) for left, right in zip(actual, expected)  # type: ignore[arg-type]
+        )
+    return actual == expected
 
 
 def _validate_inputs(
@@ -158,14 +199,21 @@ def _validate_inputs(
     for account_key, capacity in account_capacities.items():
         if not _nonempty(account_key) or not _plain_int(capacity, minimum=1):
             raise ValueError("account capacities must be positive integers")
+        if account_key == "portal:linkedin_rps" and capacity != 1:
+            raise ValueError("portal:linkedin_rps capacity is fixed at one")
     for account_key, running in account_running.items():
         if account_key not in account_capacities:
             raise ValueError("running count has no account capacity")
         if not _plain_int(running) or running > account_capacities[account_key]:
             raise ValueError("invalid account running count")
 
-    if next_dispatch_seq is not None and not _plain_int(next_dispatch_seq, minimum=1):
-        raise ValueError("next_dispatch_seq must be a positive integer")
+    if next_dispatch_seq is not None:
+        if not _plain_int(next_dispatch_seq, minimum=1):
+            raise ValueError("next_dispatch_seq must be a positive integer")
+        highest_sequence = max(
+            (state.last_dispatch_seq for state in requester_states.values()), default=0)
+        if next_dispatch_seq <= highest_sequence:
+            raise ValueError("next_dispatch_seq must advance all requester state")
     if max_dispatches is not None and not _plain_int(max_dispatches):
         raise ValueError("max_dispatches must be a non-negative integer")
 
@@ -180,9 +228,87 @@ def _slot_matches(candidate: Slot, queued: Job) -> bool:
     if queued.requested_machine is not None and candidate.machine_id != queued.requested_machine:
         return False
     return all(
-        key in candidate.capabilities and candidate.capabilities[key] == expected
+        key in candidate.capabilities
+        and _capability_equal(candidate.capabilities[key], expected)
         for key, expected in queued.requirements.items()
     )
+
+
+def _future_dispatch_capacity(
+    jobs: Sequence[Job],
+    slots: Sequence[Slot],
+    *,
+    requester_states: Mapping[str, RequesterState],
+    account_capacities: Mapping[str, int],
+    account_counts: Mapping[str, int],
+    excluded_machines: set[str],
+) -> int:
+    """Maximum remaining account→job→machine flow for a candidate choice."""
+    slots_by_machine: dict[str, list[Slot]] = {}
+    for candidate in slots:
+        if candidate.machine_id not in excluded_machines and candidate.state == _READY_STATE and candidate.fresh:
+            slots_by_machine.setdefault(candidate.machine_id, []).append(candidate)
+
+    source: tuple[object, ...] = ("source",)
+    sink: tuple[object, ...] = ("sink",)
+    residual: dict[tuple[object, ...], dict[tuple[object, ...], int]] = {}
+
+    def add_edge(left: tuple[object, ...], right: tuple[object, ...], capacity: int) -> None:
+        residual.setdefault(left, {})[right] = capacity
+        residual.setdefault(right, {}).setdefault(left, 0)
+
+    for account_key, capacity in account_capacities.items():
+        available = capacity - account_counts.get(account_key, 0)
+        if available > 0:
+            add_edge(source, ("account", account_key), available)
+    for queued in jobs:
+        if queued.requester_id not in requester_states:
+            continue
+        account_node = ("account", queued.account_key)
+        if residual.get(source, {}).get(account_node, 0) <= 0:
+            continue
+        job_node = ("job", queued.job_id)
+        matching_machines = [
+            machine_id
+            for machine_id, machine_slots in slots_by_machine.items()
+            if any(_slot_matches(candidate, queued) for candidate in machine_slots)
+        ]
+        if not matching_machines:
+            continue
+        add_edge(account_node, job_node, 1)
+        for machine_id in matching_machines:
+            add_edge(job_node, ("machine", machine_id), 1)
+    for machine_id in slots_by_machine:
+        add_edge(("machine", machine_id), sink, 1)
+
+    total = 0
+    while True:
+        parent: dict[tuple[object, ...], tuple[object, ...] | None] = {source: None}
+        queue: deque[tuple[object, ...]] = deque([source])
+        while queue and sink not in parent:
+            left = queue.popleft()
+            for right, capacity in residual.get(left, {}).items():
+                if capacity > 0 and right not in parent:
+                    parent[right] = left
+                    queue.append(right)
+        if sink not in parent:
+            return total
+        cursor = sink
+        path_capacity = math.inf
+        while parent[cursor] is not None:
+            previous = parent[cursor]
+            assert previous is not None
+            path_capacity = min(path_capacity, residual[previous][cursor])
+            cursor = previous
+        amount = int(path_capacity)
+        cursor = sink
+        while parent[cursor] is not None:
+            previous = parent[cursor]
+            assert previous is not None
+            residual[previous][cursor] -= amount
+            residual[cursor][previous] += amount
+            cursor = previous
+        total += amount
 
 
 def plan_dispatches(
@@ -226,7 +352,11 @@ def plan_dispatches(
 
     remaining = list(queued_jobs)
     unused_slots = list(known_slots)
-    used_machines: set[str] = set()
+    used_machines: set[str] = {
+        candidate.machine_id
+        for candidate in known_slots
+        if candidate.fresh and candidate.state == "busy"
+    }
     account_counts = {key: 0 for key in account_capacities}
     account_counts.update(running_input)
     dynamic_states = dict(requester_states)
@@ -266,10 +396,23 @@ def plan_dispatches(
             ),
         )
         queued, compatible = oldest_by_requester[requester_id]
+
+        def future_capacity(candidate_slot: Slot) -> int:
+            counts_after = dict(account_counts)
+            counts_after[queued.account_key] += 1
+            return _future_dispatch_capacity(
+                [other for other in remaining if other.job_id != queued.job_id],
+                unused_slots,
+                requester_states=dynamic_states,
+                account_capacities=account_capacities,
+                account_counts=counts_after,
+                excluded_machines=used_machines | {candidate_slot.machine_id},
+            )
+
         selected_slot = min(
             compatible,
             key=lambda candidate: (
-                len(candidate.capabilities),
+                -future_capacity(candidate),
                 candidate.machine_id,
                 candidate.slot_id,
             ),
