@@ -286,3 +286,13 @@ def test_sot30_qa2_superseded_by_inv9():
     doc = (REPO / "docs" / "sot" / "30-fleet-run-reliability.md").read_text("utf-8")
     assert "PAUSE_COOLDOWN_SECONDS=600" not in doc, "구 600초 스펙 잔존(INV9 와 충돌)"
     assert "INV9" in doc, "INV9(180초) 로 대체됐음을 명시해야 함"
+
+
+def test_yield_state_path_is_outside_repo():
+    """V2 확정 버그: 상태 파일이 저장소 안(.fleet/)에 쓰이면 pause 마다 git 작업공간이
+    더러워진다(Harness 청결 게이트 방해). 런타임 상태는 저장소 밖에 둔다."""
+    from tools.multi_position_sourcing.fleet_worker import REPO as WREPO, default_yield_state_path
+    p = default_yield_state_path("macmini").resolve()
+    assert not str(p).startswith(str(WREPO.resolve()) + "/"), \
+        "런타임 yield 상태 파일이 저장소 안에 있음 — 워크트리 오염(V2 지적)"
+    assert "macmini" in p.name

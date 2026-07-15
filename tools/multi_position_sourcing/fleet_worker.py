@@ -737,7 +737,7 @@ def default_owner_probe() -> Callable[[], bool] | None:
 
 
 def default_yield_state_path(machine: str) -> Path:
-    return REPO / ".fleet" / f"owner-yield-{machine}.json"
+    return Path.home() / ".valuehire" / "fleet" / f"owner-yield-{machine}.json"
 
 
 def main(argv: list[str] | None = None) -> int:
