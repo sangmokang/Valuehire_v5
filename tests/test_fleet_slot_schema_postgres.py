@@ -313,20 +313,45 @@ def _exercise_schema(conn, legacy_ids: dict[str, int], before) -> None:
     bad_checks = (
         "insert into public.fleet_machines(machine_id,enabled,os,reliability_rank,worker_version,heartbeat_generation,last_seen_at) values (' bad ',true,'linux',1,'w',0,now())",
         "insert into public.fleet_machines(machine_id,enabled,os,reliability_rank,worker_version,heartbeat_generation,last_seen_at) values ('bad'||chr(10),true,'linux',1,'w',0,now())",
+        "insert into public.fleet_machines(machine_id,enabled,os,reliability_rank,worker_version,heartbeat_generation,last_seen_at) values ('bad'||chr(160)||'id',true,'linux',1,'w',0,now())",
+        "insert into public.fleet_machines(machine_id,enabled,os,reliability_rank,worker_version,heartbeat_generation,last_seen_at) values (repeat('a',65),true,'linux',1,'w',0,now())",
+        "insert into public.fleet_machines(machine_id,enabled,os,reliability_rank,worker_version,heartbeat_generation,last_seen_at,labels) values ('bad-json',true,'linux',1,'w',0,now(),'[]')",
         "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at) values ('','vh-win-04','browser','test','p','l','a','ready',0,now())",
+        "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at) values ('blank-profile','vh-win-04','browser','test','','l','a','ready',0,now())",
+        "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at) values ('blank-logical','vh-win-04','browser','test','p','','a','ready',0,now())",
+        "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at) values ('blank-account','vh-win-04','browser','test','p','l','','ready',0,now())",
+        "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at,capabilities) values ('bad-capabilities','vh-win-04','browser','test','p','l','a','ready',0,now(),'[]')",
         "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at) values ('bad-state','vh-win-04','browser','test','p','l','a','unknown',0,now())",
+        "insert into public.account_permits(account_key,permit_no) values ('',1)",
+        f"update public.jobs set requirements='[]' where id={legacy_ids['macmini']}",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',0,now(),now(),now()+interval '1 min')",
+        f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'',1,now(),now(),now()+interval '1 min')",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',1,now(),now()-interval '1 sec',now()+interval '1 min')",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',1,now(),now(),now()-interval '1 sec')",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at,released_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',1,now(),now(),now()+interval '1 min',now()-interval '1 sec')",
     )
     for statement in bad_checks:
         _expect_error(conn, psycopg.errors.CheckViolation, statement)
-    _expect_error(
-        conn, psycopg.errors.ForeignKeyViolation,
+    bad_foreign_keys = (
         f"""insert into public.slot_leases
             (lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at)
             values ('{uuid.uuid4()}','missing-slot',{legacy_ids['macmini']},'w',1,now(),now(),now()+interval '1 min')""",
+        f"""insert into public.slot_leases
+            (lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at)
+            values ('{uuid.uuid4()}','office-linux-05:rps-b',999999,'w',1,now(),now(),now()+interval '1 min')""",
+        """insert into public.browser_slots
+            (slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,
+             account_key,state,generation,observed_at)
+            values ('ghost:slot','ghost-99','browser','test','p','l','a','ready',0,now())""",
+    )
+    for statement in bad_foreign_keys:
+        _expect_error(conn, psycopg.errors.ForeignKeyViolation, statement)
+    _expect_error(
+        conn, psycopg.errors.NotNullViolation,
+        """insert into public.fleet_machines
+            (machine_id,enabled,os,reliability_rank,worker_version,
+             heartbeat_generation,last_seen_at,labels)
+            values ('null-labels',true,'linux',1,'w',0,now(),null)""",
     )
     _assert_security(conn)
 
@@ -382,4 +407,37 @@ def test_dynamic_fleet_slot_migration_on_postgresql_16():
         finally:
             if rollback_database:
                 _drop_database(admin_dsn, rollback_database)
+            _drop_database(admin_dsn, database)
+
+
+@pytest.mark.parametrize("legacy_shape", ("empty", "jobs_only", "heartbeat_only"))
+def test_partial_legacy_shapes_preserve_rows(legacy_shape):
+    with _postgres_server() as admin_dsn:
+        _create_roles(admin_dsn)
+        database, dsn = _new_database(admin_dsn)
+        try:
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                _apply_base(conn)
+                if legacy_shape == "jobs_only":
+                    conn.execute(
+                        """insert into public.jobs
+                           (machine,skill,position_url,requested_by,role,account_key)
+                           values ('macbook','humansearch','https://example.com/only-job',
+                                   'fixture','owner','portal:macbook')"""
+                    )
+                elif legacy_shape == "heartbeat_only":
+                    conn.execute("select * from public.record_heartbeat('winpc',707,true)")
+                jobs_before = conn.execute("select count(*) from public.jobs").fetchone()[0]
+                heartbeats_before = conn.execute(
+                    "select count(*) from public.machine_heartbeats"
+                ).fetchone()[0]
+                _apply(conn, TARGET_MIGRATION)
+                assert conn.execute(
+                    "select count(*) from public.fleet_machines"
+                ).fetchone()[0] == 3
+                assert conn.execute("select count(*) from public.jobs").fetchone()[0] == jobs_before
+                assert conn.execute(
+                    "select count(*) from public.machine_heartbeats"
+                ).fetchone()[0] == heartbeats_before
+        finally:
             _drop_database(admin_dsn, database)

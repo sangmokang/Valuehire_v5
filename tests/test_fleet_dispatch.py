@@ -104,12 +104,19 @@ def test_build_fleet_job_payload_preserves_existing_machine_default():
     assert p is not None and p["machine"] == "macmini"
 
 
+def test_build_fleet_job_payload_accepts_normalized_dynamic_machine():
+    p = build_fleet_job_payload(
+        {"skill": "humansearch", "url": "https://x.com/a", "machine": "server42"},
+        requested_by="m:member", role="member")
+    assert p is not None and p["machine"] == "server42"
+
+
 @pytest.mark.parametrize("opts", [
     {"skill": "send", "url": "https://x.com/a"},        # 발송성 스킬 금지
     {"skill": "humansearch", "url": "notaurl"},
     {"skill": "humansearch"},                            # url 없음
     {"url": "https://x.com/a"},                          # skill 없음
-    {"skill": "humansearch", "url": "https://x.com/a", "machine": "server42"},
+    {"skill": "humansearch", "url": "https://x.com/a", "machine": " server42"},
 ])
 def test_build_fleet_job_payload_fail_closed(opts):
     assert build_fleet_job_payload(opts, requested_by="m:member", role="member") is None
