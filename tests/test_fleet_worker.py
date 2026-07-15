@@ -540,6 +540,117 @@ def test_injected_runner_signature_unchanged_by_badge():
     assert len(prompts) == 1
 
 
+# ── 이슈 F(2026-07-15) — 윈도우에서 claude/codex npm shim(.cmd) 실행 ──
+# [WinError 2] 지정된 파일을 찾을 수 없습니다: shell=False + 배치파일(.cmd)은
+# CreateProcess 가 직접 실행 못 함(cmd.exe 를 거쳐야 함). shutil.which 로 실제
+# 경로를 찾고, 그 경로가 .cmd/.bat 이면 shell=True 로 실행해야 한다.
+
+def test_run_claude_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["shell"] = kwargs.get("shell")
+        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(
+        fw.shutil, "which",
+        lambda name: r"C:\\Users\\vh\\AppData\\Roaming\\npm\\claude.cmd" if name == "claude" else None,
+    )
+    stdout, stderr, code = fw._run_claude("hello", timeout=10)
+    assert code == 0
+    assert stdout == "ok"
+    assert captured["cmd"][0] == r"C:\\Users\\vh\\AppData\\Roaming\\npm\\claude.cmd"
+    assert captured["cmd"][1:] == ["-p", "hello"]
+    assert captured["shell"] is True, "npm .cmd shim 은 cmd.exe 를 거쳐야 실행 가능"
+
+
+def test_run_codex_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["shell"] = kwargs.get("shell")
+        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(
+        fw.shutil, "which",
+        lambda name: r"C:\\Users\\vh\\AppData\\Roaming\\npm\\codex.cmd" if name == "codex" else None,
+    )
+    stdout, stderr, code = fw._run_codex("hello", timeout=10)
+    assert code == 0
+    assert captured["cmd"][0] == r"C:\\Users\\vh\\AppData\\Roaming\\npm\\codex.cmd"
+    assert captured["shell"] is True
+
+
+def test_run_claude_no_shell_on_windows_when_resolved_to_exe(monkeypatch):
+    """네이티브 설치(.exe)는 CreateProcess 가 직접 실행 가능 — shell=True 불필요."""
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["shell"] = kwargs.get("shell")
+        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(
+        fw.shutil, "which",
+        lambda name: r"C:\\Program Files\\Claude\\claude.exe" if name == "claude" else None,
+    )
+    fw._run_claude("hello", timeout=10)
+    assert captured["cmd"][0] == r"C:\\Program Files\\Claude\\claude.exe"
+    assert not captured["shell"]
+
+
+def test_run_claude_falls_back_to_bare_name_when_which_finds_nothing(monkeypatch):
+    """PATH 에 없더라도(예: 부모 프로세스 env 차이) 기존처럼 bare 이름으로 폴백 —
+    조용히 죽지 않고 원래 동작(맥 등 기존 경로)을 유지한다."""
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["shell"] = kwargs.get("shell")
+        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(fw.shutil, "which", lambda name: None)
+    fw._run_claude("hello", timeout=10)
+    assert captured["cmd"] == ["claude", "-p", "hello"]
+    assert not captured["shell"], "실행파일 못 찾으면 shell=True 로 무리하게 돌리지 않는다"
+
+
+def test_run_claude_no_shell_change_on_macos(monkeypatch):
+    """비-윈도우(맥/리눅스)에서는 기존 동작 그대로 — shell 미지정(False 취급)."""
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["shell"] = kwargs.get("shell")
+        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    monkeypatch.setattr(fw.sys, "platform", "darwin")
+    fw._run_claude("hello", timeout=10)
+    assert captured["cmd"] == ["claude", "-p", "hello"]
+    assert not captured["shell"]
+
+
 # ── 이슈 D(2026-07-15 승인) — heartbeat 에 LinkedIn 로그인 상태 동봉 ──
 
 def test_record_heartbeat_sends_linkedin_flag(monkeypatch):
