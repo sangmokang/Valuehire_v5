@@ -355,7 +355,7 @@ def plan_dispatches(
     used_machines: set[str] = {
         candidate.machine_id
         for candidate in known_slots
-        if candidate.fresh and candidate.state == "busy"
+        if candidate.state == "busy"
     }
     account_counts = {key: 0 for key in account_capacities}
     account_counts.update(running_input)
