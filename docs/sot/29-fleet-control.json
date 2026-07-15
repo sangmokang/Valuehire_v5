@@ -20,9 +20,10 @@
     "INV3_profile_preserve": "각 머신 --user-data-dir 디버그 프로필은 삭제·초기화 금지. 일시정지 중 크롬 탭/프로필 유지.",
     "INV4_send_gate": "어떤 Discord 명령도 아웃리치 발송을 트리거하지 못한다(SOT28). 큐엔 검색 스킬(humansearch/aisearch/url)만.",
     "INV5_owner_only": "fleet-resume·fleet-cancel 은 owner(명시적 OWNER_USER_IDS) 전용. 멤버 연락처와 분리.",
-    "INV6_paused_human": "캡차/2FA → paused_for_human + 크롬 조작 중단(양보) + Discord 알림 → fleet-resume 재개. 크롬 안 닫음.",
+    "INV6_paused_human": "캡차/2FA → paused_for_human + 크롬 조작 중단 + Discord 알림. 보안 일시정지 잡 자체는 시간으로 풀지 않고 owner의 fleet-resume 후에만 재개한다. 크롬 안 닫음. 같은 account_key의 다른 워커까지 막는 서버 장벽은 INV10이다.",
     "INV7_stale_alert": "머신 heartbeat 5분 초과/누락 → OPS_HEALTH 경보(30분 억제).",
     "INV8_machine_reliability": "신뢰도 macmini > winpc > macbook(보조 캐파). 맥북은 기본 캐파 아님.",
+    "INV9_worker_yield_3min": "paused_for_human 신호 후 해당 워커는 180초 동안 모든 claim과 변형 enqueue를 중단하고 backlog를 보존한다. ~/.valuehire/fleet의 벽시계 epoch 상태로 재기동 후 남은 시간만 이어서 기다린 뒤 다른 잡과 backlog를 자동 재개한다. 이 180초 양보는 INV6의 보안 일시정지 잡을 자동 resume하지 않는다.",
     "INV10_account_pause_barrier": "계정 단위 pause 장벽: queued 등록은 허용하되 같은 공백문자 없는 account_key(LinkedIn 공용키 portal:linkedin_rps 포함)의 claim/execute는 모든 paused_for_human 잡이 resume_job 또는 cancel_job으로 해소될 때까지 차단한다. 시간 만료 없음. 다른 account_key는 계속 실행한다."
   },
   "machines": {

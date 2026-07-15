@@ -5,8 +5,9 @@
    리스트에 적용되어 잡 params.group_session 이 실린다.
 2. fleet_worker 가 humansearch 잡을 done 종결한 뒤 큐 idle 이면, 그 그룹의 아직
    안 돈 필터 변형 1건을 자동 enqueue 한다(소진 시 중단 — 무한 enqueue 없음).
-3. paused_for_human 이후에는 idle 이어도 자동 enqueue 하지 않는다(SOT29 §2 —
-   캡차/사장님 개입 상황 자동화 재진입 금지).
+3. paused_for_human 신호 후 180초는 claim·enqueue 모두 양보하고,
+   backlog 는 버리지 않은 채 180초 후 다시 enqueue 한다. 캡차·2FA로
+   일시정지된 잡 자체는 사람의 fleet-resume 없이 자동 재개하지 않는다.
 """
 from __future__ import annotations
 
@@ -206,8 +207,10 @@ class FakeWorkerQueue:
         self.jobs = list(jobs)
         self.released = []
         self.enqueued = []
+        self.claim_calls = 0
 
     def claim_next(self, machine):
+        self.claim_calls += 1
         return self.jobs.pop(0) if self.jobs else None
 
     def release(self, job_id, status, *, result_summary="", error=""):
@@ -271,19 +274,69 @@ def test_variant_job_does_not_rebacklog():
     assert q.enqueued == []
 
 
-def test_paused_for_human_clears_backlog_no_night_reentry():
-    """인수 기준 3(SOT29): 캡차/사장님 개입(paused) 후엔 idle 이어도 enqueue 없음."""
+def test_paused_for_human_yields_globally_then_resumes_backlog(tmp_path):
+    """#107: 재기동해도 180초 양보와 backlog를 모두 보존한 뒤 자동 재개."""
+    now = {"mono": 100.0, "wall": 1_800_000_000.0}
+    state_path = tmp_path / "owner-yield-macmini.json"
     q = FakeWorkerQueue([_group_job(), _base_job(id=8)])
     w = FleetWorker(
         machine="macmini", queue=q,
         runner=lambda prompt, timeout: (
             ("후보 3명 저장 완료", 0) if "잡 #7" in prompt
             else ("PAUSED_FOR_HUMAN: 캡차", 0)),
-        notifier=lambda job, text: None)
-    assert w.run_once() == "done"            # 잡7 → backlog 적재
-    assert w.run_once() == "paused_for_human"  # 잡8 캡차 → backlog 폐기
-    assert w.run_once() == "idle"
-    assert q.enqueued == [], "paused 후 자동 enqueue = SOT29 자동화 재진입 위반"
+        notifier=lambda job, text: None,
+        clock=lambda: now["mono"],
+        wall_clock=lambda: now["wall"],
+        yield_state_path=state_path)
+    assert w.run_once() == "done"              # 잡7 → backlog 적재
+    assert w.run_once() == "paused_for_human"  # 잡8 캡차 → 180초 양보
+    claims_at_pause = q.claim_calls
+    assert len(w._variant_backlog) == 2, "paused 후 backlog 영구 폐기 금지"
+
+    # 워커가 대기 도중 재기동돼도 시간뿐 아니라 아직 등록하지 않은 변형도 복원한다.
+    restarted = FleetWorker(
+        machine="macmini", queue=q,
+        runner=lambda prompt, timeout: ("정상 완료", 0),
+        notifier=lambda job, text: None,
+        clock=lambda: now["mono"],
+        wall_clock=lambda: now["wall"],
+        yield_state_path=state_path)
+    assert len(restarted._variant_backlog) == 2, "재기동으로 backlog 유실 금지"
+
+    now["mono"] += 179
+    now["wall"] += 179
+    assert restarted.run_once() == "idle"
+    assert q.claim_calls == claims_at_pause, "180초 안에 다음 잡 claim 금지"
+    assert q.enqueued == [], "180초 안에 backlog enqueue 금지"
+
+    now["mono"] += 1
+    now["wall"] += 1
+    assert restarted.run_once() == "idle"
+    assert q.claim_calls == claims_at_pause + 1
+    assert len(q.enqueued) == 1, "180초 후 backlog 자동 재개"
+    assert q.released[-1] == (8, "paused_for_human"), (
+        "보안 일시정지 잡은 시간 경과로 자동 resume 하지 않음")
+
+    # 등록한 항목은 상태 파일에서도 즉시 빠져 재기동 때 부활하지 않는다.
+    second_restart = FleetWorker(
+        machine="macmini", queue=q,
+        runner=lambda prompt, timeout: ("정상 완료", 0),
+        notifier=lambda job, text: None,
+        clock=lambda: now["mono"],
+        wall_clock=lambda: now["wall"],
+        yield_state_path=state_path)
+    assert len(second_restart._variant_backlog) == 1
+    assert second_restart.run_once() == "idle"
+    assert len(q.enqueued) == 2
+
+    final_restart = FleetWorker(
+        machine="macmini", queue=q,
+        runner=lambda prompt, timeout: ("정상 완료", 0),
+        notifier=lambda job, text: None,
+        clock=lambda: now["mono"],
+        wall_clock=lambda: now["wall"],
+        yield_state_path=state_path)
+    assert final_restart._variant_backlog == [], "소진한 backlog가 재기동 때 부활하면 안 됨"
 
 
 def test_idle_enqueue_failure_is_fail_soft_and_drops_variant():

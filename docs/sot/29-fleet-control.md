@@ -41,6 +41,14 @@
 4. Discord `fleet-resume job:<id>` → 워커 재개.
 - 워커는 일시정지 중 절대 크롬을 닫지 않는다.
 - 같은 계정에 일시정지 잡이 여러 건이면 일부만 재개·취소해도 장벽은 풀리지 않는다.
+- **보안 일시정지는 자동으로 풀리지 않는다.** 캡차·2FA로 멈춘 그 잡은 사장님의
+  `fleet-resume` 후에만 재개한다. 같은 계정의 다른 워커까지 기간 제한 없이 막는
+  서버 장벽은 **INV10 계정 단위 pause 장벽**이 담당한다.
+- **워커 전체 3분 양보(#107, INV9):** `paused_for_human` 신호 후 180초 동안 그 워커는
+  모든 다음 잡 claim과 변형 enqueue를 멈추고 backlog를 보존한다. 상태를
+  `~/.valuehire/fleet/owner-yield-<machine>.json`에 벽시계 epoch로 남겨 재기동해도 남은
+  시간만 기다린다. 180초 후엔 다른 잡과 backlog를 자동 재개하지만, 위의
+  보안 일시정지 잡을 자동 resume하지는 않는다.
 
 ## 5. 권한
 - `fleet-run` / `fleet-status`: 인가된 멤버·owner.
