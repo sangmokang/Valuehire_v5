@@ -32,8 +32,13 @@
 1. 워커가 캡차/2FA 감지 → 잡을 `paused_for_human` 전환 + 크롬 조작 중단(양보).
 2. Discord 로 머신명·잡ID·상황 알림.
 3. 사장님이 VNC(맥) 로 접속해 수동 처리(브라우저 앞으로).
-4. Discord `fleet-resume job:<id>` → 워커 재개.
+4. Discord `fleet-resume job:<id>` → *그 잡*을 재개.
 - 워커는 일시정지 중 절대 크롬을 닫지 않는다.
+- **INV9 · 사장님 양보 3분 자동 재개 (2026-07-15 사장님 지시, #107)**: 사장님이 기기/크롬을
+  쓰는 동안과 사람 개입 신호(캡차·2FA·paused) 직후에는 자동작업(다음 잡 claim·변형 enqueue)을
+  멈춘다. 마지막 신호로부터 **180초(3분)** 동안 이상이 없으면 **자동 재개**한다 — 사람 조치 불필요.
+  자동 재개를 영구 차단하는 코드(backlog 폐기·무기한 중단·10분 고정 쿨다운)는 SOT 위반이며 삭제 대상.
+  단일 출처: `fleet_worker.OWNER_YIELD_RESUME_SECONDS = 180`.
 
 ## 5. 권한
 - `fleet-run` / `fleet-status`: 인가된 멤버·owner.

@@ -38,10 +38,12 @@ _SEARCH_RECEIPT_MARKER = "FLEET_SEARCH_RECEIPT:"
 DEFAULT_REPORT_CHANNEL = "1512503041448743092"
 _NOTIFICATION_DEDUPE: dict[str, float] = {}
 
-# QA-2(2026-07-13): 캡차/2FA 로 paused_for_human 이 되면 계정락이 풀리는데, 곧바로
-# 다음 잡을 claim 하면 사장님이 캡차를 푸는 크롬/계정에 자동화가 재진입한다(SOT29 §2·§4).
-# 서버측 락 유지(DB 마이그레이션)는 후속 — 워커측 쿨다운으로 먼저 막는다.
-PAUSE_COOLDOWN_SECONDS = 600
+# SOT29 INV9(2026-07-15 사장님 지시, #107): "내가 쓸 동안은 멈췄다가 3분 뒤까지
+# 이상이 없으면 계속 시작해." — 사람 개입(캡차/2FA/사장님 사용) 신호 후 180초 동안
+# 조용하면 자동 재개한다. 영구 중단·10분 쿨다운(구 QA-2 600초)은 이 원칙을 방해하는
+# 코드라 삭제됨. owner_activity.DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS(180)와 같은 원칙.
+OWNER_YIELD_RESUME_SECONDS = 180
+PAUSE_COOLDOWN_SECONDS = OWNER_YIELD_RESUME_SECONDS  # 하위호환 별칭(단일 출처)
 _RELEASE_RETRY_ATTEMPTS = 3
 _RELEASE_RETRY_BACKOFF = (2, 10)
 
@@ -88,6 +90,19 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     params = job.get("params") or {}
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
+    # 이슈 #107(사장님 지시): LinkedIn(url) 잡은 로그인된 브라우저/기기를 탐색해 쓴다.
+    # 함대 셋(macmini/macbook/winpc) 중 한 머신만 로그인 상태 — 라우팅(이슈 D)이 그 머신으로
+    # 보냈더라도, 실행 에이전트가 로그인 세션을 실제로 찾았는지 스스로 확인해야 한다.
+    url_login_rule = ""
+    if skill == "url":
+        url_login_rule = (
+            "19. LinkedIn 은 macmini/macbook/winpc 셋 중 한 머신만 로그인 상태다"
+            "(heartbeat linkedin_rps_logged_in 기준으로 이 머신이 선정됨). 실행 전 이 "
+            "머신의 전용 크롬 프로필에서 로그인된 브라우저를 먼저 탐색·확인하고 그 세션을 "
+            "그대로 쓸 것. 로그아웃 상태면 local secret store 로 자동 재로그인을 시도하고"
+            "(비밀번호·쿠키·토큰 출력 금지), 2FA/캡차가 뜰 때만 사람을 부를 것. 이 머신에서 "
+            "끝내 로그인 세션을 못 찾으면 heartbeat(fleet-status)로 어느 머신이 로그인 "
+            "상태인지 확인해 그 머신명을 보고할 것.\n")
     return (
         f"[Valuehire 잡 #{job_id}] {skill} 스킬을 발동해 아래 작업을 수행해줘.\n"
         f"- 포지션 URL: {url}\n"
@@ -130,6 +145,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"17. 후보 결과는 사람인/잡코리아를 구분하고 후보자명, 전체 profile_url, 채널, 점수, "
         f"why_fit, profile_summary, 주요 근거, hard exclude=false, 저장 완료=true를 포함할 것.\n"
         f"18. 후보 제안·InMail·이메일 Send/보내기는 절대 클릭하지 말 것.\n"
+        + url_login_rule
     )
 
 
@@ -336,6 +352,7 @@ class FleetWorker:
         runner: Callable[[str, int], tuple[str, int]] | None = None,
         notifier: Callable[[Mapping[str, Any], str], None] | None = None,
         timeout: int = CLAUDE_TIMEOUT_SECONDS,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         if machine not in FLEET_MACHINES:
             raise RuntimeError(f"unknown machine: {machine!r}")
@@ -349,8 +366,12 @@ class FleetWorker:
         self.notifier = notifier or discord_notify
         self.timeout = timeout
         # 이슈 #104: "방금" done 종결된 humansearch 그룹의 미소진 필터 변형 backlog.
-        # 큐 idle 일 때 1건씩 자동 enqueue(심야 지속). paused_for_human 시 전량 폐기.
+        # 큐 idle 일 때 1건씩 자동 enqueue(심야 지속).
+        # 이슈 #107(SOT29 INV9): paused_for_human 은 '3분 양보'다 — 폐기가 아니라
+        # _backlog_resume_at 까지 정지 후 자동 재개(영구 중단 금지, 사장님 지시).
         self._variant_backlog: list[dict[str, Any]] = []
+        self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
+        self._backlog_resume_at: float = 0.0
 
     def _notify(self, job: Mapping[str, Any], text: str) -> None:
         try:
@@ -454,9 +475,11 @@ class FleetWorker:
             return "failed"
         result = parse_worker_output(stdout, code, stderr=stderr)
         if result["status"] == "paused_for_human":
-            # 이슈 #104 + SOT29 §2: 캡차/2FA/사장님 개입 상황에서는 심야 자동
-            # enqueue 로 같은 계정에 재진입하지 않는다 — 변형 backlog 전량 폐기.
-            self._variant_backlog.clear()
+            # 이슈 #107(SOT29 INV9, 사장님 지시): 사람 개입 신호 = '3분 양보' —
+            # backlog 를 폐기하지 않고, 마지막 이상 신호로부터 180초 동안만 자동
+            # enqueue 를 정지한다. 3분 뒤 이상이 없으면 자동 재개(영구 중단 금지).
+            # pause 가 반복되면 그 시점부터 창이 다시 3분으로 연장된다.
+            self._backlog_resume_at = self._clock() + OWNER_YIELD_RESUME_SECONDS
             self._release(job, job_id, "paused_for_human", error=result["reason"])
             self._notify(job, (
                 f"⏸️ 잡 #{job_id} 사람 개입 필요 ({self.machine}): {result['reason']}\n"
@@ -517,6 +540,10 @@ class FleetWorker:
         idempotency_key 파생 덕에 중복 재발사도 큐 계층에서 dedup 된다.
         """
         if not self._variant_backlog:
+            return
+        # 이슈 #107(SOT29 INV9): 마지막 사람 개입 신호 후 3분이 지나기 전엔 양보(no-op).
+        # 창이 지나면 아래 enqueue 로 자동 재개 — 별도 사람 조치 불필요.
+        if self._clock() < self._backlog_resume_at:
             return
         payload = self._variant_backlog.pop(0)
         variant = (payload.get("params") or {}).get("variant") or {}

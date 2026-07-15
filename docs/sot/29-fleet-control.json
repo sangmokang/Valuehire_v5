@@ -1,34 +1,83 @@
 {
-  "sot_id": 29,
-  "title": "함대 통제 — 3대 머신 · Discord 명령 · 계정↔머신 바인딩",
-  "confirmed_date": "2026-07-11",
-  "supersedes": [],
-  "depends_on": ["docs/sot/26-portal-login-spec.json", "docs/sot/28-auto-send-policy.json"],
-  "components": {
-    "job_queue": {"pr": 83, "tables": ["jobs", "account_locks"],
-                  "rpcs": ["claim_next_job", "release_job", "resume_job", "cancel_job"]},
-    "worker": {"pr": 84, "module": "tools/multi_position_sourcing/fleet_worker.py"},
-    "discord": {"pr": 85, "module": "tools/multi_position_sourcing/fleet_dispatch.py",
-                "commands": ["fleet-run", "fleet-status", "fleet-resume", "fleet-cancel"]},
-    "heartbeat": {"module": "tools/multi_position_sourcing/fleet_heartbeat.py",
-                  "watchdog": "scripts/fleet_watchdog.py",
-                  "tables": ["machine_heartbeats"]}
+ "sot_id": 29,
+ "title": "함대 통제 — 3대 머신 · Discord 명령 · 계정↔머신 바인딩",
+ "confirmed_date": "2026-07-11",
+ "supersedes": [],
+ "depends_on": [
+  "docs/sot/26-portal-login-spec.json",
+  "docs/sot/28-auto-send-policy.json"
+ ],
+ "components": {
+  "job_queue": {
+   "pr": 83,
+   "tables": [
+    "jobs",
+    "account_locks"
+   ],
+   "rpcs": [
+    "claim_next_job",
+    "release_job",
+    "resume_job",
+    "cancel_job"
+   ]
   },
-  "invariants": {
-    "INV1_account_machine_binding": "같은 포털 계정을 여러 머신에서 동시에 돌리지 않는다. account_key 로 계정 글로벌 락(한 시점 한 머신).",
-    "INV2_linkedin_single_seat": "LinkedIn 잡(skill=url)은 heartbeat linkedin_rps_logged_in 이 참인 머신으로 라우팅(2026-07-15 승인 개정). 다중이면 INV8 신뢰도 순, 미검출·조회실패면 macmini 폴백. account_key 글로벌 락으로 같은 계정 동시 2머신은 여전히 불가.",
-    "INV3_profile_preserve": "각 머신 --user-data-dir 디버그 프로필은 삭제·초기화 금지. 일시정지 중 크롬 탭/프로필 유지.",
-    "INV4_send_gate": "어떤 Discord 명령도 아웃리치 발송을 트리거하지 못한다(SOT28). 큐엔 검색 스킬(humansearch/aisearch/url)만.",
-    "INV5_owner_only": "fleet-resume·fleet-cancel 은 owner(명시적 OWNER_USER_IDS) 전용. 멤버 연락처와 분리.",
-    "INV6_paused_human": "캡차/2FA → paused_for_human + 크롬 조작 중단(양보) + Discord 알림 → fleet-resume 재개. 크롬 안 닫음.",
-    "INV7_stale_alert": "머신 heartbeat 5분 초과/누락 → OPS_HEALTH 경보(30분 억제).",
-    "INV8_machine_reliability": "신뢰도 macmini > winpc > macbook(보조 캐파). 맥북은 기본 캐파 아님."
+  "worker": {
+   "pr": 84,
+   "module": "tools/multi_position_sourcing/fleet_worker.py"
   },
-  "machines": {
-    "macmini": {"role": "primary", "reliability": "highest", "watchdog_host": true},
-    "winpc": {"role": "secondary", "reliability": "high", "requires": "Autologon+작업스케줄러(interactive, 서비스 금지)"},
-    "macbook": {"role": "overflow", "reliability": "medium", "requires": "클램셸+더미플러그+배터리80%+FileVault결정"}
+  "discord": {
+   "pr": 85,
+   "module": "tools/multi_position_sourcing/fleet_dispatch.py",
+   "commands": [
+    "fleet-run",
+    "fleet-status",
+    "fleet-resume",
+    "fleet-cancel"
+   ]
   },
-  "maintenance_window": "일요일 새벽 — OS/Chrome 업데이트 몰아서",
-  "manual_setup_owner": ["Tailscale 3대+ACL", "맥북 클램셸/배터리/FileVault", "윈도우 Autologon/스케줄러/크롬프로필/VNC(RDP금지)", "각 머신 claude -p 로그인 확인", "plist 설치(worker 머신별·watchdog 맥미니만)"]
+  "heartbeat": {
+   "module": "tools/multi_position_sourcing/fleet_heartbeat.py",
+   "watchdog": "scripts/fleet_watchdog.py",
+   "tables": [
+    "machine_heartbeats"
+   ]
+  }
+ },
+ "invariants": {
+  "INV1_account_machine_binding": "같은 포털 계정을 여러 머신에서 동시에 돌리지 않는다. account_key 로 계정 글로벌 락(한 시점 한 머신).",
+  "INV2_linkedin_single_seat": "LinkedIn 잡(skill=url)은 heartbeat linkedin_rps_logged_in 이 참인 머신으로 라우팅(2026-07-15 승인 개정). 다중이면 INV8 신뢰도 순, 미검출·조회실패면 macmini 폴백. account_key 글로벌 락으로 같은 계정 동시 2머신은 여전히 불가.",
+  "INV3_profile_preserve": "각 머신 --user-data-dir 디버그 프로필은 삭제·초기화 금지. 일시정지 중 크롬 탭/프로필 유지.",
+  "INV4_send_gate": "어떤 Discord 명령도 아웃리치 발송을 트리거하지 못한다(SOT28). 큐엔 검색 스킬(humansearch/aisearch/url)만.",
+  "INV5_owner_only": "fleet-resume·fleet-cancel 은 owner(명시적 OWNER_USER_IDS) 전용. 멤버 연락처와 분리.",
+  "INV6_paused_human": "캡차/2FA → paused_for_human + 크롬 조작 중단(양보) + Discord 알림. 그 잡 자체의 재개는 fleet-resume(사람). 단, 워커의 다른 자동작업(다음 잡 claim·변형 enqueue)은 INV9 에 따라 마지막 사람 개입 신호 후 180초 뒤 자동 재개한다. 크롬 안 닫음.",
+  "INV7_stale_alert": "머신 heartbeat 5분 초과/누락 → OPS_HEALTH 경보(30분 억제).",
+  "INV8_machine_reliability": "신뢰도 macmini > winpc > macbook(보조 캐파). 맥북은 기본 캐파 아님.",
+  "INV9_owner_yield_3min": "(2026-07-15 사장님 지시, #107) 사장님이 기기/크롬을 쓰는 동안 및 사람 개입 신호(캡차·2FA·paused) 직후에는 자동작업을 멈춘다(눈치·양보). 마지막 신호로부터 180초(3분) 동안 이상이 없으면 **자동 재개**한다. 자동 재개를 영구 차단하는 코드(backlog 폐기·무기한 중단·10분 이상 고정 쿨다운)는 SOT 위반이며 발견 즉시 삭제한다. 단일 출처: fleet_worker.OWNER_YIELD_RESUME_SECONDS=180, owner_activity.DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS=180."
+ },
+ "machines": {
+  "macmini": {
+   "role": "primary",
+   "reliability": "highest",
+   "watchdog_host": true
+  },
+  "winpc": {
+   "role": "secondary",
+   "reliability": "high",
+   "requires": "Autologon+작업스케줄러(interactive, 서비스 금지)"
+  },
+  "macbook": {
+   "role": "overflow",
+   "reliability": "medium",
+   "requires": "클램셸+더미플러그+배터리80%+FileVault결정"
+  }
+ },
+ "maintenance_window": "일요일 새벽 — OS/Chrome 업데이트 몰아서",
+ "manual_setup_owner": [
+  "Tailscale 3대+ACL",
+  "맥북 클램셸/배터리/FileVault",
+  "윈도우 Autologon/스케줄러/크롬프로필/VNC(RDP금지)",
+  "각 머신 claude -p 로그인 확인",
+  "plist 설치(worker 머신별·watchdog 맥미니만)"
+ ],
+ "updated_at": "2026-07-15"
 }
