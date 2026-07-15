@@ -167,6 +167,42 @@ def test_two_rps_tabs_still_obey_single_account_capacity():
     assert len(plan) == 1
 
 
+@pytest.mark.parametrize("challenge_fresh", [True, False])
+def test_challenge_blocks_same_account_across_all_slots(challenge_fresh):
+    plan = plan_dispatches(
+        [
+            job(
+                "rps",
+                1,
+                1,
+                resource_class="linkedin_rps",
+                account_key="portal:linkedin_rps",
+            ),
+            job("saramin", 2, 2),
+        ],
+        [
+            slot(
+                "challenged",
+                "m1",
+                resource_class="linkedin_rps",
+                account_key="portal:linkedin_rps",
+                state="challenge",
+                fresh=challenge_fresh,
+            ),
+            slot(
+                "ready-rps",
+                "m2",
+                resource_class="linkedin_rps",
+                account_key="portal:linkedin_rps",
+            ),
+            slot("ready-saramin", "m3"),
+        ],
+        requester_states=states("rps", "saramin"),
+        account_capacities={"portal:linkedin_rps": 1, "portal:saramin": 1},
+    )
+    assert [(d.job_id, d.slot_id) for d in plan] == [(2, "ready-saramin")]
+
+
 def test_machine_default_capacity_allows_only_one_mutating_slot():
     plan = plan_dispatches(
         [job("a", 1, 1), job("b", 2, 2)],
