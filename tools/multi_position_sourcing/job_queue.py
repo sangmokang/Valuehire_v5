@@ -16,6 +16,9 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 
+# Bootstrap/default machines remain useful for aliases and status views, but
+# they are no longer an admission whitelist. Registered machine IDs are
+# dynamic and share this syntax with fleet_machines.machine_id in PostgreSQL.
 FLEET_MACHINES: tuple[str, ...] = ("macmini", "macbook", "winpc")
 FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url")
 FLEET_ROLES: tuple[str, ...] = ("owner", "member")
@@ -36,6 +39,18 @@ _RELEASE_STATUSES = ("done", "failed", "paused_for_human")
 _CANCELABLE_STATUSES = ("queued", "paused_for_human")
 
 _NETLOC_RE = None  # lazy compile
+
+
+def is_valid_machine_id(machine: Any) -> bool:
+    """Match the database machine_id contract without silently normalizing."""
+    if not isinstance(machine, str) or not 1 <= len(machine) <= 64:
+        return False
+    if not ("a" <= machine[0] <= "z" or "0" <= machine[0] <= "9"):
+        return False
+    return all(
+        "a" <= char <= "z" or "0" <= char <= "9" or char in "_-"
+        for char in machine
+    )
 
 
 def _valid_url(url: Any) -> bool:
@@ -91,7 +106,7 @@ def new_job_payload(
     account_key: str = "",
 ) -> dict[str, Any] | None:
     """jobs insert 페이로드. 무효 입력은 None(fail-closed) — 조용한 보정 금지."""
-    if machine not in FLEET_MACHINES:
+    if not is_valid_machine_id(machine):
         return None
     if skill not in FLEET_SKILLS:
         return None
@@ -139,8 +154,8 @@ def is_valid_transition(old: Any, new: Any) -> bool:
 
 
 def claim_next_job_payload(machine: str) -> dict[str, str]:
-    if machine not in FLEET_MACHINES:
-        raise ValueError(f"unknown machine: {machine!r}")
+    if not is_valid_machine_id(machine):
+        raise ValueError(f"invalid machine id: {machine!r}")
     return {"p_machine": machine}
 
 
