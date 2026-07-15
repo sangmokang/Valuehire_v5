@@ -149,6 +149,16 @@ def test_machine_contract_is_identical_and_fail_closed() -> None:
     assert canonical["keepalive"]["require_fresh_owner_idle_check"] is True
     assert canonical["keepalive"]["require_dedicated_safe_tab"] is True
     assert canonical["badge"]["required_before_first_mutation"] is True
+    assert canonical["ownership_lease"]["acquire"] == "atomic_mkdir"
+    assert canonical["ownership_lease"]["required_before_discover_or_create"] is True
+    assert canonical["mutation_guard"] == {
+        "required_before_every_mutation": True,
+        "idle_checks": 2,
+        "quiet_dwell_seconds": 1,
+        "minimum_idle_seconds": 180,
+        "lease_token_recheck": True,
+        "failure_state": "HUMAN_ACTIVE",
+    }
 
 
 def test_skill_does_not_recommend_unsafe_legacy_login_runner() -> None:
@@ -157,6 +167,10 @@ def test_skill_does_not_recommend_unsafe_legacy_login_runner() -> None:
     assert "보존 모드가 아니므로 사용 금지" in text
     assert "--human-timeout-seconds 1800" not in text
     assert "`HUMAN_AUTH` 중 navigate" in text and "금지" in text
+    assert "모든 변경 조작 직전" in text
+    assert "1초" in text and "두 번" in text
+    assert "원자적 디렉터리" in text
+    assert "점유권을 얻지 못하면" in text
 
 
 def test_installer_targets_only_three_agent_skill_directories(tmp_path: Path) -> None:

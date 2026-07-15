@@ -44,6 +44,7 @@ class PortalTabGuardTests(unittest.TestCase):
             **os.environ,
             "PORTAL_CHROME": str(self.fake_chrome),
             "PORTAL_LOG_DIR": str(self.tmp / "logs"),
+            "PORTAL_START_LOCK_DIR": str(self.tmp / "locks"),
             "PORTAL_BOOT_WAIT": "1",
             # 실환경 프로필과 격리 — 가드(pgrep --user-data-dir=…)가 진짜 포털 크롬을 잡지 않게.
             "SARAMIN_PROFILE": str(self.tmp / "prof_saramin"),
@@ -102,6 +103,22 @@ class PortalTabGuardTests(unittest.TestCase):
         calls = self.invoke_log.read_text(encoding="utf-8").splitlines() if self.invoke_log.exists() else []
         self.assertEqual(result.returncode, 2)
         self.assertEqual(calls, [])
+
+    def test_concurrent_start_same_channel_launches_once(self) -> None:
+        argv = [str(LAUNCHER), "start", "linkedin"]
+        procs = [
+            subprocess.Popen(argv, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            for _ in range(2)
+        ]
+        outputs = [proc.communicate(timeout=180) for proc in procs]
+        time.sleep(1)
+        calls = self.invoke_log.read_text(encoding="utf-8").splitlines() if self.invoke_log.exists() else []
+        self.assertTrue(all(proc.returncode == 0 for proc in procs), outputs)
+        self.assertEqual(len(calls), 1, f"동시 start가 같은 프로필을 중복 launch함: {calls}")
+
+    def test_start_path_never_recommends_restart(self) -> None:
+        text = LAUNCHER.read_text(encoding="utf-8")
+        self.assertNotIn("계속 무응답이면 'restart'", text)
 
 
 if __name__ == "__main__":
