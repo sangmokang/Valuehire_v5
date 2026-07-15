@@ -1,0 +1,74 @@
+{
+  "generator": {
+    "engine": "Codex primary self-adversarial review",
+    "head": "52222265ccff626f2b87e1ad149912b4229f8821",
+    "verdict": "PASS",
+    "evidence": "15/15 polarity controls passed; production scoring call graph traced"
+  },
+  "v1": {
+    "engine": "independent Codex reviewer /root/independent_scoring_review",
+    "verdict": "PASS",
+    "evidence": "prior blockers plus 8 nearby variants passed; positive, mixed-history, ratio, and SOT24 controls 19/19"
+  },
+  "v2": {
+    "engine": "Claude CLI 2.1.210 read-only adversarial review",
+    "verdict": "PASS",
+    "evidence": "static trace confirmed reversed/passive English and Korean formal negation fixes with positive controls intact"
+  },
+  "failed_attempts": [
+    {
+      "stage": "initial RED",
+      "result": "11 failed, 14 passed; hardened edge RED 16 failed, 15 passed",
+      "resolution": "introduced matched/total weighting and Korean degree aliases"
+    },
+    {
+      "stage": "mutation attack",
+      "result": "total=0 returning full score initially survived",
+      "resolution": "added a direct zero-total regression; all five final mutants are killed"
+    },
+    {
+      "stage": "alias and visibility adversarial rounds",
+      "result": "partial-reason, fragment, professional-degree, invisible-character, and entity-boundary counterexamples failed",
+      "resolution": "moved partial reasons to review, normalized visible text, and added Unicode token boundaries"
+    },
+    {
+      "stage": "locale adversarial RED",
+      "result": "5 failed",
+      "resolution": "covered Korean non-qualifying forms and Unicode Latin/CJK adjacency"
+    },
+    {
+      "stage": "degree-negation RED rounds",
+      "result": "5 failed, then 10 failed, then 16 failed",
+      "resolution": "generalized Korean degree status handling and common English negative claims"
+    },
+    {
+      "stage": "reversed/passive negation RED",
+      "result": "9 failed",
+      "resolution": "covered did-not/has-not/failed-to/never/passive/dash and Korean formal variants"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "PASS",
+  "command": {
+    "focused": "/Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest tests/test_reservoir_scoring.py -q",
+    "full": "PATH=/Volumes/SSD/valuehire_v5/.venv/bin:$PATH ./verify.sh",
+    "diff": "git diff --check 1f99e70",
+    "wiring": "rg -n '_education_score|_company_tier_score|_university_tier_score|score_profile_for_position|top_matches_for_profile' tools/multi_position_sourcing tests/test_reservoir_scoring.py"
+  },
+  "exit_code": {
+    "focused": 0,
+    "full": 0,
+    "diff": 0,
+    "wiring": 0
+  },
+  "artifact": [
+    "docs/engineering/scoring-ratio-signals-goal-2026-07-15.md",
+    "tools/multi_position_sourcing/scoring.py",
+    "tests/test_reservoir_scoring.py"
+  ],
+  "hash": {
+    "algorithm": "sha256",
+    "scope": "git diff 1f99e70 -- tools/multi_position_sourcing/scoring.py tests/test_reservoir_scoring.py",
+    "value": "7ce6f3b6863bbbab49604b2ac792084c6b44fd44d11fc55651f969d16791dd71"
+  }
+}

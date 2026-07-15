@@ -89,6 +89,6 @@ rg -n "_education_score|_company_tier_score|_university_tier_score|score_profile
 - [x] memory·기존 코드/git log·스킬/문서의 과거 지시 3축 회수.
 - [x] 별도 worktree `task/scoring-ratio-signals` 사용.
 - [x] RED focused test 실패 증거: `11 failed, 14 passed` 후 엣지 보강 `16 failed, 15 passed`.
-- [ ] GREEN focused test 및 전체 verify 통과.
-- [ ] 프로덕션 호출 경로 추적.
-- [ ] 자기 적대검증 + 독립 2차검증 + verdict 산출물.
+- [x] GREEN focused `23 passed, 88 subtests`; 전체 verify `1485 passed, 4 xfailed, 102 subtests`.
+- [x] `score_profile_for_position` → `top_matches_for_profile`/reservoir scorer → dry-run 호출 경로 추적.
+- [x] 자기 적대검증 + 독립 Codex + 외부 Claude 최종 PASS; verdict 산출물 기록.
