@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -67,6 +68,36 @@ def test_build_job_prompt_contains_contract():
     assert "FLEET_SEARCH_RECEIPT:" in p
     # 스킬 경로 금지 — 발동 문구 방식만
     assert "/mnt/skills" not in p
+
+
+def test_url_prompt_has_executable_login_machine_and_pause_contract():
+    prompt = build_job_prompt(_job(
+        skill="url", machine="macmini", account_key="portal:linkedin_rps"))
+    for machine in ("macmini", "macbook", "winpc"):
+        assert machine in prompt
+    assert "현재 배정 머신은 macmini" in prompt
+    assert "로그인된 브라우저와 RPS 세션을 실제 URL·DOM으로 검증할 것" in prompt
+    assert "검증하지 말" not in prompt
+    assert "규칙 6을 포함해 이 잡 전체에서 최대 1회" in prompt
+    assert "checkpoint" in prompt
+    assert "다른 머신을 원격 조작하지 말" in prompt
+    assert "fleet-status의 linkedin_ready" in prompt
+    assert "PAUSED_FOR_HUMAN: portal=linkedin_rps machine=macmini" in prompt
+    assert "마지막 줄" in prompt and "즉시 종료" in prompt
+
+    non_linkedin = build_job_prompt(_job(skill="humansearch"))
+    assert "linkedin_ready" not in non_linkedin
+    assert "정상 로그인을 시도하되" in non_linkedin
+    assert "최대 1회" not in non_linkedin
+
+
+def test_url_skill_keeps_one_login_attempt_and_security_stop_contract():
+    skill = (Path(__file__).resolve().parents[1]
+             / ".claude/skills/url/SKILL.md").read_text(encoding="utf-8")
+    assert "단순 로그아웃" in skill
+    assert "자동 로그인" in skill and "1회" in skill
+    assert "캡차" in skill and "2FA" in skill and "checkpoint" in skill
+    assert "즉시 STOP" in skill
 
 
 def _receipt(*, pages=10, opened=2, saved=2):

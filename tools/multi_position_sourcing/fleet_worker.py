@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -91,19 +92,20 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     params = job.get("params") or {}
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
-    # 이슈 #107(사장님 지시): LinkedIn(url) 잡은 로그인된 브라우저/기기를 탐색해 쓴다.
-    # 함대 셋(macmini/macbook/winpc) 중 한 머신만 로그인 상태 — 라우팅(이슈 D)이 그 머신으로
-    # 보냈더라도, 실행 에이전트가 로그인 세션을 실제로 찾았는지 스스로 확인해야 한다.
     url_login_rule = ""
     if skill == "url":
+        assigned_machine = str(job.get("machine") or "(미상)")
         url_login_rule = (
-            "19. LinkedIn 은 macmini/macbook/winpc 셋 중 한 머신만 로그인 상태다"
-            "(heartbeat linkedin_rps_logged_in 기준으로 이 머신이 선정됨). 실행 전 이 "
-            "머신의 전용 크롬 프로필에서 로그인된 브라우저를 먼저 탐색·확인하고 그 세션을 "
-            "그대로 쓸 것. 로그아웃 상태면 local secret store 로 자동 재로그인을 시도하고"
-            "(비밀번호·쿠키·토큰 출력 금지), 2FA/캡차가 뜰 때만 사람을 부를 것. 이 머신에서 "
-            "끝내 로그인 세션을 못 찾으면 fleet-status 의 linkedin_ready 로 어느 머신이 로그인 "
-            "상태인지 확인해 그 머신명을 보고할 것.\n")
+            "19. LinkedIn RPS 실행 순서: 함대가 macmini/macbook/winpc 중 heartbeat의 "
+            "linkedin_rps_logged_in=true인 머신을 먼저 찾아 이 잡에 배정한다. 현재 배정 머신은 "
+            f"{assigned_machine}이다. 이 머신의 영속 크롬 프로필에서 브라우저를 직접 탐색하고, "
+            "로그인된 브라우저와 RPS 세션을 실제 URL·DOM으로 검증할 것. 검증 전에는 검색을 "
+            "시작하지 말 것. 단순 로그아웃이면 규칙 6을 포함해 이 잡 전체에서 최대 1회만 "
+            "local secret store 자동 로그인을 시도할 것. 캡차·2FA·checkpoint가 뜨거나 로그인 "
+            "세션을 찾지 못하면 다른 머신을 원격 조작하지 말 것. 운영자가 fleet-status의 "
+            "linkedin_ready로 재배정할 수 있도록 다음 형식의 문장을 마지막 줄에 남기고 즉시 "
+            f"종료할 것: '{_PAUSE_MARKER} portal=linkedin_rps machine={assigned_machine} "
+            f"job={job_id} current_url=<현재 URL> action=linkedin_ready 확인 후 로그인 머신 재배정'.\n")
     return (
         f"[Valuehire 잡 #{job_id}] {skill} 스킬을 발동해 아래 작업을 수행해줘.\n"
         f"- 포지션 URL: {url}\n"
@@ -440,8 +442,9 @@ class FleetWorker:
         notifier: Callable[[Mapping[str, Any], str], None] | None = None,
         timeout: int = CLAUDE_TIMEOUT_SECONDS,
         clock: Callable[[], float] | None = None,
+        wall_clock: Callable[[], float] | None = None,
         owner_probe: Callable[[], bool] | None = None,
-        yield_state_path: Any = None,
+        yield_state_path: str | Path | None = None,
     ) -> None:
         if machine not in FLEET_MACHINES:
             raise RuntimeError(f"unknown machine: {machine!r}")
@@ -460,41 +463,103 @@ class FleetWorker:
         # _backlog_resume_at 까지 정지 후 자동 재개(영구 중단 금지, 사장님 지시).
         self._variant_backlog: list[dict[str, Any]] = []
         self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
+        self._wall_clock: Callable[[], float] = (
+            wall_clock if wall_clock is not None else time.time)
         # V1 2R F1: 3분 양보 창은 enqueue 만이 아니라 claim 도 막는 단일 게이트다.
         self._yield_until: float = 0.0
         # V1 2R F3: 사장님 활동 프로브(눈치) — 주입식. None 이면 게이트 없음(테스트/미지원 OS).
         # 프로덕션 배선은 main() 의 default_owner_probe() (macOS 전용, Windows 감지기는 후속).
         self.owner_probe: Callable[[], bool] | None = owner_probe
         # V1 2R F2: launchd 재기동이 양보 창을 지우지 못하게 벽시계 기반 로컬 영속(fail-soft).
-        self._yield_state_path = Path(yield_state_path) if yield_state_path else None
-        if self._yield_state_path is not None:
-            self._restore_yield_state()
+        self._yield_state_path = Path(yield_state_path) if yield_state_path is not None else None
+        self._restore_yield_state()
+
+    def _yield_remaining(self) -> float:
+        return max(0.0, self._yield_until - self._clock())
 
     def _persist_yield_state(self) -> None:
-        """V1 2R F2: 양보 창을 벽시계 epoch 로 저장 — 재기동 후에도 3분 눈치 유지(fail-soft)."""
-        if self._yield_state_path is None:
+        """남은 양보 시간과 미등록 변형을 같은 파일에 원자적으로 보존한다."""
+        path = self._yield_state_path
+        if path is None:
             return
         try:
-            remaining = max(0.0, self._yield_until - self._clock())
-            self._yield_state_path.parent.mkdir(parents=True, exist_ok=True)
-            self._yield_state_path.write_text(
-                json.dumps({"yield_until_epoch": time.time() + remaining}), encoding="utf-8")
+            remaining = self._yield_remaining()
+            if remaining <= 0 and not self._variant_backlog:
+                path.unlink(missing_ok=True)
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps({
+                "schema_version": 2,
+                "machine": self.machine,
+                "yield_until_epoch": self._wall_clock() + remaining,
+                "variant_backlog": self._variant_backlog,
+            }, allow_nan=False), encoding="utf-8")
+            tmp.replace(path)
         except Exception as exc:  # noqa: BLE001 — 영속 실패가 워커를 죽이면 안 됨
             print(f"[fleet] yield 상태 저장 실패(fail-soft): {exc}", file=sys.stderr)
 
     def _restore_yield_state(self) -> None:
-        """재기동 시 남은 양보 창 복원. 손상/과거 파일은 무시(fail-soft), 창은 180초 캡."""
+        """재기동 시 deadline을 먼저, 검증된 변형 backlog를 다음으로 복원한다."""
+        path = self._yield_state_path
+        if path is None or not path.exists():
+            return
         try:
-            if self._yield_state_path is None or not self._yield_state_path.exists():
-                return
-            data = json.loads(self._yield_state_path.read_text(encoding="utf-8"))
-            remaining = float(data.get("yield_until_epoch", 0)) - time.time()
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("상태 파일이 JSON object가 아님")
+            epoch = data.get("yield_until_epoch")
+            if isinstance(epoch, bool) or not isinstance(epoch, (int, float)) \
+                    or not math.isfinite(epoch):
+                raise ValueError("yield_until_epoch 값이 올바르지 않음")
+            remaining = min(
+                OWNER_YIELD_RESUME_SECONDS,
+                max(0.0, float(epoch) - self._wall_clock()),
+            )
             if remaining > 0:
                 self._yield_until = max(
-                    self._yield_until,
-                    self._clock() + min(remaining, OWNER_YIELD_RESUME_SECONDS))
+                    self._yield_until, self._clock() + remaining)
+
+            # #114의 v1은 deadline 하나만 썼다. schema가 없는 파일에서 backlog를
+            # 복원하면 임의 형식을 작업 큐로 승격하므로 deadline만 호환한다.
+            schema_version = data.get("schema_version")
+            if schema_version is None:
+                if "variant_backlog" in data:
+                    raise ValueError("legacy 상태에 variant_backlog가 포함됨")
+                return
+            if isinstance(schema_version, bool) or not isinstance(schema_version, int) \
+                    or schema_version != 2 or data.get("machine") != self.machine:
+                raise ValueError("상태 schema 또는 machine 불일치")
+
+            raw_backlog = data.get("variant_backlog", [])
+            from .session_batch import MAX_PENDING_VARIANTS, variant_job_payload
+            if not isinstance(raw_backlog, list) or len(raw_backlog) > MAX_PENDING_VARIANTS:
+                raise ValueError("variant_backlog 형식 또는 개수 제한 위반")
+            restored: list[dict[str, Any]] = []
+            for item in raw_backlog:
+                if not isinstance(item, dict) or item.get("skill") != "humansearch" \
+                        or item.get("status") != "queued" \
+                        or item.get("machine") != self.machine:
+                    raise ValueError("variant_backlog 작업 계약 위반")
+                params = item.get("params")
+                variant = params.get("variant") if isinstance(params, dict) else None
+                group_id = params.get("group_id") if isinstance(params, dict) else None
+                channel = variant.get("channel") if isinstance(variant, dict) else None
+                if channel not in ("saramin", "jobkorea") \
+                        or not isinstance(group_id, str) or not group_id:
+                    raise ValueError("variant_backlog 변형 파라미터 위반")
+                regenerated = variant_job_payload(
+                    item, variant, group_id=group_id)
+                if regenerated is None or regenerated != item:
+                    raise ValueError("variant_backlog 작업 검증 실패")
+                restored.append(regenerated)
+            self._variant_backlog = restored
         except Exception as exc:  # noqa: BLE001
             print(f"[fleet] yield 상태 복원 실패(fail-soft): {exc}", file=sys.stderr)
+
+    def _start_yield(self) -> None:
+        self._yield_until = self._clock() + OWNER_YIELD_RESUME_SECONDS
+        self._persist_yield_state()
 
     def _notify(self, job: Mapping[str, Any], text: str) -> None:
         try:
@@ -541,7 +606,7 @@ class FleetWorker:
         """큐에서 잡 1건 처리. 반환: idle|done|paused_for_human|failed."""
         # V1 2R F1(INV9): 마지막 사람 개입 신호 후 3분 창 안에서는 claim 도 하지 않는다
         # — release 예외(15초 백오프)·--once 경로로 창이 우회되는 구멍 봉인.
-        if self._clock() < self._yield_until:
+        if self._yield_remaining() > 0:
             return "idle"
         # V1 2R F3(INV9 '눈치'): 사장님 활동이 감지되는 동안은 claim/enqueue 모두 양보.
         # 프로브 실패 = fail-closed 양보(사장님을 앞지르지 않는다, owner_activity 와 동일 정책).
@@ -615,8 +680,7 @@ class FleetWorker:
             # backlog 를 폐기하지 않고, 마지막 이상 신호로부터 180초 동안만 자동
             # enqueue 를 정지한다. 3분 뒤 이상이 없으면 자동 재개(영구 중단 금지).
             # pause 가 반복되면 그 시점부터 창이 다시 3분으로 연장된다.
-            self._yield_until = self._clock() + OWNER_YIELD_RESUME_SECONDS
-            self._persist_yield_state()
+            self._start_yield()
             self._release(job, job_id, "paused_for_human", error=result["reason"])
             self._notify(job, (
                 f"⏸️ 잡 #{job_id} 사람 개입 필요 ({self.machine}): {result['reason']}\n"
@@ -669,6 +733,7 @@ class FleetWorker:
                 if payload is not None:
                     payloads.append(payload)
         self._variant_backlog = payloads
+        self._persist_yield_state()
 
     def _enqueue_idle_variant(self) -> None:
         """이슈 #104: idle 1회당 변형 1건 enqueue(심야 지속). 실패한 변형은 폐기(fail-soft).
@@ -680,9 +745,12 @@ class FleetWorker:
             return
         # 이슈 #107(SOT29 INV9): 마지막 사람 개입 신호 후 3분이 지나기 전엔 양보(no-op).
         # 창이 지나면 아래 enqueue 로 자동 재개 — 별도 사람 조치 불필요.
-        if self._clock() < self._yield_until:
+        if self._yield_remaining() > 0:
             return
         payload = self._variant_backlog.pop(0)
+        # pop-before-enqueue 규칙을 상태 파일에도 즉시 반영한다. enqueue 뒤 급사로 생기는
+        # 중복 가능성은 payload의 idempotency_key가 큐 계층에서 차단한다.
+        self._persist_yield_state()
         variant = (payload.get("params") or {}).get("variant") or {}
         try:
             nxt = self.queue.enqueue(payload)
