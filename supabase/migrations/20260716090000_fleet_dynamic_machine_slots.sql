@@ -10,7 +10,7 @@ create table if not exists public.fleet_machines (
   worker_version text not null,
   heartbeat_generation bigint not null,
   last_seen_at timestamptz not null,
-  labels jsonb not null default '{}',
+  capabilities jsonb not null default '{}',
   constraint fleet_machines_id_chk
     check (machine_id ~ '^[a-z0-9][a-z0-9_-]{0,63}$'),
   constraint fleet_machines_os_chk
@@ -20,14 +20,14 @@ create table if not exists public.fleet_machines (
     check (worker_version = btrim(worker_version) and worker_version <> ''
            and worker_version !~ '[[:space:]]'),
   constraint fleet_machines_generation_chk check (heartbeat_generation >= 0),
-  constraint fleet_machines_labels_chk check (jsonb_typeof(labels) = 'object')
+  constraint fleet_machines_capabilities_chk check (jsonb_typeof(capabilities) = 'object')
 );
 
 -- Register the three historical machines plus every machine already referenced by
 -- jobs, heartbeats, or a live legacy account lock before adding foreign keys.
 insert into public.fleet_machines (
   machine_id, enabled, os, reliability_rank, draining, worker_version,
-  heartbeat_generation, last_seen_at, labels
+  heartbeat_generation, last_seen_at, capabilities
 )
 select machine_id, true,
        case machine_id
@@ -53,28 +53,7 @@ where machine_id ~ '^[a-z0-9][a-z0-9_-]{0,63}$'
 group by machine_id
 on conflict (machine_id) do nothing;
 
-alter table public.jobs add column if not exists requester_platform text;
-alter table public.jobs add column if not exists requester_user_id text;
-alter table public.jobs add column if not exists request_channel_id text;
-alter table public.jobs add column if not exists request_message_id text;
-alter table public.jobs add column if not exists resource_class text;
 alter table public.jobs add column if not exists requested_machine text;
-alter table public.jobs add column if not exists assigned_machine text;
-alter table public.jobs add column if not exists assigned_slot_id text;
-alter table public.jobs add column if not exists lease_id uuid;
-alter table public.jobs add column if not exists dispatch_seq bigint;
-alter table public.jobs add column if not exists not_before timestamptz;
-alter table public.jobs add column if not exists attempt integer not null default 0;
-alter table public.jobs add column if not exists max_attempts integer not null default 3;
-alter table public.jobs add column if not exists requirements jsonb not null default '{}';
-alter table public.jobs add column if not exists scheduler_version text;
-
-alter table public.jobs drop constraint if exists jobs_attempt_chk;
-alter table public.jobs add constraint jobs_attempt_chk
-  check (attempt >= 0 and max_attempts > 0 and attempt <= max_attempts);
-alter table public.jobs drop constraint if exists jobs_requirements_object_chk;
-alter table public.jobs add constraint jobs_requirements_object_chk
-  check (jsonb_typeof(requirements) = 'object');
 
 -- Remove only the legacy three-machine lists; old migrations remain immutable.
 alter table public.jobs drop constraint if exists jobs_machine_check;
@@ -82,7 +61,7 @@ alter table public.machine_heartbeats
   drop constraint if exists machine_heartbeats_machine_check;
 alter table public.jobs drop constraint if exists jobs_machine_fkey;
 alter table public.jobs drop constraint if exists jobs_requested_machine_fkey;
-alter table public.jobs drop constraint if exists jobs_assigned_machine_fkey;
+
 alter table public.machine_heartbeats
   drop constraint if exists machine_heartbeats_machine_fkey;
 alter table public.account_locks
@@ -92,8 +71,7 @@ alter table public.jobs add constraint jobs_machine_fkey
   foreign key (machine) references public.fleet_machines(machine_id);
 alter table public.jobs add constraint jobs_requested_machine_fkey
   foreign key (requested_machine) references public.fleet_machines(machine_id);
-alter table public.jobs add constraint jobs_assigned_machine_fkey
-  foreign key (assigned_machine) references public.fleet_machines(machine_id);
+
 alter table public.machine_heartbeats add constraint machine_heartbeats_machine_fkey
   foreign key (machine) references public.fleet_machines(machine_id);
 alter table public.account_locks add constraint account_locks_holder_machine_fkey
@@ -111,14 +89,14 @@ create table if not exists public.browser_slots (
   state text not null,
   generation bigint not null,
   observed_at timestamptz not null,
+  enabled boolean not null default true,
   login_verified_at timestamptz,
   login_proof_kind text,
   capabilities jsonb not null default '{}',
   constraint browser_slots_id_chk
     check (slot_id ~ '^[a-z0-9][a-z0-9:_.-]{0,127}$'),
   constraint browser_slots_resource_chk
-    check (resource_class = btrim(resource_class) and resource_class <> ''
-           and resource_class !~ '[[:space:]]'),
+    check (resource_class in ('browser','linkedin_rps')),
   constraint browser_slots_portal_chk
     check (portal = btrim(portal) and portal <> '' and portal !~ '[[:space:]]'),
   constraint browser_slots_profile_chk
@@ -135,6 +113,9 @@ create table if not exists public.browser_slots (
   ),
   constraint browser_slots_generation_chk check (generation >= 0),
   constraint browser_slots_capabilities_chk check (jsonb_typeof(capabilities) = 'object'),
+  constraint browser_slots_rps_pair_chk check (
+    (resource_class = 'linkedin_rps') = (account_key = 'portal:linkedin_rps')
+  ),
   unique (machine_id, logical_target_key)
 );
 
@@ -153,10 +134,10 @@ create table if not exists public.slot_leases (
     check (worker_id = btrim(worker_id) and worker_id <> ''
            and worker_id !~ '[[:space:]]'),
   constraint slot_leases_fencing_chk check (fencing_token > 0),
-  constraint slot_leases_expiry_chk check (expires_at > acquired_at),
+  constraint slot_leases_expiry_chk check (expires_at > renewed_at),
   constraint slot_leases_renewed_chk check (renewed_at >= acquired_at),
   constraint slot_leases_release_chk
-    check (released_at is null or released_at >= acquired_at)
+    check (released_at is null or released_at > acquired_at)
 );
 
 create unique index if not exists slot_leases_one_active_slot_idx
@@ -182,14 +163,6 @@ insert into public.account_permits(account_key, permit_no)
 values ('portal:linkedin_rps', 1)
 on conflict (account_key, permit_no) do nothing;
 
--- These references are added after the new tables exist because jobs and leases
--- intentionally point at each other for later fencing work.
-alter table public.jobs drop constraint if exists jobs_assigned_slot_id_fkey;
-alter table public.jobs drop constraint if exists jobs_lease_id_fkey;
-alter table public.jobs add constraint jobs_assigned_slot_id_fkey
-  foreign key (assigned_slot_id) references public.browser_slots(slot_id);
-alter table public.jobs add constraint jobs_lease_id_fkey
-  foreign key (lease_id) references public.slot_leases(lease_id);
 
 alter table public.fleet_machines enable row level security;
 alter table public.browser_slots enable row level security;
@@ -224,8 +197,11 @@ returns setof public.machine_heartbeats
 language plpgsql security definer set search_path = public
 as $$
 begin
-  if not exists (select 1 from public.fleet_machines where machine_id = p_machine) then
-    raise exception 'unknown machine: %', p_machine;
+  if not exists (
+    select 1 from public.fleet_machines
+    where machine_id = p_machine and enabled and not draining
+  ) then
+    raise exception 'unknown or unavailable machine: %', p_machine;
   end if;
   insert into public.machine_heartbeats(machine, beat_at, worker_pid, linkedin_rps_logged_in)
   values (p_machine, now(), coalesce(p_worker_pid, 0), false)
@@ -246,8 +222,11 @@ returns setof public.machine_heartbeats
 language plpgsql security definer set search_path = public
 as $$
 begin
-  if not exists (select 1 from public.fleet_machines where machine_id = p_machine) then
-    raise exception 'unknown machine: %', p_machine;
+  if not exists (
+    select 1 from public.fleet_machines
+    where machine_id = p_machine and enabled and not draining
+  ) then
+    raise exception 'unknown or unavailable machine: %', p_machine;
   end if;
   insert into public.machine_heartbeats(machine, beat_at, worker_pid, linkedin_rps_logged_in)
   values (p_machine, now(), coalesce(p_worker_pid, 0),
@@ -272,8 +251,11 @@ declare
   last_id bigint := 0;
   locked boolean;
 begin
-  if not exists (select 1 from public.fleet_machines where machine_id = p_machine) then
-    raise exception 'unknown machine: %', p_machine;
+  if not exists (
+    select 1 from public.fleet_machines
+    where machine_id = p_machine and enabled and not draining
+  ) then
+    raise exception 'unknown or unavailable machine: %', p_machine;
   end if;
   loop
     select q.* into j
