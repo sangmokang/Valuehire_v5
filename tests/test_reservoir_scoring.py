@@ -167,7 +167,7 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
             "초대졸", "준학사", "비학사", "비-학사", "비(非)학사", "학사 미취득", "非학사",
             "학사 학위 없음", "학사 학위 미보유", "학사 과정 중퇴", "석사 미취득", "대졸 아님", "학사가 아님", "학사 학위가 없음",
             "非박사", "박사 미소지", "대학교 졸업 아님", "4년제 졸업 미완료", "학사 과정 자퇴", "석사 과정 제적", "박사 과정 미수료", "석사 수료", "대졸 미만", "학사학위 X",
-            "석사 학위를 보유하지 않음", "박사 학위 불보유", "대졸 아니다", "대학교 졸업 못함", "No bachelor's degree", "Bachelor degree not completed", "Master's program dropout", "PhD not awarded",
+            "석사 학위를 보유하지 않음", "박사 학위 불보유", "대졸 아니다", "대학교 졸업 못함", "No bachelor's degree", "Bachelor degree not completed", "Master's program dropout", "PhD not awarded", "did not complete a bachelor's degree", "has not earned a master's degree", "failed to obtain a PhD", "never completed a BSc program", "does not have a master's degree", "Bachelor degree was not completed", "Master's program—dropout", "학사 학위를 취득하지 못함", "박사 학위가 없었음",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 5)
