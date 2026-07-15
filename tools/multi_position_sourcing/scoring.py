@@ -22,10 +22,10 @@ HIGH_TIER_COMPANY_SIGNALS = {
 # 저수지 단계 3 — 우수 대학 티어 신호(소문자 비교). 새 신호 추가 시 같은 커밋에 테스트도 보강.
 HIGH_TIER_SCHOOL_SIGNALS = {
     "서울대",
-    "연세",
+    "연세대",
     "고려대",
     "서강대",
-    "성균관",
+    "성균관대",
     "한양대",
     "kaist",
     "카이스트",
@@ -93,7 +93,9 @@ EDUCATION_DEGREE_SIGNALS = (
     "ba",
     "b.a.",
     "bachelor",
+    "bsc",
     "master",
+    "msc",
     "ms",
     "m.s.",
     "phd",
@@ -222,14 +224,36 @@ def _contains_any(text: str, signals: tuple[str, ...] | list[str]) -> list[str]:
 
 def _matching_signals(text: str, signals: tuple[str, ...] | set[str]) -> tuple[str, ...]:
     """결정론적 alias OR 매칭. 여러 alias가 잡혀도 호출자는 한 논리 요건으로 센다."""
-    return tuple(signal for signal in sorted(signals) if keyword_in_text(signal, text))
+    text_folded = _fold(text)
+
+    def alias_in_text(signal: str) -> bool:
+        alias = _fold(signal).strip()
+        if not alias:
+            return False
+        if re.search(r"[가-힣]", alias):
+            return alias in text_folded
+        left = r"(?<![a-z0-9])" if re.match(r"[a-z0-9]", alias) else ""
+        right = r"(?![a-z0-9])" if re.search(r"[a-z0-9]", alias) else ""
+        return re.search(left + re.escape(alias) + right, text_folded) is not None
+
+    return tuple(signal for signal in sorted(signals) if alias_in_text(signal))
 
 
 def _degree_match_text(education: str) -> str:
     """학위 신호용 정규화. 전문학사/전문대학교 졸업은 4년제 학위 신호에서 제외한다."""
-    text = _fold(education)
-    text = re.sub(r"전문\s*학사", " ", text)
-    text = re.sub(r"전문\s*대학(?:교)?\s*졸업", " ", text)
+    text = "".join(
+        character
+        for character in _fold(education)
+        if unicodedata.category(character) != "Cf"
+    )
+    associate_patterns = (
+        r"전\s*문\s*대\s*학(?:\s*교)?\s*(?:전\s*문\s*)?학\s*사",
+        r"전\s*문\s*학\s*사",
+        r"전\s*문\s*대\s*학(?:\s*교)?\s*졸\s*업",
+        r"[23]\s*년\s*제\s*(?:전\s*문\s*)?대\s*학(?:\s*교)?\s*졸\s*업",
+    )
+    for pattern in associate_patterns:
+        text = re.sub(pattern, " ", text)
     return text
 
 
@@ -329,7 +353,10 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
         why_not.append("education not captured")
 
     company_score, company_reasons = _company_tier_score(profile)
-    why_fit.extend(company_reasons)
+    if company_score == COMPANY_TIER_MAX_SCORE:
+        why_fit.extend(company_reasons)
+    elif company_score:
+        why_not.extend(company_reasons)
 
     industry_stage_hits = _contains_any(
         text,
@@ -361,7 +388,10 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
 
     # 저수지 단계 3 — 품질 4기준.
     university_score, university_reasons = _university_tier_score(profile)
-    why_fit.extend(university_reasons)
+    if university_score == UNIVERSITY_TIER_MAX_SCORE:
+        why_fit.extend(university_reasons)
+    elif university_score:
+        why_not.extend(university_reasons)
 
     role_direct_score, role_direct_reasons = _role_direct_score(profile, position)
     why_fit.extend(role_direct_reasons)
