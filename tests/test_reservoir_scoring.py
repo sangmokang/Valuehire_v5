@@ -164,7 +164,7 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
             "OO전문대학 전문학사", "OO전문대학교 졸업", "전문\u200b학사",
             "전 문 학사", "2년제 대학 졸업", "3년제 대학교 졸업",
             "전문대졸", "2년제 대졸", "3년제 대졸", "전문\ufe0f학사",
-            "초대졸", "준학사", "비학사",
+            "초대졸", "준학사", "비학사", "비-학사", "비(非)학사", "학사 미취득",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 5)
@@ -214,6 +214,7 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
         for education in (
             "Smith College Bachelor", "MIT2 Academy", "MITé Academy", "Brown Universitytown", "연세우유 사내교육",
             "서울대입구 코딩학원", "고려대역 교육원", "한양대역 아카데미",
+            "서울대é Academy", "서울대中 Academy",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["university_tier"], 4)
