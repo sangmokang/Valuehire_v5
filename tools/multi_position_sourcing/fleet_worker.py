@@ -25,6 +25,7 @@ from .job_queue import (
     FLEET_SKILLS,
     JobQueueClient,
     _valid_url,
+    is_valid_machine_id,
     new_job_payload,
 )
 
@@ -62,11 +63,10 @@ def sleep_seconds_after(status: str, poll_seconds: int) -> int:
 
 
 def machine_from_env(environ: Mapping[str, str]) -> str:
-    """VALUEHIRE_MACHINE 필수 + 화이트리스트 — 무효면 기동 거부."""
-    raw = (environ.get("VALUEHIRE_MACHINE") or "").strip()
-    if raw not in FLEET_MACHINES:
-        raise RuntimeError(
-            f"VALUEHIRE_MACHINE 이 유효하지 않습니다: {raw!r} (허용: {FLEET_MACHINES})")
+    """Require a strict dynamic machine ID; DB registration is checked by RPCs."""
+    raw = environ.get("VALUEHIRE_MACHINE") or ""
+    if not is_valid_machine_id(raw):
+        raise RuntimeError(f"VALUEHIRE_MACHINE 이 유효하지 않습니다: {raw!r}")
     return raw
 
 
@@ -446,8 +446,8 @@ class FleetWorker:
         owner_probe: Callable[[], bool] | None = None,
         yield_state_path: str | Path | None = None,
     ) -> None:
-        if machine not in FLEET_MACHINES:
-            raise RuntimeError(f"unknown machine: {machine!r}")
+        if not is_valid_machine_id(machine):
+            raise RuntimeError(f"invalid machine id: {machine!r}")
         self.machine = machine
         self.queue = queue if queue is not None else JobQueueClient()
         # 이슈 B: runner 주입 시 그 러너가 항상 우선(기존 테스트 하위호환).

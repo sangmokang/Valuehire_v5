@@ -161,7 +161,7 @@ def _snapshot(conn: psycopg.Connection):
     ).fetchall()
     queued = conn.execute(
         """select id, status, machine, account_key, created_at
-           from public.jobs where status = 'queued' order by id"""
+           from public.jobs order by id"""
     ).fetchall()
     locks = conn.execute(
         "select account_key, holder_machine, job_id, acquired_at from public.account_locks order by account_key"
@@ -189,13 +189,20 @@ def _insert_machine(conn, machine_id: str) -> None:
     )
 
 
-def _insert_slot(conn, slot_id: str, machine_id: str, account_key="portal:test", state="ready"):
+def _insert_slot(
+    conn,
+    slot_id: str,
+    machine_id: str,
+    account_key="portal:test",
+    state="ready",
+    resource_class="browser",
+):
     conn.execute(
         """insert into public.browser_slots
            (slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,
             account_key,state,generation,observed_at)
-           values (%s,%s,'browser','test','profile-1',%s,%s,%s,1,now())""",
-        (slot_id, machine_id, f"logical:{slot_id}", account_key, state),
+           values (%s,%s,%s,'test','profile-1',%s,%s,%s,1,now())""",
+        (slot_id, machine_id, resource_class, f"logical:{slot_id}", account_key, state),
     )
 
 
@@ -208,20 +215,63 @@ def _assert_security(conn) -> None:
         (list(tables),),
     ).fetchall()
     assert dict(rows) == {table: True for table in tables}
+    service_privileges = {
+        "fleet_machines": ("SELECT", "INSERT", "UPDATE"),
+        "browser_slots": ("SELECT", "INSERT", "UPDATE", "DELETE"),
+        "slot_leases": ("SELECT", "INSERT", "UPDATE", "DELETE"),
+        "account_permits": ("SELECT", "INSERT", "UPDATE", "DELETE"),
+    }
     for table in tables:
         qualified = f"public.{table}"
         for role in ("public", "anon", "authenticated"):
-            assert not conn.execute(
-                "select has_table_privilege(%s,%s,'SELECT')", (role, qualified)
+            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                assert not conn.execute(
+                    "select has_table_privilege(%s,%s,%s)",
+                    (role, qualified, privilege),
+                ).fetchone()[0]
+        for privilege in service_privileges[table]:
+            assert conn.execute(
+                "select has_table_privilege('service_role',%s,%s)",
+                (qualified, privilege),
             ).fetchone()[0]
-        assert conn.execute(
-            "select has_table_privilege('service_role',%s,'SELECT')", (qualified,)
-        ).fetchone()[0]
 
 
 def _exercise_schema(conn, legacy_ids: dict[str, int], before) -> None:
     assert _snapshot(conn) == before
     assert conn.execute("select count(*) from public.fleet_machines").fetchone()[0] == 3
+    expected_job_columns = {
+        "requester_platform", "requester_user_id", "request_channel_id",
+        "request_message_id", "resource_class", "requested_machine",
+        "assigned_machine", "assigned_slot_id", "lease_id", "dispatch_seq",
+        "not_before", "attempt", "max_attempts", "requirements", "scheduler_version",
+    }
+    job_columns = {
+        row[0] for row in conn.execute(
+            """select column_name from information_schema.columns
+               where table_schema='public' and table_name='jobs'"""
+        ).fetchall()
+    }
+    assert expected_job_columns <= job_columns
+    fleet_columns = {
+        row[0] for row in conn.execute(
+            """select column_name from information_schema.columns
+               where table_schema='public' and table_name='fleet_machines'"""
+        ).fetchall()
+    }
+    assert "labels" in fleet_columns
+    browser_columns = {
+        row[0] for row in conn.execute(
+            """select column_name from information_schema.columns
+               where table_schema='public' and table_name='browser_slots'"""
+        ).fetchall()
+    }
+    assert {"current_cdp_target_id", "login_verified_at", "login_proof_kind"} <= browser_columns
+    assert conn.execute(
+        """select count(*) from information_schema.columns
+           where table_schema='public' and
+                 ((table_name='fleet_machines' and column_name='capabilities') or
+                  (table_name='browser_slots' and column_name='enabled'))"""
+    ).fetchone()[0] == 0
 
     for machine in ("vh-win-04", "office-linux-05"):
         _insert_machine(conn, machine)
@@ -253,9 +303,36 @@ def _exercise_schema(conn, legacy_ids: dict[str, int], before) -> None:
         "insert into public.machine_heartbeats(machine,worker_pid) values ('ghost-99',1)",
     )
 
+    conn.execute(
+        """insert into public.fleet_machines
+           (machine_id,enabled,os,reliability_rank,draining,worker_version,
+            heartbeat_generation,last_seen_at)
+           values ('disabled-01',false,'linux',50,false,'test',0,now()),
+                  ('draining-01',true,'linux',50,true,'test',0,now())"""
+    )
+    for stored_state in ("disabled-01", "draining-01"):
+        job_id = conn.execute(
+            """insert into public.jobs
+               (machine,skill,position_url,requested_by,role,account_key)
+               values (%s,'humansearch','https://example.com/stored-state','u','member',%s)
+               returning id""",
+            (stored_state, f"portal:{stored_state}"),
+        ).fetchone()[0]
+        conn.execute("select * from public.record_heartbeat(%s,1)", (stored_state,))
+        assert conn.execute(
+            "select id from public.claim_next_job(%s)", (stored_state,)
+        ).fetchone()[0] == job_id
+        conn.execute("select * from public.release_job(%s,'done','','')", (job_id,))
+
     _insert_slot(conn, "vh-win-04:browser", "vh-win-04")
-    _insert_slot(conn, "office-linux-05:rps-a", "office-linux-05", "portal:linkedin_rps", "ready")
-    _insert_slot(conn, "office-linux-05:rps-b", "office-linux-05", "portal:linkedin_rps", "parked")
+    _insert_slot(
+        conn, "office-linux-05:rps-a", "office-linux-05",
+        "portal:linkedin_rps", "ready", "linkedin_rps",
+    )
+    _insert_slot(
+        conn, "office-linux-05:rps-b", "office-linux-05",
+        "portal:linkedin_rps", "parked", "linkedin_rps",
+    )
 
     lease1 = str(uuid.uuid4())
     conn.execute(
@@ -322,13 +399,15 @@ def _exercise_schema(conn, legacy_ids: dict[str, int], before) -> None:
         "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at) values ('blank-account','vh-win-04','browser','test','p','l','','ready',0,now())",
         "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at,capabilities) values ('bad-capabilities','vh-win-04','browser','test','p','l','a','ready',0,now(),'[]')",
         "insert into public.browser_slots(slot_id,machine_id,resource_class,portal,profile_key,logical_target_key,account_key,state,generation,observed_at) values ('bad-state','vh-win-04','browser','test','p','l','a','unknown',0,now())",
+
         "insert into public.account_permits(account_key,permit_no) values ('',1)",
-        f"update public.jobs set requirements='[]' where id={legacy_ids['macmini']}",
+        "insert into public.account_permits(account_key,permit_no) values ('portal:linkedin_rps',2)",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',0,now(),now(),now()+interval '1 min')",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'',1,now(),now(),now()+interval '1 min')",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',1,now(),now()-interval '1 sec',now()+interval '1 min')",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',1,now(),now(),now()-interval '1 sec')",
         f"insert into public.slot_leases(lease_id,slot_id,job_id,worker_id,fencing_token,acquired_at,renewed_at,expires_at,released_at) values ('{uuid.uuid4()}','office-linux-05:rps-b',{legacy_ids['macmini']},'w',1,now(),now(),now()+interval '1 min',now()-interval '1 sec')",
+
     )
     for statement in bad_checks:
         _expect_error(conn, psycopg.errors.CheckViolation, statement)
