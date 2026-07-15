@@ -94,9 +94,7 @@ EDUCATION_DEGREE_SIGNALS = (
     "4년제 졸업", "대졸", "공학사", "이학사",
 )
 
-EDUCATION_MAX_SCORE = 10
-COMPANY_TIER_MAX_SCORE = 10
-UNIVERSITY_TIER_MAX_SCORE = 8
+EDUCATION_MAX_SCORE, COMPANY_TIER_MAX_SCORE, UNIVERSITY_TIER_MAX_SCORE = 10, 10, 8
 _SIGNAL_CRITERIA_TOTAL = 2  # 근거 존재 + 긍정 신호 확인
 
 # 1년 미만 재직을 "짧은 재직(이직)"으로 본다.
@@ -253,7 +251,9 @@ def _degree_match_text(education: str) -> str:
         r"초\s*대\s*졸",
         r"(?:준|장)\s*학\s*사|(?:무|非|비(?:\s*[-–—]|\s*\(非\))?)\s*(?:[학석박]\s*사|대\s*졸)",
         r"(?:공\s*학\s*사|이\s*학\s*사|[학석박]\s*사|대\s*졸|(?:대\s*학(?:\s*교)?|4\s*년\s*제)\s*졸\s*업)"
-        r"(?:\s*(?:학\s*위|과\s*정))?\s*(?:미\s*(?:취\s*득|소\s*지|보\s*유|완\s*료)|없\s*음|아\s*님|중\s*퇴)",
+        r"(?:\s*(?:학\s*위|과\s*정))?\s*(?:[은는이가을를]\s*)?(?:미\s*(?:취\s*득|소\s*지|보\s*유|완\s*료|수\s*료|만)|(?:비|불)\s*보\s*유|없\s*(?:음|다)|아\s*(?:님|닌|니다)|(?:취\s*득|소\s*지|보\s*유|졸\s*업|수\s*료)\s*하\s*지\s*않\s*(?:음|았\s*음)|못\s*(?:함|했\s*음)|중\s*퇴|자\s*퇴|제\s*적|수\s*료|x)",
+        r"\b(?:no|not(?:\s+an?)?|without(?:\s+an?)?)\s+(?:bachelor(?:['’]s)?|master(?:['’]s)?|ph\.?d\.?|b\.?[as]\.?|[bm]sc|m\.?s\.?|mba)(?:\s+(?:degree|program))?\b",
+        r"\b(?:bachelor(?:['’]s)?|master(?:['’]s)?|ph\.?d\.?|b\.?[as]\.?|[bm]sc|m\.?s\.?|mba)(?:\s+(?:degree|program))?\s+(?:not\s+(?:completed|awarded|earned|held)|dropout|incomplete)\b",
     )
     for pattern in associate_patterns:
         text = re.sub(pattern, " ", text)
