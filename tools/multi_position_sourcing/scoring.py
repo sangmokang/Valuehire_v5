@@ -85,8 +85,7 @@ HIGH_TIER_SCHOOL_SIGNALS = {
     "hong kong university of science",
 }
 
-# 학위/전공은 서로 대체 가능한 표기(alias)다. 별칭 개수는 점수 분모가 아니며,
-# 하나 이상 확인되면 education 축의 "긍정 신호" 요건 1개만 충족한다.
+# 학위/전공 표기는 alias OR이며, 여러 별칭도 education "긍정 신호" 한 요건으로만 센다.
 EDUCATION_DEGREE_SIGNALS = (
     "bs", "b.s.", "ba", "b.a.", "bachelor", "bsc",
     "master", "msc", "ms", "m.s.", "mba", "phd", "ph.d.", "computer",
@@ -251,9 +250,10 @@ def _degree_match_text(education: str) -> str:
         r"초\s*대\s*졸",
         r"(?:준|장)\s*학\s*사|(?:무|非|비(?:\s*[-–—]|\s*\(非\))?)\s*(?:[학석박]\s*사|대\s*졸)",
         r"(?:공\s*학\s*사|이\s*학\s*사|[학석박]\s*사|대\s*졸|(?:대\s*학(?:\s*교)?|4\s*년\s*제)\s*졸\s*업)"
-        r"(?:\s*(?:학\s*위|과\s*정))?\s*(?:[은는이가을를]\s*)?(?:미\s*(?:취\s*득|소\s*지|보\s*유|완\s*료|수\s*료|만)|(?:비|불)\s*보\s*유|없\s*(?:음|다)|아\s*(?:님|닌|니다)|(?:취\s*득|소\s*지|보\s*유|졸\s*업|수\s*료)\s*하\s*지\s*않\s*(?:음|았\s*음)|못\s*(?:함|했\s*음)|중\s*퇴|자\s*퇴|제\s*적|수\s*료|x)",
+        r"(?:\s*(?:학\s*위|과\s*정))?\s*(?:[은는이가을를]\s*)?(?:미\s*(?:취\s*득|소\s*지|보\s*유|완\s*료|수\s*료|만)|(?:비|불)\s*보\s*유|없\s*(?:음|다|었\s*음)|아\s*(?:님|닌|니다|니\s*었\s*음)|(?:취\s*득|소\s*지|보\s*유|졸\s*업|수\s*료)\s*하\s*지\s*(?:않\s*(?:음|았\s*음)|못\s*(?:함|했\s*음))|못\s*(?:함|했\s*음)|중\s*퇴|자\s*퇴|제\s*적|수\s*료|x)",
         r"\b(?:no|not(?:\s+an?)?|without(?:\s+an?)?)\s+(?:bachelor(?:['’]s)?|master(?:['’]s)?|ph\.?d\.?|b\.?[as]\.?|[bm]sc|m\.?s\.?|mba)(?:\s+(?:degree|program))?\b",
-        r"\b(?:bachelor(?:['’]s)?|master(?:['’]s)?|ph\.?d\.?|b\.?[as]\.?|[bm]sc|m\.?s\.?|mba)(?:\s+(?:degree|program))?\s+(?:not\s+(?:completed|awarded|earned|held)|dropout|incomplete)\b",
+        r"\b(?:(?:did|does|has|have|could)\s+not|never|failed\s+to)\s+(?:have|complet(?:e|ed)|earn(?:ed)?|receiv(?:e|ed)|obtain(?:ed)?|hold)\s+(?:an?\s+)?(?:bachelor(?:['’]s)?|master(?:['’]s)?|ph\.?d\.?|b\.?[as]\.?|[bm]sc|m\.?s\.?|mba)(?:\s+(?:degree|program))?\b",
+        r"\b(?:bachelor(?:['’]s)?|master(?:['’]s)?|ph\.?d\.?|b\.?[as]\.?|[bm]sc|m\.?s\.?|mba)(?:\s+(?:degree|program))?[\s—–-]+(?:(?:was\s+)?not\s+(?:completed|awarded|earned|held)|dropout|incomplete)\b",
     )
     for pattern in associate_patterns:
         text = re.sub(pattern, " ", text)
