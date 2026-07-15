@@ -1,7 +1,6 @@
 """Issue #125: pure browser-slot fairness scheduler contract."""
 from __future__ import annotations
 
-from dataclasses import replace
 import random
 
 import pytest
@@ -85,9 +84,30 @@ def test_three_machines_four_requesters_five_heterogeneous_slots_are_fair():
         account_capacities={"portal:saramin": 4},
     )
 
-    assert len(plan) == 4
-    assert {d.requester_id for d in plan[:4]} == {"a", "b", "c", "d"}
-    assert len({d.slot_id for d in plan}) == 4
+    assert len(plan) == 3
+    assert len({d.machine_id for d in plan}) == 3
+
+    # Across four one-at-a-time claims/releases, every continuously backlogged
+    # requester is served before any requester receives a second dispatch.
+    pending = jobs[:]
+    requester_states = states("a", "b", "c", "d")
+    first_round = []
+    for dispatch_seq in range(1, 5):
+        one = plan_dispatches(
+            pending,
+            slots,
+            requester_states=requester_states,
+            account_capacities={"portal:saramin": 4},
+            next_dispatch_seq=dispatch_seq,
+            max_dispatches=1,
+        )
+        assert len(one) == 1
+        dispatched = one[0]
+        first_round.append(dispatched.requester_id)
+        pending = [candidate for candidate in pending if candidate.job_id != dispatched.job_id]
+        requester_states[dispatched.requester_id] = RequesterState(
+            active_count=0, last_dispatch_seq=dispatched.dispatch_seq)
+    assert set(first_round) == {"a", "b", "c", "d"}
 
 
 def test_requester_fifo_uses_created_at_then_job_id():
@@ -143,6 +163,16 @@ def test_two_rps_tabs_still_obey_single_account_capacity():
         rps_slots,
         requester_states=states("a", "b"),
         account_capacities={"portal:linkedin_rps": 1},
+    )
+    assert len(plan) == 1
+
+
+def test_machine_default_capacity_allows_only_one_mutating_slot():
+    plan = plan_dispatches(
+        [job("a", 1, 1), job("b", 2, 2)],
+        [slot("tab-1", "winpc"), slot("tab-2", "winpc")],
+        requester_states=states("a", "b"),
+        account_capacities={"portal:saramin": 2},
     )
     assert len(plan) == 1
 
@@ -227,7 +257,7 @@ def test_seeded_ten_thousand_scenarios_have_no_collision_or_starvation():
     for seed in range(10_000):
         requesters = ("a", "b", "c", "d")
         backlog = [job(r, seed * 100 + n * 4 + i + 1, n) for n in range(3) for i, r in enumerate(requesters)]
-        slots = [slot(f"{seed}:s{i}", f"m{i % 3}") for i in range(4)]
+        slots = [slot(f"{seed}:s{i}", f"m{i}") for i in range(4)]
         rng.shuffle(backlog)
         rng.shuffle(slots)
         plan = plan_dispatches(
@@ -237,6 +267,7 @@ def test_seeded_ten_thousand_scenarios_have_no_collision_or_starvation():
             account_capacities={"portal:saramin": 4},
         )
         assert len({d.slot_id for d in plan}) == len(plan), f"seed={seed} duplicate slot"
+        assert len({d.machine_id for d in plan}) == len(plan), f"seed={seed} duplicate machine"
         assert len({d.job_id for d in plan}) == len(plan), f"seed={seed} duplicate job"
         served = {r: sum(d.requester_id == r for d in plan) for r in requesters}
         assert max(served.values()) - min(served.values()) <= 1, f"seed={seed} unfair {served}"
