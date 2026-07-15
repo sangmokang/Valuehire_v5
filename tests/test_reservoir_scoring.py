@@ -11,8 +11,13 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
-from tools.multi_position_sourcing.fixtures import SAMPLE_POSITIONS, SAMPLE_PROFILE_JOB_HOPPER
+from tools.multi_position_sourcing.fixtures import (
+    SAMPLE_POSITIONS,
+    SAMPLE_PROFILE,
+    SAMPLE_PROFILE_JOB_HOPPER,
+)
 from tools.multi_position_sourcing.models import CapturedProfile, EmploymentTenure
 from tools.multi_position_sourcing.scoring import (
     count_short_tenure_hops,
@@ -126,6 +131,80 @@ class ScoringCriteriaTests(unittest.TestCase):
         first = score_profile_for_position(p, BACKEND_POS).score_breakdown
         second = score_profile_for_position(p, BACKEND_POS).score_breakdown
         self.assertEqual(first, second)
+
+
+class RatioWeightedSignalRegressionTests(unittest.TestCase):
+    def _breakdown(self, **profile_overrides: object) -> dict[str, int]:
+        return score_profile_for_position(
+            _profile(**profile_overrides), BACKEND_POS
+        ).score_breakdown
+
+    def test_education_uses_evidence_and_signal_ratio(self) -> None:
+        self.assertEqual(self._breakdown(education="")["education"], 0)
+        self.assertEqual(self._breakdown(education="교육기관 과정 수료")["education"], 5)
+        self.assertEqual(self._breakdown(education="BS Computer Science")["education"], 10)
+
+    def test_korean_degree_wording_gets_full_education_weight(self) -> None:
+        for education in (
+            "OO대학교 학사",
+            "OO대학교 석사",
+            "OO대학교 박사",
+            "OO대학교 졸업",
+        ):
+            with self.subTest(education=education):
+                self.assertEqual(self._breakdown(education=education)["education"], 10)
+
+    def test_professional_associate_degree_is_not_bachelor_signal(self) -> None:
+        self.assertEqual(
+            self._breakdown(education="OO전문대학 전문학사")["education"], 5
+        )
+
+    def test_short_english_fragments_do_not_create_degree_match(self) -> None:
+        for education in ("Williams College", "Baruch College"):
+            with self.subTest(education=education):
+                self.assertEqual(self._breakdown(education=education)["education"], 5)
+
+    def test_company_tier_uses_evidence_and_signal_ratio(self) -> None:
+        self.assertEqual(
+            self._breakdown(current_or_past_companies=())["company_tier"], 0
+        )
+        self.assertEqual(
+            self._breakdown(current_or_past_companies=("무명컴퍼니",))["company_tier"], 5
+        )
+        self.assertEqual(
+            self._breakdown(current_or_past_companies=("Toss",))["company_tier"], 10
+        )
+
+    def test_company_alias_requires_a_token_match(self) -> None:
+        self.assertEqual(
+            self._breakdown(current_or_past_companies=("LINEAR Labs",))["company_tier"], 5
+        )
+
+    def test_university_tier_uses_evidence_and_signal_ratio(self) -> None:
+        self.assertEqual(self._breakdown(education="")["university_tier"], 0)
+        self.assertEqual(
+            self._breakdown(education="무명대학교 경영학")["university_tier"], 4
+        )
+        self.assertEqual(
+            self._breakdown(education="KAIST Computer Science BS")["university_tier"], 8
+        )
+
+    def test_university_alias_requires_a_token_match(self) -> None:
+        self.assertEqual(
+            self._breakdown(education="Smith College Bachelor")["university_tier"], 4
+        )
+
+    def test_korean_and_english_degree_wording_stay_in_same_sot24_band(self) -> None:
+        english = score_profile_for_position(SAMPLE_PROFILE, BACKEND_POS)
+        korean = score_profile_for_position(
+            replace(SAMPLE_PROFILE, education="컴퓨터공학 학사 대학교 졸업"),
+            BACKEND_POS,
+        )
+
+        self.assertEqual(english.score_breakdown["education"], 10)
+        self.assertEqual(korean.score_breakdown["education"], 10)
+        self.assertEqual(korean.score, english.score)
+        self.assertGreaterEqual(korean.score, 85)
 
 
 class FixtureJobHopperTests(unittest.TestCase):
