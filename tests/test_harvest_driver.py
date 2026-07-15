@@ -36,12 +36,14 @@ from tools.multi_position_sourcing.owner_activity import compute_yield_decision
 # 4. resolve_repo_dir — 현재 체크아웃, env/Desktop 드리프트 무시
 # ----------------------------------------------------------------------------
 def test_resolve_repo_dir_is_current_checkout(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("VALUEHIRE_REPO_DIR", str(tmp_path / "some-drifted-desktop-path"))
+    drifted = tmp_path / "some-drifted-desktop-path"
+    monkeypatch.setenv("VALUEHIRE_REPO_DIR", str(drifted))
     root = resolve_repo_dir()
     expected = Path(harvest_driver.__file__).resolve().parents[2]
     assert root == expected
     assert (root / "tools" / "multi_position_sourcing").is_dir()
-    assert "Desktop" not in str(root)
+    # env 드리프트 무시: 체크아웃이 어디 있든(로컬 Desktop 포함) env 경로를 따라가면 안 된다
+    assert root != drifted.resolve()
 
 
 # ----------------------------------------------------------------------------
