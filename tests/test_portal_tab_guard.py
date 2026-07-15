@@ -55,11 +55,15 @@ class PortalTabGuardTests(unittest.TestCase):
     def tearDown(self) -> None:
         subprocess.run(["pkill", "-f", MARKER], check=False)
 
-    def _start(self) -> None:
-        subprocess.run(
-            [str(LAUNCHER), "start"],
+    def _start(self, channel: str | None = None) -> subprocess.CompletedProcess[str]:
+        argv = [str(LAUNCHER), "start"]
+        if channel:
+            argv.append(channel)
+        return subprocess.run(
+            argv,
             env=self.env,
             capture_output=True,
+            text=True,
             timeout=180,
             check=False,
         )
@@ -82,6 +86,22 @@ class PortalTabGuardTests(unittest.TestCase):
     def test_boot_wait_is_env_tunable(self) -> None:
         text = LAUNCHER.read_text(encoding="utf-8")
         self.assertIn("PORTAL_BOOT_WAIT", text, "기동 대기 시간이 env로 조절 불가")
+
+    def test_start_one_channel_launches_only_that_channel(self) -> None:
+        result = self._start("linkedin")
+        time.sleep(1)
+        calls = self.invoke_log.read_text(encoding="utf-8").splitlines() if self.invoke_log.exists() else []
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 1, f"단일 채널 요청이 다른 포털 창까지 열면 안 됨: {calls}")
+        self.assertIn(str(self.tmp / "prof_linkedin"), calls[0])
+        self.assertNotIn(str(self.tmp / "prof_saramin"), calls[0])
+        self.assertNotIn(str(self.tmp / "prof_jobkorea"), calls[0])
+
+    def test_start_rejects_unknown_channel_without_launch(self) -> None:
+        result = self._start("unknown")
+        calls = self.invoke_log.read_text(encoding="utf-8").splitlines() if self.invoke_log.exists() else []
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

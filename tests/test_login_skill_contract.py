@@ -1,14 +1,20 @@
 """공용 login 스킬 계약 — 사람/AI 브라우저 충돌과 로그인 세션 유실을 막는다."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tools.codex_skill_sync.sync import sync_skills
+from tools.install_login_skill import install_login_skill
 
 
 REPO = Path(__file__).resolve().parent.parent
-CANONICAL = REPO / "skills" / "login" / "SKILL.md"
-CLAUDE = REPO / ".claude" / "skills" / "login" / "SKILL.md"
+CANONICAL_DIR = REPO / "skills" / "login"
+CANONICAL = CANONICAL_DIR / "SKILL.md"
+CONTRACT = CANONICAL_DIR / "browser-control-contract.json"
+CLAUDE_DIR = REPO / ".claude" / "skills" / "login"
+CLAUDE = CLAUDE_DIR / "SKILL.md"
+CLAUDE_CONTRACT = CLAUDE_DIR / "browser-control-contract.json"
 
 
 def _text(path: Path) -> str:
@@ -119,3 +125,45 @@ def test_codex_sync_classifies_login_as_full(tmp_path: Path) -> None:
     result = sync_skills([REPO / ".claude" / "skills", REPO / "skills"], tmp_path / "codex")
     assert result["classification"].get("login") == "full"
     assert (tmp_path / "codex" / "login" / "SKILL.md").read_text(encoding="utf-8") == _text(CANONICAL)
+
+
+def test_machine_contract_is_identical_and_fail_closed() -> None:
+    canonical = json.loads(_text(CONTRACT))
+    assert _text(CONTRACT) == _text(CLAUDE_CONTRACT)
+    assert canonical["state_machine"]["HUMAN_AUTH"]["allowed_actions"] == ["read_state", "wait"]
+    assert canonical["state_machine"]["HUMAN_AUTH"]["timeout_seconds"] is None
+    assert canonical["browser_limits"] == {
+        "max_new_windows_when_browser_exists": 0,
+        "max_new_tabs_per_site": 1,
+        "max_attached_targets_per_site": 1,
+    }
+    assert set(canonical["forbidden_calls"]) >= {
+        "connectOverCDP",
+        "new_page",
+        "page.close",
+        "context.close",
+        "browser.close",
+        "kill_browser",
+    }
+    assert canonical["keepalive"]["navigation_default"] == "skip"
+    assert canonical["keepalive"]["require_fresh_owner_idle_check"] is True
+    assert canonical["keepalive"]["require_dedicated_safe_tab"] is True
+    assert canonical["badge"]["required_before_first_mutation"] is True
+
+
+def test_skill_does_not_recommend_unsafe_legacy_login_runner() -> None:
+    text = _text(CANONICAL)
+    assert "python3 -m tools.multi_position_sourcing.portal_login" not in text
+    assert "portal_login은 보존 모드가 아니므로 사용 금지" in text
+    assert "--human-timeout-seconds 1800" not in text
+    assert "HUMAN_AUTH 중 navigate" in text and "금지" in text
+
+
+def test_installer_targets_only_three_agent_skill_directories(tmp_path: Path) -> None:
+    result = install_login_skill(repo_root=REPO, home=tmp_path)
+    assert set(result) == {"claude", "codex", "hermes"}
+    for agent, path in result.items():
+        target = Path(path)
+        assert target == tmp_path / f".{agent}" / "skills" / "login"
+        assert (target / "SKILL.md").read_bytes() == CANONICAL.read_bytes()
+        assert (target / "browser-control-contract.json").read_bytes() == CONTRACT.read_bytes()
