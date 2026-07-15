@@ -88,28 +88,10 @@ HIGH_TIER_SCHOOL_SIGNALS = {
 # 학위/전공은 서로 대체 가능한 표기(alias)다. 별칭 개수는 점수 분모가 아니며,
 # 하나 이상 확인되면 education 축의 "긍정 신호" 요건 1개만 충족한다.
 EDUCATION_DEGREE_SIGNALS = (
-    "bs",
-    "b.s.",
-    "ba",
-    "b.a.",
-    "bachelor",
-    "bsc",
-    "master",
-    "msc",
-    "ms",
-    "m.s.",
-    "phd",
-    "ph.d.",
-    "computer",
-    "학사",
-    "석사",
-    "박사",
-    "대학교 졸업",
-    "대학 졸업",
-    "4년제 졸업",
-    "대졸",
-    "공학사",
-    "이학사",
+    "bs", "b.s.", "ba", "b.a.", "bachelor", "bsc",
+    "master", "msc", "ms", "m.s.", "phd", "ph.d.", "computer",
+    "학사", "석사", "박사", "대학교 졸업", "대학 졸업",
+    "4년제 졸업", "대졸", "공학사", "이학사",
 )
 
 EDUCATION_MAX_SCORE = 10
