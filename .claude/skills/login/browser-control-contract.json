@@ -1,0 +1,125 @@
+{
+  "schema_version": "1.0.0",
+  "skill": "login",
+  "supported_agents": ["claude", "codex", "hermes"],
+  "platform": "macos",
+  "source_priority": [
+    "browser-control-contract.json",
+    "SKILL.md",
+    "docs/sot/26-portal-login-spec.json",
+    "legacy runbooks"
+  ],
+  "state_machine": {
+    "DISCOVER": {
+      "allowed_actions": ["read_processes", "read_cdp_endpoints", "read_targets", "read_owner_idle"],
+      "next": ["HUMAN_ACTIVE", "AI_ATTACHED"]
+    },
+    "HUMAN_ACTIVE": {
+      "allowed_actions": ["read_owner_idle", "wait"],
+      "resume_after_idle_seconds": 180,
+      "next": ["AI_ATTACHED"]
+    },
+    "AI_ATTACHED": {
+      "allowed_actions": ["attach_one_raw_cdp_target", "install_badge", "read_state"],
+      "next": ["HUMAN_AUTH", "AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
+    },
+    "HUMAN_AUTH": {
+      "allowed_actions": ["read_state", "wait"],
+      "forbidden_actions": ["navigate", "click", "type", "submit", "close", "focus_again"],
+      "poll_interval_seconds": 5,
+      "quiet_after_success_seconds": 15,
+      "timeout_seconds": null,
+      "next": ["AUTHENTICATED", "HANDOFF"]
+    },
+    "AUTHENTICATED": {
+      "allowed_actions": ["record_non_secret_proof", "start_requested_task"],
+      "next": ["KEEPALIVE", "AUTH_LOST", "HANDOFF"]
+    },
+    "KEEPALIVE": {
+      "allowed_actions": ["read_state", "skip", "navigate_dedicated_safe_tab"],
+      "next": ["AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
+    },
+    "AUTH_LOST": {
+      "allowed_actions": ["one_safe_autologin_attempt", "handoff_on_challenge"],
+      "next": ["AUTHENTICATED", "HUMAN_AUTH", "HANDOFF"]
+    },
+    "HANDOFF": {
+      "allowed_actions": ["remove_badge", "close_cdp_websocket", "report_non_secret_state"],
+      "terminal": true
+    }
+  },
+  "ownership_lease": {
+    "path_template": "~/.valuehire/browser_locks/login-<site>.lock",
+    "acquire": "atomic_mkdir",
+    "required_before_discover_or_create": true,
+    "required_until_handoff": true,
+    "recheck_token_before_every_mutation": true,
+    "on_conflict": "wait_without_browser_action",
+    "stale_removal": "manual_only_after_process_verification"
+  },
+  "mutation_guard": {
+    "required_before_every_mutation": true,
+    "idle_checks": 2,
+    "quiet_dwell_seconds": 1,
+    "minimum_idle_seconds": 180,
+    "lease_token_recheck": true,
+    "failure_state": "HUMAN_ACTIVE"
+  },
+  "browser_limits": {
+    "max_new_windows_when_browser_exists": 0,
+    "max_new_tabs_per_site": 1,
+    "max_attached_targets_per_site": 1
+  },
+  "forbidden_calls": [
+    "connectOverCDP",
+    "new_page",
+    "page.close",
+    "context.close",
+    "browser.close",
+    "kill_browser",
+    "portal_browsers stop",
+    "portal_browsers restart"
+  ],
+  "badge": {
+    "dom_id": "vh-automation-badge",
+    "required_before_first_mutation": true,
+    "failure_action": "HANDOFF"
+  },
+  "human_control": {
+    "activity_signal": "macos_os_idle_only",
+    "detection_failure_action": "HUMAN_ACTIVE",
+    "no_keylogging": true,
+    "no_browser_content_surveillance_for_activity": true
+  },
+  "keepalive": {
+    "check_after_seconds": 1800,
+    "navigation_default": "skip",
+    "require_fresh_owner_idle_check": true,
+    "require_clean_form": true,
+    "require_dedicated_safe_tab": true,
+    "allow_only_previously_opened_free_profile": true,
+    "forbid_paid_or_new_candidate_view": true
+  },
+  "site_proof": {
+    "saramin": {
+      "all": ["account_or_logout_marker", "input.search_input", "#career_min", "#career_max"],
+      "none": ["login_only_without_logout"]
+    },
+    "jobkorea": {
+      "all": ["logout_marker", "company_or_account_marker", "/Corp/Person/Find surface"],
+      "none": ["login_only_without_logout"]
+    },
+    "linkedin": {
+      "all": ["/talent/ surface", "recruiter_account_marker"],
+      "none": ["/uas/login-cap", "authwall", "checkpoint", "enterprise-authentication/sessions"]
+    }
+  },
+  "legacy_unsafe": {
+    "tools.multi_position_sourcing.portal_login": [
+      "creates pages",
+      "closes pages or contexts",
+      "uses whole-browser connectOverCDP for LinkedIn",
+      "has finite human intervention timeout"
+    ]
+  }
+}
