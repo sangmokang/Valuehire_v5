@@ -101,16 +101,57 @@ cdp_url() {
     | grep -oE '"url": *"https?://[^"]*"' | head -1 | sed -E 's/.*"(https?:[^"]*)"/\1/' | cut -c1-120
 }
 
+acquire_start_lock() {
+  local name="$1"
+  local root="${PORTAL_START_LOCK_DIR:-$HOME/.valuehire/browser_locks}"
+  local lock="$root/start-$name.lock"
+  mkdir -p "$root"
+  if mkdir "$lock" 2>/dev/null; then
+    printf '%s\n' "$$" >"$lock/pid"
+    printf '%s\n' "$lock"
+    return 0
+  fi
+  local holder=""
+  [[ -f "$lock/pid" ]] && holder="$(tr -cd '0-9' <"$lock/pid")"
+  # mkdir 직후 pid 기록 전의 짧은 구간도 활성 잠금으로 취급한다. 빈 잠금을 자동 회수하면
+  # 두 런처가 모두 Chrome을 띄우는 TOCTOU가 생긴다.
+  if [[ -z "$holder" ]]; then
+    return 1
+  fi
+  if kill -0 "$holder" 2>/dev/null; then
+    return 1
+  fi
+  # 죽은 런처가 남긴 잠금만 회수한다. 살아있는 PID의 잠금은 절대 빼앗지 않는다.
+  rm -f "$lock/pid" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || return 1
+  mkdir "$lock" 2>/dev/null || return 1
+  printf '%s\n' "$$" >"$lock/pid"
+  printf '%s\n' "$lock"
+}
+
+release_start_lock() {
+  local lock="$1"
+  rm -f "$lock/pid" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || true
+}
+
 start_one() {
   local name="$1" port="$2" profile="$3" url="$4"
+  local start_lock=""
+  if ! start_lock="$(acquire_start_lock "$name")"; then
+    echo "  [$name] 다른 실행기가 시작 점검 중 — 새 창을 열지 않고 건너뜀"
+    return 0
+  fi
   if cdp_alive "$port"; then
     echo "  [$name] 이미 :$port 에서 실행 중 — 건너뜀"
+    release_start_lock "$start_lock"
     return 0
   fi
   # 탭 증식 가드(issue #71): 같은 프로필의 크롬 프로세스가 이미 살아 있으면(기동 중·절전 직후 등
   # CDP만 잠깐 무응답) 바이너리를 다시 실행하지 않는다 — 재실행하면 기존 인스턴스에 새 탭만 쌓인다.
   if pgrep -f -- "--user-data-dir=$profile" >/dev/null 2>&1; then
-    echo "  [$name] ⚠️ 크롬 프로세스는 살아있는데 CDP :$port 무응답 — 재실행하지 않음(탭 증식 방지). 계속 무응답이면 'restart'."
+    echo "  [$name] ⚠️ 크롬 프로세스는 살아있는데 CDP :$port 무응답 — 재실행 금지(탭 증식 방지). 실제 포트와 프로세스 상태를 확인하세요."
+    release_start_lock "$start_lock"
     return 0
   fi
   if [[ ! -d "$profile" ]]; then
@@ -127,6 +168,9 @@ start_one() {
     "$url" \
     >"$LOG_DIR/portal_$name.log" 2>&1 &
   disown || true
+  # 자식 Chrome이 프로세스 목록에 나타날 시간을 확보한 뒤 시작 잠금을 푼다.
+  sleep 1
+  release_start_lock "$start_lock"
   echo "  [$name] 띄움 → CDP http://127.0.0.1:$port  (로그: $LOG_DIR/portal_$name.log)"
 }
 

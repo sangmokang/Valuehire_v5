@@ -48,6 +48,23 @@
       "terminal": true
     }
   },
+  "ownership_lease": {
+    "path_template": "~/.valuehire/browser_locks/login-<site>.lock",
+    "acquire": "atomic_mkdir",
+    "required_before_discover_or_create": true,
+    "required_until_handoff": true,
+    "recheck_token_before_every_mutation": true,
+    "on_conflict": "wait_without_browser_action",
+    "stale_removal": "manual_only_after_process_verification"
+  },
+  "mutation_guard": {
+    "required_before_every_mutation": true,
+    "idle_checks": 2,
+    "quiet_dwell_seconds": 1,
+    "minimum_idle_seconds": 180,
+    "lease_token_recheck": true,
+    "failure_state": "HUMAN_ACTIVE"
+  },
   "browser_limits": {
     "max_new_windows_when_browser_exists": 0,
     "max_new_tabs_per_site": 1,
