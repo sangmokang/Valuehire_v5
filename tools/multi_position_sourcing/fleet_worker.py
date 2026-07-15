@@ -204,6 +204,14 @@ def parse_worker_output(stdout: str, exit_code: int, stderr: str = "") -> dict[s
     return {"status": "done", "summary": text[-_SUMMARY_LIMIT:]}
 
 
+def _quote_for_cmd_exe(path: str) -> str:
+    """Codex Rescue V2 발견 — 윈도우 실행 경로 자체에 '&' 같은 cmd.exe 메타문자가
+    있으면(예: C:\\Tools&RnD\\claude.cmd — IT 배포 경로에 흔히 있을 수 있음) 큰따옴표
+    없이 cmd.exe 로 넘어갈 때 명령이 끊긴다. 큰따옴표로 감싸 메타문자를 리터럴로
+    고정한다(내부 큰따옴표는 이스케이프)."""
+    return '"' + path.replace('"', '\\"') + '"'
+
+
 def _agent_argv(name: str, base_args: list[str]) -> tuple[list[str], bool]:
     """이슈 F(2026-07-15) — 윈도우에서 npm shim(.cmd/.bat) 실행 시 [WinError 2] 방지.
 
@@ -224,7 +232,50 @@ def _agent_argv(name: str, base_args: list[str]) -> tuple[list[str], bool]:
     resolved = shutil.which(name)
     exe = resolved or name
     needs_shell = bool(resolved) and exe.lower().endswith((".cmd", ".bat"))
+    if needs_shell:
+        exe = _quote_for_cmd_exe(exe)
     return [exe, *base_args], needs_shell
+
+
+def _terminate_process_tree_windows(pid: int) -> None:
+    """Codex Rescue V2 발견 — shell=True(cmd.exe) 경로에서 타임아웃 시 cmd.exe 프로세스만
+    죽이면, cmd.exe 가 띄운 실제 에이전트 자식 프로세스는 고아로 남아 계속 돈다.
+    taskkill /T 로 프로세스 트리 전체를 종료한다. 실패해도 무시(fail-soft — 타임아웃
+    처리 자체가 이것 때문에 막히면 안 됨)."""
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True, timeout=10,
+        )
+    except Exception:  # noqa: BLE001 — 정리 실패가 타임아웃 처리를 막으면 안 됨
+        pass
+
+
+def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
+                    env: Mapping[str, str] | None) -> tuple[str, str, int]:
+    """윈도우 .cmd/.bat shim(shell=True) 경로 전용 실행기.
+
+    subprocess.run 이 아니라 Popen+communicate 를 직접 써서, 타임아웃 시 cmd.exe
+    프로세스 트리 전체(taskkill /T)를 종료할 수 있게 한다(Codex Rescue V2 발견 —
+    subprocess.run 의 기본 timeout 처리는 직계 자식인 cmd.exe 만 죽이고 그 자식은
+    고아로 남긴다). encoding='utf-8' 을 명시해 비-UTF-8 Windows 로케일에서도 한글
+    프롬프트/출력이 깨지지 않게 한다(Codex Rescue V2 발견).
+    """
+    proc = subprocess.Popen(
+        cmd, shell=True, cwd=cwd, env=dict(env) if env is not None else None,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8",
+    )
+    try:
+        stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree_windows(proc.pid)
+        try:
+            proc.communicate(timeout=5)
+        except Exception:  # noqa: BLE001 — 정리 단계, 원 타임아웃 전파가 우선
+            pass
+        raise
+    return (stdout or ""), (stderr or ""), proc.returncode
 
 
 def _run_claude(prompt: str, timeout: int,
@@ -237,14 +288,13 @@ def _run_claude(prompt: str, timeout: int,
     기존과 동일하게 argv 로 넘겨 행동 불변).
     """
     cmd, use_shell = _agent_argv("claude", ["-p"])
-    kwargs: dict[str, Any] = dict(
-        cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
+    if use_shell:
+        return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+    proc = subprocess.run(
+        [*cmd, prompt], cwd=str(REPO), capture_output=True, text=True,
+        encoding="utf-8", timeout=timeout,
         env=dict(env) if env is not None else None,
     )
-    if use_shell:
-        proc = subprocess.run(cmd, shell=True, input=prompt, **kwargs)
-    else:
-        proc = subprocess.run([*cmd, prompt], **kwargs)
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 
@@ -255,14 +305,13 @@ def _run_codex(prompt: str, timeout: int,
     이슈 F: 윈도우 .cmd shim 경로는 `codex exec -`(stdin 소스 명시) + input=prompt.
     """
     cmd, use_shell = _agent_argv("codex", ["exec"])
-    kwargs: dict[str, Any] = dict(
-        cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
+    if use_shell:
+        return _run_via_shell([*cmd, "-"], prompt, timeout, str(REPO), env)
+    proc = subprocess.run(
+        [*cmd, prompt], cwd=str(REPO), capture_output=True, text=True,
+        encoding="utf-8", timeout=timeout,
         env=dict(env) if env is not None else None,
     )
-    if use_shell:
-        proc = subprocess.run([*cmd, "-"], shell=True, input=prompt, **kwargs)
-    else:
-        proc = subprocess.run([*cmd, prompt], **kwargs)
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 

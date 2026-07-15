@@ -545,21 +545,37 @@ def test_injected_runner_signature_unchanged_by_badge():
 # CreateProcess 가 직접 실행 못 함(cmd.exe 를 거쳐야 함). shutil.which 로 실제
 # 경로를 찾고, 그 경로가 .cmd/.bat 이면 shell=True 로 실행해야 한다.
 
+class _FakePopen:
+    """Popen 스텁 — communicate()/pid/returncode 만 흉내(실제 프로세스 없음)."""
+
+    instances: list["_FakePopen"] = []
+
+    def __init__(self, cmd, **kwargs):
+        self.cmd = cmd
+        self.kwargs = kwargs
+        self.pid = 4242
+        self.returncode = 0
+        self._communicate_result = ("ok", "")
+        self._raise_timeout_once = False
+        self.communicate_calls = []
+        _FakePopen.instances.append(self)
+
+    def communicate(self, input=None, timeout=None):
+        self.communicate_calls.append({"input": input, "timeout": timeout})
+        if self._raise_timeout_once and len(self.communicate_calls) == 1:
+            raise subprocess.TimeoutExpired(cmd=self.cmd, timeout=timeout)
+        return self._communicate_result
+
+
 def test_run_claude_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
     """npm .cmd shim 경로: shell=True 로 cmd.exe 를 거치되, 프롬프트는 argv 가 아니라
     stdin(input=)으로 전달해야 한다 — URL의 '&' 같은 cmd.exe 메타문자나 우연히 들어간
-    '%VAR%' 환경변수 확장에 프롬프트 내용이 노출되면 안 된다(자기적대검증 발견)."""
-    from types import SimpleNamespace
+    '%VAR%' 환경변수 확장에 프롬프트 내용이 노출되면 안 된다(자기적대검증 발견).
+    실행 경로 자체도 큰따옴표로 감싸야 한다(Codex Rescue V2 발견 — '&' 가 든 설치
+    경로에서 cmd.exe 가 명령을 끊어 읽는 결함) + UTF-8 인코딩 명시(한글 깨짐 방지)."""
     from tools.multi_position_sourcing import fleet_worker as fw
-    captured = {}
-
-    def fake_run(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["shell"] = kwargs.get("shell")
-        captured["input"] = kwargs.get("input")
-        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
-
-    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    _FakePopen.instances.clear()
+    monkeypatch.setattr(fw.subprocess, "Popen", _FakePopen)
     monkeypatch.setattr(fw.sys, "platform", "win32")
     monkeypatch.setattr(
         fw.shutil, "which",
@@ -568,24 +584,18 @@ def test_run_claude_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch)
     stdout, stderr, code = fw._run_claude("포지션 URL: https://x/y?a=1&b=2", timeout=10)
     assert code == 0
     assert stdout == "ok"
-    assert captured["cmd"] == [r"C:\\Users\\vh\\AppData\\Roaming\\npm\\claude.cmd", "-p"]
-    assert captured["shell"] is True, "npm .cmd shim 은 cmd.exe 를 거쳐야 실행 가능"
-    assert captured["input"] == "포지션 URL: https://x/y?a=1&b=2", (
+    proc = _FakePopen.instances[0]
+    assert proc.cmd == [r'"C:\\Users\\vh\\AppData\\Roaming\\npm\\claude.cmd"', "-p"]
+    assert proc.kwargs.get("shell") is True, "npm .cmd shim 은 cmd.exe 를 거쳐야 실행 가능"
+    assert proc.kwargs.get("encoding") == "utf-8", "비-UTF-8 윈도우 로케일에서도 한글 보존"
+    assert proc.communicate_calls[0]["input"] == "포지션 URL: https://x/y?a=1&b=2", (
         "프롬프트는 반드시 stdin 으로 — argv/cmd.exe 명령줄에 실으면 안 됨")
 
 
 def test_run_codex_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
-    from types import SimpleNamespace
     from tools.multi_position_sourcing import fleet_worker as fw
-    captured = {}
-
-    def fake_run(cmd, **kwargs):
-        captured["cmd"] = cmd
-        captured["shell"] = kwargs.get("shell")
-        captured["input"] = kwargs.get("input")
-        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
-
-    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    _FakePopen.instances.clear()
+    monkeypatch.setattr(fw.subprocess, "Popen", _FakePopen)
     monkeypatch.setattr(fw.sys, "platform", "win32")
     monkeypatch.setattr(
         fw.shutil, "which",
@@ -593,9 +603,68 @@ def test_run_codex_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
     )
     stdout, stderr, code = fw._run_codex("hello & world", timeout=10)
     assert code == 0
-    assert captured["cmd"] == [r"C:\\Users\\vh\\AppData\\Roaming\\npm\\codex.cmd", "exec", "-"]
-    assert captured["shell"] is True
-    assert captured["input"] == "hello & world"
+    proc = _FakePopen.instances[0]
+    assert proc.cmd == [r'"C:\\Users\\vh\\AppData\\Roaming\\npm\\codex.cmd"', "exec", "-"]
+    assert proc.kwargs.get("shell") is True
+    assert proc.kwargs.get("encoding") == "utf-8"
+
+
+def test_run_claude_quotes_exe_path_containing_ampersand(monkeypatch):
+    """Codex Rescue V2 발견 — C:\\Tools&RnD\\claude.cmd 처럼 설치 경로 자체에 '&' 가
+    있으면(사내 IT 배포 경로 등, 공격자 통제 불필요) 큰따옴표 없이 cmd.exe 로 넘기면
+    명령이 반으로 끊긴다. 큰따옴표로 감싸는지 검증."""
+    from tools.multi_position_sourcing import fleet_worker as fw
+    _FakePopen.instances.clear()
+    monkeypatch.setattr(fw.subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(
+        fw.shutil, "which",
+        lambda name: r"C:\Tools&RnD\claude.cmd" if name == "claude" else None,
+    )
+    fw._run_claude("hi", timeout=10)
+    proc = _FakePopen.instances[0]
+    assert proc.cmd[0] == '"C:\\Tools&RnD\\claude.cmd"', "실행 경로의 '&' 는 반드시 따옴표로 보호"
+
+
+def test_run_claude_kills_process_tree_on_windows_timeout(monkeypatch):
+    """Codex Rescue V2 발견 — subprocess.run 의 기본 timeout 처리는 cmd.exe 직계
+    자식만 죽이고, cmd.exe 가 띄운 실제 에이전트 프로세스는 고아로 남는다. 타임아웃
+    시 taskkill /F /T /PID 로 프로세스 트리 전체를 정리해야 한다."""
+    from tools.multi_position_sourcing import fleet_worker as fw
+    _FakePopen.instances.clear()
+    killed = []
+
+    def fake_taskkill_run(cmd, **kwargs):
+        killed.append(cmd)
+        from types import SimpleNamespace
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(fw.subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(
+        fw.shutil, "which",
+        lambda name: r"C:\Users\vh\AppData\Roaming\npm\claude.cmd" if name == "claude" else None,
+    )
+    orig_popen_init = _FakePopen.__init__
+
+    def init_with_timeout(self, cmd, **kwargs):
+        orig_popen_init(self, cmd, **kwargs)
+        self._raise_timeout_once = True
+
+    monkeypatch.setattr(_FakePopen, "__init__", init_with_timeout)
+    # taskkill 자체는 subprocess.run 을 쓰므로 그 부분만 스텁
+    real_run = fw.subprocess.run
+    monkeypatch.setattr(fw.subprocess, "run", fake_taskkill_run)
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            fw._run_claude("hi", timeout=1)
+    finally:
+        monkeypatch.setattr(fw.subprocess, "run", real_run)
+    assert killed, "타임아웃 시 taskkill 로 프로세스 트리를 정리해야 함"
+    assert killed[0][:2] == ["taskkill", "/F"]
+    assert "/T" in killed[0]
+    proc = _FakePopen.instances[0]
+    assert str(proc.pid) in killed[0]
 
 
 def test_run_claude_no_shell_on_windows_when_resolved_to_exe(monkeypatch):
