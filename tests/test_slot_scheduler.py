@@ -1,6 +1,7 @@
 """Issue #125: pure browser-slot fairness scheduler contract."""
 from __future__ import annotations
 
+import copy
 import random
 
 import pytest
@@ -239,6 +240,29 @@ def test_shuffle_inputs_one_hundred_times_has_identical_plan():
         rng.shuffle(shuffled_jobs)
         rng.shuffle(shuffled_slots)
         assert signature(plan_dispatches(shuffled_jobs, shuffled_slots, **kwargs)) == expected
+
+
+def test_planner_does_not_mutate_nested_inputs():
+    jobs = [job("a", 1, 1, requirements={"portal": ["saramin", {"paid": False}]})]
+    slots = [
+        slot(
+            "s",
+            "m",
+            capabilities={"portal": ["saramin", {"paid": False}]},
+        )
+    ]
+    requester_states = states("a")
+    capacities = {"portal:saramin": 1}
+    before = copy.deepcopy((jobs, slots, requester_states, capacities))
+
+    plan_dispatches(
+        jobs,
+        slots,
+        requester_states=requester_states,
+        account_capacities=capacities,
+    )
+
+    assert (jobs, slots, requester_states, capacities) == before
 
 
 def test_stale_parked_and_unknown_capability_slots_fail_closed():
