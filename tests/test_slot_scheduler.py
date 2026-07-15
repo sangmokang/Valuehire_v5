@@ -287,3 +287,90 @@ def test_active_count_and_last_dispatch_sequence_drive_requester_order():
         next_dispatch_seq=11,
     )
     assert [(d.requester_id, d.dispatch_seq) for d in plan] == [("c", 11)]
+
+
+
+def test_fresh_busy_sibling_slot_blocks_new_machine_dispatch():
+    plan = plan_dispatches(
+        [job("a", 1, 1)],
+        [
+            slot("already-writing", "m1", account_key="portal:other", state="busy"),
+            slot("ready-sibling", "m1"),
+        ],
+        requester_states=states("a"),
+        account_capacities={"portal:saramin": 1, "portal:other": 1},
+        account_running={"portal:other": 1},
+    )
+    assert plan == ()
+
+
+def test_linkedin_rps_capacity_cannot_be_raised_by_caller():
+    rps_jobs = [
+        job("a", 1, 1, resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
+        job("b", 2, 2, resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
+    ]
+    rps_slots = [
+        slot("rps-1", "m1", resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
+        slot("rps-2", "m2", resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
+    ]
+    with pytest.raises(ValueError):
+        plan_dispatches(
+            rps_jobs,
+            rps_slots,
+            requester_states=states("a", "b"),
+            account_capacities={"portal:linkedin_rps": 2},
+        )
+
+
+def test_unconstrained_job_does_not_strand_requested_machine_job():
+    plan = plan_dispatches(
+        [job("a", 1, 1), job("b", 2, 2, requested_machine="m1")],
+        [slot("s1", "m1"), slot("s2", "m2")],
+        requester_states=states("a", "b"),
+        account_capacities={"portal:saramin": 2},
+    )
+    assert [(d.job_id, d.machine_id) for d in plan] == [(1, "m2"), (2, "m1")]
+
+
+def test_unconstrained_job_does_not_strand_capability_job():
+    plan = plan_dispatches(
+        [job("a", 1, 1), job("b", 2, 2, requirements={"only": "yes"})],
+        [
+            slot("special", "m1", capabilities={"only": "yes"}),
+            slot("general", "m2", capabilities={"x": 1, "y": 2}),
+        ],
+        requester_states=states("a", "b"),
+        account_capacities={"portal:saramin": 2},
+    )
+    assert [(d.job_id, d.machine_id) for d in plan] == [(1, "m2"), (2, "m1")]
+
+
+def test_next_dispatch_sequence_must_advance_existing_state():
+    with pytest.raises(ValueError):
+        plan_dispatches(
+            [job("a", 1, 1)],
+            [slot("s", "m")],
+            requester_states={"a": RequesterState(active_count=0, last_dispatch_seq=10)},
+            account_capacities={"portal:saramin": 1},
+            next_dispatch_seq=10,
+        )
+
+
+def test_capability_values_match_with_exact_json_types():
+    assert plan_dispatches(
+        [job("a", 1, 1, requirements={"human_idle": True})],
+        [slot("s", "m", capabilities={"human_idle": 1})],
+        requester_states=states("a"),
+        account_capacities={"portal:saramin": 1},
+    ) == ()
+
+    with pytest.raises(ValueError):
+        plan_dispatches(
+            [job("a", 1, 1)],
+            [slot("s", "m", capabilities={"opaque": object()})],
+            requester_states=states("a"),
+            account_capacities={"portal:saramin": 1},
+        )
+
+
+
