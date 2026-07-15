@@ -231,9 +231,8 @@ def _matching_signals(
         if re.search(r"[가-힣]", alias):
             if not strict_entities:
                 return alias in text_folded
-            boundary = r"0-9a-z가-힣"
-            left = rf"(?<![{boundary}])"
-            right = rf"(?=학교|[^{boundary}]|$)" if alias.endswith("대") else rf"(?![{boundary}])"
+            left = r"(?<![^\W_])"
+            right = r"(?=학교|(?![^\W_]))" if alias.endswith("대") else r"(?![^\W_])"
             return re.search(left + re.escape(alias) + right, text_folded) is not None
         left = r"(?<![^\W_])" if alias[0].isalnum() else ""
         right = r"(?![^\W_])" if any(character.isalnum() for character in alias) else ""
@@ -252,7 +251,7 @@ def _degree_match_text(education: str) -> str:
         r"[23]\s*년\s*제\s*(?:전\s*문\s*)?대\s*학(?:\s*교)?\s*졸\s*업",
         r"(?:전\s*문\s*|[23]\s*년\s*제\s*(?:전\s*문\s*)?)대\s*졸",
         r"초\s*대\s*졸",
-        r"(?:준|비|장)\s*학\s*사",
+        r"(?:준|무|장|비(?:\s*[-–—]|\s*\(非\))?)\s*학\s*사|학\s*사(?:\s*학\s*위)?\s*(?:미\s*(?:취\s*득|소\s*지)|아\s*님)",
     )
     for pattern in associate_patterns:
         text = re.sub(pattern, " ", text)
