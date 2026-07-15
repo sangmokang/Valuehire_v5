@@ -22,7 +22,8 @@
     "INV5_owner_only": "fleet-resume·fleet-cancel 은 owner(명시적 OWNER_USER_IDS) 전용. 멤버 연락처와 분리.",
     "INV6_paused_human": "캡차/2FA → paused_for_human + 크롬 조작 중단(양보) + Discord 알림 → fleet-resume 재개. 크롬 안 닫음.",
     "INV7_stale_alert": "머신 heartbeat 5분 초과/누락 → OPS_HEALTH 경보(30분 억제).",
-    "INV8_machine_reliability": "신뢰도 macmini > winpc > macbook(보조 캐파). 맥북은 기본 캐파 아님."
+    "INV8_machine_reliability": "신뢰도 macmini > winpc > macbook(보조 캐파). 맥북은 기본 캐파 아님.",
+    "INV10_account_pause_barrier": "계정 단위 pause 장벽: queued 등록은 허용하되 같은 공백문자 없는 account_key(LinkedIn 공용키 portal:linkedin_rps 포함)의 claim/execute는 모든 paused_for_human 잡이 resume_job 또는 cancel_job으로 해소될 때까지 차단한다. 시간 만료 없음. 다른 account_key는 계속 실행한다."
   },
   "machines": {
     "macmini": {"role": "primary", "reliability": "highest", "watchdog_host": true},
