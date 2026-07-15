@@ -290,11 +290,18 @@ def test_active_count_and_last_dispatch_sequence_drive_requester_order():
 
 
 
-def test_fresh_busy_sibling_slot_blocks_new_machine_dispatch():
+@pytest.mark.parametrize("busy_fresh", [True, False])
+def test_busy_sibling_slot_blocks_new_machine_dispatch(busy_fresh):
     plan = plan_dispatches(
         [job("a", 1, 1)],
         [
-            slot("already-writing", "m1", account_key="portal:other", state="busy"),
+            slot(
+                "already-writing",
+                "m1",
+                account_key="portal:other",
+                state="busy",
+                fresh=busy_fresh,
+            ),
             slot("ready-sibling", "m1"),
         ],
         requester_states=states("a"),
@@ -394,6 +401,3 @@ def test_slot_choice_preserves_maximum_future_matching_capacity():
         (2, "m0"),
         (3, "m2"),
     ]
-
-
-
