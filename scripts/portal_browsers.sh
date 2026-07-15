@@ -9,7 +9,7 @@
 #   scripts/launchd/install-portal-browsers.sh install
 #
 # 사용법:
-#   ./scripts/portal_browsers.sh start     # 3개 창 띄우기 (이미 떠 있으면 건너뜀 = 멱등)
+#   ./scripts/portal_browsers.sh start [saramin|jobkorea|linkedin]  # 전체 또는 한 채널만 멱등 시작
 #   ./scripts/portal_browsers.sh status     # 포트별 살아있는지/현재 URL 확인
 #   ./scripts/portal_browsers.sh health     # 채널별 로그인 상태 점검(로그인됨/로그인 필요)
 #   ./scripts/portal_browsers.sh stop        # 3개 창 종료
@@ -131,16 +131,29 @@ start_one() {
 }
 
 cmd_start() {
+  local only="${1:-}"
+  case "$only" in
+    ""|saramin|jobkorea|linkedin) ;;
+    *) echo "❌ 알 수 없는 채널: $only (saramin|jobkorea|linkedin)" >&2; return 2 ;;
+  esac
   [[ -x "$CHROME" ]] || { echo "❌ 크롬 실행파일 없음: $CHROME"; exit 1; }
-  echo "▶ 디버그 크롬 시작…"
+  if [[ -n "$only" ]]; then
+    echo "▶ $only 디버그 크롬 시작…"
+  else
+    echo "▶ 디버그 크롬 시작…"
+  fi
   for row in "${CHANNELS[@]}"; do
     # shellcheck disable=SC2086
-    set -- $row; start_one "$1" "$2" "$3" "$4"
+    set -- $row
+    [[ -z "$only" || "$1" == "$only" ]] || continue
+    start_one "$1" "$2" "$3" "$4"
   done
   local boot_wait="${PORTAL_BOOT_WAIT:-20}"
   echo "⏳ 기동 확인(최대 ${boot_wait}초)…"
   for row in "${CHANNELS[@]}"; do
-    set -- $row; local name="$1" port="$2" n=0
+    set -- $row
+    [[ -z "$only" || "$1" == "$only" ]] || continue
+    local name="$1" port="$2" n=0
     until cdp_alive "$port" || [[ $n -ge $boot_wait ]]; do sleep 1; n=$((n+1)); done
     if cdp_alive "$port"; then echo "  ✅ $name :$port 응답"; else echo "  ❌ $name :$port 무응답 — 로그 확인"; fi
   done
@@ -236,11 +249,11 @@ cmd_stop() {
 }
 
 case "${1:-}" in
-  start)   cmd_start ;;
+  start)   cmd_start "${2:-}" ;;
   status)  cmd_status ;;
   cdp)     cmd_cdp "${2:-}" ;;
   health)  cmd_health ;;
   stop)    cmd_stop ;;
-  restart) cmd_stop; sleep 2; cmd_start ;;
-  *) echo "사용법: $0 {start|status|cdp <채널>|health|stop|restart}"; exit 2 ;;
+  restart) cmd_stop; sleep 2; cmd_start "${2:-}" ;;
+  *) echo "사용법: $0 {start [saramin|jobkorea|linkedin]|status|cdp <채널>|health|stop|restart [채널]}"; exit 2 ;;
 esac

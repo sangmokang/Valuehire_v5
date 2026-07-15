@@ -92,7 +92,7 @@ def test_login_skill_defines_auth_proof_lifetime_and_safe_keepalive() -> None:
         "30분",
         "프로필 상세",
         "읽기 전용",
-        "최소 10분",
+        "30분 하나",
         "로그인 마커",
         "로그아웃",
         "AUTH_LOST",
@@ -154,9 +154,9 @@ def test_machine_contract_is_identical_and_fail_closed() -> None:
 def test_skill_does_not_recommend_unsafe_legacy_login_runner() -> None:
     text = _text(CANONICAL)
     assert "python3 -m tools.multi_position_sourcing.portal_login" not in text
-    assert "portal_login은 보존 모드가 아니므로 사용 금지" in text
+    assert "보존 모드가 아니므로 사용 금지" in text
     assert "--human-timeout-seconds 1800" not in text
-    assert "HUMAN_AUTH 중 navigate" in text and "금지" in text
+    assert "`HUMAN_AUTH` 중 navigate" in text and "금지" in text
 
 
 def test_installer_targets_only_three_agent_skill_directories(tmp_path: Path) -> None:
