@@ -88,7 +88,7 @@
 | # | 확정 결함 | 심각도 | 처치 |
 |---|---|---|---|
 | QA-1 | 워커 급사 시 running 고아 + 계정락 잔존 → 머신 큐 조용한 영구 데드락 | high | `stalled_running_jobs`(3000s 초과) + watchdog 경보로 **가시화**. 자동 회수(lease/owner 강제종결 RPC)는 DB 마이그레이션 필요 — **후속 조각** |
-| QA-2 | paused_for_human 직후 같은 계정 잡 즉시 claim — 캡차 처리 중 자동화 재진입(SOT29 §2·§4 위반) | high | 워커측 쿨다운에 더해 계정 단위 서버 장벽으로 근본 차단. queued 등록은 보존하고, 같은 비공백 account_key의 모든 일시정지 잡을 수동 해소할 때까지 claim 차단 |
+| QA-2 | paused_for_human 직후 같은 계정 잡 즉시 claim — 캡차 처리 중 자동화 재진입(SOT29 §2·§4 위반) | high | 워커측 쿨다운(⚠️ 2026-07-15 SOT29 INV9 로 supersede: `OWNER_YIELD_RESUME_SECONDS=180` — 사장님 지시 '3분 뒤 이상 없으면 자동 재개', 600초 고정 폐기) + 계정 단위 서버 장벽(#105, PR#113: 같은 비공백 account_key 의 일시정지 잡 해소 전 claim 차단). ⚠️ 서버 장벽의 '수동 해소까지 무기한 차단'은 INV9(3분 자동 재개)와 긴장 — 180초 TTL 자동해제 재정의는 #105 후속(DB) |
 | QA-3 | 비정상 종료 시 stderr 가 stdout 에 붙어 PAUSED 마커가 15줄 창 밖으로 밀림 → 캡차를 failed(재개불가) 오판 | medium | `_run_claude` stdout/stderr 분리, 마커 탐지 stdout 한정, stderr 는 실패 요약에만 |
 | QA-4 | release 호출 자체가 실패하면 잡이 조용한 running 고아 | medium | release 재시도 3회(백오프) + 최종 실패 시 "고아 위험" 명시 경보 후 전파 |
 | QA-5 | fleet_worker_loop.sh 경로 무가드 → launchd 조용한 크래시루프 / plist 경로 하드코딩(`~/Valuehire_v5`) 머신별 드리프트 | medium | 스크립트에 명시 로그 + 자기위치 폴백 + 재시도(pc-k6 규율). plist 는 설치 시 머신별 경로 확인 필수 |

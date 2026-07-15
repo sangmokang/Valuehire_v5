@@ -171,6 +171,14 @@ def dispatch_fleet_command(
 
     if invocation.command_name == "fleet-status":
         out: dict[str, Any] = {"action": "status", "jobs": q.recent(10)}
+        # 이슈 #107(V1 F6): 잡 프롬프트 규칙 19 가 안내하는 LinkedIn 로그인 머신 정보를
+        # 실제로 노출한다 — 프롬프트와 실기능의 불일치(부분 배선) 봉인. fail-soft.
+        fetch_lr = getattr(q, "linkedin_ready_machines", None)
+        if callable(fetch_lr):
+            try:
+                out["linkedin_ready"] = fetch_lr()
+            except Exception as exc:  # noqa: BLE001 — 표시 실패가 status 를 죽이면 안 됨
+                out["linkedin_ready"] = {"error": str(exc)[:200]}
         # SOT30 인수기준 3 — 머신별 heartbeat 나이(초). 일꾼 생존을 명령 한 번으로.
         fetch_hb = getattr(q, "heartbeats_epoch", None)
         if callable(fetch_hb):

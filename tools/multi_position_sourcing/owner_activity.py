@@ -47,13 +47,14 @@ def compute_yield_decision(
 ) -> bool:
     """순수 결정: 무인 워커가 지금 양보(yield)해야 하는가? (True=양보, False=재개)
 
-    - 크롬이 앞창이면 사장님이 크롬을 쓰는 중으로 보고 idle 과 무관하게 양보(True).
-    - 크롬이 앞창이 아니면 OS idle 로 판단: 최근 활동(idle<threshold)이면 양보(True),
-      오래 자리를 비웠으면(idle>=threshold) 재개(False).
+    - SOT29 INV9(2026-07-15 사장님 지시, #107): 판단 신호는 *idle 시간*이다.
+      크롬을 앞창에 둔 채 자리를 비워도(idle>=threshold=180초) **재개(False)** —
+      "앞창=영구 양보"는 3분 자동 재개를 방해하는 코드라 삭제됨(V1 F4).
+    - 최근 활동(idle<threshold)이면 앞창 무관하게 양보(True) — 크롬 앞창 여부는
+      기록/관측용으로만 남는다(frontmost_is_chrome 파라미터는 호환성 유지).
     - idle 을 읽지 못하면(None) 판단 불가 → fail-closed 양보(True). 사장님을 앞지르지 않는다.
     """
-    if frontmost_is_chrome:
-        return True
+    del frontmost_is_chrome  # INV9: idle 단일 신호(시그니처는 호환 유지)
     if os_idle_seconds is None:
         return True
     return os_idle_seconds < idle_threshold_seconds
