@@ -73,7 +73,7 @@ focused test 및 전체 `verify.sh`에서 모두 통과하면 끝난다.
 ## 검증 명령
 
 ```bash
-.venv-playwright/bin/python -m pytest tests/test_reservoir_scoring.py -q
+/Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest tests/test_reservoir_scoring.py -q
 ./verify.sh
 git diff --check
 rg -n "_education_score|_company_tier_score|_university_tier_score|score_profile_for_position" \
@@ -88,8 +88,7 @@ rg -n "_education_score|_company_tier_score|_university_tier_score|score_profile
   `docs/sot/24-position-jd-sot.json`, `Makefile`, `verify.sh`, `package.json` 읽음.
 - [x] memory·기존 코드/git log·스킬/문서의 과거 지시 3축 회수.
 - [x] 별도 worktree `task/scoring-ratio-signals` 사용.
-- [ ] RED focused test 실패 증거.
+- [x] RED focused test 실패 증거: `11 failed, 14 passed` 후 엣지 보강 `16 failed, 15 passed`.
 - [ ] GREEN focused test 및 전체 verify 통과.
 - [ ] 프로덕션 호출 경로 추적.
 - [ ] 자기 적대검증 + 독립 2차검증 + verdict 산출물.
-

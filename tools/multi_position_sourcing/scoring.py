@@ -85,6 +85,36 @@ HIGH_TIER_SCHOOL_SIGNALS = {
     "hong kong university of science",
 }
 
+# 학위/전공은 서로 대체 가능한 표기(alias)다. 별칭 개수는 점수 분모가 아니며,
+# 하나 이상 확인되면 education 축의 "긍정 신호" 요건 1개만 충족한다.
+EDUCATION_DEGREE_SIGNALS = (
+    "bs",
+    "b.s.",
+    "ba",
+    "b.a.",
+    "bachelor",
+    "master",
+    "ms",
+    "m.s.",
+    "phd",
+    "ph.d.",
+    "computer",
+    "학사",
+    "석사",
+    "박사",
+    "대학교 졸업",
+    "대학 졸업",
+    "4년제 졸업",
+    "대졸",
+    "공학사",
+    "이학사",
+)
+
+EDUCATION_MAX_SCORE = 10
+COMPANY_TIER_MAX_SCORE = 10
+UNIVERSITY_TIER_MAX_SCORE = 8
+_SIGNAL_CRITERIA_TOTAL = 2  # 근거 존재 + 긍정 신호 확인
+
 # 1년 미만 재직을 "짧은 재직(이직)"으로 본다.
 SHORT_TENURE_MONTHS = 12
 
@@ -130,11 +160,21 @@ def job_stability_penalty(hops: int) -> int:
     return -min(30, 10 * (hops - 1))
 
 
-def _university_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
-    matched = _contains_any(profile.education, sorted(HIGH_TIER_SCHOOL_SIGNALS))
-    if matched:
-        return 8, (f"university tier signal: {matched[0]}",)
-    return 0, ()
+def _weighted_portion_score(matched: int, total: int, weight: int) -> int:
+    """v4 scorer의 ``matched / total * weight``를 정수 half-up으로 계산한다.
+
+    v4의 ``total == 0 -> 1``은 JD 요구사항 부재용 규칙이다. 후보 근거 축에서는 정보 없음이
+    만점이 되면 안 되므로 0을 반환한다. 잘못된 matched 값도 0..total로 제한한다.
+    """
+    if total <= 0 or weight <= 0:
+        return 0
+    bounded = max(0, min(matched, total))
+    return (2 * bounded * weight + total) // (2 * total)
+
+
+def _evidence_signal_score(*, has_evidence: bool, has_signal: bool, weight: int) -> int:
+    matched = int(has_evidence) + int(has_evidence and has_signal)
+    return _weighted_portion_score(matched, _SIGNAL_CRITERIA_TOTAL, weight)
 
 
 _ASCII_TOKEN_RE = re.compile(r"[a-z0-9+#.]+")
@@ -180,15 +220,72 @@ def _contains_any(text: str, signals: tuple[str, ...] | list[str]) -> list[str]:
     return [signal for signal in signals if signal.lower() in lower]
 
 
-def _company_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
-    companies = " ".join(profile.current_or_past_companies).lower()
-    # sorted: set 반복 순서(PYTHONHASHSEED 의존)가 사장님 브리핑 문구를 흔들지 않게 결정론 고정.
-    matched = tuple(signal for signal in sorted(HIGH_TIER_COMPANY_SIGNALS) if signal in companies)
+def _matching_signals(text: str, signals: tuple[str, ...] | set[str]) -> tuple[str, ...]:
+    """결정론적 alias OR 매칭. 여러 alias가 잡혀도 호출자는 한 논리 요건으로 센다."""
+    return tuple(signal for signal in sorted(signals) if keyword_in_text(signal, text))
+
+
+def _degree_match_text(education: str) -> str:
+    """학위 신호용 정규화. 전문학사/전문대학교 졸업은 4년제 학위 신호에서 제외한다."""
+    text = _fold(education)
+    text = re.sub(r"전문\s*학사", " ", text)
+    text = re.sub(r"전문\s*대학(?:교)?\s*졸업", " ", text)
+    return text
+
+
+def _education_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
+    education = profile.education.strip()
+    matched = (
+        _matching_signals(_degree_match_text(education), EDUCATION_DEGREE_SIGNALS)
+        if education
+        else ()
+    )
+    score = _evidence_signal_score(
+        has_evidence=bool(education),
+        has_signal=bool(matched),
+        weight=EDUCATION_MAX_SCORE,
+    )
     if matched:
-        return 10, tuple(f"company tier signal: {signal}" for signal in matched[:2])
-    if profile.current_or_past_companies:
-        return 6, ("company history present but tier requires human review",)
-    return 0, ()
+        return score, (f"education signal satisfies default degree filter: {matched[0]}",)
+    if education:
+        return score, ("education present but degree/major fit needs review",)
+    return score, ()
+
+
+def _university_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
+    education = profile.education.strip()
+    matched = _matching_signals(education, HIGH_TIER_SCHOOL_SIGNALS) if education else ()
+    score = _evidence_signal_score(
+        has_evidence=bool(education),
+        has_signal=bool(matched),
+        weight=UNIVERSITY_TIER_MAX_SCORE,
+    )
+    if matched:
+        return score, (f"university tier signal: {matched[0]}",)
+    if education:
+        return score, ("university education present but tier requires human review",)
+    return score, ()
+
+
+def _company_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
+    company_items = tuple(
+        company.strip()
+        for company in profile.current_or_past_companies
+        if company.strip()
+    )
+    companies = " ".join(company_items)
+    # sorted: set 반복 순서(PYTHONHASHSEED 의존)가 사장님 브리핑 문구를 흔들지 않게 결정론 고정.
+    matched = _matching_signals(companies, HIGH_TIER_COMPANY_SIGNALS) if companies else ()
+    score = _evidence_signal_score(
+        has_evidence=bool(company_items),
+        has_signal=bool(matched),
+        weight=COMPANY_TIER_MAX_SCORE,
+    )
+    if matched:
+        return score, tuple(f"company tier signal: {signal}" for signal in matched[:2])
+    if company_items:
+        return score, ("company history present but tier requires human review",)
+    return score, ()
 
 
 def score_profile_for_position(profile: CapturedProfile, position: Position) -> PositionMatch:
@@ -223,13 +320,11 @@ def score_profile_for_position(profile: CapturedProfile, position: Position) -> 
     else:
         why_not.append(f"{profile.years_experience} years outside requested seniority range")
 
-    education_score = 0
-    if any(token in profile.education.lower() for token in ("bs", "ba", "bachelor", "master", "ms", "phd", "computer")):
-        education_score = 10
-        why_fit.append("education signal satisfies default degree filter")
-    elif profile.education:
-        education_score = 5
-        why_not.append("education present but degree/major fit needs review")
+    education_score, education_reasons = _education_score(profile)
+    if education_score == EDUCATION_MAX_SCORE:
+        why_fit.extend(education_reasons)
+    elif education_score:
+        why_not.extend(education_reasons)
     else:
         why_not.append("education not captured")
 
@@ -312,4 +407,3 @@ def top_matches_for_profile(
     matches = [score_profile_for_position(profile, position) for position in positions]
     matches.sort(key=lambda item: item.score, reverse=True)
     return tuple(matches[:top_n])
-
