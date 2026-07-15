@@ -89,7 +89,7 @@ HIGH_TIER_SCHOOL_SIGNALS = {
 # 하나 이상 확인되면 education 축의 "긍정 신호" 요건 1개만 충족한다.
 EDUCATION_DEGREE_SIGNALS = (
     "bs", "b.s.", "ba", "b.a.", "bachelor", "bsc",
-    "master", "msc", "ms", "m.s.", "phd", "ph.d.", "computer",
+    "master", "msc", "ms", "m.s.", "mba", "phd", "ph.d.", "computer",
     "학사", "석사", "박사", "대학교 졸업", "대학 졸업",
     "4년제 졸업", "대졸", "공학사", "이학사",
 )
@@ -169,6 +169,17 @@ def _fold(s: str) -> str:
     return unicodedata.normalize("NFKC", s).lower()
 
 
+def _visible_fold(s: str) -> str:
+    """NFKC/lower 후 제로폭 포맷 문자와 variation selector를 제거한다."""
+    return "".join(
+        character
+        for character in _fold(s)
+        if unicodedata.category(character) != "Cf"
+        and not 0xFE00 <= ord(character) <= 0xFE0F
+        and not 0xE0100 <= ord(character) <= 0xE01EF
+    )
+
+
 def keyword_in_text(keyword: str, text: str) -> bool:
     """직무 키워드가 text에 포함되는지 — ASCII 단일토큰은 영숫자 단어경계, 그 외는 부분일치.
 
@@ -204,16 +215,26 @@ def _contains_any(text: str, signals: tuple[str, ...] | list[str]) -> list[str]:
     return [signal for signal in signals if signal.lower() in lower]
 
 
-def _matching_signals(text: str, signals: tuple[str, ...] | set[str]) -> tuple[str, ...]:
+def _matching_signals(
+    text: str,
+    signals: tuple[str, ...] | set[str],
+    *,
+    strict_entities: bool = False,
+) -> tuple[str, ...]:
     """결정론적 alias OR 매칭. 여러 alias가 잡혀도 호출자는 한 논리 요건으로 센다."""
-    text_folded = _fold(text)
+    text_folded = _visible_fold(text)
 
     def alias_in_text(signal: str) -> bool:
-        alias = _fold(signal).strip()
+        alias = _visible_fold(signal).strip()
         if not alias:
             return False
         if re.search(r"[가-힣]", alias):
-            return alias in text_folded
+            if not strict_entities:
+                return alias in text_folded
+            boundary = r"0-9a-z가-힣"
+            left = rf"(?<![{boundary}])"
+            right = rf"(?=학교|[^{boundary}]|$)" if alias.endswith("대") else rf"(?![{boundary}])"
+            return re.search(left + re.escape(alias) + right, text_folded) is not None
         left = r"(?<![a-z0-9])" if re.match(r"[a-z0-9]", alias) else ""
         right = r"(?![a-z0-9])" if re.search(r"[a-z0-9]", alias) else ""
         return re.search(left + re.escape(alias) + right, text_folded) is not None
@@ -223,16 +244,13 @@ def _matching_signals(text: str, signals: tuple[str, ...] | set[str]) -> tuple[s
 
 def _degree_match_text(education: str) -> str:
     """학위 신호용 정규화. 전문학사/전문대학교 졸업은 4년제 학위 신호에서 제외한다."""
-    text = "".join(
-        character
-        for character in _fold(education)
-        if unicodedata.category(character) != "Cf"
-    )
+    text = _visible_fold(education)
     associate_patterns = (
         r"전\s*문\s*대\s*학(?:\s*교)?\s*(?:전\s*문\s*)?학\s*사",
         r"전\s*문\s*학\s*사",
         r"전\s*문\s*대\s*학(?:\s*교)?\s*졸\s*업",
         r"[23]\s*년\s*제\s*(?:전\s*문\s*)?대\s*학(?:\s*교)?\s*졸\s*업",
+        r"(?:전\s*문\s*|[23]\s*년\s*제\s*(?:전\s*문\s*)?)대\s*졸",
     )
     for pattern in associate_patterns:
         text = re.sub(pattern, " ", text)
@@ -240,7 +258,7 @@ def _degree_match_text(education: str) -> str:
 
 
 def _education_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
-    education = profile.education.strip()
+    education = _visible_fold(profile.education).strip()
     matched = (
         _matching_signals(_degree_match_text(education), EDUCATION_DEGREE_SIGNALS)
         if education
@@ -259,8 +277,16 @@ def _education_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
 
 
 def _university_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
-    education = profile.education.strip()
-    matched = _matching_signals(education, HIGH_TIER_SCHOOL_SIGNALS) if education else ()
+    education = _visible_fold(profile.education).strip()
+    matched = (
+        _matching_signals(
+            education,
+            HIGH_TIER_SCHOOL_SIGNALS,
+            strict_entities=True,
+        )
+        if education
+        else ()
+    )
     score = _evidence_signal_score(
         has_evidence=bool(education),
         has_signal=bool(matched),
@@ -275,13 +301,22 @@ def _university_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ..
 
 def _company_tier_score(profile: CapturedProfile) -> tuple[int, tuple[str, ...]]:
     company_items = tuple(
-        company.strip()
-        for company in profile.current_or_past_companies
-        if company.strip()
+        filter(
+            None,
+            (_visible_fold(company).strip() for company in profile.current_or_past_companies),
+        )
     )
     companies = " ".join(company_items)
     # sorted: set 반복 순서(PYTHONHASHSEED 의존)가 사장님 브리핑 문구를 흔들지 않게 결정론 고정.
-    matched = _matching_signals(companies, HIGH_TIER_COMPANY_SIGNALS) if companies else ()
+    matched = (
+        _matching_signals(
+            companies,
+            HIGH_TIER_COMPANY_SIGNALS,
+            strict_entities=True,
+        )
+        if companies
+        else ()
+    )
     score = _evidence_signal_score(
         has_evidence=bool(company_items),
         has_signal=bool(matched),

@@ -136,9 +136,7 @@ class ScoringCriteriaTests(unittest.TestCase):
 
 class RatioWeightedSignalRegressionTests(unittest.TestCase):
     def _breakdown(self, **profile_overrides: object) -> dict[str, int]:
-        return score_profile_for_position(
-            _profile(**profile_overrides), BACKEND_POS
-        ).score_breakdown
+        return score_profile_for_position(_profile(**profile_overrides), BACKEND_POS).score_breakdown
 
     def test_ratio_helper_keeps_missing_evidence_at_zero_and_rounds_half_up(self) -> None:
         self.assertEqual(_weighted_portion_score(0, 0, 10), 0)
@@ -146,34 +144,32 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
         self.assertEqual(_weighted_portion_score(3, 2, 10), 10)
 
     def test_education_uses_evidence_and_signal_ratio(self) -> None:
-        self.assertEqual(self._breakdown(education="")["education"], 0)
+        for education in ("", "\u200b", "\ufe0f"):
+            with self.subTest(education=education):
+                breakdown = self._breakdown(education=education)
+                self.assertEqual(breakdown["education"], 0)
+                self.assertEqual(breakdown["university_tier"], 0)
         self.assertEqual(self._breakdown(education="교육기관 과정 수료")["education"], 5)
         self.assertEqual(self._breakdown(education="BS Computer Science")["education"], 10)
 
     def test_korean_degree_wording_gets_full_education_weight(self) -> None:
         for education in (
-            "OO대학교 학사",
-            "OO대학교 석사",
-            "OO대학교 박사",
-            "OO대학교 졸업",
+            "OO대학교 학사", "OO대학교 석사", "OO대학교 박사", "OO대학교 졸업",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 10)
 
     def test_professional_associate_degree_is_not_bachelor_signal(self) -> None:
         for education in (
-            "OO전문대학 전문학사",
-            "OO전문대학교 졸업",
-            "전문\u200b학사",
-            "전 문 학사",
-            "2년제 대학 졸업",
-            "3년제 대학교 졸업",
+            "OO전문대학 전문학사", "OO전문대학교 졸업", "전문\u200b학사",
+            "전 문 학사", "2년제 대학 졸업", "3년제 대학교 졸업",
+            "전문대졸", "2년제 대졸", "3년제 대졸", "전문\ufe0f학사",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 5)
 
     def test_dotted_english_degree_wording_gets_full_education_weight(self) -> None:
-        for education in ("B.S.", "B.A.", "M.S.", "Ph.D.", "BSc", "MSc"):
+        for education in ("B.S.", "B.A.", "M.S.", "Ph.D.", "BSc", "MSc", "MBA"):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["education"], 10)
 
@@ -183,37 +179,23 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
                 self.assertEqual(self._breakdown(education=education)["education"], 5)
 
     def test_company_tier_uses_evidence_and_signal_ratio(self) -> None:
-        self.assertEqual(
-            self._breakdown(current_or_past_companies=())["company_tier"], 0
+        cases = (
+            ((), 0), (("", "  ", "\u200b", "\ufe0f"), 0),
+            (("무명컴퍼니",), 5), (("Toss",), 10),
         )
-        self.assertEqual(
-            self._breakdown(current_or_past_companies=("", "  "))["company_tier"], 0
-        )
-        self.assertEqual(
-            self._breakdown(current_or_past_companies=("무명컴퍼니",))["company_tier"], 5
-        )
-        self.assertEqual(
-            self._breakdown(current_or_past_companies=("Toss",))["company_tier"], 10
-        )
+        for companies, expected in cases:
+            with self.subTest(companies=companies):
+                self.assertEqual(self._breakdown(current_or_past_companies=companies)["company_tier"], expected)
 
     def test_company_alias_requires_a_token_match(self) -> None:
         for company in ("LINEAR Labs", "LINE2D", "Toss2Go"):
             with self.subTest(company=company):
-                self.assertEqual(
-                    self._breakdown(current_or_past_companies=(company,))[
-                        "company_tier"
-                    ],
-                    5,
-                )
+                self.assertEqual(self._breakdown(current_or_past_companies=(company,))["company_tier"], 5)
 
     def test_university_tier_uses_evidence_and_signal_ratio(self) -> None:
-        self.assertEqual(self._breakdown(education="")["university_tier"], 0)
-        self.assertEqual(
-            self._breakdown(education="무명대학교 경영학")["university_tier"], 4
-        )
-        self.assertEqual(
-            self._breakdown(education="KAIST Computer Science BS")["university_tier"], 8
-        )
+        for education, expected in (("", 0), ("무명대학교 경영학", 4), ("KAIST Computer Science BS", 8)):
+            with self.subTest(education=education):
+                self.assertEqual(self._breakdown(education=education)["university_tier"], expected)
 
     def test_partial_tier_review_reasons_are_not_reported_as_fit(self) -> None:
         match = score_profile_for_position(
@@ -223,34 +205,20 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
             ),
             BACKEND_POS,
         )
-        review_reasons = tuple(
-            reason
-            for reason in (*match.why_fit, *match.why_not)
-            if "tier requires human review" in reason
-        )
-
-        self.assertEqual(len(review_reasons), 2)
-        self.assertFalse(
-            any("tier requires human review" in reason for reason in match.why_fit)
-        )
-        self.assertEqual(
-            sum("tier requires human review" in reason for reason in match.why_not), 2
-        )
+        marker = "tier requires human review"
+        self.assertFalse(any(marker in reason for reason in match.why_fit))
+        self.assertEqual(sum(marker in reason for reason in match.why_not), 2)
 
     def test_university_alias_requires_a_token_match(self) -> None:
         for education in (
-            "Smith College Bachelor",
-            "MIT2 Academy",
-            "Brown Universitytown",
-            "연세우유 사내교육",
+            "Smith College Bachelor", "MIT2 Academy", "Brown Universitytown", "연세우유 사내교육",
+            "서울대입구 코딩학원", "고려대역 교육원", "한양대역 아카데미",
         ):
             with self.subTest(education=education):
                 self.assertEqual(self._breakdown(education=education)["university_tier"], 4)
 
     def test_university_signal_is_nfkc_normalized(self) -> None:
-        self.assertEqual(
-            self._breakdown(education="ＫＡＩＳＴ 컴퓨터공학 학사")["university_tier"], 8
-        )
+        self.assertEqual(self._breakdown(education="ＫＡＩＳＴ 컴퓨터공학 학사")["university_tier"], 8)
 
     def test_korean_and_english_degree_wording_stay_in_same_sot24_band(self) -> None:
         english = score_profile_for_position(SAMPLE_PROFILE, BACKEND_POS)
@@ -259,8 +227,6 @@ class RatioWeightedSignalRegressionTests(unittest.TestCase):
             BACKEND_POS,
         )
 
-        self.assertEqual(english.score_breakdown["education"], 10)
-        self.assertEqual(korean.score_breakdown["education"], 10)
         self.assertEqual(korean.score, english.score)
         self.assertGreaterEqual(korean.score, 85)
 
