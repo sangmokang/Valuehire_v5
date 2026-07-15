@@ -546,6 +546,9 @@ def test_injected_runner_signature_unchanged_by_badge():
 # 경로를 찾고, 그 경로가 .cmd/.bat 이면 shell=True 로 실행해야 한다.
 
 def test_run_claude_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
+    """npm .cmd shim 경로: shell=True 로 cmd.exe 를 거치되, 프롬프트는 argv 가 아니라
+    stdin(input=)으로 전달해야 한다 — URL의 '&' 같은 cmd.exe 메타문자나 우연히 들어간
+    '%VAR%' 환경변수 확장에 프롬프트 내용이 노출되면 안 된다(자기적대검증 발견)."""
     from types import SimpleNamespace
     from tools.multi_position_sourcing import fleet_worker as fw
     captured = {}
@@ -553,6 +556,7 @@ def test_run_claude_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch)
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["shell"] = kwargs.get("shell")
+        captured["input"] = kwargs.get("input")
         return SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
     monkeypatch.setattr(fw.subprocess, "run", fake_run)
@@ -561,12 +565,13 @@ def test_run_claude_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch)
         fw.shutil, "which",
         lambda name: r"C:\\Users\\vh\\AppData\\Roaming\\npm\\claude.cmd" if name == "claude" else None,
     )
-    stdout, stderr, code = fw._run_claude("hello", timeout=10)
+    stdout, stderr, code = fw._run_claude("포지션 URL: https://x/y?a=1&b=2", timeout=10)
     assert code == 0
     assert stdout == "ok"
-    assert captured["cmd"][0] == r"C:\\Users\\vh\\AppData\\Roaming\\npm\\claude.cmd"
-    assert captured["cmd"][1:] == ["-p", "hello"]
+    assert captured["cmd"] == [r"C:\\Users\\vh\\AppData\\Roaming\\npm\\claude.cmd", "-p"]
     assert captured["shell"] is True, "npm .cmd shim 은 cmd.exe 를 거쳐야 실행 가능"
+    assert captured["input"] == "포지션 URL: https://x/y?a=1&b=2", (
+        "프롬프트는 반드시 stdin 으로 — argv/cmd.exe 명령줄에 실으면 안 됨")
 
 
 def test_run_codex_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
@@ -577,6 +582,7 @@ def test_run_codex_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["shell"] = kwargs.get("shell")
+        captured["input"] = kwargs.get("input")
         return SimpleNamespace(stdout="ok", stderr="", returncode=0)
 
     monkeypatch.setattr(fw.subprocess, "run", fake_run)
@@ -585,10 +591,11 @@ def test_run_codex_uses_shell_on_windows_when_resolved_to_cmd_shim(monkeypatch):
         fw.shutil, "which",
         lambda name: r"C:\\Users\\vh\\AppData\\Roaming\\npm\\codex.cmd" if name == "codex" else None,
     )
-    stdout, stderr, code = fw._run_codex("hello", timeout=10)
+    stdout, stderr, code = fw._run_codex("hello & world", timeout=10)
     assert code == 0
-    assert captured["cmd"][0] == r"C:\\Users\\vh\\AppData\\Roaming\\npm\\codex.cmd"
+    assert captured["cmd"] == [r"C:\\Users\\vh\\AppData\\Roaming\\npm\\codex.cmd", "exec", "-"]
     assert captured["shell"] is True
+    assert captured["input"] == "hello & world"
 
 
 def test_run_claude_no_shell_on_windows_when_resolved_to_exe(monkeypatch):

@@ -204,7 +204,7 @@ def parse_worker_output(stdout: str, exit_code: int, stderr: str = "") -> dict[s
     return {"status": "done", "summary": text[-_SUMMARY_LIMIT:]}
 
 
-def _agent_argv(name: str, args: list[str]) -> tuple[list[str], bool]:
+def _agent_argv(name: str, base_args: list[str]) -> tuple[list[str], bool]:
     """이슈 F(2026-07-15) — 윈도우에서 npm shim(.cmd/.bat) 실행 시 [WinError 2] 방지.
 
     맥/리눅스는 execvp 가 PATH 를 뒤져 실행하므로 bare 이름이면 충분하지만, 윈도우의
@@ -212,13 +212,19 @@ def _agent_argv(name: str, args: list[str]) -> tuple[list[str], bool]:
     한다. shutil.which 로 실제 경로를 찾아, 그 확장자가 .cmd/.bat 이면 shell=True 를
     요구한다고 표시한다. which 가 못 찾으면(예: PATH 미갱신) 기존처럼 bare 이름으로
     폴백 — 조용히 죽거나 무리하게 shell=True 를 강제하지 않는다(fail-soft).
+
+    base_args 에는 프롬프트를 넣지 않는다 — cmd.exe 가 관여하는 경로(shell=True)에서
+    프롬프트(포지션 URL·요청자 등 외부 유래 텍스트 포함)를 명령줄에 그대로 실으면
+    '&'·'%VAR%' 같은 cmd.exe 메타문자/환경변수 확장에 노출된다(자기적대검증 발견 —
+    URL 쿼리스트링의 흔한 '&' 만으로도 명령이 깨지거나, %로 환경변수가 새어나갈 수
+    있음). 그래서 shell=True 경로는 프롬프트를 stdin 으로만 전달한다.
     """
     if sys.platform != "win32":
-        return [name, *args], False
+        return [name, *base_args], False
     resolved = shutil.which(name)
     exe = resolved or name
     needs_shell = bool(resolved) and exe.lower().endswith((".cmd", ".bat"))
-    return [exe, *args], needs_shell
+    return [exe, *base_args], needs_shell
 
 
 def _run_claude(prompt: str, timeout: int,
@@ -226,25 +232,37 @@ def _run_claude(prompt: str, timeout: int,
     """claude -p 실행(레포 루트). 반환: (stdout, stderr, exit_code) — QA-3 로 분리.
 
     env=None 이면 부모 환경 상속(기존과 동일). 이슈 E: 워커가 배지 env 를 넘긴다.
+    이슈 F: 윈도우 .cmd shim(shell=True) 경로에서는 프롬프트를 argv 가 아닌 stdin 으로
+    넘겨 cmd.exe 메타문자/변수확장 노출을 원천 차단한다(맥/리눅스·네이티브 exe 경로는
+    기존과 동일하게 argv 로 넘겨 행동 불변).
     """
-    cmd, use_shell = _agent_argv("claude", ["-p", prompt])
-    proc = subprocess.run(
-        cmd, shell=use_shell,
+    cmd, use_shell = _agent_argv("claude", ["-p"])
+    kwargs: dict[str, Any] = dict(
         cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
         env=dict(env) if env is not None else None,
     )
+    if use_shell:
+        proc = subprocess.run(cmd, shell=True, input=prompt, **kwargs)
+    else:
+        proc = subprocess.run([*cmd, prompt], **kwargs)
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 
 def _run_codex(prompt: str, timeout: int,
                env: Mapping[str, str] | None = None) -> tuple[str, str, int]:
-    """codex exec 실행(레포 루트) — 이슈 B(2026-07-15). claude -p 와 동형 계약."""
-    cmd, use_shell = _agent_argv("codex", ["exec", prompt])
-    proc = subprocess.run(
-        cmd, shell=use_shell,
+    """codex exec 실행(레포 루트) — 이슈 B(2026-07-15). claude -p 와 동형 계약.
+
+    이슈 F: 윈도우 .cmd shim 경로는 `codex exec -`(stdin 소스 명시) + input=prompt.
+    """
+    cmd, use_shell = _agent_argv("codex", ["exec"])
+    kwargs: dict[str, Any] = dict(
         cwd=str(REPO), capture_output=True, text=True, timeout=timeout,
         env=dict(env) if env is not None else None,
     )
+    if use_shell:
+        proc = subprocess.run([*cmd, "-"], shell=True, input=prompt, **kwargs)
+    else:
+        proc = subprocess.run([*cmd, prompt], **kwargs)
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 
