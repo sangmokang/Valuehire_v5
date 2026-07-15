@@ -2,8 +2,10 @@
 
 대상: 거버넌스 문서 3종
   - CLAUDE.md                                  (SOT 불변식)
+  - AGENTS.md                                  (Codex 사용자 브리핑 계약)
   - docs/harness.md                            (게이트 절차)
   - docs/prompts/goal-full-codebase-review.md  (전체 코드 재리뷰 Goal 프롬프트)
+  - docs/prompts/fix-107-then-resume-dongtan-ai-search-2026-07-15.md
 
 사장님 지시(2026-06-15)를 SOT/하니스에 '박았는지'를 코드로 고정한다.
 세 원리가 문구로 살아있어야 GREEN, 약화/삭제되면 RED.
@@ -12,18 +14,25 @@
   P2  2패스 적대검증   — (1) 작은 기능 단위 자기 적대검증 (2) Codex Rescue 2차 검증
   P3  과거 지시 회수   — 코딩 시작 시 '전에 시킨 것이 이미 있는지' 먼저 점검 (게이트)
   P4  Goal 프롬프트    — 전체 코드 재리뷰 프롬프트가 실존 + 세 원리 + 하니스 게이트 포함
+  P5  사용자 브리핑    — 중간·차단·최종 쉬운 보고 + #107/동탄 AI Search 복구 프롬프트
 
 게이트 4b(독립 검증자)의 반복 지적은 4a 로 승격한다(harness 진화 규칙).
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 CLAUDE = REPO / "CLAUDE.md"
+AGENTS = REPO / "AGENTS.md"
 HARNESS = REPO / "docs" / "harness.md"
 GOAL = REPO / "docs" / "prompts" / "goal-full-codebase-review.md"
+RECOVERY_PROMPT = (
+    REPO / "docs" / "prompts"
+    / "fix-107-then-resume-dongtan-ai-search-2026-07-15.md"
+)
 
 
 def _squash(text: str) -> str:
@@ -112,3 +121,86 @@ def test_p4_goal_prompt_no_auto_send() -> None:
     gs = _squash(GOAL.read_text(encoding="utf-8"))
     assert "자동발송" in gs and ("금지" in gs or "않는다" in gs), \
         "Goal 프롬프트에 '자동 발송 금지' 안전장치 부재"
+
+
+# ── P5 · 모든 사용자 브리핑 + 두 단계 복구 프롬프트 ──────────
+def test_p5_all_owner_briefings_and_two_stage_recovery_prompt() -> None:
+    """중간·차단·최종 보고와 #107→동탄 검색 복구가 한 계약으로 살아 있어야 한다."""
+    agents = AGENTS.read_text(encoding="utf-8")
+    compact_agents = _squash(agents)
+    semantic_agents = re.sub(r"[*_`]", "", compact_agents)
+    compact_harness = _squash(HARNESS.read_text(encoding="utf-8"))
+
+    assert "모든사용자브리핑(중간·차단·최종)" in semantic_agents
+    assert "중간·차단보고는1~3문장으로현재상태/이유/다음행동만말한다" in semantic_agents
+    assert "내부상태근거와사용자설명은1:1로대조" in semantic_agents
+    assert "근거를빼거나과장하지않고" in semantic_agents
+    assert "사장님께보이는메시지에는이쉬운보고규칙이우선" in semantic_agents
+    for forbidden in ("근거를빼고", "과장해도", "기술형식이우선"):
+        assert forbidden not in semantic_agents
+    final_sections = (
+        "## 1. 뭘 요청받았나", "## 2. 뭘 했나", "## 3. 확인은 어떻게 했나",
+        "## 4. 놓친 부분 / 다음에 봐야 할 것", "## 5. 다음 행동",
+    )
+    assert all(section in agents for section in final_sections), \
+        "최종 보고 5칸 실제 템플릿이 모두 있어야 함"
+    assert "모든사용자브리핑(중간·차단·최종)" in compact_harness
+
+    assert RECOVERY_PROMPT.exists(), f"복구 프롬프트 부재: {RECOVERY_PROMPT}"
+    prompt = RECOVERY_PROMPT.read_text(encoding="utf-8")
+    required = (
+        "이슈 #107", "검사", "독립 재검토", "PR", "병합 후", "작업 장부",
+        "1200초", "180초", "코드 작업용 미완료 장부", "다시 계속 여부를 묻지 않는다",
+        "화성·동탄", "사람인", "LinkedIn", "좌측", "위치 필터",
+        "상단 전역 검색창은 사용하지 않는다",
+        "profile_url", "score", "why_fit", "profile_summary", "발송하지 않는다",
+        "내부 상태 근거", "1:1",
+    )
+    missing = [marker for marker in required if marker not in prompt]
+    assert not missing, f"복구 프롬프트 필수 계약 누락: {missing}"
+    assert "/Volumes/SSD/Valuehire_v5-owner-yield-3min" not in prompt, \
+        "병합 전 과거 작업 공간을 재사용하라는 낡은 지시가 남음"
+    assert "/Volumes/SSD/Valuehire_v5-" not in prompt, "기존 보조 작업공간 절대경로 재사용 금지"
+    assert "task/owner-yield" not in prompt and "task/linkedin-login-guidance" not in prompt
+    assert "git fetch origin main" in prompt
+    assert "a090640" in prompt and "PR #117" in prompt
+    assert "완료 조건과 읽기 전용 대조가 모두 맞으면 저장소 파일·작업 장부를 수정하지 않고" in prompt
+    assert "새 브랜치·커밋·PR을 만들지 않은 채 즉시 2단계" in prompt
+    assert "1200초" in prompt and "최소 300초" in prompt and "서로 다른 범위" in prompt
+    assert "문서 간 어긋남" in prompt and "최상위 180초 규칙을 따르고" in prompt
+    forbidden_send = ("제안을 발송한다", "메일을 발송한다", "InMail을 발송한다", "Send를 누른다")
+    assert not [text for text in forbidden_send if text in prompt], "복구 프롬프트가 발송을 지시함"
+    forbidden_mutations = (
+        "병합 완료여도 새 코드", "새 코드/PR 반드시 생성", "Send 버튼 클릭",
+        "계속 여부 재질문", "계속 여부를 다시 묻는다", "기존 보조 작업 공간을 재사용한다",
+        "발송 버튼을 클릭한다", "진행할까요?", "사용자에게 다시 확인한다",
+    )
+    assert not [text for text in forbidden_mutations if text in prompt]
+    assert not re.search(r"(?:Send|발송|보내기|제안).{0,12}(클릭|누른다)", prompt)
+    reconfirm_scan = prompt.replace("다시 계속 여부를 묻지 않는다", "")
+    reconfirm_scan = re.sub(
+        r"실제 사람 개입이 필요한 차단 외에는 “계속할까요\?”를\s*묻지 말고",
+        "",
+        reconfirm_scan,
+    )
+    assert not re.search(r"(?:진행|계속).{0,12}(물어|묻|확인)", reconfirm_scan)
+    stage_one = re.search(r"^## 1단계\b", prompt, re.MULTILINE)
+    stage_two = re.search(r"^## 2단계\b", prompt, re.MULTILINE)
+    assert stage_one and stage_two and stage_one.start() < stage_two.start(), \
+        "#107 마감 뒤 동탄 AI Search를 재개하는 순서여야 함"
+    stage_one_body = prompt[stage_one.start():stage_two.start()]
+    ordered_stage_one_markers = (
+        "완료 증거와 함께 아래 계약",
+        "`tests/test_owner_yield_3min.py` 전체 통과",
+        "SOT25의 1200초·최소 300초",
+        "완료 조건과 읽기 전용 대조가 모두 맞으면",
+    )
+    marker_positions = [stage_one_body.index(marker) for marker in ordered_stage_one_markers]
+    assert marker_positions == sorted(marker_positions), \
+        "계약→검사기록→시간차이→무변경 완료 분기 순서가 바뀜"
+
+    executable = re.search(r"```text\n(?P<body>.*?)\n```", prompt, re.DOTALL)
+    assert executable, "복구 프롬프트 실행 블록이 없거나 형식이 바뀜"
+    executable_sha256 = hashlib.sha256(executable.group("body").encode("utf-8")).hexdigest()
+    assert executable_sha256 == "e92126fc7dd65b6fbc28e12d515994314cc1c2fc24168326902f2867479ea5b4", \
+        "검증되지 않은 지시 추가·삭제·순서 변경: 실행 프롬프트 계약 해시 불일치"
