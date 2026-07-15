@@ -226,9 +226,10 @@ language plpgsql security definer set search_path = public
 as $$
 begin
   if not exists (
-    select 1 from public.fleet_machines where machine_id = p_machine
+    select 1 from public.fleet_machines
+    where machine_id = p_machine and enabled and not draining
   ) then
-    raise exception 'unknown machine: %', p_machine;
+    raise exception 'unknown or unavailable machine: %', p_machine;
   end if;
   insert into public.machine_heartbeats(machine, beat_at, worker_pid, linkedin_rps_logged_in)
   values (p_machine, now(), coalesce(p_worker_pid, 0), false)
@@ -250,9 +251,10 @@ language plpgsql security definer set search_path = public
 as $$
 begin
   if not exists (
-    select 1 from public.fleet_machines where machine_id = p_machine
+    select 1 from public.fleet_machines
+    where machine_id = p_machine and enabled and not draining
   ) then
-    raise exception 'unknown machine: %', p_machine;
+    raise exception 'unknown or unavailable machine: %', p_machine;
   end if;
   insert into public.machine_heartbeats(machine, beat_at, worker_pid, linkedin_rps_logged_in)
   values (p_machine, now(), coalesce(p_worker_pid, 0),
@@ -278,9 +280,10 @@ declare
   locked boolean;
 begin
   if not exists (
-    select 1 from public.fleet_machines where machine_id = p_machine
+    select 1 from public.fleet_machines
+    where machine_id = p_machine and enabled and not draining
   ) then
-    raise exception 'unknown machine: %', p_machine;
+    raise exception 'unknown or unavailable machine: %', p_machine;
   end if;
   loop
     select q.* into j
