@@ -674,13 +674,47 @@ return SendDecision(allowed=not reasons, reasons=tuple(reasons))</code></pre>
     <li><a href="https://sre.google/sre-book/table-of-contents/">Google SRE Book (무료 공개)</a> —
       crash-only·lease·heartbeat·지수 백오프+지터. 4부 함대 설계의 뿌리.</li>
   </ul>
-  <p class="callout">위 링크 6개는 2026-07-16 접속 검증(HTTP 200) 완료. ※ 뮤테이션 테스팅 도구(mutmut·Pitest) 공식 문서는
+
+  <h3>2판 보강 — 하니스·루프 엔지니어링 심화 (딥리서치, 2026-07-16)</h3>
+  <ul>
+    <li><a href="https://www.anthropic.com/engineering/harness-design-long-running-apps">Anthropic — <em>Harness Design for Long-Running Apps</em></a> —
+      장시간 실행 에이전트를 위한 하니스 설계 공식 글. 평가자-생성자 분리의 비용·품질 트레이드오프를 실측으로 다룬다(하니스 없는 단독 실행 대비 시간·비용은 크게 늘지만 품질이 극적으로 오른다고 보고).
+      우리 6부(G/V1/V2 분리)의 "왜 이렇게까지 하는가"에 대한 1차 출처.</li>
+    <li><a href="https://arxiv.org/abs/2607.08028"><em>From Prompts to Contracts: Harness Engineering for Auditable Enterprise LLM Agents</em> (2026)</a> —
+      "프롬프트는 가드레일이 아니다": 출력이 계약(스키마)을 위반하면 결정론 폴백으로 전환하는 fail-closed 게이트를 설계,
+      프롬프트만 쓴 대조군은 적대 시나리오 30/30 전부 뚫린 반면 게이트는 전부 차단하며 유효 답변을 유지했다고 보고.
+      <strong>5부의 정독 교재</strong> — <code class="ref" data-ref="tools/multi_position_sourcing/auto_send.py">auto_send.py</code>의
+      evaluate_send가 이 논문의 패턴과 같은 구조다.</li>
+    <li><a href="https://www.anthropic.com/engineering/multi-agent-research-system">Anthropic — <em>Multi-Agent Research System</em></a> —
+      orchestrator-workers 실측: 단일 에이전트 대비 성능 큰 폭 향상, 단 토큰 비용 수 배(보고 기준 15배). 우리 fleet(4부)의 이론적 배경과 비용 감각.</li>
+    <li><a href="https://deepeval.com/blog/what-is-an-eval-harness">DeepEval — <em>What is an Eval Harness</em></a> —
+      eval harness(오프라인, 골든셋 반복 채점)와 guardrail(라이브 경로, 실시간 차단)의 구분.
+      우리 대응: 골든셋 회귀 = <code class="ref" data-ref="tools/multi_position_sourcing/ab_harness.py">ab_harness.py</code>·verify,
+      guardrail = 5부 발송 게이트.</li>
+    <li><a href="https://arxiv.org/abs/2607.05391"><em>LLM-as-a-Verifier</em> (2026)</a> —
+      검증자의 "판정 생성"과 시스템의 "판정 집행"을 분리하라는 원칙: LLM 판정은 타입 있는 제안일 뿐, 커밋은 외부 컨트롤러가 결정한다.
+      우리 verdict 장부(6.1)가 판정을 데이터로 남기고 사람이 merge를 집행하는 것과 같은 구도.</li>
+    <li><a href="https://dev.classmethod.jp/en/articles/loop-engineering-claude-code-autonomous/">Loop Engineering — Claude Code 자율 루프 해설</a> —
+      "프롬프트 엔지니어링 → 컨텍스트 엔지니어링 → 하니스 엔지니어링 → <strong>루프 엔지니어링</strong>" 계보.
+      Claude Code 총괄 Boris Cherny: "나는 이제 Claude에게 직접 프롬프트하지 않는다 — Claude를 프롬프트하는 루프를 짠다."
+      이 강의 전체의 제목이 가리키는 지점이다.</li>
+    <li><a href="https://www.databricks.com/blog/ai-harness">Databricks — <em>AI Harness</em></a> —
+      에이전트 하니스의 구성요소 분해(툴·메모리·실행환경·가드레일). 0부의 지도와 대조해 읽기 좋다.</li>
+    <li><a href="https://arxiv.org/abs/2602.10465"><em>Authenticated Workflows</em> (2026)</a> —
+      에이전틱 시스템의 idempotency·상태 추적 보호. 3부(멱등 순회)·4부(상태 enum) 심화.</li>
+    <li><a href="https://portkey.ai/blog/rate-limiting-for-llm-applications/">Portkey — LLM Rate Limiting 실무</a> —
+      시간창 요청 제한 + 백오프·지터. 우리 daily_cap·페이싱의 업계 대응물.</li>
+  </ul>
+  <p class="callout">본 부록의 링크 15개는 전부 2026-07-16 접속 검증(HTTP 200) 완료. 외부 자료의 수치 주장은 각 출처의 "보고"이며
+  이 저장소에서 재현한 값이 아니다. ※ 뮤테이션 테스팅 도구(mutmut·Pitest) 공식 문서와 Claude API 구조화 출력 최신 스펙은
   미검증이라 싣지 않았다 — 확인되면 다음 업데이트에 추가.</p>
 </section>
 
 <footer>
   <h2 style="font-size:1.1rem">업데이트 로그 — 살아있는 문서</h2>
   <ul class="updates">
+    <li><strong>2026-07-16 · 2판.</strong> 부록에 딥리서치 레퍼런스 9건 보강(전건 접속 검증) —
+    fail-closed 게이트 논문(5부 정독 교재), Anthropic 하니스 설계·멀티에이전트 실측, "루프 엔지니어링" 계보(Boris Cherny).</li>
     <li><strong>2026-07-16 · 초판.</strong> 7부 커리큘럼. 인용 경로 계약 테스트
     (<code class="ref" data-ref="tests/test_learning_curriculum_doc.py">tests/test_learning_curriculum_doc.py</code>)와 함께 배송.
     같은 날 잡힌 환경 의존 단언 사고(PR#119)와 .pyc 캐시 함정을 6.2에 수록.</li>
