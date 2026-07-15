@@ -359,6 +359,13 @@ def plan_dispatches(
     }
     account_counts = {key: 0 for key in account_capacities}
     account_counts.update(running_input)
+    challenged_accounts = {
+        candidate.account_key
+        for candidate in known_slots
+        if candidate.state == "challenge"
+    }
+    for account_key in challenged_accounts & account_capacities.keys():
+        account_counts[account_key] = account_capacities[account_key]
     dynamic_states = dict(requester_states)
     plan: list[Dispatch] = []
 
