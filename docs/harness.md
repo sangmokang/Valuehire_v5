@@ -77,6 +77,8 @@
   pre-push 훅 + CI(`verify.yml`)가 verify를 재실행한다.
 - PR 본문: 이슈 링크 + 증명 테스트(기계) + 검증자 판정(판단) + verify 출력.
 - CI 초록 + merge 전까지 "완료"는 없다.
+- **사장님께 보고할 때**는 PR 본문/게이트 용어를 그대로 붙여넣지 않는다.
+  `AGENTS.md`의 "최종 보고 규칙"(쉬운 5칸 보고서 형식)으로 다시 써서 전달한다.
 
 ## 6 — 종료 + 진화
 - merge 후 worktree 정리(`git worktree remove`) + /clear. 다음 작업은 게이트 0부터.

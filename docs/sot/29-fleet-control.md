@@ -17,6 +17,12 @@
   스스로 깨고, LinkedIn 은 시트 라이선스라 약관 위반이다.
 - 각 머신의 크롬 디버그 프로필에는 **그 머신 전용 계정만** 로그인한다.
 - 잡의 `account_key`(기본 `portal:<machine>`)로 **계정 글로벌 락**을 건다 — 같은 계정은 한 시점에 한 머신만.
+- **계정 단위 pause 장벽**: 같은 공백문자 없는 `account_key`에 `paused_for_human` 잡이 하나라도 있으면
+  새 잡 등록은 보존하되 서버가 그 계정의 claim/execute를 막는다. 다른 계정은 계속 실행한다.
+  시간 만료는 없으며, 같은 키의 모든 일시정지 잡을 `resume_job` 또는 `cancel_job`으로 해소해야 풀린다.
+- LinkedIn 공용 키 `portal:linkedin_rps`에도 머신과 무관하게 같은 장벽을 적용한다. 신규·변경되는
+  실행 대상 잡의 공백 `account_key`는 거부한다. 과거 대기·일시정지 공백 키는 기본 정책으로
+  보정하고, 실행 중 공백 키가 있으면 배포를 멈춰 수동 확인한다.
 - **LinkedIn 잡(skill=url)은 heartbeat 의 `linkedin_rps_logged_in` 상태를 보고 로그인된 머신으로
   라우팅한다**(2026-07-15 사장님 승인 개정 — 이전 "macmini 전용" 조항 대체). 로그인 머신이 여럿이면
   INV8 신뢰도 순(macmini > winpc > macbook), **아무도 로그인 안 돼 있거나 조회 실패면 macmini 폴백**.
@@ -32,13 +38,14 @@
 1. 워커가 캡차/2FA 감지 → 잡을 `paused_for_human` 전환 + 크롬 조작 중단(양보).
 2. Discord 로 머신명·잡ID·상황 알림.
 3. 사장님이 VNC(맥) 로 접속해 수동 처리(브라우저 앞으로).
-4. Discord `fleet-resume job:<id>` → *그 잡*을 재개.
+4. Discord `fleet-resume job:<id>` → 워커 재개.
 - 워커는 일시정지 중 절대 크롬을 닫지 않는다.
 - **INV9 · 사장님 양보 3분 자동 재개 (2026-07-15 사장님 지시, #107)**: 사장님이 기기/크롬을
   쓰는 동안과 사람 개입 신호(캡차·2FA·paused) 직후에는 자동작업(다음 잡 claim·변형 enqueue)을
   멈춘다. 마지막 신호로부터 **180초(3분)** 동안 이상이 없으면 **자동 재개**한다 — 사람 조치 불필요.
   자동 재개를 영구 차단하는 코드(backlog 폐기·무기한 중단·10분 고정 쿨다운)는 SOT 위반이며 삭제 대상.
   단일 출처: `fleet_worker.OWNER_YIELD_RESUME_SECONDS = 180`.
+- 같은 계정에 일시정지 잡이 여러 건이면 일부만 재개·취소해도 장벽은 풀리지 않는다.
 
 ## 5. 권한
 - `fleet-run` / `fleet-status`: 인가된 멤버·owner.
