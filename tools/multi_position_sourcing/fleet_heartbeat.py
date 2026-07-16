@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from .job_queue import FLEET_MACHINES
+from .job_queue import FLEET_MACHINES, is_valid_machine_id
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -29,8 +29,8 @@ RUNNING_STALL_SECONDS = 3000
 
 def heartbeat_payload(machine: Any, *, worker_pid: int, now_iso: str,
                       linkedin_rps_logged_in: bool = False) -> dict[str, Any]:
-    if machine not in FLEET_MACHINES:
-        raise ValueError(f"unknown machine: {machine!r}")
+    if not is_valid_machine_id(machine):
+        raise ValueError(f"invalid machine id: {machine!r}")
     return {"machine": machine, "beat_at": now_iso, "worker_pid": int(worker_pid),
             "linkedin_rps_logged_in": bool(linkedin_rps_logged_in)}
 
@@ -113,7 +113,11 @@ def pick_linkedin_machine(
         if not isinstance(r, Mapping):
             continue
         machine, epoch = r.get("machine"), r.get("beat_at_epoch")
-        if machine not in FLEET_MACHINES or not isinstance(epoch, int):
+        if (
+            not isinstance(machine, str)
+            or not is_valid_machine_id(machine)
+            or not isinstance(epoch, int)
+        ):
             continue
         if (now_epoch - epoch) > STALE_SECONDS:
             continue
@@ -122,6 +126,9 @@ def pick_linkedin_machine(
     for machine in _LINKEDIN_MACHINE_PRIORITY:
         if machine in ready:
             return machine
+    dynamic_ready = sorted(ready.difference(_LINKEDIN_MACHINE_PRIORITY))
+    if dynamic_ready:
+        return dynamic_ready[0]
     return _LINKEDIN_FALLBACK_MACHINE
 
 

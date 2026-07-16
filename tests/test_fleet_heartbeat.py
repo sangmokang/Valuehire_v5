@@ -28,9 +28,13 @@ def test_heartbeat_payload():
     p = heartbeat_payload("macmini", worker_pid=4242, now_iso="2026-07-11T00:00:00Z")
     assert p == {"machine": "macmini", "beat_at": "2026-07-11T00:00:00Z", "worker_pid": 4242,
                  "linkedin_rps_logged_in": False}
+    dynamic = heartbeat_payload(
+        "office-linux-05", worker_pid=7, now_iso="2026-07-11T00:00:00Z"
+    )
+    assert dynamic["machine"] == "office-linux-05"
 
 
-@pytest.mark.parametrize("machine", ["", "laptop", "MACMINI", None])
+@pytest.mark.parametrize("machine", ["", " bad", "bad ", "bad\n", "MACMINI", None, "a" * 65])
 def test_heartbeat_payload_rejects_bad_machine(machine):
     with pytest.raises(ValueError):
         heartbeat_payload(machine, worker_pid=1, now_iso="2026-07-11T00:00:00Z")
@@ -319,6 +323,11 @@ def test_pick_linkedin_machine_priority_and_fallback():
     assert pick_linkedin_machine(rows, now_epoch=now) == "winpc"
     rows.append({"machine": "macmini", "beat_at_epoch": now - 10, "linkedin_rps_logged_in": True})
     assert pick_linkedin_machine(rows, now_epoch=now) == "macmini"
+    dynamic = [
+        {"machine": "office-linux-05", "beat_at_epoch": now - 10,
+         "linkedin_rps_logged_in": True}
+    ]
+    assert pick_linkedin_machine(dynamic, now_epoch=now) == "office-linux-05"
     # 아무도 로그인 안 됨 → macmini 폴백(무동작보다 낫다, 사장님 승인 설계)
     assert pick_linkedin_machine([], now_epoch=now) == "macmini"
     # stale heartbeat(5분 초과)는 제외

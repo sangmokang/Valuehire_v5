@@ -55,7 +55,7 @@ def test_new_job_payload_happy_path():
     assert row["account_key"]
 
 
-@pytest.mark.parametrize("machine", ["", "macstudio", "MACMINI", None, "winpc "])
+@pytest.mark.parametrize("machine", ["", "MACMINI", None, "winpc ", "bad\n", "A" * 65])
 def test_new_job_payload_rejects_bad_machine(machine):
     assert new_job_payload(**_ok_kwargs(machine=machine)) is None
 
@@ -163,8 +163,9 @@ def test_transition_table_only_contains_known_statuses():
 
 def test_claim_payload_valid_machine_only():
     assert claim_next_job_payload("macbook") == {"p_machine": "macbook"}
+    assert claim_next_job_payload("laptop") == {"p_machine": "laptop"}
     with pytest.raises(ValueError):
-        claim_next_job_payload("laptop")
+        claim_next_job_payload(" bad")
     with pytest.raises(ValueError):
         claim_next_job_payload("")
 

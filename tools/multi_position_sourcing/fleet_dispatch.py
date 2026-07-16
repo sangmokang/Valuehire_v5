@@ -59,7 +59,7 @@ def build_fleet_job_payload(
     params = options.get("params") or {}
     # SOT29 existing fleet default/account binding stays authoritative. Natural language
     # may select winpc only through an explicit win/windows/윈도우/winpc token.
-    machine = (options.get("machine") or "macmini").strip()
+    machine = options.get("machine") or "macmini"
     return new_job_payload(
         machine=machine, skill=skill, position_url=url,
         requested_by=requested_by, role=role, params=params,
