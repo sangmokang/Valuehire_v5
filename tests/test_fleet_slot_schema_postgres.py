@@ -310,21 +310,19 @@ def _exercise_schema(conn, legacy_ids: dict[str, int], before) -> None:
            values ('disabled-01',false,'linux',50,false,'test',0,now()),
                   ('draining-01',true,'linux',50,true,'test',0,now())"""
     )
-    for unavailable in ("disabled-01", "draining-01"):
-        conn.execute(
+    for stored_state in ("disabled-01", "draining-01"):
+        job_id = conn.execute(
             """insert into public.jobs
                (machine,skill,position_url,requested_by,role,account_key)
-               values (%s,'humansearch','https://example.com/unavailable','u','member',%s)""",
-            (unavailable, f"portal:{unavailable}"),
-        )
-        _expect_error(
-            conn, psycopg.errors.RaiseException,
-            "select * from public.record_heartbeat(%s,1)", (unavailable,),
-        )
-        _expect_error(
-            conn, psycopg.errors.RaiseException,
-            "select * from public.claim_next_job(%s)", (unavailable,),
-        )
+               values (%s,'humansearch','https://example.com/stored-state','u','member',%s)
+               returning id""",
+            (stored_state, f"portal:{stored_state}"),
+        ).fetchone()[0]
+        conn.execute("select * from public.record_heartbeat(%s,1)", (stored_state,))
+        assert conn.execute(
+            "select id from public.claim_next_job(%s)", (stored_state,)
+        ).fetchone()[0] == job_id
+        conn.execute("select * from public.release_job(%s,'done','','')", (job_id,))
 
     _insert_slot(conn, "vh-win-04:browser", "vh-win-04")
     _insert_slot(
