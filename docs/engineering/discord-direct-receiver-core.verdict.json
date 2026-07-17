@@ -12,8 +12,8 @@
     ],
     "red_evidence": "RED 커밋: ImportError(direct_receiver 모듈 부재)로 수집 실패 → 구현 커밋으로 GREEN",
     "command": "./verify.sh",
-    "exit_code": null,
-    "green_evidence": "focused 11 passed. 전체 verify 재실행 대기(직전 실측 1 failed=test_portal_tab_guard 동시성 플래키, 단독 3/3+main 통과 — 별도 추적)",
+    "exit_code": 0,
+    "green_evidence": "focused 11 passed / 전체 verify 1699 passed, 4 xfailed, 102 subtests in 46.58s, exit 0 (2026-07-18 실측). 직전 회차 1 failed 는 test_portal_tab_guard 동시성 플래키(단독 3/3+main 통과, 별도 추적)",
     "mutant_check": "뮤턴트1 신원 게이트 무력화 → 최초 미감지(DM 경로 중복 방어) → 길드 역할 경로 봉인 테스트 추가 후 1 failed 감지. 뮤턴트2 denied 침묵→응답화 → 2 failed 감지. 뮤턴트3 is_dm=True 고정(hermes 방식 회귀) → 1 failed 감지. 각각 적용→감지→git checkout 원복.",
     "wiring": "순수 모듈 — 프로덕션 배선은 조각 C(discord_direct_gateway)가 소비 예정(goal §3 단계 설계). 현 시점 엔트리=테스트. 고아 아님 주장 안 함 — 조각 C 배송 전까지 '부분 배선(설계상 단계)' 상태로 명시.",
     "notify_note": "dispatch_fleet_command 내부 discord_notify 직접 호출은 테스트에서 무력화(실자격증명 로컬 실발송 방지). notifier 주입 분리는 goal 조각 F 범위."
