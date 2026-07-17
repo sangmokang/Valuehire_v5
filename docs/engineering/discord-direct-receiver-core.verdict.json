@@ -52,6 +52,19 @@
       "next_change": "원본 모듈(fleet_dispatch.dispatch_fleet_command) 직접 호출로 정정"
     }
   ],
-  "three_way_agree": false,
-  "status": "G 뮤턴트 3종 감지 — 전체 verify·V1(Codex) 대기"
+  "v2": {
+    "author": "Claude reset (general-purpose, goal+verdict 만 읽고 시작)",
+    "verdict": "pass (조각 A 범위)",
+    "independent_repro": "tests/test_direct_receiver.py → 21 passed, exit 0 직접 재현. skip/xfail/only 0, 삭제 단언 0.",
+    "what_v1_missed": "치명 결함 없음 — V1 pass 재확인. C1~C5 봉인 코드 실존 직접 확인, C6 논증 정당(실행기 미보유=행동증명), residual_caveat(조각 F 이월) 정당.",
+    "honest_limit": "focused 21개만 독립재현, 전체 1709 는 미재현(verdict 가 'CI 최종판정'으로 남긴 그대로) — 순수모듈 조각 A 판정엔 무영향.",
+    "source_transcript": "scratchpad tasks/a0c183b61416c8db8.output"
+  },
+  "three_way_table": {
+    "generator": "pass — RED→GREEN, 뮤턴트3종+우회11종 감지, 전체 1709 passed exit 0",
+    "v1_codex": "pass (5차) — C1~C5 행동봉인 재확인, C6 아키텍처 논증 부분동의",
+    "v2_claude_reset": "pass — 21 focused 독립재현, 봉인 코드 실존 확인, 치명결함 0"
+  },
+  "three_way_agree": true,
+  "status": "3자 일치 pass — PR/CI 대기(조각 A: 순수모듈, 배선은 조각 C, 알림분리는 조각 F 이월)"
 }
