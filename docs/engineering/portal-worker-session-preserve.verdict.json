@@ -1,0 +1,54 @@
+{
+  "claim_id": "portal-worker-session-preserve-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "portal_worker.stop() 이 사람인·잡코리아 persistent context 를 더 이상 닫지 않는다(세션 탭 보존). lock 해제·manager 정리는 유지. 같은 프로필 재-launch 는 미지원(실제 playwright 의미론)임을 테스트가 정직하게 모델링.",
+    "changed_files": [
+      "tools/multi_position_sourcing/portal_worker.py",
+      "tests/test_multi_position_sourcing.py",
+      "tests/test_portal_worker_session_preserve.py"
+    ],
+    "red_evidence": "commit 3d25985: 새 테스트 3 failed(close_calls 1 != 0), linkedin 회귀 1 passed",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "1670 passed, 4 xfailed, 102 subtests (V1 반례 봉인 후 재실행 44.23s) / v4 login guard 29 cases passed",
+    "mutant_check": "G: close 재도입 파일 뮤턴트 → 7 failed 감지 후 원복. V1: 샌드박스 제약으로 in-memory 뮤턴트 대체 → 4 focused 중 3 failed 로 동일 감지(MUTANT_RESULT run=4 failures=3)."
+  },
+  "v1": {
+    "author": "Codex fresh (codex-rescue subagent)",
+    "verdict": "fail→봉인 후 재판정 대기",
+    "counterexamples": [
+      "C1: 프로덕션 호출자는 모두 바깥 async_playwright() 스코프 종료 시 브라우저가 닫힘 — stop() 보존만으로 '프로세스 수명 너머' 세션 보존은 미완(goal 문서에 선-인정된 한계, 완성형=TODO-2b CDP 재부착)",
+      "C2: 세션 보존 + 같은 프로필 재-launch 는 실제 playwright 가 'profile already in use' 로 거부 — 기존 재시작 테스트가 Fake 로 이를 은폐(과장)",
+      "C3: stop() 의 lock 반납 후 살아있는 브라우저의 싱글턴 락을 다음 워커의 clear_stale_singleton_locks 가 stale 로 오판 가능"
+    ],
+    "sealing": [
+      "C2 → FakeChromium 이 실제 의미론(미close 상태 재-launch 거부)을 모사하도록 수정, 테스트를 test_stop_releases_lock_but_same_profile_relaunch_is_unsupported 로 정정(과장 제거). 4 passed + 전체 1670 passed 재확인",
+      "C1/C3 → 코드 1줄로 못 막는 구조 문제 — SOT-28 §13 TODO-2b(사람인·잡코리아를 portal_browsers.sh 기동 + CDP attach 로 이행)로 박제. V1 CALL_SITE_ANALYSIS 근거: 현행 프로덕션 호출자는 stop 후 재-start 를 하지 않아(스코프 종료 시 __aexit__ 만) 당장의 회귀는 없음"
+    ],
+    "call_site_analysis": "PortalWorker 프로덕션 호출자 = scripts/run_portal_search.py:75, portal_live_check.py:1394/1459/1622, portal_login.py:636. stop() 은 __aexit__ 로만 호출. fleet_worker 는 PortalWorker 미사용.",
+    "source_transcript": "scratchpad tasks/a92f3dfd92a046c97.output (agent transcript)"
+  },
+  "v2": {
+    "author": "Claude reset (goal+verdict 만 읽고 시작)",
+    "verdict": "conditional pass",
+    "note": "verify 독립 재실행 일치, 배선·테스트 실재 확인. 조건 = honest_limitation(프로세스 종료 시 브라우저 동반 종료)이 완료 주장을 과장하지 않을 것 — goal 비범위·TODO-2b 로 반영됨"
+  },
+  "failed_attempts": [
+    {
+      "attempt": "뮤턴트 원복을 git checkout -- 로 수행",
+      "root_cause": "GREEN 구현이 아직 미커밋 상태라 구현까지 함께 원복됨",
+      "repro": "git checkout -- tools/multi_position_sourcing/portal_worker.py (uncommitted fix 소실)",
+      "next_change": "뮤턴트는 커밋 후에만 적용 — fix 재적용 후 verify 재실행으로 복구 완료"
+    },
+    {
+      "attempt": "재시작 테스트를 '2회 start/stop 왕복 성공' 으로 단언",
+      "root_cause": "Fake 가 playwright 싱글턴 의미론을 모델링하지 않아 실기기에서 불가능한 성공을 통과시킴 (V1 C2)",
+      "repro": "실 playwright: 미close persistent context + 재 launch_persistent_context → RuntimeError('profile already in use')",
+      "next_change": "Fake 에 의미론 주입 + 테스트를 '재-launch 미지원 + lock 재획득 가능' 으로 정정 — 적용 완료"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "진행중 — G GREEN + V1 반례 봉인 완료, V1 재판정·PR/CI 대기"
+}

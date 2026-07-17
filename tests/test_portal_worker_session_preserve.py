@@ -32,12 +32,18 @@ class FakeContext:
 
 
 class FakeChromium:
+    """실제 playwright 의미론 모사(V1 반례 2 봉인): 같은 user-data-dir 에 살아있는
+    (close 안 된) persistent context 가 있으면 재-launch 는 "profile already in use" 로
+    거부된다 — 세션 보존과 같은 프로필 재기동은 양립 불가(후속 TODO-2b: CDP 재부착)."""
+
     def __init__(self, context: FakeContext) -> None:
         self._context = context
         self.launch_calls = 0
 
     async def launch_persistent_context(self, *_args, **_kwargs) -> FakeContext:
         self.launch_calls += 1
+        if self.launch_calls > 1 and self._context.close_calls == 0:
+            raise RuntimeError("browser is already in use for user data dir")
         return self._context
 
     async def connect_over_cdp(self, _endpoint: str) -> object:
@@ -96,20 +102,36 @@ class PortalWorkerSessionPreserveTests(unittest.TestCase):
             _run(flow())
             self.assertEqual(context.close_calls, 0)
 
-    def test_stop_still_releases_lock_and_allows_restart(self) -> None:
-        # 세션 보존이 정리 자체를 망가뜨리면 안 된다: stop() 후 같은 프로필로
-        # 즉시 재시작(재-lock)이 가능해야 한다.
+    def test_stop_releases_lock_but_same_profile_relaunch_is_unsupported(self) -> None:
+        # V1 적대검증(2026-07-17) 반례 2 봉인: 세션을 보존한 채 같은 프로필로
+        # launch_persistent_context 재호출은 실제 playwright 가 거부한다.
+        # 현재 계약 = stop() 후 프로필 lock 재획득은 가능하되, 살아있는 브라우저에
+        # 대한 재접속은 재-launch 가 아니라 CDP 재부착(후속 TODO-2b)이어야 한다.
+        # 프로덕션 호출자는 stop() 후 같은 스코프에서 start() 를 다시 부르지 않는다
+        # (V1 CALL_SITE_ANALYSIS: stop 은 __aexit__ 로만 호출됨).
+        from tools.multi_position_sourcing.portal_worker import ProfileLock
+
         with TemporaryDirectory(prefix="pwsp_") as root:
             worker, context = self._worker("saramin", root)
 
-            async def flow() -> None:
+            async def flow() -> str:
                 await worker.start()
                 await worker.stop()
-                await worker.start()
-                await worker.stop()
+                # lock 은 반납되어 재획득 가능해야 한다.
+                relock = ProfileLock(worker.config)
+                relock.acquire()
+                relock.release()
+                try:
+                    await worker.start()
+                except RuntimeError as exc:
+                    await worker.stop()
+                    return str(exc)
+                return ""
 
-            _run(flow())
+            message = _run(flow())
             self.assertEqual(context.close_calls, 0)
+            self.assertIn("already in use", message,
+                          "같은 프로필 재-launch 는 미지원임을 테스트가 정직하게 모델링해야 한다")
 
     def test_linkedin_rps_stop_never_closes_context_regression(self) -> None:
         with TemporaryDirectory(prefix="pwsp_") as root:
