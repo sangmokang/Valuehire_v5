@@ -117,7 +117,27 @@ def _ip_is_global(ip: str) -> bool:
     # 여전히 내부 라우팅 대역 — 명시 차단. IPv6Address.is_site_local 로 잡는다.
     if getattr(addr, "is_site_local", False):
         return False
+    # V2-F6: NAT64 well-known prefix(64:ff9b::/96, RFC6052)는 하위 32비트에 IPv4 를 임베드한다.
+    # ipaddress.is_global 은 이 합성주소를 특별취급하지 않아 사설/loopback/메타데이터 IPv4 를
+    # 임베드한 주소도 공인으로 오판한다 — NAT64 게이트웨이가 있으면 실제 그 IPv4 로 라우팅된다.
+    # 임베드된 IPv4 를 추출해 그 IPv4 의 공인 여부로 재판정한다(공인 임베드는 정상 통과).
+    embedded = _nat64_embedded_ipv4(addr)
+    if embedded is not None:
+        return _ip_is_global(embedded)
     return addr.is_global and not addr.is_multicast
+
+
+_NAT64_WELLKNOWN = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _nat64_embedded_ipv4(addr: Any) -> str | None:
+    """NAT64 well-known prefix(64:ff9b::/96) 주소면 하위 32비트의 IPv4 를 문자열로 반환.
+
+    그 외(일반 IPv6·IPv4)는 None. RFC8215 로컬 프리픽스(64:ff9b:1::/48)는 이미 ipaddress
+    가 is_global=False 로 처리하므로 여기서는 well-known /96 만 다룬다."""
+    if not isinstance(addr, ipaddress.IPv6Address) or addr not in _NAT64_WELLKNOWN:
+        return None
+    return str(ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF))
 
 
 def _looks_like_ip_literal_host(host: str) -> bool:
