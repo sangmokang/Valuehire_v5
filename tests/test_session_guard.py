@@ -54,6 +54,13 @@ class DecideKeepaliveTests(unittest.TestCase):
         action = decide_keepalive("saramin", due=True, owner_active=True, cookie_evidence="present")
         self.assertEqual(action, "skip_owner_active")
 
+    def test_owner_active_label_wins_even_when_also_not_due(self) -> None:
+        # 판정 우선순위 봉인(뮤턴트 검사에서 발견된 미봉인 경계): 사람 점유가
+        # 항상 1순위 — not_due 와 겹쳐도 skip_owner_active 로 보고해야
+        # 운영 로그에서 "사장님 사용 중" 신호가 묻히지 않는다.
+        action = decide_keepalive("saramin", due=False, owner_active=True, cookie_evidence="unknown")
+        self.assertEqual(action, "skip_owner_active")
+
     def test_not_due_skips(self) -> None:
         action = decide_keepalive("saramin", due=False, owner_active=False, cookie_evidence="present")
         self.assertEqual(action, "skip_not_due")
