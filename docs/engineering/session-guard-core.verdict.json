@@ -1,0 +1,24 @@
+{
+  "claim_id": "session-guard-core-01",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "세션가드 코어(판정 순수함수 + 쿠키 스냅샷 롤링)가 SOT-28 §3a/§4/§5 계약을 결정론 테스트로 봉인. 판정 우선순위 owner_active > due > present > unknown > absent. LinkedIn absent 는 자동 로그인 금지(human_wait). CDP 쿠키 조회는 미검증 표기 + 실패 시 unknown 폴백.",
+    "changed_files": [
+      "tools/multi_position_sourcing/session_guard.py",
+      "tests/test_session_guard.py",
+      "docs/engineering/session-guard-core-goal-2026-07-17.md"
+    ],
+    "red_evidence": "commit 1b8c24f: RED 테스트 선커밋 → 8792b88 구현으로 GREEN",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "1682 passed, 4 xfailed, 102 subtests passed in 53.05s (worktree 실측 2026-07-17)",
+    "mutant_check": "뮤턴트1 owner 우선순위 무력화(if False and owner_active) → 3 failed 감지. 뮤턴트2 classify_cookie_evidence 상수 present 화 → 1 failed 감지. 각각 적용→감지→git checkout 원복.",
+    "contract_cross_check": "raw_cdp.attach(target, badge=False) raw_cdp.py:202, CDPTab.send(method, params=None) raw_cdp.py:124, owner_activity.detect_owner_activity_snapshot(owner_activity_detected) 실존 대조",
+    "wiring": "엔트리 = CLI python -m tools.multi_position_sourcing.session_guard --site <site> (main:195). 러너(keepalive 루프) 통합은 goal 비범위 — 후속 조각"
+  },
+  "v1": {},
+  "failed_attempts": [],
+  "three_way_agree": false,
+  "status": "G GREEN + 뮤턴트 통과 — V1(Codex) 대기"
+}
