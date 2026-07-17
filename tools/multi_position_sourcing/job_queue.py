@@ -117,27 +117,44 @@ def _ip_is_global(ip: str) -> bool:
     # 여전히 내부 라우팅 대역 — 명시 차단. IPv6Address.is_site_local 로 잡는다.
     if getattr(addr, "is_site_local", False):
         return False
-    # V2-F6: NAT64 well-known prefix(64:ff9b::/96, RFC6052)는 하위 32비트에 IPv4 를 임베드한다.
-    # ipaddress.is_global 은 이 합성주소를 특별취급하지 않아 사설/loopback/메타데이터 IPv4 를
-    # 임베드한 주소도 공인으로 오판한다 — NAT64 게이트웨이가 있으면 실제 그 IPv4 로 라우팅된다.
-    # 임베드된 IPv4 를 추출해 그 IPv4 의 공인 여부로 재판정한다(공인 임베드는 정상 통과).
-    embedded = _nat64_embedded_ipv4(addr)
+    # IPv4 주소면 ipaddress.is_global 이 사설/loopback/메타데이터/CGNAT 를 모두 False 로 잡는다.
+    if isinstance(addr, ipaddress.IPv4Address):
+        return addr.is_global and not addr.is_multicast
+    # 이하 IPv6. IPv4 를 임베드하는 형식(IPv4-mapped ::ffff:a.b.c.d, NAT64 64:ff9b::/96)은
+    # 임베드된 IPv4 로 재판정한다 — ipaddress.is_global 이 이 합성주소들의 사설 임베드를
+    # 공인으로 오판하기 때문(V2-F6 NAT64 + V1 IPv4-compatible/translated 반례).
+    embedded = _embedded_ipv4(addr)
     if embedded is not None:
         return _ip_is_global(embedded)
+    # 그 외 IPv6: 공인 IPv6 는 오직 global unicast(2000::/3) 안에만 배정된다(IANA). 그 밖의
+    # 특수목적 IPv6(site-local·link-local·ULA·IPv4-compatible ::/96·translated ::ffff:0:0/96·
+    # 그 외 미래 예약대역)는 공인일 수 없으므로 fail-closed 로 거부한다 — whack-a-mole 대신
+    # "허용 대역 화이트리스트" 로 근본 차단(V1 지적: NAT64 외 임베드 형식이 여럿).
+    if addr not in _GLOBAL_UNICAST:
+        return False
     return addr.is_global and not addr.is_multicast
 
 
 _NAT64_WELLKNOWN = ipaddress.ip_network("64:ff9b::/96")
+_GLOBAL_UNICAST = ipaddress.ip_network("2000::/3")
 
 
-def _nat64_embedded_ipv4(addr: Any) -> str | None:
-    """NAT64 well-known prefix(64:ff9b::/96) 주소면 하위 32비트의 IPv4 를 문자열로 반환.
+def _embedded_ipv4(addr: Any) -> str | None:
+    """IPv6 가 IPv4 를 임베드하는 형식이면 그 IPv4 를 문자열로 반환, 아니면 None.
 
-    그 외(일반 IPv6·IPv4)는 None. RFC8215 로컬 프리픽스(64:ff9b:1::/48)는 이미 ipaddress
-    가 is_global=False 로 처리하므로 여기서는 well-known /96 만 다룬다."""
-    if not isinstance(addr, ipaddress.IPv6Address) or addr not in _NAT64_WELLKNOWN:
+    다루는 형식: IPv4-mapped(::ffff:a.b.c.d — ipaddress.ipv4_mapped) + NAT64 well-known
+    (64:ff9b::/96 하위 32비트, RFC6052). 이 둘만 '공인 IPv4 임베드는 공인으로 통과'시켜야
+    해서 추출한다 — 그 밖의 IPv4-compatible(::/96)·translated(::ffff:0:0/96) 같은 구식 형식은
+    추출하지 않고 상위 2000::/3 게이트가 fail-closed 로 거부한다(공인 임베드도 막지만, 이
+    형식들은 실 getaddrinfo 반환에 나타나지 않아 가용성 손실이 없다)."""
+    if not isinstance(addr, ipaddress.IPv6Address):
         return None
-    return str(ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF))
+    mapped = addr.ipv4_mapped
+    if mapped is not None:
+        return str(mapped)
+    if addr in _NAT64_WELLKNOWN:
+        return str(ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF))
+    return None
 
 
 def _looks_like_ip_literal_host(host: str) -> bool:
