@@ -30,6 +30,63 @@ MEMBER_ID = "222222222222222222"
 STRANGER_ID = "999999999999999999"
 CLICKUP_URL = "https://app.clickup.com/t/86eznizpq"
 
+# INV-D1 기계 강제: 수신기 소스에 실행·동적로딩 원시요소가 없어야 한다.
+# 허용 import 는 정확한 전체 경로로만 매칭한다(끝 이름만 보고 통과시키지 않음 — V1 재공격).
+_ALLOWED_ABSOLUTE_IMPORTS = frozenset({
+    "__future__", "re", "time", "dataclasses", "typing",
+})
+# 패키지 상대 import 는 레벨 1(같은 패키지) + 정확한 모듈명만(하위 경로 금지).
+_ALLOWED_RELATIVE_MODULES = frozenset({
+    "access", "discord_routing", "fleet_dispatch", "hermes_fleet_bridge",
+})
+# 맨 이름(builtin)으로 나타나면 안 되는 식별자 — __import__ 를 변수에 담아 나중에
+# 부르는 우회(V1 재공격)까지 이름 존재 자체로 막는다. re.compile 처럼 안전한
+# 표준 라이브러리 메서드와 충돌하지 않도록 '이름' 노드에만 적용한다.
+_BANNED_NAMES = frozenset({
+    "__import__", "eval", "exec", "compile", "getattr", "globals", "vars", "__loader__",
+})
+# 속성 접근(x.method)으로 나타나면 안 되는 위험 메서드 — 표준 안전 메서드
+# (re.compile 등)와 겹치지 않는 실행·동적로딩 전용 이름만.
+_BANNED_ATTRS = frozenset({
+    "system", "popen", "Popen", "spawn", "import_module", "__import__", "check_output",
+    "call", "run", "getoutput",
+})
+
+
+def execution_primitive_violations(source: str) -> list[str]:
+    """AST 로 INV-D1 위반(허용 밖 import·금지 식별자)을 모두 수집한다.
+
+    문자열 매칭이 아니라 구조(import 노드·이름 노드)를 본다 — 별칭·동적 조합·하위
+    경로 우회를 전부 잡는다. 우회하려면 결국 import 나 금지 이름 참조가 필요하고,
+    둘 다 AST 에 반드시 드러난다.
+    """
+    import ast
+
+    violations: list[str] = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] not in _ALLOWED_ABSOLUTE_IMPORTS:
+                    violations.append(f"import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:  # 상대 import: 레벨 1 + 정확한 모듈명만(하위 경로 금지)
+                if node.level != 1 or (node.module or "") not in _ALLOWED_RELATIVE_MODULES:
+                    # from . import X 는 module=None → 별칭이 허용 모듈명이어야
+                    if node.module is None and all(
+                            a.name in _ALLOWED_RELATIVE_MODULES for a in node.names):
+                        continue
+                    violations.append(f"from {'.' * node.level}{node.module or ''} import ...")
+            elif (node.module or "").split(".")[0] not in _ALLOWED_ABSOLUTE_IMPORTS:
+                violations.append(f"from {node.module} import ...")
+        elif isinstance(node, ast.Name):
+            if node.id in _BANNED_NAMES:
+                violations.append(f"name:{node.id}")
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _BANNED_ATTRS:
+                violations.append(f"attr:{node.attr}")
+    return violations
+
 AUTHORIZED = (
     DiscordAuthorizedUser(name="owner", alias="o", email="o@valueconnect.kr", discord_id=OWNER_ID),
     DiscordAuthorizedUser(name="member", alias="m", email="m@valueconnect.kr", discord_id=MEMBER_ID),
@@ -331,39 +388,42 @@ class V1SealTests(unittest.TestCase):
         self.assertIn("owner", result["response"])
         self.assertNotIn("형식", result["response"], "형식 힌트로 경로가 갈라지면 안 된다")
 
-    def test_source_contract_no_execution_primitives(self) -> None:
-        # C6/INV-D1: 수신기 소스에 실행 원시요소가 아예 없어야 한다(enqueue-only 기계 강제).
-        # V1 재공격 봉인: 문자열 매칭은 별칭(from os import system as ...)·동적 조합
-        # (importlib.import_module("sub"+"process"))으로 우회됨 — AST import 화이트리스트로
-        # 교체. 허용 목록 밖 모듈 import 자체가 결함이므로 우회하려면 import 가 필요하고,
-        # import 는 전부 AST 에 드러난다.
-        import ast
+    def test_receiver_source_has_no_execution_primitives(self) -> None:
+        # C6/INV-D1: 실제 수신기 소스는 위반 0(enqueue-only 기계 강제).
         import inspect
-        allowed_modules = {
-            "__future__", "re", "time", "dataclasses", "typing",
-            # 패키지 내부 계약 재사용(INV-D3 대상)만 허용
-            "access", "discord_routing", "fleet_dispatch", "hermes_fleet_bridge",
+        self.assertEqual(execution_primitive_violations(inspect.getsource(dr)), [])
+
+    def test_execution_guard_catches_every_known_bypass(self) -> None:
+        # V1 3회차까지의 모든 우회 패턴을 합성 소스로 재현 — 검사기 자체가
+        # 이들을 전부 잡는지 봉인한다(검사기가 우회되면 C6 계약이 무의미).
+        bypasses = {
+            "direct_subprocess": "import subprocess\n",
+            "alias_os_system": "from os import system as launch\n",
+            "dynamic_importlib": "import importlib\nx = importlib.import_module('sub'+'process')\n",
+            "stored_dunder_import": "f = __import__\nm = f('os')\n",
+            "subpath_ending_allowed": "from .unapproved.access import x\n",
+            "deep_relative": "from ..other.thing import y\n",
+            "getattr_reach": "import os\ng = getattr(os, 'sys'+'tem')\n",
+            "eval_call": "y = eval('1+1')\n",
         }
-        tree = ast.parse(inspect.getsource(dr))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    self.assertIn(alias.name.split(".")[0], allowed_modules, alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.level:  # 패키지 상대 import — 모듈명 또는 각 별칭이 허용 목록에
-                    if node.module:
-                        self.assertIn(node.module.split(".")[-1], allowed_modules,
-                                      f"relative import: {node.module}")
-                    else:  # from . import X — X 각각 검사
-                        for alias in node.names:
-                            self.assertIn(alias.name, allowed_modules, alias.name)
-                else:
-                    self.assertIn((node.module or "").split(".")[0],
-                                  allowed_modules, str(node.module))
-            elif isinstance(node, ast.Call):
-                name = getattr(node.func, "id", "") or getattr(node.func, "attr", "")
-                self.assertNotIn(name, ("eval", "exec", "__import__", "import_module",
-                                        "system", "popen", "Popen", "spawn"), name)
+        for name, src in bypasses.items():
+            self.assertNotEqual(
+                execution_primitive_violations(src), [],
+                f"우회 미탐지: {name} — {src!r}")
+
+    def test_execution_guard_allows_legitimate_imports(self) -> None:
+        # 과탐 방지: 실제 수신기가 쓰는 정상 import 는 통과해야 한다(검사기가
+        # 모든 걸 막아서 우연히 GREEN 되는 가짜 봉인이 아님을 증명).
+        ok = (
+            "from __future__ import annotations\n"
+            "import re\nimport time\n"
+            "from dataclasses import dataclass\n"
+            "from typing import Any\n"
+            "from .access import DiscordAuthorizedUser\n"
+            "from .fleet_dispatch import dispatch_fleet_command, is_owner\n"
+            "from . import fleet_dispatch\n"
+        )
+        self.assertEqual(execution_primitive_violations(ok), [])
 
     def test_integer_typed_identity_fields_fail_closed(self) -> None:
         # V1 재공격 item5 봉인: 게이트웨이 버그·위조로 int 가 흘러들어와도
