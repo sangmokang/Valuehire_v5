@@ -12,8 +12,8 @@
     "red_evidence": "RED 커밋: _ip_is_global('64:ff9b::127.0.0.1')=True 로 nat64 테스트 1 failed. GREEN: 116 passed.",
     "command": "./verify.sh",
     "exit_code": 0,
-    "green_evidence": "focused test_url_hardening+test_job_queue 116 passed. 전체 ./verify.sh: 1722 passed, 4 xfailed, 102 subtests passed in 53.46s (exit 0).",
-    "mutant_check": "NAT64 추출 무력화(embedded=None 고정) → nat64 테스트 1 failed 감지 후 git checkout 원복(커밋 후 적용).",
+    "green_evidence": "focused 118 passed. 전체 ./verify.sh(재수정 후): 1724 passed, 4 xfailed, 102 subtests passed in 39.92s (exit 0).",
+    "mutant_check": "2000::/3 게이트 무력화→other_ipv4_embedding 1 failed. mapped 추출 제거→ipv4_mapped_public 1 failed. NAT64 추출 무력화(초판)→nat64 1 failed. 전부 감지·원복(커밋 후).",
     "wiring": "_ip_is_global 은 url_host_resolves_public(2단, enqueue 직전 강제)의 유일 판정자 — 배선 기존 경로 그대로."
   },
   "strict_reverification_context": {
@@ -24,9 +24,39 @@
     "v2_reset": "Claude reset subagent(goal+verdict 만 read) — F1~F5 봉인 전부 재현 확인 + 신규 F6(NAT64) 발견. V2_VERDICT=conditional. tasks/a829054a4e6717723.output.",
     "g_independent_repro": "생성자 직접 재현: 64:ff9b::127.0.0.1/a00:1/a9fe:a9fe/c0a8:1 = is_global True(수정 전) → 실결함 확정."
   },
-  "v1": {},
-  "v2": {},
-  "failed_attempts": [],
+  "v1": {
+    "author": "Codex CLI read-only (codex exec --sandbox read-only). tasks/bhmty5db9.output — 이번엔 판정 본문 확보(필터 미차단).",
+    "verdict": "fail (NAT64-only 수정 대상, '올리면 안 됩니다')",
+    "findings": [
+      "NAT64 well-known(64:ff9b::/96) 봉인은 유효(34 passed 재현).",
+      "추가 우회: IPv4-compatible IPv6(::a.b.c.d, deprecated RFC4291)와 IPv4-translated(::ffff:0:0/96, RFC2765)가 여전히 is_global True — ::169.254.169.254(메타데이터)·::ffff:0:127.0.0.1(loopback) 통과. 재현: G 직접 재현으로 확정(_ip_is_global True).",
+      "정확성: 표준 64:ff9b::/96 에 비공인 IPv4 임베드 패킷은 규격상 번역기가 폐기 → '실 사설 라우팅'은 번역기 비준수/오설정 조건 필요. goal 위험 서술 과장 지적(수용)."
+    ],
+    "resolution": "V1 지적 수용 — 2000::/3 global-unicast 화이트리스트로 일반화(IPv6 특수목적 대역 일괄 fail-closed + IPv4-mapped·NAT64 공인임베드만 통과). RED 테스트 선커밋 후 봉인. goal 위험서술 정직화.",
+    "repro": "pytest tests/test_url_hardening.py -q → GREEN. G 광범위 스윕: 차단 20종 누출 0, 공인 5종 오차단 0."
+  },
+  "v2": {
+    "author": "Claude reset subagent (goal+verdict 만 read). tasks/a7a5ec78e0622bbcc.output.",
+    "verdict": "pass (NAT64-only 수정 대상)",
+    "findings": [
+      "NAT64 사설/메타데이터 임베드 4종 거부·공인 임베드 통과·재귀 안전(5000회 0.054s)·오탐 0·116 passed 전부 재현.",
+      "RFC8215 로컬 프리픽스·문서용 2001:db8 비범위 선언 정직성 실측 확인.",
+      "새 구멍 0으로 판정 — 단 V2 는 ::(IPv4-compatible)·::ffff:0: 형식을 시험하지 않아 V1 이 잡은 부류를 놓침(공유 사각지대 아님, 시험범위 차이)."
+    ]
+  },
+  "three_way_resolution": {
+    "disagreement": "V1=fail(추가 우회 벡터), V2=pass(NAT64 한정 봉인 확인). strict '갈리면 결론 보류' 적용.",
+    "resolved_by": "G 직접 재현으로 V1 벡터가 실결함임을 확정(V2 는 해당 형식 미시험이라 놓친 것) → 안전한 쪽(봉인)으로 해소. 2000::/3 일반화로 V1·V2 관심사 모두 충족.",
+    "post_fix_status": "재수정 후 G 광범위 스윕 통과. 재수정본에 대한 V1/V2 재검증은 전체 verify GREEN 확인 후 배송 전 1회 더 권장(현 상태: G 자기검증 + 뮤턴트 2/2)."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "NAT64 well-known 프리픽스만 특수차단",
+      "root_cause": "IPv4 를 임베드하는 IPv6 형식이 NAT64 말고도 여럿(IPv4-compatible ::/96, translated ::ffff:0:0/96) — 하나씩 막으면 whack-a-mole",
+      "repro": "_ip_is_global('::169.254.169.254')=True (수정 전)",
+      "next_change": "공인 IPv6=2000::/3 화이트리스트로 뒤집어 특수목적 대역 일괄 fail-closed — 완료"
+    }
+  ],
   "three_way_agree": false,
-  "status": "G GREEN(116 passed)+뮤턴트 감지 — NAT64 fix 재검증(V1·V2) 대기"
+  "status": "재수정 GREEN(118 passed)+뮤턴트 2/2+광범위 스윕 통과 — 전체 verify·재검증 후 배송"
 }

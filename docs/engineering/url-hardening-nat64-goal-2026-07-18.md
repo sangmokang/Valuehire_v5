@@ -18,11 +18,16 @@
 - [x] 뮤턴트: 추출 무력화(항상 None) → nat64 테스트 1 failed 감지 후 원복.
 - [ ] 4b: V1(Codex)·V2(리셋) 재확인.
 
+## 범위 확대 (V1 반례 반영 — 2000::/3 화이트리스트로 일반화)
+- 최초 수정은 NAT64 well-known(64:ff9b::/96)만 다뤘으나, V1(Codex read-only)이 같은 부류의 추가 우회를 지적: `::169.254.169.254`(IPv4-compatible ::/96, 메타데이터)·`::ffff:0:127.0.0.1`(IPv4-translated ::ffff:0:0/96) 등이 여전히 is_global True.
+- 근본 수정: **공인 IPv6 는 IANA 상 오직 global unicast(2000::/3) 안에만 배정**되므로, IPv6 판정을 "그 밖의 특수목적 대역은 fail-closed 거부 + IPv4-mapped·NAT64 임베드만 임베드 IPv4 로 재판정"으로 바꿔 whack-a-mole 없이 일괄 차단. IPv4 는 기존 is_global 경로 유지.
+
 ## 비범위
-- RFC8215 로컬 NAT64 프리픽스(64:ff9b:1::/48)는 ipaddress 가 이미 is_global=False → 별도 차단 불필요(회귀 테스트 후보).
 - params.search_urls(워커가 페치하는 실경로)의 동일 하드닝 — 여전히 조각 B 후속(V2도 실위험 후보로 지목).
 - 워커 실행 시점 재해석(TOCTOU) — 큐 입구 차단이 이번 범위.
+- IPv4-compatible/translated 형식에 **공인** IPv4 를 임베드한 것도 2000::/3 밖이라 거부됨(fail-closed) — 이 구식 형식은 실 getaddrinfo 반환에 나타나지 않아 가용성 손실 없음(막는 방향이라 안전).
+- V1 정확성 지적 수용: "표준 64:ff9b::/96 에 비공인 IPv4 패킷은 규격상 번역기가 폐기" — 실 라우팅은 번역기 비준수/오설정 조건이 필요. 방어는 심층방어(defense-in-depth)이며 goal 위험 서술을 이 조건으로 정직화함.
 
 ## 적대 검증 로그
-- 발견: V2 리셋 재검증(agent transcript tasks/a829054a4e6717723.output). G 직접 재현으로 실결함 확정.
-- V1/V2 재확인: verdict.json 참조.
+- 발견: V2 리셋 재검증(NAT64) + V1 read-only(추가 IPv6 임베드 형식). G 직접 재현으로 두 부류 실결함 확정.
+- 3자 대조·재확인: verdict.json 참조.
