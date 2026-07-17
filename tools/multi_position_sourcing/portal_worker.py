@@ -654,20 +654,16 @@ class PortalWorker:
             raise
 
     async def stop(self) -> None:
+        # SOT-28 §4(세션 상시 유지)·§12 현상6(TODO-2): 어떤 채널도 로그인 세션이
+        # 담긴 context 를 닫지 않는다. 예전엔 사람인·잡코리아에서 context.close() 로
+        # 세션 탭이 통째로 꺼졌다. 종료 = 참조 해제 + lock 반납만.
+        self._context = None
+        self._browser = None
         try:
-            if self.config.channel != "linkedin_rps" and self._context is not None:
-                try:
-                    await self._context.close()
-                except Exception:
-                    pass
+            await self._close_playwright_manager_if_possible()
         finally:
-            self._context = None
-            self._browser = None
-            try:
-                await self._close_playwright_manager_if_possible()
-            finally:
-                self._lock.release()
-                self._started = False
+            self._lock.release()
+            self._started = False
 
     async def _close_playwright_manager_if_possible(self) -> None:
         if self._playwright_manager is None:
