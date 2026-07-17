@@ -107,6 +107,19 @@ class ProbeUrlTests(unittest.TestCase):
 
 
 class SnapshotRollingTests(unittest.TestCase):
+    def test_existing_file_with_loose_permissions_is_forced_back_to_0600(self) -> None:
+        # V1 적대검증 반례(2026-07-18): O_CREAT|O_TRUNC 는 기존 파일의 권한을
+        # 유지한다 — 같은 타임스탬프 경로가 0644 로 선존재하면 비밀 쿠키가
+        # 0644 파일에 남았다. 저장 후 무조건 0600 강제를 봉인한다.
+        cookies = [{"name": "JSESSIONID", "value": "secret", "domain": ".saramin.co.kr"}]
+        with TemporaryDirectory(prefix="sg_perm_") as root:
+            expected = save_cookie_snapshot("saramin", cookies, root=Path(root), now=1000.0)
+            os.chmod(expected, 0o644)  # 권한이 느슨해진 선존재 파일 재현
+            again = save_cookie_snapshot("saramin", cookies, root=Path(root), now=1000.0)
+            self.assertEqual(expected, again)
+            self.assertEqual(oct(again.stat().st_mode & 0o777), oct(0o600))
+
+
     def test_snapshot_rolls_and_keeps_latest_n_with_0600(self) -> None:
         cookies = [{"name": "JSESSIONID", "value": "secret", "domain": ".saramin.co.kr"}]
         with TemporaryDirectory(prefix="sg_snap_") as root:

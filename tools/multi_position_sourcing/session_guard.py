@@ -116,6 +116,9 @@ def save_cookie_snapshot(
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
+    # O_CREAT 의 0600 은 "새 파일"에만 적용 — 선존재 파일은 이전 권한이 유지된다
+    # (V1 적대검증 반례 2026-07-18). 비밀 쿠키 파일이므로 무조건 0600 강제.
+    os.chmod(path, 0o600)
     snapshots = sorted(root.glob(f"{site}-*.json"), key=lambda p: p.name)
     for old in snapshots[:-keep]:
         old.unlink(missing_ok=True)
