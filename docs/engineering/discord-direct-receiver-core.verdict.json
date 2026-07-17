@@ -33,6 +33,8 @@
     ],
     "sealing": "C1~C5 는 RED 테스트 선커밋 후 행동 봉인(커밋 4건, 뮤턴트/우회 재현으로 감지 확인). C6 은 4라운드 강화 후 수렴 판단 — 아래 c6_boundary 참조.",
     "c6_boundary": "정적 AST 스캔은 파이썬의 동적성(introspection·subscript·문자열조합) 때문에 완전한 실행봉쇄가 원리상 불가능하다(Codex 매 라운드 새 우회 발견 — 무한 군비경쟁). C6 테스트의 실제 역할 = '개발자가 실수로 subprocess/os.system/eval 을 넣는 회귀'를 잡는 트립와이어. INV-D1 의 진짜 보증은 정적검사가 아니라 아키텍처다: 수신기는 실행기를 보유하지 않고 모든 실행능력(큐·알림·시계)이 주입 의존성에 있으며, enqueue-only 행동을 test_receiver_never_executes_itself_enqueue_only + 큐주입 테스트가 직접 증명한다. 이국적 우회(re.__dict__ 뒤지기 등)조차 direct_receiver.py 에 코드로 쓰여야 하고 그건 코드리뷰+이 트립와이어+행동테스트를 통과해야 한다.",
+    "final_verdict": "pass (5차 재판정) — C1~C5 행동봉인 전부 재확인(21 passed, 새 우회 0). C6 아키텍처 논증 부분 동의.",
+    "residual_caveat": "V1 잔여 지적: '실행능력 0' 은 direct_receiver.py 단독이 아니라 dispatch_fleet_command → discord_notify 호출사슬까지 봐야 완전. 현재 discord_notify 직접호출은 테스트에서 무력화(로컬 실발송 방지)이며, notifier 주입 분리는 goal 조각 F 의 명시 범위. 조각 A 는 수신기 자체의 enqueue-only 만 보증하고 알림 분리는 F 로 이월(비범위 명시).",
     "note": "V1 의 verify '11 failed' 는 그 세션 환경 문제로 판단(내 실측 exit 0, CI 로 최종 판정)",
     "source_transcript": "scratchpad tasks/a2a6f82d9945d36c7.output"
   },
