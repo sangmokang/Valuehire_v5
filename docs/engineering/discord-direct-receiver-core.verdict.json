@@ -18,7 +18,22 @@
     "wiring": "순수 모듈 — 프로덕션 배선은 조각 C(discord_direct_gateway)가 소비 예정(goal §3 단계 설계). 현 시점 엔트리=테스트. 고아 아님 주장 안 함 — 조각 C 배송 전까지 '부분 배선(설계상 단계)' 상태로 명시.",
     "notify_note": "dispatch_fleet_command 내부 discord_notify 직접 호출은 테스트에서 무력화(실자격증명 로컬 실발송 방지). notifier 주입 분리는 goal 조각 F 범위."
   },
-  "v1": {},
+  "v1": {
+    "author": "Codex fresh (codex-rescue subagent)",
+    "verdict": "fail → 봉인 후 재판정 대기",
+    "counterexamples": [
+      "C1: 형식 오류 경로가 owner 전용 판정을 건너뛰어 정상 경로와 응답 분기",
+      "C2: 형식 오류 회신에 사용자 입력 원문(비밀 모양·@everyone·장문) 에코",
+      "C3: 감사 콜백 예외가 수신기 전체를 죽임",
+      "C4: is_dm=True 위조로 길드 allowlist 우회",
+      "C5: 빈/비정형 event_id·role_ids 무검증 통과",
+      "C6: INV-D1(직접 실행 금지)을 기계 강제하는 테스트 부재",
+      "C7(해당없음 확인): 정상 경로 직접 실행 없음·지시 원문 유출 없음"
+    ],
+    "sealing": "6건 전부 RED 테스트 선커밋 후 수정(커밋 2건). C2 는 V1 재현과 달리 따옴표형 오류는 원래 에코가 없었고 맨 토큰/필드명 경로가 실제 에코 — 테스트를 3경로로 확장해 봉인. 17 passed.",
+    "note": "V1 의 verify '11 failed' 는 그 세션 환경 문제로 판단(내 실측 exit 0, CI 로 최종 판정)",
+    "source_transcript": "scratchpad tasks/a2a6f82d9945d36c7.output"
+  },
   "failed_attempts": [
     {
       "attempt": "worktree 에서 ./verify.sh | tail 파이프로 실행",
