@@ -1,0 +1,16 @@
+{
+  "claim_id": "hermes-plugin-test-offline-01",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "test_plugin_loads_correctly_even_when_hermes_own_tools_package_is_already_imported 가 자격증명이 보이는 환경(본 레포 .env.local)에서 실제 Supabase HTTPS 를 조회하다 30초 read timeout 으로 subprocess timeout=30 을 넘겨 실패했다(Gate 0 RED). 서브프로세스에 즉시 connection refused 되는 로컬 주소 짝(NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:9 + dummy key)을 env 주입해 오프라인·결정적으로 만들었다. 테스트 의도(tools 패키지 이름 충돌 시 'No module named' 미발생)는 그대로 보존 — 단언 삭제·약화 0건.",
+    "changed_files": ["tests/test_hermes_plugin_registration.py"],
+    "red_evidence": "VALUEHIRE_REPO_DIR=/Volumes/SSD/valuehire_v5 pytest <test> → '1 failed in 30.08s' (TimeoutExpired, job_queue.py:385 urlopen 스택 faulthandler 실측)",
+    "command": "VALUEHIRE_REPO_DIR=/Volumes/SSD/valuehire_v5 .venv/bin/python -m pytest tests/test_hermes_plugin_registration.py -q",
+    "exit_code": 0,
+    "green_evidence": "7 passed in 0.16s (자격증명 보임) / 7 passed in 0.12s (자격증명 없음) — 두 환경 동일 결과",
+    "mutant_check": "env 주입 제거(=수정 전 상태)가 곧 뮤턴트: 자격증명 보이는 환경에서 30.08s 실패 재현됨 → 테스트가 회귀를 감지함"
+  },
+  "failed_attempts": [],
+  "status": "G 판정 GREEN — L2 (테스트 1파일, 프로덕션 코드 무변경)"
+}
