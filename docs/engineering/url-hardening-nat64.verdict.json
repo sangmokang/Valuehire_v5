@@ -47,7 +47,7 @@
   "three_way_resolution": {
     "disagreement": "V1=fail(추가 우회 벡터), V2=pass(NAT64 한정 봉인 확인). strict '갈리면 결론 보류' 적용.",
     "resolved_by": "G 직접 재현으로 V1 벡터가 실결함임을 확정(V2 는 해당 형식 미시험이라 놓친 것) → 안전한 쪽(봉인)으로 해소. 2000::/3 일반화로 V1·V2 관심사 모두 충족.",
-    "post_fix_status": "재수정 후 G 광범위 스윕 통과. 재수정본에 대한 V1/V2 재검증은 전체 verify GREEN 확인 후 배송 전 1회 더 권장(현 상태: G 자기검증 + 뮤턴트 2/2)."
+    "post_fix_status": "V2 재검증 pass(일반화 재수정본). G·V1·V2 3자 관심사 전부 봉인 확인 — 배송 가능."
   },
   "failed_attempts": [
     {
@@ -57,6 +57,12 @@
       "next_change": "공인 IPv6=2000::/3 화이트리스트로 뒤집어 특수목적 대역 일괄 fail-closed — 완료"
     }
   ],
-  "three_way_agree": false,
-  "status": "재수정 GREEN(118 passed)+뮤턴트 2/2+광범위 스윕 통과 — 전체 verify·재검증 후 배송"
+  "three_way_agree": true,
+  "status": "GREEN(1724 passed)+뮤턴트 2/2+V2 재검증 pass — 배송",
+  "v2_final": {
+    "author": "Claude reset subagent(일반화 재수정본 대상). tasks/aaf55e23ac637f67b.output.",
+    "verdict": "pass",
+    "evidence": "차단 13종 누출 0·통과 5종 오차단 0·실도메인 AAAA 라이브(clickup/discord/saramin/jobkorea/github/google/cloudflare/supabase 등) 전부 통과·enqueue 사설해석 HTTP 0·창의적 신규우회 18종 전부 차단·118 passed. 2000::/3 밖 현행 공인 유니캐스트 부재 확인(가용성 오차단 위험 없음).",
+    "minor_note": "3fff::/20(RFC9637 문서용, 2024)은 Python3.14 stdlib 이 is_global=True 로 판정해 화이트리스트 통과 — 문서전용 대역이라 내부자원 도달 불가=SSRF 아님, 실도메인 미사용=가용성 손실 없음. 후속 명시제외 권고(배송 비차단)."
+  }
 }
