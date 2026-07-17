@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -148,8 +149,20 @@ def test_plugin_loads_correctly_even_when_hermes_own_tools_package_is_already_im
         print("OK:", result[:80])
         """
     )
+    # 이 테스트의 관심사는 "tools" 패키지 이름 충돌뿐인데, fleet-status 는 잡큐(Supabase)
+    # 를 실제 HTTPS 로 조회한다. 자격증명이 보이는 환경(본 레포 .env.local)에서는 원격
+    # 응답 지연 30초가 그대로 subprocess timeout=30 을 넘겨 네트워크 상태에 따라
+    # 널뛰는 테스트가 된다(2026-07-17 실측: TimeoutExpired). 즉시 connection refused 가
+    # 나는 로컬 주소를 짝으로 주입해 오프라인·결정적으로 만든다 — 핸들러가 오류를
+    # 문자열로 돌려줘도 "No module named" 검증에는 영향이 없다.
+    offline_env = {
+        **os.environ,
+        "NEXT_PUBLIC_SUPABASE_URL": "http://127.0.0.1:9",
+        "SUPABASE_SERVICE_ROLE_KEY": "offline-test-dummy",
+    }
     proc = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
+        [sys.executable, "-c", script],
+        capture_output=True, text=True, timeout=30, env=offline_env,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "OK:" in proc.stdout
