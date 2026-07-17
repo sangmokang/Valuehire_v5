@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -19,12 +20,20 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from tools.codex_skill_sync.sync import (
+    default_dest as default_skill_dest,
+    default_sources as default_skill_sources,
+    sync_skills,
+)
+
 from .fleet_heartbeat import read_linkedin_login_flag
 from .job_queue import (
     FLEET_MACHINES,
     FLEET_SKILLS,
+    OWNER_AGENT_SKILL,
     JobQueueClient,
     _valid_url,
+    default_account_key,
     is_valid_machine_id,
     new_job_payload,
 )
@@ -36,6 +45,7 @@ POLL_SECONDS = 30
 _SUMMARY_LIMIT = 800
 _PAUSE_MARKER = "PAUSED_FOR_HUMAN:"
 _SEARCH_RECEIPT_MARKER = "FLEET_SEARCH_RECEIPT:"
+_NETWORK_CONFIG_FLAG = "sandbox_workspace_write.network_access=true"
 
 # 기본 보고 채널 = 사장님 DM 채널(scripts/discord_command_listener.py 와 동일)
 DEFAULT_REPORT_CHANNEL = "1512503041448743092"
@@ -70,9 +80,115 @@ def machine_from_env(environ: Mapping[str, str]) -> str:
     return raw
 
 
+def _v4_repo(environ: Mapping[str, str] | None = None, repo_root: Path = REPO) -> Path:
+    source = os.environ if environ is None else environ
+    configured = str(source.get("VALUEHIRE_V4_REPO") or "").strip()
+    return Path(configured) if configured else repo_root.parent / "valuehire_v4"
+
+
+def sync_owner_agent_skills(
+    *,
+    repo_root: Path = REPO,
+    v4_root: Path | None = None,
+    dest: Path | None = None,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Mirror both repo generations immediately before an owner-agent execution."""
+    repo_root = Path(repo_root)
+    v4_root = Path(v4_root) if v4_root is not None else _v4_repo(repo_root=repo_root)
+    if not repo_root.is_dir():
+        raise RuntimeError(f"v5 repo missing: {repo_root}")
+    if not v4_root.is_dir():
+        raise RuntimeError(f"v4 repo missing: {v4_root}")
+    def candidates(sources: list[Path]) -> set[str]:
+        found: set[str] = set()
+        for source in sources:
+            if not source.is_dir():
+                continue
+            for child in source.iterdir():
+                if (not child.name.startswith(".") and not child.is_symlink()
+                        and (child / "SKILL.md").is_file()):
+                    found.add(child.name)
+        return found
+
+    v5_sources = [repo_root / "skills", repo_root / ".claude/skills"]
+    v4_sources = [v4_root / ".codex/skills", v4_root / ".claude/skills", v4_root / "tools"]
+    v5_names, v4_names = candidates(v5_sources), candidates(v4_sources)
+    if not v5_names:
+        raise RuntimeError(f"v5 skill sources empty: {repo_root}")
+    if not v4_names:
+        raise RuntimeError(f"v4 skill sources empty: {v4_root}")
+    target = Path(dest) if dest is not None else default_skill_dest()
+    result = sync_skills(
+        default_skill_sources(repo_root, v4_root=v4_root, home=home),
+        target,
+    )
+    if not result.get("copied"):
+        raise RuntimeError("v4/v5 skill sync produced no skills")
+    represented = set(result["copied"])
+    represented.update(item[0] for item in result["skipped"])
+    represented.update(item[0] for item in result["collisions"])
+    missing = (v5_names | v4_names) - represented
+    if missing:
+        raise RuntimeError(f"skill sync omitted names: {sorted(missing)}")
+    broken = [name for name in result["copied"] if not (target / name / "SKILL.md").is_file()]
+    if broken:
+        raise RuntimeError(f"skill sync produced broken copies: {sorted(broken)}")
+    return result
+
+
+def build_owner_agent_prompt(job: Mapping[str, Any]) -> str:
+    """Revalidate an immutable owner envelope and build the skill-selection prompt."""
+    if job.get("skill") != OWNER_AGENT_SKILL:
+        raise ValueError("owner agent 계약이 아닌 작업")
+    job_id = job.get("id")
+    if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+        raise ValueError("owner agent 작업 번호 계약 위반")
+    revalidated = new_job_payload(
+        machine=job.get("machine"), skill=job.get("skill"),
+        position_url=job.get("position_url"), requested_by=job.get("requested_by"),
+        role=job.get("role"), params=job.get("params"),
+        account_key=job.get("account_key", ""),
+    )
+    if revalidated is None:
+        raise ValueError("owner agent 승인 계약 위반")
+    if job.get("status") != "running":
+        raise ValueError("owner agent 실행 상태 계약 위반")
+    for field in ("machine", "skill", "position_url", "params", "requested_by", "role", "account_key"):
+        if job.get(field) != revalidated[field]:
+            raise ValueError(f"owner agent 승인 필드 정규화 금지: {field}")
+    expected_lock = default_account_key(OWNER_AGENT_SKILL, revalidated["machine"])
+    if revalidated["account_key"] != expected_lock:
+        raise ValueError("owner agent 머신 잠금 키 계약 위반")
+    params = revalidated["params"]
+    approved_json = json.dumps(params["request_text"], ensure_ascii=False)
+    v4_root = _v4_repo()
+    skill_root = default_skill_dest()
+    return (
+        f"[Valuehire owner agent #{job_id}] 인증된 Discord 현재 메시지 1건을 실행합니다.\n"
+        f"approval_id: {params['approval_id']}\n"
+        f"prompt_sha256: {params['prompt_sha256']}\n"
+        f"approval_sha256: {params['approval_sha256']}\n"
+        f"approved_request_json: {approved_json}\n"
+        "규칙:\n"
+        "1. approved_request_json을 JSON 문자열로 해석한 정확한 원문만 요청 범위로 삼을 것.\n"
+        "2. v5와 v4에서 동기화된 스킬 설명을 자연어로 매칭하고, 명시된 스킬은 해당 "
+        "SKILL.md 전체를 읽고 따를 것.\n"
+        f"3. 동기화 스킬 루트는 {skill_root}, 기본 작업 루트는 v5 {REPO}, "
+        f"추가 스킬/도구 루트는 v4 {v4_root}다.\n"
+        "4. 외부 등록·발송은 원문에 명시된 대상·채널·횟수를 절대 넓히지 말 것.\n"
+        "5. 필요한 도구가 없어 부분동작이면 성공을 꾸미지 말고 막힌 이유를 보고할 것.\n"
+        "6. danger-full-access나 권한 우회 옵션을 사용하지 말 것.\n"
+        f"7. 캡차/2FA/본인확인을 만나면 '{_PAUSE_MARKER} <상황>'을 마지막 줄에 출력할 것.\n"
+        "8. 최종 결과는 한국어로 stdout에 요약할 것.\n"
+    )
+
+
 def build_job_prompt(job: Mapping[str, Any]) -> str:
     """잡 1건 → claude -p 실행 문구. 계약 위반 잡은 ValueError(fail-closed)."""
     skill = job.get("skill")
+    if skill == OWNER_AGENT_SKILL:
+        return build_owner_agent_prompt(job)
     if skill not in FLEET_SKILLS:
         raise ValueError(f"허용되지 않은 스킬: {skill!r}")
     job_id = job.get("id")
@@ -305,9 +421,34 @@ def _run_claude(prompt: str, timeout: int,
     넘겨 cmd.exe 메타문자/변수확장 노출을 원천 차단한다(맥/리눅스·네이티브 exe 경로는
     기존과 동일하게 argv 로 넘겨 행동 불변).
     """
-    cmd, use_shell = _agent_argv("claude", ["-p"])
+    owner_agent = str((env or {}).get("VALUEHIRE_OWNER_AGENT_JOB") or "") == "1"
+    base_args: list[str] = []
+    if owner_agent:
+        v4_root = _v4_repo(env)
+        if not v4_root.is_dir():
+            raise RuntimeError(f"v4 repo missing: {v4_root}")
+        if sys.platform == "win32" and any(ch in str(v4_root) for ch in "&|<>^%!()"):
+            raise ValueError("unsafe Windows v4 path")
+        base_args.extend(["--add-dir", str(v4_root)])
+        raw_mode = (env or {}).get("VALUEHIRE_AGENT_EXECUTION_MODE")
+        permission_mode = {
+            "read_only": "plan",
+            "workspace_write": "acceptEdits",
+        }.get(raw_mode)
+        if permission_mode is None:
+            raise ValueError(f"unsupported Claude execution mode: {raw_mode!r}")
+        base_args.extend(["--permission-mode", permission_mode])
+    base_args.append("-p")
+    cmd, use_shell = _agent_argv("claude", base_args)
     if use_shell:
         return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+    if owner_agent:
+        proc = subprocess.run(
+            cmd, cwd=str(REPO), input=prompt, capture_output=True, text=True,
+            encoding="utf-8", timeout=timeout,
+            env=dict(env) if env is not None else None,
+        )
+        return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
     proc = subprocess.run(
         [*cmd, prompt], cwd=str(REPO), capture_output=True, text=True,
         encoding="utf-8", timeout=timeout,
@@ -316,17 +457,48 @@ def _run_claude(prompt: str, timeout: int,
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
 
+def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]:
+    """Build the only allowed noninteractive Codex command for fleet jobs."""
+    source = os.environ if environ is None else environ
+    mode = (
+        str(source.get("VALUEHIRE_AGENT_EXECUTION_MODE"))
+        if "VALUEHIRE_AGENT_EXECUTION_MODE" in source else "read_only"
+    )
+    sandbox = {"read_only": "read-only", "workspace_write": "workspace-write"}.get(mode)
+    if sandbox is None:
+        raise ValueError(f"unsupported Codex execution mode: {mode!r}")
+    args = ["exec", "-C", str(REPO), "--sandbox", sandbox]
+    if sandbox == "workspace-write":
+        args.extend(["-c", _NETWORK_CONFIG_FLAG])
+    if str(source.get("VALUEHIRE_OWNER_AGENT_JOB") or "") == "1":
+        v4_root = _v4_repo(source)
+        if not v4_root.is_dir():
+            raise RuntimeError(f"v4 repo missing: {v4_root}")
+        if sys.platform == "win32" and any(ch in str(v4_root) for ch in "&|<>^%!()"):
+            raise ValueError("unsafe Windows v4 path")
+        args.extend(["--add-dir", str(v4_root)])
+    args.extend(["--ephemeral", "--ignore-user-config", "-"])
+    if "danger-full-access" in args or "--dangerously-bypass-approvals-and-sandbox" in args:
+        raise ValueError("unsafe Codex sandbox")
+    return args
+
+
 def _run_codex(prompt: str, timeout: int,
                env: Mapping[str, str] | None = None) -> tuple[str, str, int]:
     """codex exec 실행(레포 루트) — 이슈 B(2026-07-15). claude -p 와 동형 계약.
 
     이슈 F: 윈도우 .cmd shim 경로는 `codex exec -`(stdin 소스 명시) + input=prompt.
     """
-    cmd, use_shell = _agent_argv("codex", ["exec"])
+    import ntpath
+    codex_name = str((env or {}).get("VALUEHIRE_CODEX_BIN") or "codex").strip()
+    basename = ntpath.basename(codex_name).lower()
+    if basename not in ("codex", "codex.exe", "codex.cmd", "codex.bat"):
+        raise ValueError(f"Codex 실행파일이 아닙니다: {codex_name!r}")
+    cmd, use_shell = _agent_argv(codex_name, build_codex_exec_args(env))
     if use_shell:
-        return _run_via_shell([*cmd, "-"], prompt, timeout, str(REPO), env)
+        return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
     proc = subprocess.run(
-        [*cmd, prompt], cwd=str(REPO), capture_output=True, text=True,
+        cmd, cwd=str(REPO), input=prompt, capture_output=True, text=True,
         encoding="utf-8", timeout=timeout,
         env=dict(env) if env is not None else None,
     )
@@ -445,6 +617,7 @@ class FleetWorker:
         wall_clock: Callable[[], float] | None = None,
         owner_probe: Callable[[], bool] | None = None,
         yield_state_path: str | Path | None = None,
+        skill_sync: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         if not is_valid_machine_id(machine):
             raise RuntimeError(f"invalid machine id: {machine!r}")
@@ -470,6 +643,7 @@ class FleetWorker:
         # V1 2R F3: 사장님 활동 프로브(눈치) — 주입식. None 이면 게이트 없음(테스트/미지원 OS).
         # 프로덕션 배선은 main() 의 default_owner_probe() (macOS 전용, Windows 감지기는 후속).
         self.owner_probe: Callable[[], bool] | None = owner_probe
+        self.skill_sync = sync_owner_agent_skills if skill_sync is None else skill_sync
         # V1 2R F2: launchd 재기동이 양보 창을 지우지 못하게 벽시계 기반 로컬 영속(fail-soft).
         self._yield_state_path = Path(yield_state_path) if yield_state_path is not None else None
         self._restore_yield_state()
@@ -573,6 +747,11 @@ class FleetWorker:
         env = dict(os.environ)
         env["VH_BUSY_TASK"] = f"fleet #{job.get('id')} ({job.get('skill')})"
         env["VH_BUSY_AGENT"] = agent_label
+        if job.get("skill") == OWNER_AGENT_SKILL:
+            params = job.get("params") or {}
+            env["VALUEHIRE_OWNER_AGENT_JOB"] = "1"
+            env["VALUEHIRE_AGENT_EXECUTION_MODE"] = str(params.get("execution_mode") or "")
+            env["VALUEHIRE_V4_REPO"] = str(_v4_repo(env))
         return env
 
     def _release(self, job: Mapping[str, Any], job_id: int, status: str, *,
@@ -624,6 +803,11 @@ class FleetWorker:
             self._enqueue_idle_variant()
             return "idle"
         job_id = job["id"]
+        if job.get("skill") == OWNER_AGENT_SKILL and job.get("machine") != self.machine:
+            error = f"owner agent 배정 머신 불일치: {job.get('machine')} != {self.machine}"
+            self._release(job, job_id, "failed", error=error)
+            self._notify(job, f"❌ 잡 #{job_id} 실패 — {error}")
+            return "failed"
         try:
             prompt = build_job_prompt(job)
         except ValueError as exc:
@@ -631,9 +815,17 @@ class FleetWorker:
             self._notify(job, f"❌ 잡 #{job_id} 실패 — 계약 위반: {exc}")
             return "failed"
         if dry_run:
-            self._release(job, job_id, "done", result_summary="dry-run — claude 미실행")
-            self._notify(job, f"🧪 잡 #{job_id} dry-run 완료 (claude 미실행)")
+            self._release(job, job_id, "done", result_summary="dry-run — 실행기 미실행")
+            self._notify(job, f"🧪 잡 #{job_id} dry-run 완료 (실행기 미실행)")
             return "done"
+        if job.get("skill") == OWNER_AGENT_SKILL:
+            try:
+                self.skill_sync()
+            except Exception as exc:  # noqa: BLE001 — 동기화 실패 시 모델 실행 금지
+                error = f"스킬 동기화 실패: {exc}"
+                self._release(job, job_id, "failed", error=error)
+                self._notify(job, f"❌ 잡 #{job_id} 실패 — {error}")
+                return "failed"
         # 이슈 C(2026-07-15 goal §3): claim~완료 사이 공백 메움 — 실행 직전 1회, fail-soft(_notify)
         self._notify(job, (
             f"▶️ 잡 #{job_id} 실행 시작 ({self.machine}, skill={job.get('skill')}) — "

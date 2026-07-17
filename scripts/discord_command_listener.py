@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""사장님 Discord DM → Claude 명령 다리 (2026-07-03 사장님 지시).
+"""사장님 Discord DM → 영속 작업 큐 접수기.
 
 hermes_v5 봇의 사장님 DM 채널(1512503041448743092)을 폴링해, **사장님이 쓴 새 메시지만**
-`claude -p`(헤드리스, 이 레포 루트)로 실행하고 결과를 DM 으로 회신한다.
+owner agent 작업으로 등록한다. 모델 실행은 fleet worker만 담당한다.
 
 안전 계약(테스트 D1 강제):
 - OWNER_ID(사장님) 메시지만 명령으로 인정 — 봇 자신·타인 무시
 - 처리한 메시지 id 는 상태파일에 저장 — 재실행 금지
 - "봇 정지"/"stop bot" = 킬 스위치(리스너 종료)
-- 명령은 셸이 아니라 Claude 프롬프트로만 전달(임의 셸 실행 아님, Claude 권한 체계 통과)
+- 수신기는 Claude/Codex subprocess를 직접 실행하지 않고 영속 큐에만 등록
+- Discord message id 중복 방지 키로 재시작 후에도 한 번만 등록
 - 회신은 1900자 분할(Discord 2000 제한)
 사용: nohup python3 scripts/discord_command_listener.py >/tmp/discord_bridge.log 2>&1 &
 """
@@ -16,19 +17,26 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+
+from tools.multi_position_sourcing.job_queue import (  # noqa: E402
+    JobQueueClient,
+    is_valid_machine_id,
+    new_owner_agent_job_payload,
+)
+
 OWNER_ID = "814353841088757800"
 BOT_ID = "1512101118543397056"  # hermes_v5 — 자기 메시지 무시
 DM_CHANNEL = "1512503041448743092"
 STATE = Path.home() / ".valuehire" / "discord_cmd_state.json"
 POLL_SECONDS = 20
-CLAUDE_TIMEOUT = 1200  # 20분
 
 _KILL_PHRASES = ("봇 정지", "봇정지", "stop bot", "stopbot")
 
@@ -133,53 +141,84 @@ def _save_last(last_id: str) -> None:
     save_last_atomic(STATE, last_id)
 
 
-_AGENT_COMMANDS: dict[str, tuple[str, ...]] = {
-    "claude": ("claude", "-p"),
-    "codex": ("codex", "exec"),
-}
-
-
 def select_agent_and_prompt(content: str) -> tuple[str, str]:
-    """DM 원문 → (agent, prompt). 순수 함수(이슈 F, 2026-07-15 사장님 지시).
-
-    'codex:' 접두어(대소문자·앞뒤 공백 무관)일 때만 agent=codex 로 전환하고 접두어를
-    벗겨낸 나머지를 프롬프트로 쓴다. 문장 중간의 "codex"/"코덱스" 단어는 오탐 방지를
-    위해 무시한다(접두어 위치가 아니면 트리거 안 됨). 접두어가 없으면 agent=claude,
-    프롬프트는 원문을 1바이트도 재구성하지 않는다 — 여기가 안전 템플릿(이슈 A/B)과
-    반대로 verbatim 이 목적인 지점이다.
-    """
+    """접두어로 실행기만 선택하고 승인 원문은 1바이트도 재구성하지 않는다."""
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("빈 Discord 요청")
     stripped = content.lstrip()
-    if stripped[:6].lower() == "codex:":
-        return "codex", stripped[6:].strip()
-    return "claude", content
+    for agent in ("claude", "codex"):
+        prefix = agent + ":"
+        if stripped[:len(prefix)].lower() == prefix:
+            if not stripped[len(prefix):].strip():
+                raise ValueError(f"{agent}: 뒤 요청이 비었습니다")
+            return agent, content
+    return "codex", content
 
 
-def _run_agent(agent: str, prompt: str) -> str:
-    cmd = list(_AGENT_COMMANDS[agent]) + [prompt]
+def _is_idempotency_conflict(exc: urllib.error.HTTPError) -> bool:
+    if exc.code != 409:
+        return False
     try:
-        p = subprocess.run(
-            cmd, cwd=str(REPO), capture_output=True,
-            text=True, timeout=CLAUDE_TIMEOUT,
-        )
-        out = (p.stdout or "").strip() or (p.stderr or "").strip() or "(응답 없음)"
-        return out
-    except subprocess.TimeoutExpired:
-        return "⏱️ 시간 초과(20분) — 작업이 길면 터미널에서 이어서 확인 필요"
-    except FileNotFoundError:
-        return f"❌ {agent} CLI 를 찾을 수 없음"
+        body = json.loads((exc.read() or b"{}").decode("utf-8", errors="replace"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(body, dict):
+        return False
+    evidence = " ".join(str(body.get(key) or "") for key in ("message", "details", "hint"))
+    return body.get("code") == "23505" and "jobs_discord_idempotency_key_uidx" in evidence
 
 
-def _run_claude(prompt: str) -> str:
-    return _run_agent("claude", prompt)
+def enqueue_owner_message(
+    message: dict,
+    *,
+    queue: JobQueueClient,
+    machine: str,
+) -> dict[str, object]:
+    """Re-authenticate one DM and enqueue it exactly once; never execute a model."""
+    author_id = str((message.get("author") or {}).get("id") or "")
+    if author_id != OWNER_ID:
+        raise PermissionError("owner Discord ID가 아닙니다")
+    channel_id = message.get("channel_id")
+    if not isinstance(channel_id, str) or channel_id != DM_CHANNEL:
+        raise PermissionError("owner DM 채널이 아닙니다")
+    raw = message.get("content")
+    agent, approved_request = select_agent_and_prompt(raw)
+    payload = new_owner_agent_job_payload(
+        machine=machine,
+        guild_id="@me",
+        channel_id=channel_id,
+        message_id=str(message.get("id") or ""),
+        request_text=approved_request,
+        agent=agent,
+        requested_by=f"{OWNER_ID}:owner",
+        verified_role="owner",
+        execution_mode="workspace_write",
+    )
+    if payload is None:
+        raise ValueError("Discord owner agent 작업 계약 위반")
+    try:
+        row = queue.enqueue(payload)
+    except urllib.error.HTTPError as exc:
+        if _is_idempotency_conflict(exc):
+            return {"status": "duplicate", "job_id": None, "agent": agent}
+        raise
+    job_id = row.get("id") if isinstance(row, dict) else None
+    if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+        raise ValueError("큐가 유효한 작업 번호를 반환하지 않았습니다")
+    return {"status": "queued", "job_id": job_id, "agent": agent}
 
 
 LOCK = Path.home() / ".valuehire" / "discord_cmd_bridge.lock"
 
 
-def main() -> None:
+def main(*, queue: JobQueueClient | None = None, machine: str = "") -> None:
     if not acquire_single_instance_lock(LOCK, os.getpid()):
         print("이미 다른 리스너가 실행 중 — 종료(중복 실행 금지)", flush=True)
         return
+    selected_machine = machine or (os.environ.get("VALUEHIRE_MACHINE") or "")
+    if not is_valid_machine_id(selected_machine):
+        raise RuntimeError("VALUEHIRE_MACHINE이 필요합니다")
+    job_queue = queue if queue is not None else JobQueueClient()
     last = _load_last()
     # 시작 시 과거 대화 재실행 방지: last=0 이면 현재 최신 id 로 초기화
     if last == "0":
@@ -187,7 +226,7 @@ def main() -> None:
         if msgs:
             last = msgs[0]["id"]
         _save_last(last)
-    _send("🤖 디스코드 명령 다리 시작 — 이 DM에 지시를 쓰시면 Claude가 실행하고 회신합니다. (\"봇 정지\"로 중단)")
+    _send("디스코드 작업 접수기 시작 — 이 DM의 새 지시를 영속 대기열에 등록합니다. (\"봇 정지\"로 중단)")
     while True:
         try:
             msgs = _api("GET", f"/channels/{DM_CHANNEL}/messages?after={last}&limit=50")
@@ -203,13 +242,14 @@ def main() -> None:
                     _save_last(m["id"])
                     _send("🛑 명령 다리 정지합니다.")
                     return
-                agent, prompt = select_agent_and_prompt(raw)
-                _send(f"⏳ 접수({agent}): {content[:120]} — 실행 중…")
-                result = _run_agent(agent, prompt)
-                _send(f"✅ 결과:\n{result[:5500]}")
-                # V1(Codex): 실행 *완료 후* 저장 — 중간에 죽으면 재실행(유실 금지, at-least-once)
+                result = enqueue_owner_message(
+                    m, queue=job_queue, machine=selected_machine)
                 last = m["id"]
                 _save_last(last)
+                if result["status"] == "duplicate":
+                    _send(f"이미 접수({result['agent']})된 Discord 작업입니다.")
+                else:
+                    _send(f"접수({result['agent']}) 완료 — 작업 #{result['job_id']}")
         except Exception as e:  # noqa: BLE001
             print(f"loop error: {e}", flush=True)
             time.sleep(30)

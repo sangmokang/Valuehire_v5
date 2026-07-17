@@ -70,16 +70,19 @@ def _job(**over):
     return j
 
 
-def _agent_job(*, request_text="jdbuilder 스킬로 초안을 만들어줘", **over):
+def _agent_job(
+    *, request_text="jdbuilder 스킬로 초안을 만들어줘",
+    agent="codex", execution_mode="workspace_write", **over,
+):
     from tools.multi_position_sourcing.job_queue import new_owner_agent_job_payload
     payload = new_owner_agent_job_payload(
         machine="macmini", guild_id="@me",
         channel_id="876543210987654321", message_id="765432109876543210",
-        request_text=request_text, agent="codex",
+        request_text=request_text, agent=agent, execution_mode=execution_mode,
         requested_by="814353841088757800:owner", verified_role="owner",
     )
     assert payload is not None
-    job = {"id": 71, **payload}
+    job = {"id": 71, **payload, "status": "running"}
     job.update(over)
     return job
 
@@ -217,6 +220,18 @@ def test_owner_agent_prompt_rejects_tampered_envelope(key, value) -> None:
         build_owner_agent_prompt(job)
 
 
+@pytest.mark.parametrize("mutation", [
+    {"account_key": None},
+    {"account_key": "portal:other"},
+    {"status": "queued"},
+])
+def test_owner_agent_prompt_rejects_claim_or_lock_normalization(mutation) -> None:
+    job = _agent_job()
+    job.update(mutation)
+    with pytest.raises(ValueError, match="승인|계약|잠금"):
+        build_owner_agent_prompt(job)
+
+
 def test_owner_agent_skill_sync_requires_and_mirrors_both_repo_versions(tmp_path) -> None:
     v5, v4, dest = tmp_path / "v5", tmp_path / "v4", tmp_path / "dest"
     for root, rel, name in (
@@ -226,12 +241,21 @@ def test_owner_agent_skill_sync_requires_and_mirrors_both_repo_versions(tmp_path
         skill = root / rel
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(f"---\nname: {name}\ndescription: test\n---\n")
-    result = sync_owner_agent_skills(repo_root=v5, v4_root=v4, dest=dest)
+    result = sync_owner_agent_skills(
+        repo_root=v5, v4_root=v4, dest=dest, home=tmp_path / "empty-home")
     assert set(result["copied"]) == {"v5-skill", "jdbuilder"}
     assert (dest / "v5-skill/SKILL.md").is_file()
     assert (dest / "jdbuilder/SKILL.md").is_file()
     with pytest.raises(RuntimeError, match="v4"):
-        sync_owner_agent_skills(repo_root=v5, v4_root=tmp_path / "missing", dest=dest)
+        sync_owner_agent_skills(
+            repo_root=v5, v4_root=tmp_path / "missing", dest=dest,
+            home=tmp_path / "empty-home")
+    empty_v4 = tmp_path / "empty-v4"
+    (empty_v4 / ".codex/skills").mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="v4"):
+        sync_owner_agent_skills(
+            repo_root=v5, v4_root=empty_v4, dest=dest,
+            home=tmp_path / "empty-home")
 
 
 def test_codex_exec_args_are_bounded_and_use_both_work_roots(tmp_path) -> None:
@@ -252,8 +276,35 @@ def test_codex_exec_args_are_bounded_and_use_both_work_roots(tmp_path) -> None:
     read_only = build_codex_exec_args({"VALUEHIRE_AGENT_EXECUTION_MODE": "read_only"})
     assert read_only[read_only.index("--sandbox") + 1] == "read-only"
     assert "sandbox_workspace_write.network_access=true" not in read_only
-    with pytest.raises(ValueError):
-        build_codex_exec_args({"VALUEHIRE_AGENT_EXECUTION_MODE": "danger-full-access"})
+    for invalid in (None, "", "read-only", "workspace-write", "danger-full-access", " workspace_write"):
+        with pytest.raises(ValueError):
+            build_codex_exec_args({"VALUEHIRE_AGENT_EXECUTION_MODE": invalid})  # type: ignore[dict-item]
+
+
+def test_codex_runner_rejects_non_codex_executable_before_subprocess(monkeypatch) -> None:
+    from tools.multi_position_sourcing import fleet_worker as fw
+    monkeypatch.setattr(
+        fw.subprocess, "run",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("subprocess called")),
+    )
+    with pytest.raises(ValueError, match="Codex"):
+        fw._run_codex(
+            "hello", timeout=10,
+            env={"VALUEHIRE_CODEX_BIN": "/bin/echo",
+                 "VALUEHIRE_AGENT_EXECUTION_MODE": "read_only"},
+        )
+
+
+def test_codex_args_reject_windows_metacharacters_in_v4_path(monkeypatch, tmp_path) -> None:
+    from tools.multi_position_sourcing import fleet_worker as fw
+    v4 = tmp_path / "v4&unsafe"; v4.mkdir()
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    with pytest.raises(ValueError, match="Windows"):
+        build_codex_exec_args({
+            "VALUEHIRE_AGENT_EXECUTION_MODE": "workspace_write",
+            "VALUEHIRE_OWNER_AGENT_JOB": "1",
+            "VALUEHIRE_V4_REPO": str(v4),
+        })
 
 
 def test_new_job_payload_blocks_injection_at_queue_gate():
@@ -676,6 +727,71 @@ def test_timeout_error_names_selected_agent(monkeypatch):
     err = q.released[0][3]
     assert "타임아웃" in err and "claude" not in err
     assert "codex" in err
+
+
+def test_owner_agent_claude_override_uses_v4_dir_and_stdin(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    v4 = tmp_path / "v4"; v4.mkdir()
+    monkeypatch.setenv("VALUEHIRE_V4_REPO", str(v4))
+    captured = {}
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["input"] = kwargs.get("input")
+        return SimpleNamespace(stdout="완료", stderr="", returncode=0)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    q = FakeQueue(_agent_job(agent="claude"))
+    worker = FleetWorker(
+        machine="macmini", queue=q, skill_sync=lambda: {"copied": ["jdbuilder"]},
+        notifier=lambda job, text: None,
+    )
+    assert worker.run_once() == "done"
+    assert captured["cmd"][:2] == ["claude", "--add-dir"]
+    assert captured["cmd"][2] == str(v4) and captured["cmd"][-1] == "-p"
+    mode_index = captured["cmd"].index("--permission-mode")
+    assert captured["cmd"][mode_index + 1] == "acceptEdits"
+    assert "jdbuilder" in captured["input"]
+    assert "bypassPermissions" not in captured["cmd"]
+
+
+def test_owner_agent_claude_read_only_uses_plan_mode(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    v4 = tmp_path / "v4"; v4.mkdir()
+    monkeypatch.setenv("VALUEHIRE_V4_REPO", str(v4))
+    captured = {}
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(stdout="검토 완료", stderr="", returncode=0)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    q = FakeQueue(_agent_job(agent="claude", execution_mode="read_only"))
+    worker = FleetWorker(
+        machine="macmini", queue=q, skill_sync=lambda: {"copied": ["jdbuilder"]},
+        notifier=lambda job, text: None,
+    )
+    assert worker.run_once() == "done"
+    index = captured["cmd"].index("--permission-mode")
+    assert captured["cmd"][index + 1] == "plan"
+
+
+def test_owner_agent_codex_failure_never_falls_back_to_claude(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    v4 = tmp_path / "v4"; v4.mkdir()
+    monkeypatch.setenv("VALUEHIRE_V4_REPO", str(v4))
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("input")))
+        return SimpleNamespace(stdout="", stderr="codex failed", returncode=1)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    q = FakeQueue(_agent_job(agent="codex"))
+    worker = FleetWorker(
+        machine="macmini", queue=q, skill_sync=lambda: {"copied": ["jdbuilder"]},
+        notifier=lambda job, text: None,
+    )
+    assert worker.run_once() == "failed"
+    assert len(calls) == 1 and calls[0][0][0] == "codex"
+    assert calls[0][0][-1] == "-" and "jdbuilder" in calls[0][1]
 
 
 # ── 이슈 E(2026-07-15 goal §6, 사장님 라벨 승인) — 자동화 사용중 배지 env 주입 ──

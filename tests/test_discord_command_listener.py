@@ -181,6 +181,18 @@ def test_enqueue_owner_message_reauthenticates_author_and_rejects_blank_prefix()
     assert queue.payloads == []
 
 
+def test_enqueue_owner_message_requires_explicit_owner_dm_channel() -> None:
+    import pytest
+    for channel in (None, "", "111111111111111111"):
+        message = _owner_message()
+        if channel is None:
+            message.pop("channel_id")
+        else:
+            message["channel_id"] = channel
+        with pytest.raises(PermissionError):
+            enqueue_owner_message(message, queue=_FakeQueue(), machine="macmini")
+
+
 def test_duplicate_message_conflict_is_acknowledged_without_second_execution() -> None:
     conflict = HTTPError(
         "https://db/jobs", 409, "Conflict", None,
@@ -201,6 +213,9 @@ def test_unrelated_http_409_is_not_misreported_as_duplicate() -> None:
     )
     with pytest.raises(HTTPError):
         enqueue_owner_message(_owner_message(), queue=_FakeQueue(conflict), machine="macmini")
+    non_object = HTTPError("https://db/jobs", 409, "Conflict", None, BytesIO(b"[]"))
+    with pytest.raises(HTTPError):
+        enqueue_owner_message(_owner_message(), queue=_FakeQueue(non_object), machine="macmini")
 
 
 def test_listener_has_no_direct_model_subprocess_path() -> None:
@@ -235,3 +250,12 @@ def test_main_loop_enqueues_then_advances_message_state(monkeypatch) -> None:
     assert queue.payloads[0]["params"]["agent"] == "codex"
     assert saved == ["765432109876543210", "765432109876543211"]
     assert any("접수(codex)" in s and "#501" in s for s in sent)
+
+
+def test_main_requires_explicit_valid_machine(monkeypatch) -> None:
+    import pytest
+    from scripts import discord_command_listener as dcl
+    monkeypatch.setattr(dcl, "acquire_single_instance_lock", lambda *a: True)
+    monkeypatch.delenv("VALUEHIRE_MACHINE", raising=False)
+    with pytest.raises(RuntimeError, match="VALUEHIRE_MACHINE"):
+        dcl.main(queue=_FakeQueue())
