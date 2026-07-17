@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.codex_skill_sync.sync import sync_skills
+from tools.codex_skill_sync.sync import default_sources, sync_skills
 
 
 def _make_skill(root: Path, name: str, body: str = "hello") -> Path:
@@ -158,3 +158,38 @@ def test_source_symlink_loop_does_not_crash(tmp_path):
     # 링크 자체를 dest 로 옮기지 않는다(옮기면 Codex 가 그 폴더를 훑을 때 같은 무한루프에 빠짐)
     assert not (dest / "loopskill" / "loop").exists()
     assert not (dest / "loopskill" / "loop" / "loop").exists()
+
+
+def test_default_sources_cover_v5_v4_and_keep_global_as_fallback(tmp_path):
+    v5 = tmp_path / "valuehire_v5"
+    v4 = tmp_path / "valuehire_v4"
+    home = tmp_path / "home"
+
+    assert default_sources(v5, v4_root=v4, home=home) == [
+        v5 / "skills",
+        v5 / ".claude" / "skills",
+        v4 / ".codex" / "skills",
+        v4 / ".claude" / "skills",
+        v4 / "tools",
+        home / ".claude" / "skills",
+    ]
+
+
+def test_v4_jdbuilder_is_discovered_with_v5_precedence_and_provenance(tmp_path):
+    v5 = tmp_path / "valuehire_v5"
+    v4 = tmp_path / "valuehire_v4"
+    home = tmp_path / "home"
+    dest = tmp_path / "codex"
+    _make_skill(v5 / "skills", "shared", body="V5")
+    _make_skill(v4 / ".codex" / "skills", "shared", body="V4")
+    _make_skill(v4 / ".codex" / "skills", "jdbuilder", body="V4 JD")
+    _make_skill(home / ".claude" / "skills", "shared", body="GLOBAL")
+
+    res = sync_skills(
+        default_sources(v5, v4_root=v4, home=home), dest, dry_run=True)
+
+    assert {"shared", "jdbuilder"} <= set(res["copied"])
+    assert res["provenance"]["shared"] == str(v5 / "skills" / "shared")
+    assert res["provenance"]["jdbuilder"] == str(
+        v4 / ".codex" / "skills" / "jdbuilder")
+    assert not dest.exists()
