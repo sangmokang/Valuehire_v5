@@ -124,16 +124,11 @@ def _looks_like_ip_literal_host(host: str) -> bool:
     """호스트가 '진짜 도메인'이 아니라 IP 를 흉내낸 숫자 표기인지 — DNS 없이 판정.
 
     실도메인의 최상위 라벨(TLD)은 항상 알파벳으로 끝난다. 따라서 마지막 라벨이 순수 숫자
-    이거나(예: 010.0.0.1, 127.1), 호스트 전체가 십진 정수(예: 2130706433)이거나, 0x·0o
+    이거나(예: 010.0.0.1, 127.1, 그리고 점 없는 십진 정수 2130706433=127.0.0.1) 0x·0o
     같은 진법 접두를 쓰면 IP 흉내 표기로 본다 — ipaddress 가 표준 표기만 파싱하는 틈으로
     십진/8진/16진 loopback 이 새는 것을 1단에서 막는다(V1-F5, 방어심층)."""
-    if host.isdigit():                    # 순수 십진 정수형 IP (2130706433 = 127.0.0.1)
-        return True
-    labels = host.split(".")
-    last = labels[-1]
-    if last and (last.isdigit() or last.startswith(("0x", "0o"))):
-        return True
-    return False
+    last = host.split(".")[-1]
+    return bool(last) and (last.isdigit() or last.startswith(("0x", "0o")))
 
 
 def _host_forbidden_literal(host: str) -> bool:
