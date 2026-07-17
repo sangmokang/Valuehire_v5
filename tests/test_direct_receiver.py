@@ -46,10 +46,14 @@ _BANNED_NAMES = frozenset({
     "__import__", "eval", "exec", "compile", "getattr", "globals", "vars", "__loader__",
 })
 # 속성 접근(x.method)으로 나타나면 안 되는 위험 메서드 — 표준 안전 메서드
-# (re.compile 등)와 겹치지 않는 실행·동적로딩 전용 이름만.
+# (re.compile 등)와 겹치지 않는 실행·동적로딩 전용 이름 + introspection 탈출 도구.
+# 후자(__dict__/__builtins__/__subclasses__ 등)는 허용 모듈 내부를 뒤져 __import__ 를
+# 꺼내는 우회(V1 4차)를 막는다 — 정상 코드는 이 던더들을 만질 이유가 없다.
 _BANNED_ATTRS = frozenset({
     "system", "popen", "Popen", "spawn", "import_module", "__import__", "check_output",
     "call", "run", "getoutput",
+    "__dict__", "__builtins__", "__globals__", "__class__", "__subclasses__",
+    "__bases__", "__mro__", "__loader__", "__getattribute__",
 })
 
 
@@ -67,7 +71,9 @@ def execution_primitive_violations(source: str) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] not in _ALLOWED_ABSOLUTE_IMPORTS:
+                # 하위 모듈(re._compiler 등)은 정확한 전체 이름이 허용목록에 있어야
+                # 통과 — 허용 최상위 이름 뒤에 점을 붙인 우회(V1 4차)를 막는다.
+                if alias.name not in _ALLOWED_ABSOLUTE_IMPORTS:
                     violations.append(f"import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             if node.level:  # 상대 import: 레벨 1 + 정확한 모듈명만(하위 경로 금지)
@@ -405,6 +411,9 @@ class V1SealTests(unittest.TestCase):
             "deep_relative": "from ..other.thing import y\n",
             "getattr_reach": "import os\ng = getattr(os, 'sys'+'tem')\n",
             "eval_call": "y = eval('1+1')\n",
+            "dunder_dig_dict": "imp = re.__dict__['__buil'+'tins__']['__imp'+'ort__']\n",
+            "submodule_of_allowed": "import re._compiler\n",
+            "subclasses_escape": "obj = ().__class__.__bases__[0].__subclasses__()\n",
         }
         for name, src in bypasses.items():
             self.assertNotEqual(
