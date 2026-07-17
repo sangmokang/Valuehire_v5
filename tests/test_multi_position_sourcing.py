@@ -11614,7 +11614,8 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(kwargs["headless"])
         self.assertEqual(kwargs["args"], ["--disable-blink-features=AutomationControlled"])
         self.assertNotIn("storage_state", kwargs)
-        self.assertTrue(context.closed)
+        # SOT-28 §4 세션 상시 유지(TODO-2): stop() 은 로그인 세션이 담긴 context 를 닫지 않는다.
+        self.assertFalse(context.closed)
         self.assertEqual(context.pages[-1].filled, [('input[name="searchword"]', "backend")])
         self.assertEqual(context.pages[-1].clicked, ['button[name="search"]'])
 
@@ -11777,11 +11778,13 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await worker.stop()
 
-    async def test_portal_worker_stop_ignores_context_close_failure_and_releases_lock(self) -> None:
+    async def test_portal_worker_stop_preserves_context_and_releases_lock_even_when_manager_close_fails(self) -> None:
+        # SOT-28 §4(TODO-2): stop() 은 context.close() 를 아예 부르지 않는다(세션 보존).
+        # close 가 불리면 RuntimeError 로 즉시 들통나는 카나리아 context 를 쓴다.
         class CloseFailingContext(FakeContext):
             async def close(self) -> None:
                 self.closed = True
-                raise RuntimeError("context close failed with cookie-secret")
+                raise RuntimeError("context close must never be called by stop()")
 
         class CloseFailingPlaywrightManager:
             def __init__(self) -> None:
@@ -11807,7 +11810,8 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
             reacquired.release()
 
         self.assertEqual(result.status, "searched")
-        self.assertTrue(context.closed)
+        # 세션 보존: stop() 이 카나리아 context.close() 를 건드리지 않았다.
+        self.assertFalse(context.closed)
         self.assertTrue(manager.closed)
         self.assertIsNone(worker._playwright_manager)
 
