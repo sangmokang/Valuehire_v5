@@ -251,6 +251,88 @@ class SecretNonExposureTests(unittest.TestCase):
         self.assertNotIn("SECRET", combined, "raw 예외 원문이 어디에도 새면 안 된다")
 
 
+class V1SealTests(unittest.TestCase):
+    """Codex V1 반례 6건 봉인 (2026-07-18)."""
+
+    def test_parse_error_response_never_echoes_user_input(self) -> None:
+        # C2: 형식 오류 응답에 사용자 입력 원문(비밀 모양·멘션 폭탄) 에코 금지(INV-D5).
+        queue = FakeQueue()
+        result = handle_envelope(
+            _dm_envelope(raw_args='url:"sk-SECRET-999 @everyone'), queue=queue,
+            authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
+        )
+        self.assertIsNotNone(result["response"])
+        self.assertNotIn("sk-SECRET-999", result["response"])
+        self.assertNotIn("@everyone", result["response"])
+        self.assertLess(len(result["response"]), 300, "회신은 짧은 안내문이어야 한다")
+
+    def test_audit_callback_exception_never_kills_receiver(self) -> None:
+        # C3: 감사 콜백이 죽어도 수신기는 죽지 않는다(fail-soft 감사, 처리 우선).
+        def broken_audit(event: dict) -> None:
+            raise RuntimeError("disk full")
+
+        queue = FakeQueue()
+        for env in (
+            _dm_envelope(),                                   # 성공 경로
+            _dm_envelope(STRANGER_ID),                        # 침묵 경로
+            _dm_envelope(raw_args='url:"unclosed'),           # 파싱 실패 경로
+        ):
+            result = handle_envelope(
+                env, queue=queue, authorized_users=AUTHORIZED,
+                config=DiscordAccessConfig(allow_dm=True), audit=broken_audit,
+            )
+            self.assertTrue(result["handled"])
+
+    def test_dm_flag_with_guild_context_is_inconsistent_and_silent(self) -> None:
+        # C4: is_dm=True 로 위조된 길드 이벤트가 길드 allowlist 를 우회하지 못한다.
+        queue = FakeQueue()
+        audit: list[dict] = []
+        result = handle_envelope(
+            DiscordEnvelope(
+                event_id="444444444444444444", user_id=MEMBER_ID,
+                channel_id="555555555555555555", guild_id="666666666666666666",
+                command="fleet-run", raw_args=CLICKUP_URL, is_dm=True,
+            ),
+            queue=queue, authorized_users=AUTHORIZED,
+            config=DiscordAccessConfig(allow_dm=True), audit=audit.append,
+        )
+        self.assertIsNone(result["response"])
+        self.assertEqual(queue.enqueued, [])
+        self.assertTrue(any(e.get("action") == "ignored_inconsistent" for e in audit))
+
+    def test_blank_event_id_fails_closed(self) -> None:
+        # C5: event_id 는 감사·멱등키의 뿌리 — snowflake 꼴 아니면 처리 자체를 거부.
+        queue = FakeQueue()
+        for bad in ("", "  ", "abc"):
+            result = handle_envelope(
+                _dm_envelope(event_id=bad), queue=queue,
+                authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
+            )
+            self.assertIsNone(result["response"], bad)
+        self.assertEqual(queue.enqueued, [])
+
+    def test_owner_only_parse_error_gives_member_owner_denial(self) -> None:
+        # C1: owner 전용 명령은 형식이 틀려도 비owner 에겐 정상 경로와 같은 안내
+        # (형식 오류 응답으로 경로별 판정이 갈라지지 않게 일관화).
+        queue = FakeQueue()
+        result = handle_envelope(
+            _dm_envelope(MEMBER_ID, command="fleet-cancel", raw_args='job:"broken'),
+            queue=queue, authorized_users=AUTHORIZED,
+            config=DiscordAccessConfig(allow_dm=True),
+        )
+        self.assertIsNotNone(result["response"])
+        self.assertIn("owner", result["response"])
+        self.assertNotIn("형식", result["response"], "형식 힌트로 경로가 갈라지면 안 된다")
+
+    def test_source_contract_no_execution_primitives(self) -> None:
+        # C6/INV-D1: 수신기 소스에 실행 원시요소가 아예 없어야 한다(enqueue-only 기계 강제).
+        import inspect
+        source = inspect.getsource(dr)
+        for banned in ("subprocess", "os.system", "Popen", "pexpect",
+                       "eval(", "exec(", "__import__"):
+            self.assertNotIn(banned, source, banned)
+
+
 class MemberOwnerBoundaryTests(unittest.TestCase):
     def test_member_owner_only_command_gets_polite_denial_not_silence(self) -> None:
         # 인가된 멤버가 owner 전용(fleet-cancel)을 부르면 — 신원은 믿으므로 침묵이 아니라 안내.
