@@ -110,6 +110,41 @@ def test_ipv6_scope_id_stripped_before_judgement() -> None:
         "https://positions.example.com/1", getaddrinfo=_resolver("fe80::1%en0"))
 
 
+# ── Codex V1 반례 봉인 (2026-07-18) ────────────────────────────────────
+
+def test_malformed_ipv6_url_is_fail_closed_not_exception() -> None:
+    # V1-F1: 잘못 닫힌 IPv6 URL 이 안전한 False 대신 ValueError 를 던지면 fail-closed 위반.
+    for bad in ("https://[::1/x", "https://[gggg::]/x", "http://[/"):
+        assert url_host_resolves_public(bad, getaddrinfo=_resolver("93.184.216.34")) is False, bad
+
+
+def test_site_local_ipv6_fec0_is_not_public() -> None:
+    # V1-F2: fec0::/10 site-local 은 (deprecated 라도) 내부망 — ipaddress.is_global 이
+    # True 로 오판하므로 명시 차단해야 한다. ULA(fc00::/7)·link-local 도 함께 봉인.
+    for internal in ("fec0::1", "fec0:0:0:1::5", "fc00::1", "fd12:3456::1", "fe80::1"):
+        assert not url_host_resolves_public(
+            "https://positions.example.com/1", getaddrinfo=_resolver(internal)), internal
+
+
+def test_public_ipv6_still_accepted_via_real_sockaddr_shape() -> None:
+    # 공인 IPv6 는 4-튜플 sockaddr(AF_INET6) 형상으로 와도 통과해야 한다.
+    def v6_resolver(host, port, *a, **k):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700:4700::1111", 0, 0, 0))]
+    assert url_host_resolves_public("https://positions.example.com/1", getaddrinfo=v6_resolver)
+
+
+@pytest.mark.parametrize("url", [
+    "http://2130706433/x",       # decimal 정수형 = 127.0.0.1
+    "http://0177.0.0.1/x",       # 8진 선행 0 = 127.0.0.1
+    "http://0x7f.0.0.1/x",       # 16진 옥텟
+    "http://127.1/x",            # 축약형 = 127.0.0.1
+    "http://010.0.0.1/x",        # 8진 = 8.0.0.1(공인이지만 표기 자체가 기만적)
+])
+def test_numeric_ip_lookalike_hosts_rejected_at_stage1(url: str) -> None:
+    # V1-F5: 십진/8진/16진 IP 기만 표기는 DNS 없이도 1단에서 거부(방어심층).
+    assert new_job_payload(**_kwargs(url)) is None, url
+
+
 # ── 배선(R4): enqueue 가 POST 직전 DNS 검사를 강제 ────────────────────
 
 def _client(resolver) -> JobQueueClient:
