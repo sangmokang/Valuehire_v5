@@ -6,9 +6,15 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+from io import BytesIO
+from urllib.error import HTTPError
+
 from scripts.discord_command_listener import (
+    DM_CHANNEL,
     OWNER_ID,
     chunk_reply,
+    enqueue_owner_message,
     is_kill_command,
     select_agent_and_prompt,
     select_new_commands,
@@ -86,75 +92,170 @@ def test_d1_v1_state_saved_atomically(tmp_path) -> None:
 
 
 # ── 이슈 F(2026-07-15 사장님 지시) — Discord DM = 쉘 프론트엔드, codex 선택지 ──
-def test_f_default_agent_is_claude_verbatim() -> None:
-    """접두어 없으면 agent=claude, 프롬프트는 원문 그대로(1바이트도 재구성 안 함)."""
+def test_f_default_agent_is_codex_verbatim() -> None:
+    """접두어 없으면 agent=codex, 프롬프트는 원문 그대로다."""
     agent, prompt = select_agent_and_prompt("찾아줘 이 링크")
-    assert agent == "claude"
+    assert agent == "codex"
     assert prompt == "찾아줘 이 링크"
 
 
-def test_f_codex_prefix_switches_agent_and_strips_prefix() -> None:
-    agent, prompt = select_agent_and_prompt("codex: 이 버그 고쳐줘 foo.py 43번째 줄")
+def test_f_codex_prefix_switches_agent_and_preserves_raw_approval() -> None:
+    raw = "codex: 이 버그 고쳐줘 foo.py 43번째 줄"
+    agent, prompt = select_agent_and_prompt(raw)
     assert agent == "codex"
-    assert prompt == "이 버그 고쳐줘 foo.py 43번째 줄"
+    assert prompt == raw
 
 
 def test_f_codex_prefix_case_and_whitespace_insensitive() -> None:
-    agent, prompt = select_agent_and_prompt("Codex:   fix bug")
+    raw = "Codex:   fix bug"
+    agent, prompt = select_agent_and_prompt(raw)
     assert agent == "codex"
-    assert prompt == "fix bug"
+    assert prompt == raw
+
+
+def test_f_claude_prefix_switches_agent_and_preserves_raw_approval() -> None:
+    raw = "  Claude:  jdbuilder로 초안 만들어줘  "
+    agent, prompt = select_agent_and_prompt(raw)
+    assert agent == "claude"
+    assert prompt == raw
 
 
 def test_f_codex_word_mid_sentence_does_not_trigger() -> None:
-    """접두어가 아니라 문장 중간의 'codex'/'코덱스'는 오탐 안 됨 — 기본 claude, verbatim 유지."""
+    """문장 중간의 'codex'/'코덱스'는 오탐 안 됨 — 기본 codex, verbatim 유지."""
     agent, prompt = select_agent_and_prompt("이거 코덱스 얘기인데 찾아줘")
-    assert agent == "claude"
+    assert agent == "codex"
     assert prompt == "이거 코덱스 얘기인데 찾아줘"
 
 
-def test_f_run_agent_dispatches_correct_subprocess_command(monkeypatch) -> None:
-    from scripts import discord_command_listener as dcl
+class _FakeQueue:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.payloads: list[dict] = []
+        self.error = error
 
-    captured: dict[str, list[str]] = {}
-
-    class _FakeCompleted:
-        stdout = "ok"
-        stderr = ""
-
-    def _fake_run(cmd, **kwargs):
-        captured["cmd"] = cmd
-        return _FakeCompleted()
-
-    monkeypatch.setattr(dcl.subprocess, "run", _fake_run)
-    dcl._run_agent("claude", "hello")
-    assert captured["cmd"] == ["claude", "-p", "hello"]
-    dcl._run_agent("codex", "hello")
-    assert captured["cmd"] == ["codex", "exec", "hello"]
+    def enqueue(self, payload: dict) -> dict:
+        self.payloads.append(payload)
+        if self.error:
+            raise self.error
+        return {"id": 501, **payload}
 
 
-def test_f_v1_main_loop_verbatim_prompt_and_agent_tag(monkeypatch) -> None:
-    """V1(Codex) 반증 수용 — main 루프가 프롬프트를 바깥 공백까지 그대로 전달하고,
-    접수 메시지에 선택된 agent(claude 포함)를 표시한다."""
-    from types import SimpleNamespace
+def _owner_message(content: str = "jdbuilder로 초안 만들어줘") -> dict:
+    return {
+        "id": "765432109876543210",
+        "channel_id": DM_CHANNEL,
+        "author": {"id": OWNER_ID, "username": "사장님"},
+        "content": content,
+    }
 
+
+def test_owner_message_enqueues_one_durable_codex_job() -> None:
+    queue = _FakeQueue()
+    result = enqueue_owner_message(_owner_message(), queue=queue, machine="macmini")
+    assert result == {"status": "queued", "job_id": 501, "agent": "codex"}
+    assert len(queue.payloads) == 1
+    row = queue.payloads[0]
+    assert row["skill"] == "agent" and row["role"] == "owner"
+    assert row["params"]["request_text"] == "jdbuilder로 초안 만들어줘"
+    assert row["params"]["agent"] == "codex"
+    assert row["params"]["approval_id"] == "discord:765432109876543210"
+
+
+def test_owner_message_claude_override_is_bound_before_enqueue() -> None:
+    queue = _FakeQueue()
+    result = enqueue_owner_message(
+        _owner_message("claude:  url 스킬로 준비해줘"), queue=queue, machine="macmini")
+    assert result["agent"] == "claude"
+    assert queue.payloads[0]["params"]["request_text"] == "claude:  url 스킬로 준비해줘"
+    assert queue.payloads[0]["params"]["agent"] == "claude"
+
+
+def test_enqueue_owner_message_reauthenticates_author_and_rejects_blank_prefix() -> None:
+    queue = _FakeQueue()
+    other = _owner_message()
+    other["author"] = {"id": "111111111111111111", "username": "member"}
+    import pytest
+    with pytest.raises(PermissionError):
+        enqueue_owner_message(other, queue=queue, machine="macmini")
+    with pytest.raises(ValueError):
+        enqueue_owner_message(_owner_message("claude:   "), queue=queue, machine="macmini")
+    assert queue.payloads == []
+
+
+def test_enqueue_owner_message_requires_explicit_owner_dm_channel() -> None:
+    import pytest
+    for channel in (None, "", "111111111111111111"):
+        message = _owner_message()
+        if channel is None:
+            message.pop("channel_id")
+        else:
+            message["channel_id"] = channel
+        with pytest.raises(PermissionError):
+            enqueue_owner_message(message, queue=_FakeQueue(), machine="macmini")
+
+
+def test_duplicate_message_conflict_is_acknowledged_without_second_execution() -> None:
+    conflict = HTTPError(
+        "https://db/jobs", 409, "Conflict", None,
+        BytesIO(b'{"code":"23505","message":"duplicate key value violates unique constraint '
+                b'\\"jobs_discord_idempotency_key_uidx\\""}'),
+    )
+    queue = _FakeQueue(conflict)
+    result = enqueue_owner_message(_owner_message(), queue=queue, machine="macmini")
+    assert result == {"status": "duplicate", "job_id": None, "agent": "codex"}
+    assert len(queue.payloads) == 1
+
+
+def test_unrelated_http_409_is_not_misreported_as_duplicate() -> None:
+    import pytest
+    conflict = HTTPError(
+        "https://db/jobs", 409, "Conflict", None,
+        BytesIO(b'{"code":"23503","message":"foreign key conflict"}'),
+    )
+    with pytest.raises(HTTPError):
+        enqueue_owner_message(_owner_message(), queue=_FakeQueue(conflict), machine="macmini")
+    non_object = HTTPError("https://db/jobs", 409, "Conflict", None, BytesIO(b"[]"))
+    with pytest.raises(HTTPError):
+        enqueue_owner_message(_owner_message(), queue=_FakeQueue(non_object), machine="macmini")
+
+
+def test_listener_has_no_direct_model_subprocess_path() -> None:
+    source = (Path(__file__).resolve().parents[1]
+              / "scripts/discord_command_listener.py").read_text(encoding="utf-8")
+    assert "subprocess.run" not in source
+    assert "def _run_agent" not in source
+
+
+def test_main_loop_enqueues_then_advances_message_state(monkeypatch) -> None:
+    """수신기는 모델을 부르지 않고 큐 접수 성공 뒤에만 메시지 상태를 전진한다."""
     from scripts import discord_command_listener as dcl
 
     raw = "  keep  internal  \nformatting  "
     sent: list[str] = []
-    argv: list[list[str]] = []
+    saved: list[str] = []
+    queue = _FakeQueue()
     msgs = [
-        {"id": "101", "author": {"id": dcl.OWNER_ID}, "content": raw},
-        {"id": "102", "author": {"id": dcl.OWNER_ID}, "content": "봇 정지"},
+        {"id": "765432109876543210", "channel_id": dcl.DM_CHANNEL,
+         "author": {"id": dcl.OWNER_ID}, "content": raw},
+        {"id": "765432109876543211", "channel_id": dcl.DM_CHANNEL,
+         "author": {"id": dcl.OWNER_ID}, "content": "봇 정지"},
     ]
     monkeypatch.setattr(dcl, "acquire_single_instance_lock", lambda *a: True)
-    monkeypatch.setattr(dcl, "_load_last", lambda: "100")
+    monkeypatch.setattr(dcl, "_load_last", lambda: "765432109876543209")
     monkeypatch.setattr(dcl, "_api", lambda *a, **k: msgs)
     monkeypatch.setattr(dcl, "_send", sent.append)
-    monkeypatch.setattr(dcl, "_save_last", lambda _last: None)
-    monkeypatch.setattr(
-        dcl.subprocess, "run",
-        lambda cmd, **kw: (argv.append(cmd) or SimpleNamespace(stdout="ok", stderr="")),
-    )
-    dcl.main()
-    assert argv == [["claude", "-p", raw]]  # 원문 그대로 — 앞뒤 공백도 재구성 금지
-    assert any(s.startswith("⏳ 접수(claude):") for s in sent)
+    monkeypatch.setattr(dcl, "_save_last", saved.append)
+    dcl.main(queue=queue, machine="macmini")
+    assert len(queue.payloads) == 1
+    assert queue.payloads[0]["params"]["request_text"] == raw
+    assert queue.payloads[0]["params"]["agent"] == "codex"
+    assert saved == ["765432109876543210", "765432109876543211"]
+    assert any("접수(codex)" in s and "#501" in s for s in sent)
+
+
+def test_main_requires_explicit_valid_machine(monkeypatch) -> None:
+    import pytest
+    from scripts import discord_command_listener as dcl
+    monkeypatch.setattr(dcl, "acquire_single_instance_lock", lambda *a: True)
+    monkeypatch.delenv("VALUEHIRE_MACHINE", raising=False)
+    with pytest.raises(RuntimeError, match="VALUEHIRE_MACHINE"):
+        dcl.main(queue=_FakeQueue())

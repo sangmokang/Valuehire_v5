@@ -229,7 +229,10 @@ Discord DM/slash
 
 - 입력: 인증된 owner Discord message id, 원문, 실행 엔진, 머신.
 - 작업 형태: `skill=agent`, `role=owner`, `params.request_text`, `params.agent`,
-  `params.approval_id`, `params.prompt_sha256`, `params.idempotency_key`.
+  `params.approval_id`, `params.prompt_sha256`, `params.approval_sha256`,
+  `params.idempotency_key`, `params.execution_mode`.
+- `prompt_sha256`는 Discord 원문, `approval_sha256`는 원문·실행기·실행모드·승인번호를
+  길이 구분 형식으로 묶은 값이다. 둘 중 하나라도 다르면 실행하지 않는다.
 - 상태: `queued → running → done|failed|paused_for_human`; 같은 message id는 한 번만
   등록한다.
 - 완료 단언: member·빈 원문·과대 원문·변조된 hash는 거부하고, owner의 정상
@@ -239,6 +242,8 @@ Discord DM/slash
 
 - 입력: owner DM 자연어. 접두어 없으면 Codex, `claude:`는 Claude,
   `codex:`는 Codex로 실행한다.
+- 접두어는 실행기 선택에만 쓰며 승인·저장·실행 원문에서는 제거하지 않는다. 따라서
+  앞뒤 공백과 줄바꿈을 포함한 Discord 메시지 전체가 같은 해시로 끝까지 보존된다.
 - 수신기는 모델을 직접 부르지 않고 조각 B의 대기열에만 등록한다.
 - worker는 실행 직전 조각 A로 스킬을 동기화하고, v5를 기본 작업 루트로,
   v4를 추가 작업 루트로 제공한다. `danger-full-access`는 허용하지 않는다.
@@ -251,7 +256,7 @@ Discord DM/slash
 
 ```bash
 python3 -m pytest -q tests/test_codex_skill_sync.py
-python3 -m pytest -q tests/test_discord_agent_queue.py
+python3 -m pytest -q tests/test_job_queue.py
 python3 -m pytest -q tests/test_discord_command_listener.py tests/test_job_queue.py tests/test_fleet_worker.py
 ./verify.sh
 ```
@@ -259,3 +264,31 @@ python3 -m pytest -q tests/test_discord_command_listener.py tests/test_job_queue
 최종 판정 전에 생성자 자체 공격 1회, 독립 검토 2회를 실행해 총 3회의
 적대적 검증을 남긴다. 실제 Discord 봇 전환, Hermes 중지, 외부 등록·발송은
 자동 검사 범위 밖이다.
+
+## 13. 구현 진행 기록
+
+- 조각 A(`#136`, PR `#137`) 병합: v5·v4·사용자 전역의 57개 스킬 이름을 결정적
+  우선순위로 발견하며, 충돌 출처와 Codex 완전/부분 동작 분류를 남긴다.
+- 조각 B(`#138`, PR `#139`) 병합: owner 일반 작업을 기존 검색 allowlist와 분리하고,
+  Discord message id 중복 방지와 원문·실행기·실행모드 변조 검사를 Python·PostgreSQL
+  양쪽에 추가했다.
+- 조각 C(`#140`) 구현: 수신기의 직접 모델 호출을 제거하고 영속 큐 등록만 남겼다.
+  worker는 실행 전 승인 봉투를 재검증하고 v4·v5 스킬을 동기화한다. Codex는
+  `read-only|workspace-write`만 허용하며 v5 기본 루트와 v4 추가 루트를 사용한다.
+- 이 기록은 코드·자동검사 범위다. 현재 Hermes 중지, Discord 수신기/worker 재시작,
+  운영 데이터베이스 마이그레이션 적용, 실제 외부 등록·발송은 수행하지 않았다.
+
+## 14. 최종 검증 기록
+
+- 생성자 자체 반증: 승인 봉투 7종, 실행모드 비정상값 8종, 작성자·채널 위조 3종을
+  거부했다. 이 과정에서 빈 실행모드가 기본값으로 보정되던 결함 1건을 찾아 수정했다.
+- 독립 검토 1(Discord 수신기): 채널 번호 누락을 owner DM으로 보정하던 결함을 찾아
+  수정했다. 수정 후 관련 검사 169개와 동일 반례 재검토를 통과했다.
+- 독립 검토 2(worker): Codex 실행파일 위장, 빈 v4 스킬 소스, Claude 읽기 전용 모드
+  미적용, 잠금 키 누락 보정 4건을 찾아 수정했다. 수정 후 관련 검사 192개와 동일 반례
+  재검토를 통과했다.
+- 실제 v5·v4 소스를 임시 대상에 동기화해 54개 복사, 57개 이름 표현, 부분동작 12개,
+  누락 0개를 확인했다. 부분동작 스킬은 `claude:` 실행기를 명시할 수 있고, 필요한 도구가
+  없으면 성공으로 꾸미지 않고 차단 사유를 보고한다.
+- 최종 관련 검사 275개, 저장소 전체 검사 1,666개와 하위검사 102개가 통과했다.
+  예상된 미완성 표시 4개 외의 실패는 없다.
