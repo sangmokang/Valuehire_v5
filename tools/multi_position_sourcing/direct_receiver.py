@@ -33,7 +33,8 @@ from .discord_routing import (
     DiscordInvocation,
     route_discord_invocation,
 )
-from .fleet_dispatch import FLEET_COMMANDS, dispatch_fleet_command
+from .fleet_dispatch import FLEET_COMMANDS, dispatch_fleet_command, is_owner
+from . import fleet_dispatch as _fleet_dispatch
 from .hermes_fleet_bridge import HermesFleetBridgeError, parse_hermes_fleet_args
 
 _SNOWFLAKE_RE = re.compile(r"^[0-9]{15,22}$")
@@ -116,21 +117,34 @@ def handle_envelope(
     """
 
     def _audit(action: str, reason: str = "") -> None:
-        if audit is not None:
+        # V1 C3 봉인: 감사 저장 실패가 수신기를 죽이면 안 된다(fail-soft 감사 —
+        # 이벤트 처리·응답이 우선, 감사 유실은 다음 감사 채널이 감지할 문제).
+        if audit is None:
+            return
+        try:
             audit({
                 "at": clock(), "event_id": envelope.event_id,
                 "user_id": envelope.user_id, "command": envelope.command,
                 "guild_id": envelope.guild_id, "channel_id": envelope.channel_id,
                 "action": action, "reason": reason,
             })
+        except Exception:  # noqa: BLE001
+            pass
 
     def _silent(action: str, reason: str) -> dict[str, Any]:
         _audit(action, reason)
         return {"handled": True, "action": action, "response": None, "reason": reason}
 
-    # ① 신원 모양 검증 — snowflake 꼴이 아니면 사장님으로도 팀원으로도 간주하지 않는다.
+    # ① 신원·이벤트 모양 검증 — snowflake 꼴이 아니면 사장님으로도 팀원으로도
+    # 간주하지 않는다. event_id 는 감사·멱등키(조각 B)의 뿌리라 같은 기준(V1 C5).
     if not _SNOWFLAKE_RE.fullmatch(str(envelope.user_id or "").strip()):
         return _silent("ignored_identity", "user_id 가 snowflake 형식이 아님")
+    if not _SNOWFLAKE_RE.fullmatch(str(envelope.event_id or "").strip()):
+        return _silent("ignored_event", "event_id 가 snowflake 형식이 아님")
+    # V1 C4 봉인: DM 표식과 길드 컨텍스트가 동시에 오면 위조/게이트웨이 버그 신호 —
+    # DM 완화 규칙으로 길드 allowlist 를 우회하지 못하게 통째로 무시한다.
+    if envelope.is_dm and str(envelope.guild_id or "").strip():
+        return _silent("ignored_inconsistent", "is_dm 인데 guild_id 존재")
 
     invocation_context = dict(
         user_id=str(envelope.user_id).strip(),
@@ -138,23 +152,36 @@ def handle_envelope(
         is_dm=bool(envelope.is_dm),
         invocation_kind=DIRECT_INVOCATION_KIND,
         guild_id=str(envelope.guild_id or "").strip(),
-        member_role_ids=tuple(str(r) for r in envelope.role_ids),
+        # 역할도 snowflake 꼴만 통과 — 이상한 형식의 권한값을 조용히 걸러낸다(V1 C5).
+        member_role_ids=tuple(
+            str(r) for r in envelope.role_ids if _SNOWFLAKE_RE.fullmatch(str(r))),
     )
 
     # ② 단일 파싱(INV-D3) — 실패 시 인가자에게만 안내(비인가자는 침묵, INV-D6).
     try:
         options = parse_hermes_fleet_args(envelope.command, envelope.raw_args)
     except HermesFleetBridgeError as exc:
+        invocation = DiscordInvocation(
+            command_name=envelope.command, **invocation_context)
         decision = route_discord_invocation(
-            DiscordInvocation(command_name=envelope.command, **invocation_context),
-            authorized_users=authorized_users, config=config,
-        )
+            invocation, authorized_users=authorized_users, config=config)
         if not decision.allowed:
             return _silent("denied", decision.reason)
+        # V1 C1 봉인: owner 전용 명령은 형식이 틀려도 비owner 에겐 정상 경로
+        # (denied_owner_only)와 같은 안내 — 경로별 판정·응답이 갈라지지 않게.
+        if envelope.command in _fleet_dispatch._OWNER_ONLY and not is_owner(invocation):
+            _audit("denied_owner_only", str(exc))
+            return {
+                "handled": True, "action": "denied_owner_only",
+                "response": f"⛔ {envelope.command} 은 owner 전용입니다",
+                "reason": "owner 전용",
+            }
+        # V1 C2 봉인: 오류 상세(사용자 입력 에코 가능)는 감사에만 — 회신은 일반 안내문.
         _audit("parse_error", str(exc))
         return {
             "handled": True, "action": "parse_error",
-            "response": f"⚠️ 명령 형식 오류 — {exc}", "reason": str(exc),
+            "response": "⚠️ 명령 형식 오류 — 인자 형식을 확인해 주세요.",
+            "reason": str(exc),
         }
 
     # ③ 권한검사+등록 — 기존 dispatch_fleet_command 경유(권한검사는 이 안에서 1회).

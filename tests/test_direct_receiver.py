@@ -257,14 +257,21 @@ class V1SealTests(unittest.TestCase):
     def test_parse_error_response_never_echoes_user_input(self) -> None:
         # C2: 형식 오류 응답에 사용자 입력 원문(비밀 모양·멘션 폭탄) 에코 금지(INV-D5).
         queue = FakeQueue()
-        result = handle_envelope(
-            _dm_envelope(raw_args='url:"sk-SECRET-999 @everyone'), queue=queue,
-            authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
-        )
-        self.assertIsNotNone(result["response"])
-        self.assertNotIn("sk-SECRET-999", result["response"])
-        self.assertNotIn("@everyone", result["response"])
-        self.assertLess(len(result["response"]), 300, "회신은 짧은 안내문이어야 한다")
+        for raw in (
+            'url:"sk-SECRET-999 @everyone',   # 따옴표 오류(셸 파서 메시지)
+            "@everyone sk-SECRET-999",        # 맨 토큰 거부(토큰 repr 에코 경로)
+            "badfield:sk-SECRET-999",         # 허용 안 된 필드(키 에코 경로)
+        ):
+            result = handle_envelope(
+                _dm_envelope(raw_args=raw), queue=queue,
+                authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
+            )
+            self.assertIsNotNone(result["response"], raw)
+            self.assertNotIn("sk-SECRET-999", result["response"], raw)
+            self.assertNotIn("@everyone", result["response"], raw)
+            self.assertNotIn("badfield", result["response"], raw)
+            self.assertLess(len(result["response"]), 300, "회신은 짧은 안내문이어야 한다")
+        self.assertEqual(queue.enqueued, [])
 
     def test_audit_callback_exception_never_kills_receiver(self) -> None:
         # C3: 감사 콜백이 죽어도 수신기는 죽지 않는다(fail-soft 감사, 처리 우선).
