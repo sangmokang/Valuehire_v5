@@ -10,6 +10,8 @@
 - **워커**(PR #84): `tools/multi_position_sourcing/fleet_worker.py` — 자기 머신 큐를 폴링해
   `claude -p` 로 스킬 잡 실행, 캡차 시 `PAUSED_FOR_HUMAN`, 결과 한국어 Discord 보고.
 - **Discord 명령**(PR #85): `fleet-run`(멤버·owner) / `fleet-status` / `fleet-resume`·`fleet-cancel`(owner 전용).
+- **owner 일반 스킬 작업**(#138): 현재 Discord 메시지 원문을 `skill=agent` 잡 1건으로 보존한다.
+  실행기는 `codex`가 기본이고 `claude`를 명시할 수 있다. 멤버용 검색 작업과 별도 lane이다.
 - **heartbeat/watchdog**(단계 G): 1분 심장박동 + 5분 stale 경보(30분 억제).
 
 ## 2. 계정 ↔ 머신 1:1 바인딩 (가장 큰 안전장치)
@@ -51,7 +53,14 @@
 - `fleet-run` / `fleet-status`: 인가된 멤버·owner.
 - `fleet-resume` / `fleet-cancel`: **owner 전용**(사장님). owner 는 명시적 Discord ID(`OWNER_USER_IDS`,
   기본 814353841088757800)로 판정하며 멤버 연락처 목록과 분리한다.
-- **어떤 Discord 명령도 아웃리치 발송을 트리거하지 못한다**(SOT28 발송 게이트 유지). 큐엔 검색 스킬만.
+- 멤버·자동 실행 lane은 `humansearch`·`aisearch`·`url`만 허용하며 아웃리치 발송을 트리거하지
+  못한다(SOT28 발송 게이트 유지).
+- owner 일반 스킬 lane은 **사장님의 현재 메시지 한 건**만 승인 범위로 삼는다. `role=owner`,
+  `skill=agent`, `agent=codex|claude`, `approval_id=discord:<message_id>`, 원문 `prompt_sha256`,
+  원문·실행기·실행모드·승인번호를 묶은 `approval_sha256`, `idempotency_key=approval_id`를 함께
+  검증한다. 같은 메시지는 한 번만 등록하며, 멤버 요청·후속 자동
+  작업·원문 해시 불일치는 거부한다. 외부 발송이 적힌 경우에도 그 메시지에 명시된 대상·채널·횟수를
+  넓혀 해석할 수 없다.
 
 ## 6. 무중단 목표의 정직한 평가
 - 100% 무중단은 불가능(OS/Chrome 업데이트·재부팅·정전·맥북 발열/배터리·FileVault). 목표는

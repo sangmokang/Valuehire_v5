@@ -347,6 +347,7 @@ def _owner_agent_kwargs(**over):
         request_text="jdbuilder 스킬로 이 포지션 초안을 만들어줘",
         agent="codex",
         requested_by="814353841088757800:사장님",
+        verified_role="owner",
     )
     kw.update(over)
     return kw
@@ -363,12 +364,19 @@ def test_owner_agent_payload_preserves_approved_message_exactly():
         "876543210987654321/765432109876543210"
     )
     assert row["account_key"] == "portal:macmini"
+    approval = "discord:765432109876543210"
+    fields = (request, "codex", "workspace_write", approval)
+    material = b"".join(
+        str(len(value.encode("utf-8"))).encode("ascii") + b":" + value.encode("utf-8")
+        for value in fields
+    )
     assert row["params"] == {
         "request_text": request,
         "agent": "codex",
-        "approval_id": "discord:765432109876543210",
+        "approval_id": approval,
         "prompt_sha256": hashlib.sha256(request.encode("utf-8")).hexdigest(),
-        "idempotency_key": "discord:765432109876543210",
+        "approval_sha256": hashlib.sha256(material).hexdigest(),
+        "idempotency_key": approval,
         "execution_mode": "workspace_write",
     }
 
@@ -387,10 +395,14 @@ def test_owner_agent_payload_supports_dm_and_explicit_claude_read_only():
     ("channel_id", "123"),
     ("message_id", "76543210987654321x"),
     ("agent", "shell"),
+    ("agent", "broken-surrogate-\ud800"),
+    ("verified_role", "member"),
     ("execution_mode", "danger-full-access"),
+    ("execution_mode", "broken-surrogate-\ud800"),
     ("request_text", ""),
     ("request_text", "   \n"),
     ("request_text", "contains\x00nul"),
+    ("request_text", "broken-surrogate-\ud800"),
 ])
 def test_owner_agent_payload_rejects_invalid_boundary_values(field, value):
     assert new_owner_agent_job_payload(**_owner_agent_kwargs(**{field: value})) is None
@@ -419,6 +431,7 @@ def test_agent_skill_is_owner_only_and_contract_is_tamper_evident():
         ("idempotency_key", "discord:111111111111111111"),
         ("agent", "shell"),
         ("execution_mode", "danger-full-access"),
+        ("approval_sha256", "0" * 64),
     ):
         params = dict(good["params"], **{key: value})
         assert new_job_payload(**base, params=params) is None, key
@@ -426,6 +439,9 @@ def test_agent_skill_is_owner_only_and_contract_is_tamper_evident():
     assert new_job_payload(**base, params=extra) is None
     followup = dict(good["params"], followup_skill="aisearch")
     assert new_job_payload(**base, params=followup) is None
+    for key, value in (("agent", "claude"), ("execution_mode", "read_only")):
+        params = dict(good["params"], **{key: value})
+        assert new_job_payload(**base, params=params) is None, key
 
 
 def test_search_allowlist_stays_separate_from_owner_agent_lane():
@@ -444,7 +460,9 @@ def test_owner_agent_migration_enforces_database_boundary():
     for needle in (
         "jobs_skill_check", "'agent'", "jobs_owner_agent_contract_chk",
         "role = 'owner'", "request_text", "approval_id", "prompt_sha256",
-        "idempotency_key", "execution_mode", "workspace_write", "read_only",
+        "approval_sha256", "idempotency_key", "execution_mode", "workspace_write",
+        "read_only", "params - array", "sha256(convert_to", "octet_length",
+        "jsonb_typeof(params->'approval_sha256') = 'string'", ") is true",
     ):
         assert needle in sql, f"마이그레이션에 {needle!r} 누락"
 
@@ -453,6 +471,8 @@ def test_owner_agent_sot_machine_contract_matches_human_document():
     machine = json.loads((REPO / "docs/sot/29-fleet-control.json").read_text())
     inv = machine["invariants"]["INV11_owner_agent_lane"]
     human = (REPO / "docs/sot/29-fleet-control.md").read_text()
-    for phrase in ("owner", "approval_id", "prompt_sha256", "idempotency_key"):
+    for phrase in (
+        "owner", "approval_id", "prompt_sha256", "approval_sha256", "idempotency_key",
+    ):
         assert phrase in inv
         assert phrase in human

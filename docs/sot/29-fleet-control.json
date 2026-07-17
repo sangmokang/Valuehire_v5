@@ -35,6 +35,20 @@
     "fleet-cancel"
    ]
   },
+  "owner_agent": {
+   "queue_skill": "agent",
+   "role": "owner",
+   "agents": [
+    "codex",
+    "claude"
+   ],
+   "approval_fields": [
+    "approval_id",
+    "prompt_sha256",
+    "approval_sha256",
+    "idempotency_key"
+   ]
+  },
   "heartbeat": {
    "module": "tools/multi_position_sourcing/fleet_heartbeat.py",
    "watchdog": "scripts/fleet_watchdog.py",
@@ -47,13 +61,14 @@
   "INV1_account_machine_binding": "같은 포털 계정을 여러 머신에서 동시에 돌리지 않는다. account_key 로 계정 글로벌 락(한 시점 한 머신).",
   "INV2_linkedin_single_seat": "LinkedIn 잡(skill=url)은 heartbeat linkedin_rps_logged_in 이 참인 머신으로 라우팅(2026-07-15 승인 개정). 다중이면 INV8 신뢰도 순, 미검출·조회실패면 macmini 폴백. account_key 글로벌 락으로 같은 계정 동시 2머신은 여전히 불가.",
   "INV3_profile_preserve": "각 머신 --user-data-dir 디버그 프로필은 삭제·초기화 금지. 일시정지 중 크롬 탭/프로필 유지.",
-  "INV4_send_gate": "어떤 Discord 명령도 아웃리치 발송을 트리거하지 못한다(SOT28). 큐엔 검색 스킬(humansearch/aisearch/url)만.",
+  "INV4_send_gate": "멤버·자동 실행 lane은 검색 스킬(humansearch/aisearch/url)만 허용하며 아웃리치 발송을 트리거하지 못한다(SOT28). owner agent lane은 사장님의 현재 Discord 메시지에 명시된 대상·채널·횟수 범위만 별도 승인으로 실행한다.",
   "INV5_owner_only": "fleet-resume·fleet-cancel 은 owner(명시적 OWNER_USER_IDS) 전용. 멤버 연락처와 분리.",
   "INV6_paused_human": "캡차/2FA → paused_for_human + 크롬 조작 중단(양보) + Discord 알림. 그 잡 자체의 재개는 fleet-resume(사람). 단, 워커의 다른 자동작업(다음 잡 claim·변형 enqueue)은 INV9 에 따라 마지막 사람 개입 신호 후 180초 뒤 자동 재개한다. 크롬 안 닫음.",
   "INV7_stale_alert": "머신 heartbeat 5분 초과/누락 → OPS_HEALTH 경보(30분 억제).",
   "INV8_machine_reliability": "신뢰도 macmini > winpc > macbook(보조 캐파). 맥북은 기본 캐파 아님.",
   "INV10_account_pause_barrier": "계정 단위 pause 장벽: queued 등록은 허용하되 같은 공백문자 없는 account_key(LinkedIn 공용키 portal:linkedin_rps 포함)의 claim/execute는 모든 paused_for_human 잡이 resume_job 또는 cancel_job으로 해소될 때까지 차단한다. 시간 만료 없음. 다른 account_key는 계속 실행한다. ⚠️ INV9 와의 경계(2026-07-15): 이 장벽은 캡차가 '실제로 안 풀린 그 계정'의 잡만 막는다(재시도 무의미 — 봇질 방지). 그 외 자동작업(다른 계정 잡·변형 enqueue 준비)은 INV9 의 3분 자동 재개를 따른다. 장벽의 무기한 차단을 180초 TTL 자동해제로 재정의할지는 #105 후속에서 사장님 판단.",
-  "INV9_owner_yield_3min": "(2026-07-15 사장님 지시, #107) 사장님이 기기/크롬을 쓰는 동안 및 사람 개입 신호(캡차·2FA·paused) 직후에는 자동작업을 멈춘다(눈치·양보). 마지막 신호로부터 180초(3분) 동안 이상이 없으면 **자동 재개**한다. 자동 재개를 영구 차단하는 코드(backlog 폐기·무기한 중단·10분 이상 고정 쿨다운)는 SOT 위반이며 발견 즉시 삭제한다. 단일 출처: fleet_worker.OWNER_YIELD_RESUME_SECONDS=180, owner_activity.DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS=180."
+  "INV9_owner_yield_3min": "(2026-07-15 사장님 지시, #107) 사장님이 기기/크롬을 쓰는 동안 및 사람 개입 신호(캡차·2FA·paused) 직후에는 자동작업을 멈춘다(눈치·양보). 마지막 신호로부터 180초(3분) 동안 이상이 없으면 **자동 재개**한다. 자동 재개를 영구 차단하는 코드(backlog 폐기·무기한 중단·10분 이상 고정 쿨다운)는 SOT 위반이며 발견 즉시 삭제한다. 단일 출처: fleet_worker.OWNER_YIELD_RESUME_SECONDS=180, owner_activity.DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS=180.",
+  "INV11_owner_agent_lane": "일반 스킬 작업은 인증된 owner의 현재 Discord 메시지 1건만 원문 그대로 큐에 넣는다. role=owner, skill=agent, agent=codex|claude, approval_id=discord:<message_id>, prompt_sha256=원문 SHA-256, approval_sha256=원문·실행기·실행모드·승인번호 결합 SHA-256, idempotency_key=approval_id를 모두 검증하며 같은 메시지는 한 번만 등록한다. 멤버·후속작업·해시 불일치는 거부한다."
  },
  "machines": {
   "macmini": {
@@ -80,5 +95,5 @@
   "각 머신 claude -p 로그인 확인",
   "plist 설치(worker 머신별·watchdog 맥미니만)"
  ],
- "updated_at": "2026-07-15"
+ "updated_at": "2026-07-17"
 }

@@ -8,7 +8,9 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -21,8 +23,24 @@ REPO = Path(__file__).resolve().parents[2]
 # dynamic and share this syntax with fleet_machines.machine_id in PostgreSQL.
 FLEET_MACHINES: tuple[str, ...] = ("macmini", "macbook", "winpc")
 FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url")
+OWNER_AGENT_SKILL = "agent"
+QUEUE_SKILLS: tuple[str, ...] = (*FLEET_SKILLS, OWNER_AGENT_SKILL)
+OWNER_AGENT_MAX_REQUEST_CHARS = 8_000
 FLEET_ROLES: tuple[str, ...] = ("owner", "member")
 FLEET_AGENTS: tuple[str, ...] = ("claude", "codex")  # 이슈 B — 실행 엔진 화이트리스트
+
+_SNOWFLAKE_RE = re.compile(r"^[0-9]{15,22}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_OWNER_AGENT_PARAM_KEYS = frozenset({
+    "request_text", "agent", "approval_id", "prompt_sha256",
+    "approval_sha256", "idempotency_key", "execution_mode",
+})
+
+
+def _approval_sha256(request: str, agent: str, mode: str, approval_id: str) -> str:
+    encoded = (value.encode("utf-8") for value in (request, agent, mode, approval_id))
+    material = b"".join(str(len(value)).encode("ascii") + b":" + value for value in encoded)
+    return hashlib.sha256(material).hexdigest()
 
 # 상태 전이 화이트리스트 — 여기 없는 전이는 전부 거부.
 ALLOWED_TRANSITIONS: dict[str, tuple[str, ...]] = {
@@ -95,6 +113,46 @@ def default_account_key(skill: str, machine: str) -> str:
     return f"portal:{machine}"
 
 
+def _valid_owner_agent_params(params: dict[str, Any], position_url: str, role: str) -> bool:
+    """Validate the exact owner-approved Discord message envelope."""
+    if role != "owner" or set(params) != _OWNER_AGENT_PARAM_KEYS:
+        return False
+    request = params.get("request_text")
+    if (not isinstance(request, str) or not request.strip()
+            or len(request) > OWNER_AGENT_MAX_REQUEST_CHARS or "\x00" in request):
+        return False
+    agent = params.get("agent")
+    mode = params.get("execution_mode")
+    approval = params.get("approval_id")
+    digest = params.get("prompt_sha256")
+    approval_digest = params.get("approval_sha256")
+    idempotency = params.get("idempotency_key")
+    if agent not in FLEET_AGENTS or mode not in ("read_only", "workspace_write"):
+        return False
+    if not isinstance(approval, str) or not approval.startswith("discord:"):
+        return False
+    message_id = approval.removeprefix("discord:")
+    if not _SNOWFLAKE_RE.fullmatch(message_id) or idempotency != approval:
+        return False
+    try:
+        expected_digest = hashlib.sha256(request.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError:
+        return False
+    if (not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest)
+            or digest != expected_digest):
+        return False
+    expected_approval_digest = _approval_sha256(request, agent, mode, approval)
+    if (not isinstance(approval_digest, str)
+            or not _SHA256_RE.fullmatch(approval_digest)
+            or approval_digest != expected_approval_digest):
+        return False
+    expected = re.fullmatch(
+        r"https://discord\.com/channels/(?:@me|[0-9]{15,22})/"
+        r"[0-9]{15,22}/([0-9]{15,22})", position_url,
+    )
+    return bool(expected and expected.group(1) == message_id)
+
+
 def new_job_payload(
     *,
     machine: Any,
@@ -108,7 +166,7 @@ def new_job_payload(
     """jobs insert 페이로드. 무효 입력은 None(fail-closed) — 조용한 보정 금지."""
     if not is_valid_machine_id(machine):
         return None
-    if skill not in FLEET_SKILLS:
+    if skill not in QUEUE_SKILLS:
         return None
     if role not in FLEET_ROLES:
         return None
@@ -129,6 +187,9 @@ def new_job_payload(
         json.dumps(params, allow_nan=False)
     except (TypeError, ValueError):
         return None
+    if skill == OWNER_AGENT_SKILL:
+        if not _valid_owner_agent_params(params, position_url.strip(), role):
+            return None
     # 이슈 A(2026-07-15): followup_skill 도 화이트리스트만 — 큐 입구에서 fail-closed
     if "followup_skill" in params and params["followup_skill"] not in FLEET_SKILLS:
         return None
@@ -147,6 +208,55 @@ def new_job_payload(
         "status": "queued",
         "account_key": account_key or default_account_key(skill, machine),
     }
+
+
+def new_owner_agent_job_payload(
+    *,
+    machine: Any,
+    guild_id: Any,
+    channel_id: Any,
+    message_id: Any,
+    request_text: Any,
+    agent: Any,
+    requested_by: Any,
+    verified_role: Any,
+    execution_mode: Any = "workspace_write",
+) -> dict[str, Any] | None:
+    """Build one immutable queue job from one explicitly approved Discord message."""
+    if verified_role != "owner":
+        return None
+    if guild_id != "@me" and (
+            not isinstance(guild_id, str) or not _SNOWFLAKE_RE.fullmatch(guild_id)):
+        return None
+    if (not isinstance(channel_id, str) or not _SNOWFLAKE_RE.fullmatch(channel_id)
+            or not isinstance(message_id, str) or not _SNOWFLAKE_RE.fullmatch(message_id)
+            or not isinstance(request_text, str) or not isinstance(agent, str)
+            or agent not in FLEET_AGENTS or not isinstance(execution_mode, str)
+            or execution_mode not in ("read_only", "workspace_write")):
+        return None
+    try:
+        prompt_sha256 = hashlib.sha256(request_text.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError:
+        return None
+    approval_id = f"discord:{message_id}"
+    params = {
+        "request_text": request_text,
+        "agent": agent,
+        "approval_id": approval_id,
+        "prompt_sha256": prompt_sha256,
+        "approval_sha256": _approval_sha256(
+            request_text, agent, execution_mode, approval_id),
+        "idempotency_key": approval_id,
+        "execution_mode": execution_mode,
+    }
+    return new_job_payload(
+        machine=machine,
+        skill=OWNER_AGENT_SKILL,
+        position_url=f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}",
+        requested_by=requested_by,
+        role="owner",
+        params=params,
+    )
 
 
 def is_valid_transition(old: Any, new: Any) -> bool:
