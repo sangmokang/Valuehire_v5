@@ -211,6 +211,23 @@ class GuildContextTests(_NotifySilencedCase):
         self.assertTrue(any(e.get("action") == "denied" for e in audit))
 
 
+class SecretNonExposureTests(unittest.TestCase):
+    def test_queue_exception_never_leaks_raw_error_text(self) -> None:
+        # goal §6-4: 예외 메시지에 토큰 모양 문자열 → 회신에 원문 부재(INV-D5).
+        class ExplodingQueue(FakeQueue):
+            def enqueue(self, payload: dict) -> dict:
+                raise RuntimeError("Bearer sk-SECRET-TOKEN-12345 rejected")
+
+        audit: list[dict] = []
+        result = handle_envelope(
+            _dm_envelope(), queue=ExplodingQueue(), authorized_users=AUTHORIZED,
+            config=DiscordAccessConfig(allow_dm=True), audit=audit.append,
+        )
+        self.assertEqual(result["action"], "internal_error")
+        combined = (result["response"] or "") + result["reason"] + repr(audit)
+        self.assertNotIn("SECRET", combined, "raw 예외 원문이 어디에도 새면 안 된다")
+
+
 class MemberOwnerBoundaryTests(unittest.TestCase):
     def test_member_owner_only_command_gets_polite_denial_not_silence(self) -> None:
         # 인가된 멤버가 owner 전용(fleet-cancel)을 부르면 — 신원은 믿으므로 침묵이 아니라 안내.
