@@ -70,6 +70,17 @@ def _mirror(src_dir: Path, dst_dir: Path) -> None:
     shutil.copytree(src_dir, dst_dir, ignore=_ignore)
 
 
+def _paths_overlap(left: Path, right: Path) -> bool:
+    """True when either resolved path contains the other (including equality)."""
+    left_resolved = left.resolve()
+    right_resolved = right.resolve()
+    return (
+        left_resolved == right_resolved
+        or left_resolved in right_resolved.parents
+        or right_resolved in left_resolved.parents
+    )
+
+
 def sync_skills(
     sources,
     dest,
@@ -85,8 +96,12 @@ def sync_skills(
     classification: dict[str, str] = {}
     claimed: dict[str, str] = {}  # name -> 이긴 skill 디렉토리 경로
 
+    sources = [Path(source) for source in sources]
     for source in sources:
-        source = Path(source)
+        if source.is_dir() and _paths_overlap(source, dest):
+            raise ValueError(f"source/destination overlap rejected: {source} <-> {dest}")
+
+    for source in sources:
         if not source.is_dir():
             continue
         for child in sorted(source.iterdir()):
@@ -95,6 +110,9 @@ def sync_skills(
                 continue  # .system 등 dot 디렉토리는 대상 아님
             skill_md = child / "SKILL.md"
             if not skill_md.is_file():
+                continue
+            if child.is_symlink():
+                skipped.append([name, "top-level skill symlink rejected"])
                 continue
 
             # 별칭 skip
@@ -107,7 +125,7 @@ def sync_skills(
 
             # 충돌: 먼저 온 source 가 이김
             if name in claimed:
-                collisions.append([name, claimed[name], str(source)])
+                collisions.append([name, claimed[name], str(child)])
                 continue
             claimed[name] = str(child)
 

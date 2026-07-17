@@ -83,7 +83,9 @@ def test_collision_first_source_wins(tmp_path):
     _make_skill(src_b, "humansearch", body="FROM_B")
     res = sync_skills([src_a, src_b], dest)
     assert (dest / "humansearch" / "SKILL.md").read_text(encoding="utf-8").find("FROM_A") != -1
-    assert any(c[0] == "humansearch" for c in res["collisions"])
+    assert [
+        "humansearch", str(src_a / "humansearch"), str(src_b / "humansearch"),
+    ] in res["collisions"]
 
 
 def test_classification_full_vs_partial(tmp_path):
@@ -158,6 +160,31 @@ def test_source_symlink_loop_does_not_crash(tmp_path):
     # 링크 자체를 dest 로 옮기지 않는다(옮기면 Codex 가 그 폴더를 훑을 때 같은 무한루프에 빠짐)
     assert not (dest / "loopskill" / "loop").exists()
     assert not (dest / "loopskill" / "loop" / "loop").exists()
+
+
+def test_source_destination_overlap_is_rejected_before_deletion(tmp_path):
+    source_and_dest = tmp_path / "skills"
+    victim = _make_skill(source_and_dest, "victim") / "SKILL.md"
+
+    with pytest.raises(ValueError, match="overlap"):
+        sync_skills([source_and_dest], source_and_dest)
+
+    assert victim.is_file()
+
+
+def test_top_level_skill_symlink_is_skipped_without_copying_external_files(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    external = _make_skill(tmp_path / "external", "linked")
+    (external / "secret.txt").write_text("DO NOT COPY", encoding="utf-8")
+    (source / "linked").symlink_to(external, target_is_directory=True)
+    dest = tmp_path / "dest"
+
+    res = sync_skills([source], dest)
+
+    assert not (dest / "linked").exists()
+    assert ["linked", "top-level skill symlink rejected"] in res["skipped"]
+    assert "linked" not in res["provenance"]
 
 
 def test_default_sources_cover_v5_v4_and_keep_global_as_fallback(tmp_path):
