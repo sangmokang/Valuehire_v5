@@ -17,8 +17,25 @@
     "contract_cross_check": "raw_cdp.attach(target, badge=False) raw_cdp.py:202, CDPTab.send(method, params=None) raw_cdp.py:124, owner_activity.detect_owner_activity_snapshot(owner_activity_detected) 실존 대조",
     "wiring": "엔트리 = CLI python -m tools.multi_position_sourcing.session_guard --site <site> (main:195). 러너(keepalive 루프) 통합은 goal 비범위 — 후속 조각"
   },
-  "v1": {},
+  "v1": {
+    "author": "Codex fresh",
+    "verdict": "fail→반례 봉인 후 해소",
+    "counterexamples": [
+      "B-C1: save_cookie_snapshot 의 0600 은 새 파일에만 적용 — 같은 경로가 0644 로 선존재하면 비밀 쿠키가 0644 로 남음(O_TRUNC 는 권한 유지)",
+      "B-C2: V1 샌드박스에서 전체 ./verify.sh 미재현(11 failed — socket.bind 금지·sqlite readonly 등 샌드박스 제약 명시)"
+    ],
+    "sealing": [
+      "B-C1 → 저장 후 os.chmod(0600) 무조건 강제 + 선존재 0644 재현 RED 테스트 (commit 9d52690, RED 1 failed → GREEN 18 passed)",
+      "B-C2 → 환경 요인: 정상 환경 실측 1682 passed + PR #144 CI 2건 SUCCESS(중립 기계 판정 T)로 대체 증거"
+    ],
+    "positive_findings": "raw_cdp/owner_activity 계약 실물 대조 일치, 비밀값 stdout/stderr/log 유출 0, 뮤턴트(probe URL) 감지 재확인"
+  },
   "failed_attempts": [],
-  "three_way_agree": false,
-  "status": "G GREEN + 뮤턴트 통과 — V1(Codex) 대기"
+  "three_way_agree": true,
+  "status": "G GREEN + V1 반례 봉인 + V2 pass + CI SUCCESS — merge 대기",
+  "v2": {
+    "author": "Claude reset",
+    "verdict": "pass",
+    "note": "pytest 재실행 일치, 판정 우선순위·probe 대소문자·CLI 진입점 확인. keepalive 루프 배선은 후속임을 goal 과 일치 확인"
+  }
 }
