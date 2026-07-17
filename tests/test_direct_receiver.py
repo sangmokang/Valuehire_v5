@@ -58,7 +58,21 @@ def _dm_envelope(user_id: str = OWNER_ID, *, command: str = "fleet-run",
     )
 
 
-class FleetRunDispatchTests(unittest.TestCase):
+class _NotifySilencedCase(unittest.TestCase):
+    """enqueue 에 도달하는 테스트는 워커의 직접 Discord 알림을 반드시 끈다.
+
+    실자격증명이 보이는 로컬 환경에서 dispatch_fleet_command → discord_notify 가
+    실발송하는 사고 방지(알림 주입 분리 자체는 goal 조각 F 범위).
+    """
+
+    def setUp(self) -> None:
+        from tools.multi_position_sourcing import fleet_worker
+        patcher = patch.object(fleet_worker, "discord_notify", lambda job, text: None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class FleetRunDispatchTests(_NotifySilencedCase):
     def test_fleet_run_dispatches_once_and_replies_with_job_id(self) -> None:
         queue = FakeQueue()
         audit: list[dict] = []
@@ -147,7 +161,7 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(queue.enqueued, [])
 
 
-class GuildContextTests(unittest.TestCase):
+class GuildContextTests(_NotifySilencedCase):
     """goal §3 — 직결 수신기는 길드 컨텍스트를 처음으로 진짜 전달한다(DM 고정 금지)."""
 
     def _guild_envelope(self, **overrides) -> DiscordEnvelope:
@@ -166,7 +180,7 @@ class GuildContextTests(unittest.TestCase):
 
         def capture(invocation, **kwargs):
             seen.append(invocation)
-            return dr.dispatch_fleet_command(invocation, **kwargs)
+            return fleet_dispatch.dispatch_fleet_command(invocation, **kwargs)
 
         config = DiscordAccessConfig(
             allowed_channel_ids=("555555555555555555",),
