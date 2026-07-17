@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -16,12 +18,16 @@ from tools.multi_position_sourcing.job_queue import (
     ALLOWED_TRANSITIONS,
     FLEET_MACHINES,
     FLEET_SKILLS,
+    OWNER_AGENT_MAX_REQUEST_CHARS,
+    OWNER_AGENT_SKILL,
+    QUEUE_SKILLS,
     JobQueueClient,
     _env_config,
     cancel_job_payload,
     claim_next_job_payload,
     is_valid_transition,
     new_job_payload,
+    new_owner_agent_job_payload,
     release_job_payload,
 )
 
@@ -328,3 +334,125 @@ def test_new_job_payload_validates_agent():
     ok2 = new_job_payload(**base, params={"agent": "claude"})
     assert ok2 is not None
     assert new_job_payload(**base, params={"agent": "gpt4"}) is None
+
+
+# ── Discord owner 일반 스킬 작업 계약 (#138) ───────────────────────
+
+def _owner_agent_kwargs(**over):
+    kw = dict(
+        machine="macmini",
+        guild_id="987654321098765432",
+        channel_id="876543210987654321",
+        message_id="765432109876543210",
+        request_text="jdbuilder 스킬로 이 포지션 초안을 만들어줘",
+        agent="codex",
+        requested_by="814353841088757800:사장님",
+    )
+    kw.update(over)
+    return kw
+
+
+def test_owner_agent_payload_preserves_approved_message_exactly():
+    row = new_owner_agent_job_payload(**_owner_agent_kwargs())
+    assert row is not None
+    request = _owner_agent_kwargs()["request_text"]
+    assert row["skill"] == OWNER_AGENT_SKILL == "agent"
+    assert row["role"] == "owner"
+    assert row["position_url"] == (
+        "https://discord.com/channels/987654321098765432/"
+        "876543210987654321/765432109876543210"
+    )
+    assert row["account_key"] == "portal:macmini"
+    assert row["params"] == {
+        "request_text": request,
+        "agent": "codex",
+        "approval_id": "discord:765432109876543210",
+        "prompt_sha256": hashlib.sha256(request.encode("utf-8")).hexdigest(),
+        "idempotency_key": "discord:765432109876543210",
+        "execution_mode": "workspace_write",
+    }
+
+
+def test_owner_agent_payload_supports_dm_and_explicit_claude_read_only():
+    row = new_owner_agent_job_payload(**_owner_agent_kwargs(
+        guild_id="@me", agent="claude", execution_mode="read_only"))
+    assert row is not None
+    assert "/channels/@me/" in row["position_url"]
+    assert row["params"]["agent"] == "claude"
+    assert row["params"]["execution_mode"] == "read_only"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("guild_id", "bad-guild"),
+    ("channel_id", "123"),
+    ("message_id", "76543210987654321x"),
+    ("agent", "shell"),
+    ("execution_mode", "danger-full-access"),
+    ("request_text", ""),
+    ("request_text", "   \n"),
+    ("request_text", "contains\x00nul"),
+])
+def test_owner_agent_payload_rejects_invalid_boundary_values(field, value):
+    assert new_owner_agent_job_payload(**_owner_agent_kwargs(**{field: value})) is None
+
+
+def test_owner_agent_payload_enforces_request_size_without_rewriting_text():
+    exact = "가" * OWNER_AGENT_MAX_REQUEST_CHARS
+    row = new_owner_agent_job_payload(**_owner_agent_kwargs(request_text=exact))
+    assert row is not None and row["params"]["request_text"] == exact
+    assert new_owner_agent_job_payload(**_owner_agent_kwargs(
+        request_text=exact + "가")) is None
+
+
+def test_agent_skill_is_owner_only_and_contract_is_tamper_evident():
+    good = new_owner_agent_job_payload(**_owner_agent_kwargs())
+    assert good is not None
+    base = dict(
+        machine=good["machine"], skill=good["skill"],
+        position_url=good["position_url"], requested_by=good["requested_by"],
+        role=good["role"], account_key=good["account_key"],
+    )
+    assert new_job_payload(**{**base, "role": "member"}, params=good["params"]) is None
+    for key, value in (
+        ("prompt_sha256", "0" * 64),
+        ("approval_id", "discord:111111111111111111"),
+        ("idempotency_key", "discord:111111111111111111"),
+        ("agent", "shell"),
+        ("execution_mode", "danger-full-access"),
+    ):
+        params = dict(good["params"], **{key: value})
+        assert new_job_payload(**base, params=params) is None, key
+    extra = dict(good["params"], injected_option="--dangerously-bypass-approvals-and-sandbox")
+    assert new_job_payload(**base, params=extra) is None
+    followup = dict(good["params"], followup_skill="aisearch")
+    assert new_job_payload(**base, params=followup) is None
+
+
+def test_search_allowlist_stays_separate_from_owner_agent_lane():
+    assert set(FLEET_SKILLS) == {"humansearch", "aisearch", "url"}
+    assert set(QUEUE_SKILLS) == {*FLEET_SKILLS, OWNER_AGENT_SKILL}
+    assert OWNER_AGENT_SKILL not in FLEET_SKILLS
+    member = new_job_payload(**_ok_kwargs(role="member"))
+    assert member is not None
+
+
+def test_owner_agent_migration_enforces_database_boundary():
+    candidates = sorted((REPO / "supabase" / "migrations").glob("*owner_agent*.sql"))
+    assert candidates, "owner agent 마이그레이션 SQL 이 없습니다"
+    raw = candidates[-1].read_text()
+    sql = "\n".join(line.split("--", 1)[0] for line in raw.splitlines()).lower()
+    for needle in (
+        "jobs_skill_check", "'agent'", "jobs_owner_agent_contract_chk",
+        "role = 'owner'", "request_text", "approval_id", "prompt_sha256",
+        "idempotency_key", "execution_mode", "workspace_write", "read_only",
+    ):
+        assert needle in sql, f"마이그레이션에 {needle!r} 누락"
+
+
+def test_owner_agent_sot_machine_contract_matches_human_document():
+    machine = json.loads((REPO / "docs/sot/29-fleet-control.json").read_text())
+    inv = machine["invariants"]["INV11_owner_agent_lane"]
+    human = (REPO / "docs/sot/29-fleet-control.md").read_text()
+    for phrase in ("owner", "approval_id", "prompt_sha256", "idempotency_key"):
+        assert phrase in inv
+        assert phrase in human
