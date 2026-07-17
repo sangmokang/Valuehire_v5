@@ -116,9 +116,13 @@ def handle_envelope(
     반환: {handled, action, response(None=침묵), reason}.
     """
 
+    audit_failures = 0
+
     def _audit(action: str, reason: str = "") -> None:
         # V1 C3 봉인: 감사 저장 실패가 수신기를 죽이면 안 된다(fail-soft 감사 —
-        # 이벤트 처리·응답이 우선, 감사 유실은 다음 감사 채널이 감지할 문제).
+        # 이벤트 처리·응답이 우선). 단, 유실이 조용히 사라지지도 않는다 —
+        # audit_failed 로 결과에 드러내 게이트웨이가 경보를 올리게 한다(V1 재공격).
+        nonlocal audit_failures
         if audit is None:
             return
         try:
@@ -129,17 +133,32 @@ def handle_envelope(
                 "action": action, "reason": reason,
             })
         except Exception:  # noqa: BLE001
-            pass
+            audit_failures += 1
+
+    def _result(action: str, response: Optional[str], reason: str) -> dict[str, Any]:
+        return {
+            "handled": True, "action": action, "response": response,
+            "reason": reason, "audit_failed": audit_failures > 0,
+        }
 
     def _silent(action: str, reason: str) -> dict[str, Any]:
         _audit(action, reason)
-        return {"handled": True, "action": action, "response": None, "reason": reason}
+        return _result(action, None, reason)
 
-    # ① 신원·이벤트 모양 검증 — snowflake 꼴이 아니면 사장님으로도 팀원으로도
-    # 간주하지 않는다. event_id 는 감사·멱등키(조각 B)의 뿌리라 같은 기준(V1 C5).
-    if not _SNOWFLAKE_RE.fullmatch(str(envelope.user_id or "").strip()):
+    # ① 신원·이벤트 타입+모양 검증 — snowflake 꼴 문자열이 아니면 사장님으로도
+    # 팀원으로도 간주하지 않는다. event_id 는 감사·멱등키(조각 B)의 뿌리라 같은
+    # 기준(V1 C5). str() 강제변환으로 int 위조를 통과시키지 않는다(V1 재공격 item5) —
+    # 게이트웨이가 아닌 타입을 보냈다는 것 자체가 버그/위조 신호다.
+    typed_str_fields = (
+        envelope.event_id, envelope.user_id, envelope.channel_id,
+        envelope.guild_id, envelope.command, envelope.raw_args,
+    )
+    if (not all(isinstance(v, str) for v in typed_str_fields)
+            or not all(isinstance(r, str) for r in envelope.role_ids)):
+        return _silent("ignored_type", "envelope 필드 타입이 str 이 아님")
+    if not _SNOWFLAKE_RE.fullmatch(envelope.user_id.strip()):
         return _silent("ignored_identity", "user_id 가 snowflake 형식이 아님")
-    if not _SNOWFLAKE_RE.fullmatch(str(envelope.event_id or "").strip()):
+    if not _SNOWFLAKE_RE.fullmatch(envelope.event_id.strip()):
         return _silent("ignored_event", "event_id 가 snowflake 형식이 아님")
     # V1 C4 봉인: DM 표식과 길드 컨텍스트가 동시에 오면 위조/게이트웨이 버그 신호 —
     # DM 완화 규칙으로 길드 allowlist 를 우회하지 못하게 통째로 무시한다.
@@ -171,18 +190,13 @@ def handle_envelope(
         # (denied_owner_only)와 같은 안내 — 경로별 판정·응답이 갈라지지 않게.
         if envelope.command in _fleet_dispatch._OWNER_ONLY and not is_owner(invocation):
             _audit("denied_owner_only", str(exc))
-            return {
-                "handled": True, "action": "denied_owner_only",
-                "response": f"⛔ {envelope.command} 은 owner 전용입니다",
-                "reason": "owner 전용",
-            }
+            return _result(
+                "denied_owner_only",
+                f"⛔ {envelope.command} 은 owner 전용입니다", "owner 전용")
         # V1 C2 봉인: 오류 상세(사용자 입력 에코 가능)는 감사에만 — 회신은 일반 안내문.
         _audit("parse_error", str(exc))
-        return {
-            "handled": True, "action": "parse_error",
-            "response": "⚠️ 명령 형식 오류 — 인자 형식을 확인해 주세요.",
-            "reason": str(exc),
-        }
+        return _result(
+            "parse_error", "⚠️ 명령 형식 오류 — 인자 형식을 확인해 주세요.", str(exc))
 
     # ③ 권한검사+등록 — 기존 dispatch_fleet_command 경유(권한검사는 이 안에서 1회).
     try:
@@ -193,11 +207,10 @@ def handle_envelope(
         )
     except Exception as exc:  # noqa: BLE001 — 수신기는 절대 죽지 않는다(fail-closed 보고).
         _audit("internal_error", f"{type(exc).__name__}")
-        return {
-            "handled": True, "action": "internal_error",
-            "response": "⚠️ 내부 오류로 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-            "reason": f"{type(exc).__name__}",
-        }
+        return _result(
+            "internal_error",
+            "⚠️ 내부 오류로 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            f"{type(exc).__name__}")
 
     if result is None:  # parse 가 명령을 걸렀으므로 도달 불가 — 방어적 침묵.
         return _silent("ignored_command", "미지원 명령")
@@ -207,8 +220,4 @@ def handle_envelope(
         return _silent("denied", str(result.get("reason") or ""))
 
     _audit(action, str(result.get("reason") or ""))
-    return {
-        "handled": True, "action": action,
-        "response": _render_response(result),
-        "reason": str(result.get("reason") or ""),
-    }
+    return _result(action, _render_response(result), str(result.get("reason") or ""))
