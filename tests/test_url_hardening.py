@@ -168,6 +168,31 @@ def test_nat64_embedding_public_ipv4_still_allowed() -> None:
         "https://positions.example.com/1", getaddrinfo=_resolver("64:ff9b::5db8:d822"))
 
 
+def test_other_ipv4_embedding_ipv6_forms_rejected() -> None:
+    # V1(codex read-only) 반례: NAT64 well-known 말고도 IPv4 를 임베드하는 구식 IPv6
+    # 형식이 여럿 있고, ipaddress.is_global 이 그것들도 공인으로 오판한다.
+    # 근본 차단: 공인 IPv6 는 2000::/3(global unicast) 안에만 존재하므로, 그 밖의
+    # 특수목적 IPv6 는 공인 IPv4 임베드가 확인되지 않는 한 전부 거부(fail-closed).
+    vectors = {
+        "::169.254.169.254": "IPv4-compatible(deprecated) 메타데이터 임베드",
+        "::127.0.0.1": "IPv4-compatible loopback 임베드",
+        "::10.0.0.1": "IPv4-compatible 사설 임베드",
+        "::ffff:0:127.0.0.1": "IPv4-translated(RFC2765) loopback 임베드",
+        "::ffff:0:a9fe:a9fe": "IPv4-translated 메타데이터 임베드",
+        "::ffff:0:a00:1": "IPv4-translated 사설 임베드",
+    }
+    for addr, why in vectors.items():
+        assert not url_host_resolves_public(
+            "https://positions.example.com/1", getaddrinfo=_resolver(addr)), why
+
+
+def test_ipv4_mapped_public_still_allowed() -> None:
+    # 회귀 방지: IPv4-mapped 로 온 공인 IPv4(::ffff:8.8.8.8)는 계속 통과해야 한다
+    # (2000::/3 게이트가 IPv4-mapped 공인까지 잘못 막지 않도록).
+    assert url_host_resolves_public(
+        "https://positions.example.com/1", getaddrinfo=_resolver("::ffff:8.8.8.8"))
+
+
 # ── 배선(R4): enqueue 가 POST 직전 DNS 검사를 강제 ────────────────────
 
 def _client(resolver) -> JobQueueClient:
