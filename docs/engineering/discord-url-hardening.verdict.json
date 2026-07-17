@@ -1,0 +1,23 @@
+{
+  "claim_id": "discord-url-hardening-01",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "큐 입구 SSRF 2단 차단: _valid_url 이 비공인 IP 리터럴·localhost 계열을 순수 거부(1단), JobQueueClient.enqueue 가 POST 직전 DNS 해석 전수-공인 검사를 강제(2단, resolver 주입식·fail-closed). 기존 공개 URL(클릭업·사람인·잡코리아·디스코드) 회귀 0.",
+    "changed_files": [
+      "tools/multi_position_sourcing/job_queue.py",
+      "tests/test_url_hardening.py",
+      "tests/test_job_queue.py"
+    ],
+    "red_evidence": "commit 50bd1e3: ImportError(url_host_resolves_public 부재) — 기대 동작 결여로 실패",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "focused: test_url_hardening 24 + test_job_queue 합산 106 passed in 0.54s. 전체 ./verify.sh: 1712 passed, 4 xfailed, 102 subtests passed in 47.24s (exit 0)",
+    "mutant_check": "뮤턴트1 url_host_resolves_public 상수 True → 4 failed. 뮤턴트2 localhost 분기 제거 → 3 failed. 뮤턴트3 _ip_is_global 상수 True → 14 failed. 각각 적용→감지→git checkout 원복.",
+    "wiring": "엔트리→새코드: dispatch_fleet_command(fleet_dispatch.py:159 q.enqueue)·hermes_fleet_bridge→dispatch 경유 전 경로가 JobQueueClient.enqueue 관문 통과. enqueue 내부에서 url_host_resolves_public 호출(고아 0)."
+  },
+  "v1": {},
+  "failed_attempts": [],
+  "three_way_agree": false,
+  "status": "G GREEN + 뮤턴트 3/3 — 전체 verify·V1(Codex) 대기"
+}
