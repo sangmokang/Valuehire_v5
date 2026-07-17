@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 import urllib.parse
@@ -98,7 +99,51 @@ def _valid_url(url: Any) -> bool:
         port = parsed.port               # V1 2R: 65535 초과 포트
     except ValueError:
         return False
-    return port is None or 0 < port <= 65535
+    if port is not None and not 0 < port <= 65535:
+        return False
+    # 조각 G(goal 2026-07-17 §5): SSRF 1단 — IP 리터럴·localhost 계열은 큐에 못 들어간다.
+    return not _host_forbidden_literal(parsed.hostname or "")
+
+
+def _ip_is_global(ip: str) -> bool:
+    """공인 주소만 True. loopback/private/link-local(메타데이터 169.254.169.254 포함)/
+    reserved/CGNAT/unspecified 는 ipaddress.is_global 이 전부 False — 그걸 그대로 쓴다.
+    multicast 는 명시 배제(파이썬 버전별 is_global 판정 흔들림 방지). 파싱 불가는 False."""
+    try:
+        addr = ipaddress.ip_address(ip.partition("%")[0])  # fe80::1%en0 의 scope 제거
+    except ValueError:
+        return False
+    return addr.is_global and not addr.is_multicast
+
+
+def _host_forbidden_literal(host: str) -> bool:
+    """DNS 없이 판정 가능한 금지 호스트 — localhost 계열 + 비공인 IP 리터럴."""
+    host = host.lower().rstrip(".")
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False                     # IP 리터럴 아님 → 2단(DNS)에서 판정
+    return not _ip_is_global(host)
+
+
+def url_host_resolves_public(url: str, *, getaddrinfo: Any = None) -> bool:
+    """SSRF 2단 — 호스트가 해석되는 주소 **전부** 공인일 때만 True (fail-closed).
+
+    사설이 하나라도 섞이면(DNS rebinding 류) False. 해석 실패·빈 결과·예외 전부 False.
+    순수 테스트를 위해 resolver 주입식 — 기본은 socket.getaddrinfo(실 DNS).
+    """
+    resolve = getaddrinfo if getaddrinfo is not None else __import__("socket").getaddrinfo
+    host = urllib.parse.urlparse(url or "").hostname
+    if not host:
+        return False
+    try:
+        infos = resolve(host, None)
+    except Exception:  # noqa: BLE001 — 어떤 해석 실패든 통과로 위장하지 않는다
+        return False
+    ips = {info[4][0] for info in infos if len(info) >= 5 and info[4]}
+    return bool(ips) and all(_ip_is_global(str(ip)) for ip in ips)
 
 
 # 이슈 D(V1 blocker 수용): LinkedIn Recruiter 좌석은 1개 — 로그인 머신 라우팅으로
@@ -359,7 +404,7 @@ def _env_config() -> tuple[str, str]:
 
 
 class JobQueueClient:
-    def __init__(self, url: str = "", key: str = "") -> None:
+    def __init__(self, url: str = "", key: str = "", *, getaddrinfo: Any = None) -> None:
         url, key = (url or "").strip(), (key or "").strip()  # V1 2R: 공백 자격증명 거부
         if url and key:
             self.url, self.key = url.rstrip("/"), key
@@ -368,6 +413,8 @@ class JobQueueClient:
         else:
             u, k = _env_config()
             self.url, self.key = u.rstrip("/"), k
+        # 조각 G: enqueue 직전 SSRF 2단(DNS) 검사용 resolver — 테스트는 주입, 운영은 실 DNS.
+        self._getaddrinfo = getaddrinfo
 
     def _call(self, method: str, path: str, payload: Any = None,
               prefer: str = "return=representation") -> Any:
@@ -401,6 +448,12 @@ class JobQueueClient:
         )
         if revalidated is None or payload.get("status") != "queued":
             raise ValueError("무효 페이로드 — new_job_payload 검증 실패")
+        # 조각 G(goal §5): 이름 기반 호스트도 POST 직전 DNS 해석으로 공인 여부를 강제.
+        # 사설·loopback·메타데이터로 해석되면 HTTP 호출 없이 즉시 거부(fail-closed).
+        if not url_host_resolves_public(
+                revalidated["position_url"], getaddrinfo=self._getaddrinfo):
+            raise ValueError(
+                "position_url 호스트가 공인 주소로 해석되지 않음(사설/loopback/메타데이터 거부)")
         rows = self._call("POST", "/jobs", revalidated)
         return rows[0] if isinstance(rows, list) and rows else rows
 
