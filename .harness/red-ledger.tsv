@@ -68,6 +68,6 @@ fleet-slot-scheduler-model	GREEN	#125	안전 반례 10건 봉인·관련 검사 
 discord-codex-skill-discovery	GREEN	#136	v4·v5 57개 이름 누락 0, 관련 17개·전체 1,619개 통과, 독립 반증 통과
 discord-owner-agent-queue	GREEN	#138	PR#139 merged 2026-07-17 — owner 원문·실행기·모드·승인번호 결합 지문과 중복 방지, DB 우회 26종 거부, 관련 216개·전체 1,638개 통과
 discord-owner-agent-runtime	GREEN	#140	PR#141 merged 2026-07-17 — Discord 원문 queue-only 접수, v4·v5 실행 전 동기화, Codex/Claude 제한 모드, 적대검증 3회, 관련 275개·전체 1,666개 통과
-hermes-plugin-test-offline	RED	-	worktree ../Valuehire_v5-hermes-plugin-test-offline (branch task/hermes-plugin-test-offline)
+hermes-plugin-test-offline	GREEN	-	PR#143 merged 2026-07-18 — fleet-status 테스트의 실 Supabase 30s 타임아웃 의존 제거(오프라인 env 주입, 단언 약화 0). RED 1 failed 30.08s → GREEN 7 passed 0.16s, verify 1666 passed+CI green. verdict: docs/engineering/hermes-plugin-test-offline.verdict.json. SHIPPED(워크트리 정리)
 portal-worker-session-preserve	GREEN	-	PR#142 merged 2026-07-17 — stop() 이 사람인·잡코리아 세션 context 를 닫지 않음(SOT-28 TODO-2). verify 1670 passed+CI green. L3 3자일치(V1 Codex pass 재판정·C2 봉인, V2 reset conditional pass — 한계는 TODO-2b 박제). verdict: docs/engineering/portal-worker-session-preserve.verdict.json. SHIPPED(워크트리 정리)
 session-guard-core	GREEN	-	PR#144 merged 2026-07-18 — 세션가드 코어(owner 우선 keepalive·2단계 쿠키판정·스냅샷 롤링 0600 강제·LinkedIn 자동로그인 금지, SOT-28 §3a/§4/§5). 18 tests+verify 1682 passed+CI green. V1 Codex 반례 2건(스냅샷 권한·검증환경) 봉인, V2 reset pass. verdict: docs/engineering/session-guard-core.verdict.json. SHIPPED(워크트리 정리)
