@@ -145,6 +145,29 @@ def test_numeric_ip_lookalike_hosts_rejected_at_stage1(url: str) -> None:
     assert new_job_payload(**_kwargs(url)) is None, url
 
 
+# ── V2 리셋 재검증 반례 봉인: NAT64/6to4 임베드 사설IP (2026-07-18) ──────
+
+def test_nat64_wellknown_prefix_embedding_private_ipv4_rejected() -> None:
+    # V2-F6: 64:ff9b::/96(NAT64 well-known, RFC6052)에 사설/loopback/메타데이터 IPv4 를
+    # 임베드하면 ipaddress.is_global 이 True 로 오판 → NAT64 게이트웨이가 있는 호스트에서
+    # 실제 사설 IPv4 로 라우팅될 수 있다. 임베드된 IPv4 를 추출해 재판정해야 한다.
+    cases = {
+        "64:ff9b::127.0.0.1": "loopback 임베드",
+        "64:ff9b::a00:1": "10.0.0.1 사설 임베드",
+        "64:ff9b::a9fe:a9fe": "169.254.169.254 메타데이터 임베드",
+        "64:ff9b::c0a8:1": "192.168.0.1 사설 임베드",
+    }
+    for addr, why in cases.items():
+        assert not url_host_resolves_public(
+            "https://positions.example.com/1", getaddrinfo=_resolver(addr)), why
+
+
+def test_nat64_embedding_public_ipv4_still_allowed() -> None:
+    # NAT64 에 공인 IPv4(93.184.216.34)를 임베드한 것은 실제로 공인으로 라우팅되므로 통과.
+    assert url_host_resolves_public(
+        "https://positions.example.com/1", getaddrinfo=_resolver("64:ff9b::5db8:d822"))
+
+
 # ── 배선(R4): enqueue 가 POST 직전 DNS 검사를 강제 ────────────────────
 
 def _client(resolver) -> JobQueueClient:
