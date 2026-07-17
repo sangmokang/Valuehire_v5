@@ -1,0 +1,52 @@
+{
+  "claim_id": "discord-url-hardening-01",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "큐 입구 SSRF 2단 차단: _valid_url 이 비공인 IP 리터럴·localhost 계열·IP흉내 숫자표기(십진/8진/16진)를 순수 거부(1단), JobQueueClient.enqueue 가 POST 직전 DNS 해석 전수-공인 검사를 강제(2단, resolver 주입식·fail-closed, malformed URL 예외도 안전측 False). 기존 공개 URL(클릭업·사람인·잡코리아·디스코드) 회귀 0.",
+    "changed_files": [
+      "tools/multi_position_sourcing/job_queue.py",
+      "tests/test_url_hardening.py",
+      "tests/test_job_queue.py"
+    ],
+    "red_evidence": "50bd1e3(1차 RED, ImportError) → 62c187c(1차 GREEN) → V1 반례 RED 커밋(malformed·fec0·numeric 7 failed) → 반례봉인 GREEN",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "focused test_url_hardening+test_job_queue 114 passed. 전체 ./verify.sh: 1720 passed, 4 xfailed, 102 subtests passed in 41.20s (exit 0)",
+    "mutant_check": "커밋 후 재실행(git checkout 로 미커밋 구현 소실하던 초기 실수 교정): M1 is_site_local 무력화→site_local 테스트 1 failed. M2 malformed try 제거(예외 전파)→malformed 테스트 1 failed. M3 last-label 숫자분기 무력화→numeric 4 failed. 전부 감지."
+  },
+  "v1": {
+    "author": "Codex CLI (codex exec, 방어적 코드리뷰 프레이밍 — 최초 rescue 서브에이전트는 빈 본문·SSRF 프레이밍은 사이버 필터 거부로 2회 무산, CLI 직접 실행으로 본문 확보)",
+    "verdict": "fail (초판 62c187c 대상)",
+    "counterexamples": [
+      "F1: 잘못 닫힌 IPv6 URL('https://[::1/x' 등)이 url_host_resolves_public 에서 안전측 False 대신 ValueError 전파 — fail-closed 위반. → urlparse().hostname 을 try 로 감싸 봉인.",
+      "F2: fec0::/10 site-local IPv6 가 ipaddress.is_global True 로 공인 오판(내부 라우팅 대역 누출). → _ip_is_global 에 is_site_local 명시 차단.",
+      "F5: 십진(2130706433)·8진(0177.0.0.1)·선행0(010.0.0.1) IP 기만 표기가 1단을 통과(2단 DNS 의존). → _looks_like_ip_literal_host 로 1단 방어심층 추가.",
+      "F3(높음, 수용): enqueue 가 실 DNS 의존 — 장애 시 정상 공개 URL 잡도 거부. goal §5 G '해석 실패 fail-closed' 계약 그대로이므로 코드 결함 아님. 무음 유실 아님(Discord 오류 회신·워커 재시도). goal 비범위에 한계+후속 개선안 명시.",
+      "F4: 저장 배선 완결 — enqueue 가 유일 프로덕션 POST 경로(fleet_dispatch·fleet_worker·discord_command_listener 전부 경유). 직접 SQL 없음(테스트만). 배선 정상 확인."
+    ],
+    "generator_claim_corrected": "초판 verdict 의 '선행0도 2단에서 차단되고 테스트에 포함' 주장은 부정확 — 실제로는 테스트 부재. V1 지적 수용해 1단 방어+전용 테스트 추가로 정정.",
+    "sealing": "F1·F2·F5 전부 RED 테스트 선커밋 후 봉인 GREEN(114 passed). F3·F4 는 코드 무변경(계약/정상 확인).",
+    "repro": "cd worktree && .venv/bin/python -m pytest tests/test_url_hardening.py tests/test_job_queue.py -q → 114 passed",
+    "source": "codex exec 출력 tasks/b58tlo3h1.output (VERDICT fail, F1~F5 재현 명령·출력 포함)"
+  },
+  "v2": {
+    "note": "V2 리셋 재검증은 이 L2 건에서 필수 아님(3자 일치는 L3 고위험 전용). G 자기반증(이상 리터럴·IPv6 sockaddr 형상 직접 실행) + V1 독립 반증 + 뮤턴트 기계판정으로 L2 게이트 충족."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "뮤턴트 검사를 미커밋 구현 상태에서 git checkout 원복으로 수행",
+      "root_cause": "구현 fix 가 아직 미커밋이라 첫 git checkout 이 구현까지 되돌려 이후 뮤턴트가 원본(결함) 코드를 측정 — 무효 결과(M3 5 passed 오탐)",
+      "repro": "sed 뮤턴트 후 git checkout -- job_queue.py → uncommitted fix 소실",
+      "next_change": "구현을 먼저 커밋한 뒤 뮤턴트 적용 — 재실행으로 M1·M2·M3 정상 감지 확인"
+    },
+    {
+      "attempt": "codex:rescue 서브에이전트로 V1 위임",
+      "root_cause": "본문 없는 'Done'/'대기 중' 응답 2회 + SSRF 공격 프레이밍이 Codex 사이버 안전 필터에 걸려 거부",
+      "repro": "SendMessage 재요청 2회 모두 빈 본문",
+      "next_change": "codex exec CLI 직접 실행 + 방어적 코드리뷰 프레이밍(우리 자체 코드 입력검증 완결성 점검)으로 본문 확보"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "G GREEN(1720 passed) + V1 fail→반례 4범주 봉인 + 뮤턴트 3/3 재검증 통과 — L2 게이트 충족, PR 대기"
+}

@@ -216,7 +216,12 @@ def test_cancel_payload():
 # ── 클라이언트: 변조 방지 + env 짝 강제 (V1 결함 6·7) ────────────────
 
 def _fake_client() -> JobQueueClient:
-    return JobQueueClient(url="https://example.supabase.co", key="k")
+    # 조각 G 이후 enqueue 는 POST 직전 DNS 공인해석 검사를 한다 — 단위테스트가
+    # 실 DNS 를 타지 않도록 공인 IP 로 답하는 resolver 를 주입(오프라인 결정성).
+    import socket as _s
+    fake = lambda host, port, *a, **k: [  # noqa: E731
+        (_s.AF_INET, _s.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    return JobQueueClient(url="https://example.supabase.co", key="k", getaddrinfo=fake)
 
 
 def test_enqueue_rejects_tampered_payload(monkeypatch):
