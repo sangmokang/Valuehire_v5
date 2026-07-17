@@ -333,11 +333,85 @@ class V1SealTests(unittest.TestCase):
 
     def test_source_contract_no_execution_primitives(self) -> None:
         # C6/INV-D1: 수신기 소스에 실행 원시요소가 아예 없어야 한다(enqueue-only 기계 강제).
+        # V1 재공격 봉인: 문자열 매칭은 별칭(from os import system as ...)·동적 조합
+        # (importlib.import_module("sub"+"process"))으로 우회됨 — AST import 화이트리스트로
+        # 교체. 허용 목록 밖 모듈 import 자체가 결함이므로 우회하려면 import 가 필요하고,
+        # import 는 전부 AST 에 드러난다.
+        import ast
         import inspect
-        source = inspect.getsource(dr)
-        for banned in ("subprocess", "os.system", "Popen", "pexpect",
-                       "eval(", "exec(", "__import__"):
-            self.assertNotIn(banned, source, banned)
+        allowed_modules = {
+            "__future__", "re", "time", "dataclasses", "typing",
+            # 패키지 내부 계약 재사용(INV-D3 대상)만 허용
+            "access", "discord_routing", "fleet_dispatch", "hermes_fleet_bridge",
+        }
+        tree = ast.parse(inspect.getsource(dr))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertIn(alias.name.split(".")[0], allowed_modules, alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:  # 패키지 상대 import — 모듈명 또는 각 별칭이 허용 목록에
+                    if node.module:
+                        self.assertIn(node.module.split(".")[-1], allowed_modules,
+                                      f"relative import: {node.module}")
+                    else:  # from . import X — X 각각 검사
+                        for alias in node.names:
+                            self.assertIn(alias.name, allowed_modules, alias.name)
+                else:
+                    self.assertIn((node.module or "").split(".")[0],
+                                  allowed_modules, str(node.module))
+            elif isinstance(node, ast.Call):
+                name = getattr(node.func, "id", "") or getattr(node.func, "attr", "")
+                self.assertNotIn(name, ("eval", "exec", "__import__", "import_module",
+                                        "system", "popen", "Popen", "spawn"), name)
+
+    def test_integer_typed_identity_fields_fail_closed(self) -> None:
+        # V1 재공격 item5 봉인: 게이트웨이 버그·위조로 int 가 흘러들어와도
+        # str 강제변환으로 통과시키지 않는다 — 타입까지 fail-closed.
+        queue = FakeQueue()
+        config = DiscordAccessConfig(
+            allowed_channel_ids=("555555555555555555",),
+            allowed_role_ids=("777777777777777777",),
+        )
+        int_event = DiscordEnvelope(
+            event_id=444444444444444444, user_id=OWNER_ID,  # type: ignore[arg-type]
+            channel_id="333333333333333333", command="fleet-run",
+            raw_args=CLICKUP_URL, is_dm=True,
+        )
+        int_role = DiscordEnvelope(
+            event_id="444444444444444444", user_id=STRANGER_ID,
+            channel_id="555555555555555555", guild_id="666666666666666666",
+            role_ids=(777777777777777777,),  # type: ignore[arg-type]
+            command="fleet-run", raw_args=CLICKUP_URL, is_dm=False,
+        )
+        int_user = DiscordEnvelope(
+            event_id="444444444444444444", user_id=814353841088757800,  # type: ignore[arg-type]
+            channel_id="333333333333333333", command="fleet-run",
+            raw_args=CLICKUP_URL, is_dm=True,
+        )
+        for env in (int_event, int_role, int_user):
+            result = handle_envelope(
+                env, queue=queue, authorized_users=AUTHORIZED, config=config)
+            self.assertIsNone(result["response"])
+        self.assertEqual(queue.enqueued, [])
+
+    def test_audit_failure_is_visible_in_result(self) -> None:
+        # V1 재공격 new_issue 봉인: 감사 유실이 조용히 사라지지 않는다 —
+        # 게이트웨이가 경보를 올릴 수 있게 결과에 표시.
+        def broken_audit(event: dict) -> None:
+            raise RuntimeError("disk full")
+
+        queue = FakeQueue()
+        result = handle_envelope(
+            _dm_envelope(), queue=queue, authorized_users=AUTHORIZED,
+            config=DiscordAccessConfig(allow_dm=True), audit=broken_audit,
+        )
+        self.assertTrue(result.get("audit_failed"), "감사 실패가 결과에 드러나야 한다")
+        ok = handle_envelope(
+            _dm_envelope(), queue=queue, authorized_users=AUTHORIZED,
+            config=DiscordAccessConfig(allow_dm=True), audit=lambda e: None,
+        )
+        self.assertFalse(ok.get("audit_failed"))
 
 
 class MemberOwnerBoundaryTests(unittest.TestCase):
