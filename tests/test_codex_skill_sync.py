@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.codex_skill_sync.sync import sync_skills
+from tools.codex_skill_sync.sync import default_sources, sync_skills
 
 
 def _make_skill(root: Path, name: str, body: str = "hello") -> Path:
@@ -83,7 +83,9 @@ def test_collision_first_source_wins(tmp_path):
     _make_skill(src_b, "humansearch", body="FROM_B")
     res = sync_skills([src_a, src_b], dest)
     assert (dest / "humansearch" / "SKILL.md").read_text(encoding="utf-8").find("FROM_A") != -1
-    assert any(c[0] == "humansearch" for c in res["collisions"])
+    assert [
+        "humansearch", str(src_a / "humansearch"), str(src_b / "humansearch"),
+    ] in res["collisions"]
 
 
 def test_classification_full_vs_partial(tmp_path):
@@ -158,3 +160,83 @@ def test_source_symlink_loop_does_not_crash(tmp_path):
     # 링크 자체를 dest 로 옮기지 않는다(옮기면 Codex 가 그 폴더를 훑을 때 같은 무한루프에 빠짐)
     assert not (dest / "loopskill" / "loop").exists()
     assert not (dest / "loopskill" / "loop" / "loop").exists()
+
+
+def test_source_destination_overlap_is_rejected_before_deletion(tmp_path):
+    source_and_dest = tmp_path / "skills"
+    victim = _make_skill(source_and_dest, "victim") / "SKILL.md"
+
+    with pytest.raises(ValueError, match="overlap"):
+        sync_skills([source_and_dest], source_and_dest)
+
+    assert victim.is_file()
+
+
+def test_top_level_skill_symlink_is_skipped_without_copying_external_files(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    external = _make_skill(tmp_path / "external", "linked")
+    (external / "secret.txt").write_text("DO NOT COPY", encoding="utf-8")
+    (source / "linked").symlink_to(external, target_is_directory=True)
+    dest = tmp_path / "dest"
+
+    res = sync_skills([source], dest)
+
+    assert not (dest / "linked").exists()
+    assert ["linked", "top-level skill symlink rejected"] in res["skipped"]
+    assert "linked" not in res["provenance"]
+
+
+def test_default_sources_cover_v5_v4_and_keep_global_as_fallback(tmp_path):
+    v5 = tmp_path / "valuehire_v5"
+    v4 = tmp_path / "valuehire_v4"
+    home = tmp_path / "home"
+
+    assert default_sources(v5, v4_root=v4, home=home) == [
+        v5 / "skills",
+        v5 / ".claude" / "skills",
+        v4 / ".codex" / "skills",
+        v4 / ".claude" / "skills",
+        v4 / "tools",
+        home / ".claude" / "skills",
+    ]
+
+
+def test_default_sources_honor_v4_repo_environment(tmp_path, monkeypatch):
+    v5 = tmp_path / "valuehire_v5"
+    v4 = tmp_path / "legacy"
+    monkeypatch.setenv("VALUEHIRE_V4_REPO", str(v4))
+
+    sources = default_sources(v5, home=tmp_path / "home")
+
+    assert sources[2:5] == [
+        v4 / ".codex" / "skills",
+        v4 / ".claude" / "skills",
+        v4 / "tools",
+    ]
+
+
+def test_v4_jdbuilder_is_discovered_with_v5_precedence_and_provenance(tmp_path):
+    v5 = tmp_path / "valuehire_v5"
+    v4 = tmp_path / "valuehire_v4"
+    home = tmp_path / "home"
+    dest = tmp_path / "codex"
+    _make_skill(v5 / "skills", "shared", body="V5")
+    _make_skill(v5 / ".claude" / "skills", "shared", body="V5 CLAUDE")
+    _make_skill(v4 / ".codex" / "skills", "shared", body="V4")
+    _make_skill(v4 / ".codex" / "skills", "jdbuilder", body="V4 JD")
+    _make_skill(v4 / ".claude" / "skills", "v4-claude", body="V4 CLAUDE")
+    _make_skill(v4 / "tools", "v4-tool", body="V4 TOOL")
+    _make_skill(home / ".claude" / "skills", "shared", body="GLOBAL")
+    _make_skill(home / ".claude" / "skills", "global-only", body="GLOBAL ONLY")
+
+    res = sync_skills(
+        default_sources(v5, v4_root=v4, home=home), dest, dry_run=True)
+
+    assert {
+        "shared", "jdbuilder", "v4-claude", "v4-tool", "global-only",
+    } <= set(res["copied"])
+    assert res["provenance"]["shared"] == str(v5 / "skills" / "shared")
+    assert res["provenance"]["jdbuilder"] == str(
+        v4 / ".codex" / "skills" / "jdbuilder")
+    assert not dest.exists()

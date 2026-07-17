@@ -70,6 +70,17 @@ def _mirror(src_dir: Path, dst_dir: Path) -> None:
     shutil.copytree(src_dir, dst_dir, ignore=_ignore)
 
 
+def _paths_overlap(left: Path, right: Path) -> bool:
+    """True when either resolved path contains the other (including equality)."""
+    left_resolved = left.resolve()
+    right_resolved = right.resolve()
+    return (
+        left_resolved == right_resolved
+        or left_resolved in right_resolved.parents
+        or right_resolved in left_resolved.parents
+    )
+
+
 def sync_skills(
     sources,
     dest,
@@ -83,10 +94,14 @@ def sync_skills(
     skipped: list[list[str]] = []
     collisions: list[list[str]] = []
     classification: dict[str, str] = {}
-    claimed: dict[str, str] = {}  # name -> 이긴 source 경로
+    claimed: dict[str, str] = {}  # name -> 이긴 skill 디렉토리 경로
+
+    sources = [Path(source) for source in sources]
+    for source in sources:
+        if source.is_dir() and _paths_overlap(source, dest):
+            raise ValueError(f"source/destination overlap rejected: {source} <-> {dest}")
 
     for source in sources:
-        source = Path(source)
         if not source.is_dir():
             continue
         for child in sorted(source.iterdir()):
@@ -95,6 +110,9 @@ def sync_skills(
                 continue  # .system 등 dot 디렉토리는 대상 아님
             skill_md = child / "SKILL.md"
             if not skill_md.is_file():
+                continue
+            if child.is_symlink():
+                skipped.append([name, "top-level skill symlink rejected"])
                 continue
 
             # 별칭 skip
@@ -107,9 +125,9 @@ def sync_skills(
 
             # 충돌: 먼저 온 source 가 이김
             if name in claimed:
-                collisions.append([name, claimed[name], str(source)])
+                collisions.append([name, claimed[name], str(child)])
                 continue
-            claimed[name] = str(source)
+            claimed[name] = str(child)
 
             classification[name] = _classify(skill_md)
             copied.append(name)
@@ -128,17 +146,36 @@ def sync_skills(
         "skipped": skipped,
         "collisions": collisions,
         "classification": classification,
+        "provenance": dict(claimed),
     }
 
 
-def default_sources(repo_root: Path | None = None) -> list[Path]:
-    """기본 소스: 전역 ~/.claude/skills + 레포 .claude/skills + 레포 skills."""
-    home = Path.home()
-    root = repo_root or Path(__file__).resolve().parents[2]
+def default_sources(
+    repo_root: Path | None = None,
+    *,
+    v4_root: Path | None = None,
+    home: Path | None = None,
+) -> list[Path]:
+    """v5/v4 정본과 전역 fallback을 결정적 우선순위로 반환.
+
+    현재 v5의 Codex-native ``skills``를 가장 먼저 두고, v4의 완전한
+    ``.codex/skills``를 Claude adapter보다 먼저 둔다. 사용자 전역 스킬은
+    두 버전에 없는 이름만 채우는 마지막 fallback이다.
+    """
+    home = Path.home() if home is None else Path(home)
+    root = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parents[2]
+    if v4_root is None:
+        configured = (os.environ.get("VALUEHIRE_V4_REPO") or "").strip()
+        v4_root = Path(configured) if configured else root.parent / "valuehire_v4"
+    else:
+        v4_root = Path(v4_root)
     return [
-        home / ".claude" / "skills",
-        root / ".claude" / "skills",
         root / "skills",
+        root / ".claude" / "skills",
+        v4_root / ".codex" / "skills",
+        v4_root / ".claude" / "skills",
+        v4_root / "tools",
+        home / ".claude" / "skills",
     ]
 
 
