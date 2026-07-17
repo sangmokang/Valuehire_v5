@@ -1,0 +1,38 @@
+{
+  "claim_id": "discord-direct-receiver-core-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal": "docs/prompts/discord-direct-connect-goal-2026-07-17.md §5A",
+  "generator": {
+    "claim": "직결 수신기 조각 A: DiscordEnvelope(길드 컨텍스트 보존) + handle_envelope 순수로직. 기존 계약만 재사용(parse_hermes_fleet_args 단일 파싱, dispatch_fleet_command 경유 권한검사 1회, 큐·감사·시계 주입). 비인가·신원미상 침묵+감사(INV-D6), 큐 예외 raw 원문 비노출(INV-D5), enqueue-only(INV-D1).",
+    "changed_files": [
+      "tools/multi_position_sourcing/direct_receiver.py",
+      "tests/test_direct_receiver.py",
+      "docs/prompts/discord-direct-connect-goal-2026-07-17.md"
+    ],
+    "red_evidence": "RED 커밋: ImportError(direct_receiver 모듈 부재)로 수집 실패 → 구현 커밋으로 GREEN",
+    "command": "./verify.sh",
+    "exit_code": null,
+    "green_evidence": "focused 11 passed. 전체 verify 재실행 대기(직전 실측 1 failed=test_portal_tab_guard 동시성 플래키, 단독 3/3+main 통과 — 별도 추적)",
+    "mutant_check": "뮤턴트1 신원 게이트 무력화 → 최초 미감지(DM 경로 중복 방어) → 길드 역할 경로 봉인 테스트 추가 후 1 failed 감지. 뮤턴트2 denied 침묵→응답화 → 2 failed 감지. 뮤턴트3 is_dm=True 고정(hermes 방식 회귀) → 1 failed 감지. 각각 적용→감지→git checkout 원복.",
+    "wiring": "순수 모듈 — 프로덕션 배선은 조각 C(discord_direct_gateway)가 소비 예정(goal §3 단계 설계). 현 시점 엔트리=테스트. 고아 아님 주장 안 함 — 조각 C 배송 전까지 '부분 배선(설계상 단계)' 상태로 명시.",
+    "notify_note": "dispatch_fleet_command 내부 discord_notify 직접 호출은 테스트에서 무력화(실자격증명 로컬 실발송 방지). notifier 주입 분리는 goal 조각 F 범위."
+  },
+  "v1": {},
+  "failed_attempts": [
+    {
+      "attempt": "worktree 에서 ./verify.sh | tail 파이프로 실행",
+      "root_cause": ".venv 부재로 verify 가 exit 2 였는데 파이프 마지막 tail 의 exit 0 이 성공으로 보임",
+      "repro": "새 worktree 에서 ./verify.sh — '인터프리터를 찾지 못했습니다'",
+      "next_change": ".venv 심링크 + exit 코드 직접 echo 로 실측 — 이후 모든 verify 는 exit 코드를 별도 출력"
+    },
+    {
+      "attempt": "guild 컨텍스트 캡처 테스트에서 패치된 dispatch 를 다시 호출",
+      "root_cause": "spy side_effect 가 자기 자신(패치본)을 불러 무한 재귀 → RecursionError → internal_error",
+      "repro": "patch.object(dr, 'dispatch_fleet_command', side_effect=capture) + capture 내부 dr.dispatch_fleet_command 호출",
+      "next_change": "원본 모듈(fleet_dispatch.dispatch_fleet_command) 직접 호출로 정정"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "G 뮤턴트 3종 감지 — 전체 verify·V1(Codex) 대기"
+}
