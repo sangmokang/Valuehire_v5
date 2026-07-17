@@ -132,6 +132,29 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(queue.enqueued, [])
         self.assertTrue(audit, "신원미상도 감사 이벤트는 남긴다")
 
+    def test_malformed_identity_rejected_even_with_allowed_role(self) -> None:
+        # 신원 게이트의 실질 방어선: 역할이 allowlist 에 걸려도 user_id 가
+        # snowflake 꼴이 아니면(게이트웨이 버그·위조 신호) 무조건 무시한다.
+        # DM 경로는 하위 연락처 대조가 겹으로 막지만, 길드 역할 인증은
+        # user_id 모양과 무관하게 통과시키므로 이 게이트가 없으면 뚫린다.
+        queue = FakeQueue()
+        config = DiscordAccessConfig(
+            allowed_channel_ids=("555555555555555555",),
+            allowed_role_ids=("777777777777777777",),
+        )
+        result = handle_envelope(
+            DiscordEnvelope(
+                event_id="444444444444444444", user_id="not-a-snowflake",
+                channel_id="555555555555555555", guild_id="666666666666666666",
+                role_ids=("777777777777777777",), command="fleet-run",
+                raw_args=CLICKUP_URL, is_dm=False,
+            ),
+            queue=queue, authorized_users=AUTHORIZED, config=config,
+        )
+        self.assertIsNone(result["response"])
+        self.assertEqual(result["action"], "ignored_identity")
+        self.assertEqual(queue.enqueued, [])
+
     def test_parse_error_is_fail_closed_and_does_not_leak(self) -> None:
         queue = FakeQueue()
         # 인가자: 안전한 안내문(원본 셸 파싱 예외 원문 비노출), 큐 접촉 0.
