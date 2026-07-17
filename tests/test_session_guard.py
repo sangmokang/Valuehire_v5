@@ -22,8 +22,10 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 from tools.multi_position_sourcing.session_guard import (
+    run_keepalive_once,
     KEEPALIVE_INTERVAL_SECONDS,
     PROBE_URLS,
     SESSION_COOKIE_NAMES,
@@ -115,5 +117,54 @@ class SnapshotRollingTests(unittest.TestCase):
             self.assertEqual(data["cookies"][0]["name"], "JSESSIONID")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class RunKeepaliveOnceTests(unittest.TestCase):
+    def test_owner_check_happens_before_any_browser_touch(self) -> None:
+        touched = []
+        result = run_keepalive_once(
+            "saramin",
+            owner_snapshot=lambda: SimpleNamespace(owner_activity_detected=True),
+            tab_factory=lambda: touched.append("attach"),
+            last_at=None, now=100.0,
+        )
+        self.assertEqual(result["action"], "skip_owner_active")
+        self.assertEqual(touched, [], "사장님 사용 중엔 CDP attach 자체를 하면 안 된다")
+
+    def test_cookie_present_saves_rolling_snapshot_and_disconnects_only(self) -> None:
+        class FakeTab:
+            def __init__(self) -> None:
+                self.closed = 0
+
+            def send(self, method: str, params: dict | None = None) -> dict:
+                return {"cookies": [{"name": "JSESSIONID", "value": "s", "domain": ".saramin.co.kr"}]}
+
+            def close(self) -> None:
+                self.closed += 1
+
+        tab = FakeTab()
+        with TemporaryDirectory(prefix="sg_run_") as root:
+            result = run_keepalive_once(
+                "saramin",
+                owner_snapshot=lambda: SimpleNamespace(owner_activity_detected=False),
+                tab_factory=lambda: tab,
+                last_at=None, now=100.0, snapshot_root=Path(root),
+            )
+            self.assertEqual(result["action"], "cookie_only_ok")
+            self.assertEqual(len(list(Path(root).glob("saramin-*.json"))), 1)
+        self.assertEqual(tab.closed, 1, "종료 = WebSocket 해제(close) 1회만")
+
+    def test_cookie_fetch_failure_falls_back_to_probe_action(self) -> None:
+        class BrokenTab:
+            def send(self, method: str, params: dict | None = None) -> dict:
+                raise RuntimeError("cdp unavailable")
+
+            def close(self) -> None:
+                pass
+
+        result = run_keepalive_once(
+            "jobkorea",
+            owner_snapshot=lambda: SimpleNamespace(owner_activity_detected=False),
+            tab_factory=lambda: BrokenTab(),
+            last_at=None, now=100.0,
+        )
+        self.assertEqual(result["action"], "probe_readonly")
+        self.assertEqual(result["cookie_evidence"], "unknown")
