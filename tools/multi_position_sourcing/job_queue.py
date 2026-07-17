@@ -113,18 +113,39 @@ def _ip_is_global(ip: str) -> bool:
         addr = ipaddress.ip_address(ip.partition("%")[0])  # fe80::1%en0 의 scope 제거
     except ValueError:
         return False
+    # V1-F2: fec0::/10 site-local 은 deprecated 라 ipaddress.is_global 이 True 로 오판하지만
+    # 여전히 내부 라우팅 대역 — 명시 차단. IPv6Address.is_site_local 로 잡는다.
+    if getattr(addr, "is_site_local", False):
+        return False
     return addr.is_global and not addr.is_multicast
 
 
+def _looks_like_ip_literal_host(host: str) -> bool:
+    """호스트가 '진짜 도메인'이 아니라 IP 를 흉내낸 숫자 표기인지 — DNS 없이 판정.
+
+    실도메인의 최상위 라벨(TLD)은 항상 알파벳으로 끝난다. 따라서 마지막 라벨이 순수 숫자
+    이거나(예: 010.0.0.1, 127.1), 호스트 전체가 십진 정수(예: 2130706433)이거나, 0x·0o
+    같은 진법 접두를 쓰면 IP 흉내 표기로 본다 — ipaddress 가 표준 표기만 파싱하는 틈으로
+    십진/8진/16진 loopback 이 새는 것을 1단에서 막는다(V1-F5, 방어심층)."""
+    if host.isdigit():                    # 순수 십진 정수형 IP (2130706433 = 127.0.0.1)
+        return True
+    labels = host.split(".")
+    last = labels[-1]
+    if last and (last.isdigit() or last.startswith(("0x", "0o"))):
+        return True
+    return False
+
+
 def _host_forbidden_literal(host: str) -> bool:
-    """DNS 없이 판정 가능한 금지 호스트 — localhost 계열 + 비공인 IP 리터럴."""
+    """DNS 없이 판정 가능한 금지 호스트 — localhost 계열 + 비공인/기만 IP 리터럴."""
     host = host.lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost"):
         return True
     try:
         ipaddress.ip_address(host)
     except ValueError:
-        return False                     # IP 리터럴 아님 → 2단(DNS)에서 판정
+        # 표준 IP 표기는 아님 — 하지만 IP 흉내 숫자표기(십진/8진/16진)면 1단에서 거부.
+        return _looks_like_ip_literal_host(host)
     return not _ip_is_global(host)
 
 
@@ -135,7 +156,12 @@ def url_host_resolves_public(url: str, *, getaddrinfo: Any = None) -> bool:
     순수 테스트를 위해 resolver 주입식 — 기본은 socket.getaddrinfo(실 DNS).
     """
     resolve = getaddrinfo if getaddrinfo is not None else __import__("socket").getaddrinfo
-    host = urllib.parse.urlparse(url or "").hostname
+    try:
+        # V1-F1: 잘못 닫힌 IPv6 URL(예: 'https://[::1/x')은 .hostname 에서 ValueError 를
+        # 던진다 — 예외가 새어나가지 않게 감싸 안전측 False 로 떨군다(fail-closed).
+        host = urllib.parse.urlparse(url or "").hostname
+    except ValueError:
+        return False
     if not host:
         return False
     try:
