@@ -13,7 +13,7 @@
     "command": "./verify.sh",
     "exit_code": 0,
     "green_evidence": "1682 passed, 4 xfailed, 102 subtests passed in 53.05s (worktree 실측 2026-07-17)",
-    "mutant_check": "뮤턴트1 owner 우선순위 무력화(if False and owner_active) → 3 failed 감지. 뮤턴트2 classify_cookie_evidence 상수 present 화 → 1 failed 감지. 각각 적용→감지→git checkout 원복.",
+    "mutant_check": "뮤턴트1 owner 우선순위 무력화(if False and owner_active) → 3 failed 감지(T 재실행으로 독립 재현: 3 failed, 14 passed → 원복 17 passed). 뮤턴트2 classify_cookie_evidence 상수 present 화 → 1 failed 감지. 추가 실측: 잡코리아 probe URL 소문자화 → 1 failed / owner·not_due 순서 반전 → 경계 테스트(a030260)로 1 failed. 각각 적용→감지→git checkout 원복.",
     "contract_cross_check": "raw_cdp.attach(target, badge=False) raw_cdp.py:202, CDPTab.send(method, params=None) raw_cdp.py:124, owner_activity.detect_owner_activity_snapshot(owner_activity_detected) 실존 대조",
     "wiring": "엔트리 = CLI python -m tools.multi_position_sourcing.session_guard --site <site> (main:195). 러너(keepalive 루프) 통합은 goal 비범위 — 후속 조각"
   },
