@@ -83,7 +83,7 @@ def sync_skills(
     skipped: list[list[str]] = []
     collisions: list[list[str]] = []
     classification: dict[str, str] = {}
-    claimed: dict[str, str] = {}  # name -> 이긴 source 경로
+    claimed: dict[str, str] = {}  # name -> 이긴 skill 디렉토리 경로
 
     for source in sources:
         source = Path(source)
@@ -109,7 +109,7 @@ def sync_skills(
             if name in claimed:
                 collisions.append([name, claimed[name], str(source)])
                 continue
-            claimed[name] = str(source)
+            claimed[name] = str(child)
 
             classification[name] = _classify(skill_md)
             copied.append(name)
@@ -128,17 +128,36 @@ def sync_skills(
         "skipped": skipped,
         "collisions": collisions,
         "classification": classification,
+        "provenance": dict(claimed),
     }
 
 
-def default_sources(repo_root: Path | None = None) -> list[Path]:
-    """기본 소스: 전역 ~/.claude/skills + 레포 .claude/skills + 레포 skills."""
-    home = Path.home()
-    root = repo_root or Path(__file__).resolve().parents[2]
+def default_sources(
+    repo_root: Path | None = None,
+    *,
+    v4_root: Path | None = None,
+    home: Path | None = None,
+) -> list[Path]:
+    """v5/v4 정본과 전역 fallback을 결정적 우선순위로 반환.
+
+    현재 v5의 Codex-native ``skills``를 가장 먼저 두고, v4의 완전한
+    ``.codex/skills``를 Claude adapter보다 먼저 둔다. 사용자 전역 스킬은
+    두 버전에 없는 이름만 채우는 마지막 fallback이다.
+    """
+    home = Path.home() if home is None else Path(home)
+    root = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parents[2]
+    if v4_root is None:
+        configured = (os.environ.get("VALUEHIRE_V4_REPO") or "").strip()
+        v4_root = Path(configured) if configured else root.parent / "valuehire_v4"
+    else:
+        v4_root = Path(v4_root)
     return [
-        home / ".claude" / "skills",
-        root / ".claude" / "skills",
         root / "skills",
+        root / ".claude" / "skills",
+        v4_root / ".codex" / "skills",
+        v4_root / ".claude" / "skills",
+        v4_root / "tools",
+        home / ".claude" / "skills",
     ]
 
 

@@ -175,20 +175,40 @@ def test_default_sources_cover_v5_v4_and_keep_global_as_fallback(tmp_path):
     ]
 
 
+def test_default_sources_honor_v4_repo_environment(tmp_path, monkeypatch):
+    v5 = tmp_path / "valuehire_v5"
+    v4 = tmp_path / "legacy"
+    monkeypatch.setenv("VALUEHIRE_V4_REPO", str(v4))
+
+    sources = default_sources(v5, home=tmp_path / "home")
+
+    assert sources[2:5] == [
+        v4 / ".codex" / "skills",
+        v4 / ".claude" / "skills",
+        v4 / "tools",
+    ]
+
+
 def test_v4_jdbuilder_is_discovered_with_v5_precedence_and_provenance(tmp_path):
     v5 = tmp_path / "valuehire_v5"
     v4 = tmp_path / "valuehire_v4"
     home = tmp_path / "home"
     dest = tmp_path / "codex"
     _make_skill(v5 / "skills", "shared", body="V5")
+    _make_skill(v5 / ".claude" / "skills", "shared", body="V5 CLAUDE")
     _make_skill(v4 / ".codex" / "skills", "shared", body="V4")
     _make_skill(v4 / ".codex" / "skills", "jdbuilder", body="V4 JD")
+    _make_skill(v4 / ".claude" / "skills", "v4-claude", body="V4 CLAUDE")
+    _make_skill(v4 / "tools", "v4-tool", body="V4 TOOL")
     _make_skill(home / ".claude" / "skills", "shared", body="GLOBAL")
+    _make_skill(home / ".claude" / "skills", "global-only", body="GLOBAL ONLY")
 
     res = sync_skills(
         default_sources(v5, v4_root=v4, home=home), dest, dry_run=True)
 
-    assert {"shared", "jdbuilder"} <= set(res["copied"])
+    assert {
+        "shared", "jdbuilder", "v4-claude", "v4-tool", "global-only",
+    } <= set(res["copied"])
     assert res["provenance"]["shared"] == str(v5 / "skills" / "shared")
     assert res["provenance"]["jdbuilder"] == str(
         v4 / ".codex" / "skills" / "jdbuilder")
