@@ -9,8 +9,10 @@ portal_worker.stop() 이 linkedin_rps 외 채널(사람인·잡코리아)에서
 인수 기준(기계 단언):
 - saramin/jobkorea 채널에서 start() → stop() 후 context.close() 호출 0회.
 - linkedin_rps 는 원래도 close 하지 않았음을 회귀로 봉인.
-- stop() 의 나머지 정리(프로필 lock 해제, _started/_context 리셋)는 그대로 —
-  세션 보존이 재기동(2회차 start)을 막으면 안 된다.
+- stop() 의 나머지 정리(프로필 lock 해제, _started/_context 리셋)는 그대로.
+- 단, 세션을 보존한 채 같은 프로필 재-launch 는 실제 playwright 가 거부하므로
+  "재기동 가능"이 아니라 "lock 재획득 가능 + 재-launch 미지원(CDP 재부착이 정답,
+  TODO-2b)"이 정직한 계약이다 (V1 적대검증 반례 C2).
 """
 
 from __future__ import annotations

@@ -10,7 +10,8 @@
 ## 인수 기준 (기계 검사)
 1. saramin/jobkorea 채널에서 `start()`→`stop()` 후 `context.close()` 호출 0회.
 2. linkedin_rps 무-close 회귀 봉인.
-3. `stop()` 의 프로필 lock 해제·재시작 가능성은 유지(2회 start/stop 왕복).
+3. `stop()` 의 프로필 lock 해제는 유지(재획득 가능). 같은 프로필 재-launch 는
+   실제 playwright 의미론상 미지원("already in use") — 재접속은 TODO-2b CDP 재부착으로.
 4. 전체 verify exit 0, 기존 단언 삭제 0 (옛 계약 단언 2건은 새 계약으로 반전·카나리아화만).
 5. v4 `.claude/hooks/tests/test_login_guard.py` 29/29 유지.
 

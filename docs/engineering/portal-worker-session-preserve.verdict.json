@@ -17,7 +17,7 @@
   },
   "v1": {
     "author": "Codex fresh (codex-rescue subagent)",
-    "verdict": "fail→봉인 후 재판정 대기",
+    "verdict": "pass (봉인 후 재판정 2026-07-17)",
     "counterexamples": [
       "C1: 프로덕션 호출자는 모두 바깥 async_playwright() 스코프 종료 시 브라우저가 닫힘 — stop() 보존만으로 '프로세스 수명 너머' 세션 보존은 미완(goal 문서에 선-인정된 한계, 완성형=TODO-2b CDP 재부착)",
       "C2: 세션 보존 + 같은 프로필 재-launch 는 실제 playwright 가 'profile already in use' 로 거부 — 기존 재시작 테스트가 Fake 로 이를 은폐(과장)",
@@ -49,6 +49,6 @@
       "next_change": "Fake 에 의미론 주입 + 테스트를 '재-launch 미지원 + lock 재획득 가능' 으로 정정 — 적용 완료"
     }
   ],
-  "three_way_agree": false,
-  "status": "진행중 — G GREEN + V1 반례 봉인 완료, V1 재판정·PR/CI 대기"
+  "three_way_agree": true,
+  "status": "G GREEN + V1 pass(재판정) + V2 conditional pass — PR/CI 대기"
 }
