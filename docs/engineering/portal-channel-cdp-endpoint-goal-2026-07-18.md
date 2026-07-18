@@ -47,3 +47,13 @@
 
 ## 적대 검증 로그
 - `portal-channel-cdp-endpoint.verdict.json` 참조.
+
+## 라이브 실측 발견 (2026-07-18, 조각 B 안전요건)
+사장님 실제 환경 포트 스캔(읽기전용 /json/version·/json):
+- 9222=사람인 로그인탭 / 9223=잡코리아 / 9224=잡코리아 / 9225=빈탭(linkedin 포트).
+- **실제 포트 배치가 portal_browsers.sh 기본(saramin=9223)과 불일치** → 채널→기본포트
+  매핑만으로 attach 하면 사람인 작업이 9223(잡코리아 크롬)에 붙는 오접속 사고.
+- ⇒ **조각 B 필수 계약**: resolve_channel_cdp_endpoint 로 후보 포트를 얻되, attach 전
+  그 endpoint 의 탭에 대상 사이트 로그인 마커가 실제로 있는지 검증(SOT-26 §2). 없으면
+  다른 살아있는 포트를 마커로 재탐색. v4 tools/position-batch/lib/cdp-endpoints.mjs 의
+  계층 match 와 동형. 조각 A(순수 포트 해석)는 이 검증의 1차 후보 생성기 역할.
