@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import math
 import os
 import re
 import secrets
+import time
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -887,7 +889,14 @@ ReadyCheck = Callable[[Any], Awaitable[bool]]
 
 
 class PortalWorker:
-    def __init__(self, config: PortalWorkerConfig, *, playwright: Any | None = None) -> None:
+    def __init__(
+        self,
+        config: PortalWorkerConfig,
+        *,
+        playwright: Any | None = None,
+        owner_snapshot: Callable[[], Any] | None = None,
+        mutation_sleep: Callable[[float], None] | None = None,
+    ) -> None:
         self.config = config
         self._provided_playwright = playwright
         self._playwright_manager: Any | None = None
@@ -900,6 +909,47 @@ class PortalWorker:
         # raw attach 채널(사람인·잡코리아)이 심는 RawPage. None 이면 기존 launch/linkedin 경로.
         self._raw_page: Any | None = None
         self._raw_tab: Any | None = None
+        if owner_snapshot is None:
+            from .owner_activity import detect_owner_activity_snapshot
+
+            owner_snapshot = detect_owner_activity_snapshot
+        self._owner_snapshot = owner_snapshot
+        self._mutation_sleep = mutation_sleep or time.sleep
+
+    @staticmethod
+    def _proved_idle_seconds(snapshot: Any) -> float:
+        value = getattr(snapshot, "idle_seconds", None)
+        if (
+            getattr(snapshot, "detection_status", "") != "ok"
+            or getattr(snapshot, "owner_activity_detected", True) is not False
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < 180.0
+        ):
+            raise ProfileLockError("owner activity blocks raw browser mutation")
+        return float(value)
+
+    def _assert_raw_mutation_allowed(self) -> None:
+        """Lease + two OS-idle proofs + quiet dwell before exactly one mutation."""
+        self._lock.assert_owned()
+        try:
+            first = self._proved_idle_seconds(self._owner_snapshot())
+        except ProfileLockError:
+            raise
+        except Exception as exc:
+            raise ProfileLockError("owner activity detection failed closed") from exc
+        self._mutation_sleep(1.0)
+        self._lock.assert_owned()
+        try:
+            second = self._proved_idle_seconds(self._owner_snapshot())
+        except ProfileLockError:
+            raise
+        except Exception as exc:
+            raise ProfileLockError("owner activity detection failed closed") from exc
+        if second <= first:
+            raise ProfileLockError("owner idle proof did not increase during quiet dwell")
+        self._lock.assert_owned()
 
     @property
     def context(self) -> Any:
@@ -948,15 +998,16 @@ class PortalWorker:
                 badge_label = raw_cdp._resolve_badge_label(os.environ)
                 if not badge_label:
                     raise RuntimeError("visible automation marker is required for raw mode")
-                self._raw_tab = raw_cdp.attach(target, badge=False)
                 self._lock.assert_owned()
+                self._raw_tab = raw_cdp.attach(target, badge=False)
+                await asyncio.to_thread(self._assert_raw_mutation_allowed)
                 if self._raw_tab.mark_busy(badge_label) is not True:
                     raise RuntimeError("visible automation marker could not be applied")
                 self._raw_page = RawPage(
                     self._raw_tab,
                     initial_url=str(target.get("url") or ""),
                     require_badge=True,
-                    mutation_guard=self._lock.assert_owned,
+                    mutation_guard=self._assert_raw_mutation_allowed,
                 )
                 self._started = True
                 return
@@ -1008,7 +1059,11 @@ class PortalWorker:
         self._raw_tab = None
         if tab is None:
             return
-        disconnect = getattr(tab, "close", None)
+        try:
+            self._lock.assert_owned()
+            disconnect = getattr(tab, "close", None)
+        except ProfileLockError:
+            disconnect = getattr(tab, "disconnect", None)
         if not callable(disconnect):
             return
         try:

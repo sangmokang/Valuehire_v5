@@ -185,14 +185,18 @@ class RawPage:
                 raise RuntimeError("raw navigation failed")
             if navigation.get("isDownload") is True:
                 raise RuntimeError("raw navigation download was rejected")
-        if wait_until is None:
-            return
         loader_id = ""
         if isinstance(navigation, dict):
             loader_id = str(navigation.get("loaderId") or "")
         if self._require_badge and not loader_id:
             raise RuntimeError("raw navigation loader proof is missing")
+        if wait_until is None:
+            if not self._require_badge:
+                return
+            wait_until = "domcontentloaded"
         lifecycle = getattr(self._tab, "wait_for_lifecycle", None)
+        if self._require_badge and not callable(lifecycle):
+            raise RuntimeError("raw navigation lifecycle proof is unavailable")
         if loader_id and callable(lifecycle):
             lifecycle_name = {
                 "domcontentloaded": "DOMContentLoaded",

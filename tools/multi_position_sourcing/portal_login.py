@@ -308,8 +308,18 @@ async def _saramin_search_ready(page: Any) -> bool:
         except Exception:
             return False
     text = await _body_text(page)
-    has_search = await page.locator("input.search_input, #career_min, #career_max").count()
-    return bool(has_search or "로그아웃" in text)
+    if "로그인" in text and "로그아웃" not in text:
+        return False
+    account_marker = (
+        "로그아웃" in text
+        or "밸류커넥트" in text
+        or "value connect" in text.casefold()
+        or "valueconnect" in text.casefold()
+    )
+    search_input = await page.locator("input.search_input").count()
+    career_min = await page.locator("#career_min").count()
+    career_max = await page.locator("#career_max").count()
+    return bool(account_marker and search_input and career_min and career_max)
 
 
 async def _jobkorea_search_ready(page: Any) -> bool:
@@ -323,7 +333,20 @@ async def _jobkorea_search_ready(page: Any) -> bool:
             await _close_popups(page)
         except Exception:
             return False
-    return bool(await page.locator("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']").count())
+    text = await _body_text(page)
+    if "로그인" in text and "로그아웃" not in text:
+        return False
+    has_logout = "로그아웃" in text
+    folded = text.casefold()
+    has_account = (
+        "밸류커넥트" in text
+        or "value connect" in folded
+        or "valueconnect" in folded
+    )
+    has_search = await page.locator(
+        "#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"
+    ).count()
+    return bool(has_logout and has_account and has_search)
 
 
 async def _linkedin_rps_ready(page: Any) -> bool:

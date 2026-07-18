@@ -200,12 +200,6 @@ class CDPTab:
     def navigate(self, url: str, wait_ms: int = 4000) -> dict:
         result = self.send("Page.navigate", {"url": url})
         time.sleep(wait_ms / 1000)
-        # 페이지 로드로 배지가 사라지므로, 점유 중이면 다시 붙인다(best-effort).
-        if getattr(self, "_badge_label", None):
-            try:
-                self.eval(_badge_js(self._badge_label))
-            except Exception:
-                pass
         return result
 
     def wait_for_lifecycle(
@@ -250,6 +244,13 @@ class CDPTab:
             f.write(data)
         return path
 
+    def disconnect(self) -> None:
+        """Close only this raw WebSocket; never mutate or destroy the browser target."""
+        try:
+            self.ws.close()
+        except Exception:
+            pass
+
     def close(self):
         # 작업 끝 → 배지 제거(사장님이 이어받을 때 '사용중' 잔상 안 남게).
         try:
@@ -257,10 +258,7 @@ class CDPTab:
                 self.eval(_clear_js())
         except Exception:
             pass
-        try:
-            self.ws.close()
-        except Exception:
-            pass
+        self.disconnect()
 
 
 def _maybe_auto_badge(tab: "CDPTab", env: Any) -> None:

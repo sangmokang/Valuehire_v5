@@ -209,7 +209,9 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                     channel="saramin",
                     profile_root=Path(root),
                     connection_mode="raw_single_tab",
-                )
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
             )
             tab = FakeRawTab()
             worker._raw_page = RawPage(
@@ -253,7 +255,9 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                     channel="saramin",
                     profile_root=Path(root),
                     connection_mode="raw_single_tab",
-                )
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
             )
             try:
                 with self.assertRaises(RuntimeError):

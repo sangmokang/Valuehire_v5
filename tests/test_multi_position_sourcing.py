@@ -410,7 +410,12 @@ class FakeAutoLoginLocator:
     async def count(self) -> int:
         if self.selector == "body":
             return 1
-        if self.selector == "input.search_input, #career_min, #career_max":
+        if self.selector in {
+            "input.search_input",
+            "#career_min",
+            "#career_max",
+            "input.search_input, #career_min, #career_max",
+        }:
             return 1 if self.page.logged_in else 0
         if self.selector == "#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']":
             return 1 if self.page.logged_in else 0
@@ -428,7 +433,7 @@ class FakeAutoLoginLocator:
             self.page.url = self.page.ready_url
 
     async def inner_text(self, **_kwargs: object) -> str:
-        return "로그아웃" if self.page.logged_in else "로그인"
+        return "밸류커넥트 로그아웃" if self.page.logged_in else "로그인"
 
 
 class FakeAutoLoginPage:
