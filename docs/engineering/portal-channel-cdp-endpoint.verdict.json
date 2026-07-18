@@ -1,59 +1,61 @@
 {
   "claim_id": "portal-channel-cdp-endpoint-01",
   "mode": "code-change",
-  "risk": "L2",
+  "risk": "L3",
   "generator": {
-    "claim": "resolve_channel_cdp_endpoint(channel) 가 portal_browsers.sh 포트(saramin=9223/jobkorea=9224/linkedin_rps=9225)와 정합하는 채널별 CDP endpoint 를 우선순위(value>전역env>채널포트env>채널기본)로 해석한다. public_web은 ValueError. 기존 launch 방식·소비처 미변경. [완결] linkedin_rps start() 의 CDP endpoint 해석을 이 함수로 통과(_cdp_endpoint 메서드)해 고아를 해소 — 값-우선이라 기존 config 동작 보존, config 비면 채널 기본 포트로 폴백.",
+    "claim": "portal_live_check의 profile_only 정식 경로가 portal_browsers.sh로 exact 관리 Chrome root/CDP를 증명하고, 공식 로그인된 page target 하나만 raw WebSocket으로 attach하여 검색한다. 새 창·새 탭·전체 브라우저 attach·탭 close는 0이며, lease/owner-idle/visible badge/URL/DOM ownership을 모든 mutation과 handoff에 결박한다.",
     "changed_files": [
+      "scripts/portal_browsers.sh",
+      "tools/multi_position_sourcing/portal_live_check.py",
+      "tools/multi_position_sourcing/portal_login.py",
       "tools/multi_position_sourcing/portal_worker.py",
+      "tools/multi_position_sourcing/raw_cdp.py",
+      "tools/multi_position_sourcing/raw_page_adapter.py",
+      "tests/test_channel_endpoint_marker_verify.py",
+      "tests/test_multi_position_sourcing.py",
+      "tests/test_portal_cdp_discovery.py",
       "tests/test_portal_channel_cdp_endpoint.py",
-      "tests/test_channel_endpoint_marker_verify.py"
+      "tests/test_portal_preflight_autologin.py",
+      "tests/test_raw_cdp_busy_badge.py",
+      "tests/test_raw_page_adapter.py",
+      "tests/test_raw_portal_worker_wiring.py",
+      "tests/test_search_page_acquisition.py"
     ],
-    "red_evidence": "commit(RED): 함수 미존재 import error(collection error)",
-    "command": "./verify.sh",
-    "exit_code": 0,
-    "green_evidence": "focused 9(해석)+11(배선)+7(마커검증) / 전체 ./verify.sh 1763 passed, 4 xfailed exit 0",
-    "mutant_check": "채널포트 saramin 9223→9999 2f · LINKEDIN_PORT 이름파손 1f · 배선(config값 무시) 1f · 마커검증 무력화 2f — 4종 모두 감지 후 원복",
-    "sot_alignment": "포트·env 이름은 scripts/portal_browsers.sh:74-80 과 동일(재발명 아님)",
-    "wiring_status": "COSMETIC-SCAFFOLD(V2 정정): start() 가 _cdp_endpoint()→resolve_channel_cdp_endpoint 를 호출해 문법적 고아는 해소됐으나, config.chrome_cdp_endpoint 가 default_factory 로 항상 채워지고 resolve 가 value-우선이라 **채널 기본포트 분기는 프로덕션에서 영구 미도달**. 즉 linkedin 은 배선 전후 동일 주소, saramin/jobkorea 는 여전히 launch_persistent_context — TODO-2b 실질(portal_browsers.sh 크롬 attach) 0% 전달. '채널 인지'는 스캐폴드일 뿐.",
-    "test_quality": {
-      "happy_path": true,
-      "edge_cases": "채널 포트 env override·전역 env 우선·value 최우선·비숫자 포트 폴백·비http 전역 env 무시",
-      "failure_paths": "public_web ValueError",
-      "asserts_observable_behavior_only": true,
-      "weakened_or_deleted_assertions": 0
+    "red_evidence": "각 계약을 RED commit으로 먼저 고정: endpoint/target 배선, exact profile/root, loader/auth/visible marker, shared lease/owner idle, cancellation/handoff, Chrome identity, atomic badge/DOM ownership/navigation, socket/partial-ack uncertainty, slow attach/mark_busy cancellation, compositor occlusion, PNG provenance/CRC/IEND/DPR, integer Overlay geometry, stable resolved-node identity, post-proof owner return, exact-clone race, stale tooltip, immutable human locator, required-mode legacy fallback 제거.",
+    "green_evidence": "HEAD 3c0eda1: V1 independent 457 passed + 8 subtests; V2 actual headful Chromium matrix + local raw/adapter/wiring 85 passed; ./verify.sh 1865 passed, 4 xfailed, 105 subtests, exit 0.",
+    "wiring_status": "WIRED: run_profile_only_live_search -> PortalWorker(connection_mode=raw_single_tab) -> resolve_managed_channel_cdp_endpoint -> find_verified_channel_target -> exact raw target attach -> RawPage production search body.",
+    "session_preservation": "stop/handoff removes only acknowledged visible badge and raw WebSocket. Browser, profile, context, page target and login session are not closed or deleted.",
+    "fail_closed": [
+      "configured Chrome executable/profile root mismatch",
+      "renderer/helper-only or duplicate browser roots",
+      "non-CDP HTTP responder or hung/no-port process",
+      "ambiguous/missing/non-page/lookalike/insecure target",
+      "owner active or lease/token loss",
+      "generic/hidden/non-Recruiter login proof",
+      "URL or badge ownership race",
+      "page-owned red overlay/pseudo/modal spoof (browser Overlay nonce challenge)",
+      "mutable aria tooltip spoof (immutable label-derived custom tag; Accessibility Name suppressed)",
+      "exact-clone replacement between proof and action (same resolved object retained)",
+      "owner return during compositor proof (guard repeated at mutation boundary)",
+      "badge clear/socket close/constructor/attach acknowledgement uncertainty",
+      "navigation loader or DOM selector acknowledgement loss"
+    ]
+  },
+  "adversarial_reviews": [
+    {
+      "reviewer": "V1 fresh independent",
+      "head": "3c0eda1",
+      "verdict": "PASS",
+      "evidence": "457 passed, 8 subtests. RGB/RGBA filters 0-4, DPR 2x3 crop, CRC/IEND/nonfinite rejection, generated JS compilation, exact-clone zero mutation, stable-object required mode and cleanup all PASS."
+    },
+    {
+      "reviewer": "V2 actual Chromium",
+      "head": "3c0eda1",
+      "verdict": "PASS",
+      "evidence": "Actual headful Chromium: fractional rect/int Overlay, cover/pseudo/modal, delayed aria PAGE-SPOOF, exact clone, same-object action/navigation, clear/cross-nav/reinject all PASS; immutable canonical tag remained byte-identical and visible; local focused 85 passed."
     }
-  },
-  "failed_attempts": [],
-  "v1": {
-    "author": "Codex fresh (read-only)",
-    "verdict": "pass-but-must-wire",
-    "correctness_findings": [
-      "포트 범위 검증 누락(isdigit만) → 0·65536 통과 [봉인: 1..65535]",
-      "LINKEDIN_PORT override 테스트 부재 → 이름 파손 뮤텐트 미검출 [봉인: 테스트 추가]",
-      "기본포트·env이름 portal_browsers.sh:74-80 과 정확 일치 확인",
-      "우선순위·public_web ValueError 순서 정확"
-    ],
-    "split_judgment": "분할 합리적이나 조각 A 단독배송 금지(운영 호출자 0=고아). 조각 B와 묶어야.",
-    "design_correction": "SOT-26 INV5: connect_over_cdp 전체연결 금지, raw CDP 단일탭만 허용. 조각 B는 connect_over_cdp 확대 아니라 raw_cdp.py 단일탭+실포트탐색 재사용. 기존 linkedin connect_over_cdp도 제거대상 부채.",
-    "verify_repro": "V1 샌드박스 11 failed(환경제한)—신규함수 무관. focused 9 passed 재현. 뮤텐트 jobkorea 9224→9999 2 failed 감지",
-    "source_transcript": "tasks/af1de502cc4bcc0dd.output",
-    "agentId": "af1de502cc4bcc0dd"
-  },
-  "v2": {
-    "author": "Claude reset (goal+verdict 만 읽음)",
-    "verdict": "pass-with-caveats",
-    "wiring_honesty": "cosmetic/inert — value-first 로 채널 기본포트 프로덕션 미도달. 고아 해소는 문법적으로만 사실, 채널 인지 능력 0 전달. G/V1 둘 다 이 무동작성 미표면화.",
-    "caught_regression": "작업트리에 커밋 안 된 회귀(isascii 봉인 revert→전각숫자 counter-AC 1 failed) 잠복 발견 — G/V1 놓침. checkout 으로 폐기, HEAD 19 passed 복원 확인.",
-    "marker_weakness": "find_verified 의 marker substring 매칭 느슨(mylinkedin.com·notsaramin.co.kr 오탐, 피싱 룩얼라이크 미방어) + 자동화 전용 크롬 식별(user-data-dir) 없음 → 사장님 개인 크롬 오접속 위험. 조각 B 계약에 host 단위 매칭+크롬 식별 추가 필요.",
-    "orphan": "find_verified_channel_endpoint 프로덕션 호출자 0(순수 고아). 문서상 조각 B 묶음 조건에서만 정당 — 단독 merge=죽은코드.",
-    "independent_repro": "HEAD: focused 19 passed / ./verify.sh 1764 passed exit 0. 작업트리(회귀): 1 failed(전각숫자).",
-    "test_weakening": "merge-base 대비 tests +208줄 순수추가, 삭제·약화 0"
-  },
-  "three_way_agree": false,
-  "status": "조각 A 해석 GREEN + 마커검증 로직 GREEN·라이브 read-only 실증(오접속 방지 작동). 배선은 여전히 COSMETIC(실 start() attach 이행은 playwright↔raw 재설계=별도 대공사). PR#149 단독 merge 금지 유지.",
-  "slice_b_marker_verify": {
-    "claim": "find_verified_channel_endpoint 가 채널 후보 포트를 순회하며 대상 사이트 마커가 실제 있는 endpoint 만 채택, 없으면 LookupError(맹목 attach 금지). 라이브 실측 오접속(9222사람인/9223잡코리아) 방지.",
-    "live_evidence": "라이브 read-only(/json 조회, 세션 무해) 실증 2026-07-18: find_verified_channel_endpoint 가 실환경에서 saramin→9222(기본 9223 아님, 실제 사람인 탭 있는 곳 정확)·jobkorea→9224 정확 선택. linkedin_rps→LookupError(9225 빈탭=미로그인, 맹목 attach 안 하고 멈춤=세션 보호). 오접속 방지+미로그인 보호 라이브 확인."
-  }
+  ],
+  "historical_correction": "초기 verdict의 COSMETIC-SCAFFOLD/0%/단독 merge 금지는 조각 A/B1 시점 판정이었다. 같은 PR에서 B2 production wiring과 adversarial lifecycle sealing까지 완료되어 이 최종 판정이 우선한다.",
+  "three_way_agree": true,
+  "status": "GREEN — PR #149 standalone merge allowed for the profile_only raw-single-target portal search scope. Login-page discovery/window locator/keepalive remain a separate login-skill task and are not claimed here."
 }

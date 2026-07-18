@@ -86,3 +86,21 @@ class RawPage:
 
 ## 적대 검증 로그
 - `portal-raw-attach-adapter.verdict.json` 참조.
+
+## 최종 생산 완결 정정 (2026-07-18)
+
+조각 B2까지 같은 PR에서 배선되어 어댑터는 더 이상 고아가 아니다.
+`run_profile_only_live_search → PortalWorker(raw_single_tab) → RawPage/RawLocator`가 실제
+생산 호출 경로다. `nth/get_attribute/press`, fresh URL/event bridge, 비차단 attach/navigation,
+exact lifecycle, cancellation-safe handoff까지 포함한다.
+
+`require_badge=True`에서는 legacy fresh-ID fallback이 없다. 브라우저 Overlay로 실제 합성된
+marker를 full-viewport PNG에서 challenge color/좌표로 증명하고, label의 ASCII slug+SHA-256
+축약을 immutable custom-element tag에 넣는다. 성공 proof의 resolved object는 실제
+fill/click/press/navigation까지 유지되며 동일 object에서 identity/URL/visibility/selector와
+행동을 한 `Runtime.callFunctionOn`으로 실행한다. proof 동안 owner가 돌아오는 경우를 위해
+mutation 직전 canonical guard를 재실행한다. reproof/action 실패는 stale overlay를 지우고
+uncertain state와 lease를 보존한다.
+
+종료는 DOM marker와 Overlay의 exact clear acknowledgement 후 raw WebSocket만 닫는다.
+Chrome·profile·context·page target·로그인 session은 닫거나 삭제하지 않는다.

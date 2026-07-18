@@ -1,6 +1,6 @@
-# Goal — 채널별 CDP endpoint 해석 (TODO-2b 조각 A, 2026-07-18)
+# Goal — 채널별 exact raw single-target CDP 생산 배선 (TODO-2b, 2026-07-18)
 
-- 모드: code-change / 위험등급: **L2**(순수 해석 함수 추가 — 기존 launch 방식 미변경, 회귀 0 지향)
+- 모드: code-change / 위험등급: **L3**(실제 포털 세션·기존 탭에 단일 raw CDP attach)
 - 워크트리: `/Volumes/SSD/Valuehire_v5-portal-channel-cdp-endpoint` (branch task/portal-channel-cdp-endpoint)
 - 상위 작업: TODO-2b(SOT-26 §13) — 사람인·잡코리아를 launch_persistent_context 소유 →
   portal_browsers.sh 기동 크롬 CDP attach 로 이행. **이 조각(A)은 그 기반**이고, 실제
@@ -76,3 +76,22 @@
   포트 배타성 확인)으로 사장님 개인 크롬 오접속 방지 ③ find_verified 를 start() 에
   실제 배선(고아 해소) + 실크롬 라이브 attach 검증(사장님 입회).
 - ⛔ PR#149 단독 merge 금지 — 조각 B 실배선과 묶어야(V1·V2 일치).
+
+## 최종 완결 정정 (2026-07-18, 이후 판정이 위 역사 로그보다 우선)
+
+초기 조각 A의 "0%/단독 merge 금지"는 같은 PR에서 조각 B2까지 완성하며 해소했다.
+정식 `profile_only` 경로는 관리 Chrome의 executable/profile/root/CDP identity를 확인하고,
+공식 host의 로그인된 `type=page` exact target 하나만 raw WebSocket으로 attach한다. 전체
+브라우저 attach, 새 창·새 탭 생성, target close, browser/profile/session 종료는 없다.
+
+모든 portal mutation은 채널별 원자 lease/token, 180초 간격의 owner-idle 두 스냅샷,
+exact URL, 브라우저-owned Overlay의 렌더 challenge, label-derived immutable custom tag,
+동일한 resolved CDP object identity에 묶인다. 렌더 proof 뒤 owner guard를 다시 수행하고,
+그 동일 object에서 `Runtime.callFunctionOn`으로 identity/visibility/URL/행동을 원자 실행한다.
+내비게이션 뒤에는 exact lifecycle을 확인하고 새 문서에 marker를 재주입·재증명한다.
+clear/socket/partial acknowledgement가 불명확하면 fail-closed로 lease를 유지한다.
+
+이 PR은 위 `profile_only raw_single_tab` 검색 범위에서 standalone merge 가능하다. 다만
+사용자가 로그인해야 할 OS 창을 찾아 맨앞에 표시하는 window locator와 HUMAN_AUTH 대기,
+safe click→Browser Back keepalive는 별도 `login` 스킬 구현 범위이며 여기서 해결했다고
+주장하지 않는다.

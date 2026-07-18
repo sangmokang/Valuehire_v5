@@ -3,28 +3,39 @@
   "mode": "code-change",
   "risk": "L3",
   "generator": {
-    "claim": "raw_page_adapter.RawPage/RawLocator 가 검색부 playwright 표면(locator/count/fill/click/first/inner_text/goto/wait_for_timeout/url)을 raw_cdp.CDPTab 위에 재현. selector·value json.dumps 이스케이프(injection 방지). page.on 은 조각 B2.",
-    "changed_files": [
-      "tools/multi_position_sourcing/raw_page_adapter.py",
-      "tests/test_raw_page_adapter.py"
+    "claim": "RawPage/RawLocator가 production search surface를 exact raw target 위에서 제공하며, required mode의 fill/click/press/navigation은 exact URL + browser-owned visible marker + selector + lease/owner proof를 동일한 resolved badge object의 Runtime.callFunctionOn에 결박한다.",
+    "production_surface": [
+      "locator/count/is_visible/fill/click/press/get_attribute/inner_text/first/nth",
+      "url/current_url/on",
+      "atomic owned navigation + exact next lifecycle",
+      "JSON escaping for selector/value/url/label"
     ],
-    "red_evidence": "RED: 어댑터 모듈 미존재 collection error",
-    "command": "./verify.sh",
-    "exit_code": 0,
-    "green_evidence": "focused 8 passed / 전체 1772 passed, 4 xfailed exit 0",
-    "mutant_check": "count 이스케이프 제거(json.dumps→raw f-string) → injection 테스트 1 failed 감지 후 원복",
-    "wiring_status": "ORPHAN-BY-DESIGN: RawPage 는 아직 start() 가 안 씀. 조각 B2(start() saramin/jobkorea 를 find_verified+raw attach+RawPage 로 이행)가 소비 → 고아 해소. 조각 A·마커검증·어댑터·B2 를 한 브랜치(PR#149)로 묶어 배송(V1·V2 지시).",
-    "test_quality": {
-      "happy_path": true,
-      "edge_cases": "따옴표·백슬래시 selector 이스케이프(injection)·first=index0·매칭 없음 no-op",
-      "failure_paths": "요소 없으면 fill/click no-op(예외 안 던짐), count=0",
-      "asserts_observable_behavior_only": true,
-      "weakened_or_deleted_assertions": 0
-    }
+    "lifecycle": "attach와 initial badge acknowledgement는 off-event-loop cancellation-safe이고, constructor/partial badge/socket/clear 실패는 정확히 ack되지 않으면 raw state와 lease를 보존한다.",
+    "green_evidence": "HEAD 3c0eda1: local adapter/raw/wiring 85 passed; independent focused 457 passed + 8 subtests; actual headful Chromium adversarial matrix PASS; ./verify.sh 1865 passed, 4 xfailed, 105 subtests, exit 0.",
+    "mutation_guards": [
+      "canonical per-channel atomic lease and token",
+      "two owner-idle snapshots >=180s with increasing idle across dwell",
+      "exact official URL",
+      "full-viewport PNG nonce challenge plus immutable label-derived custom tag in browser Overlay",
+      "same resolved connected badge object retained across post-proof owner guard",
+      "exact tag/id/text/aria/title/role plus ancestor display/visibility/opacity and viewport geometry",
+      "selector/action boolean acknowledgement",
+      "synchronous location.assign plus next lifecycle correlation"
+    ]
   },
-  "failed_attempts": [],
-  "v1": null,
-  "v2": null,
-  "three_way_agree": false,
-  "status": "조각 B1(어댑터) GREEN. 고아=조각 B2 배선으로 해소 예정. 대공사 진행중: A(해석)+마커검증+B1(어댑터) 완료 → B2(start 배선)+B3(라이브) 남음"
+  "adversarial_reviews": [
+    {
+      "reviewer": "V1 fresh independent",
+      "head": "3c0eda1",
+      "verdict": "PASS"
+    },
+    {
+      "reviewer": "V2 actual Chromium",
+      "head": "3c0eda1",
+      "verdict": "PASS",
+      "evidence": "Actual headful Chromium: page overlay/pseudo/modal cannot spoof browser marker; delayed aria mutation does not alter immutable canonical tag; exact clone and owner-return races yield zero mutation; stale Overlay clears; cross-document reproof required."
+    }
+  ],
+  "three_way_agree": true,
+  "status": "GREEN — adapter is production-wired in profile_only raw_single_tab search; no orphan remains."
 }
