@@ -15,6 +15,7 @@ from __future__ import annotations
 import http.server
 import importlib
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -89,9 +90,20 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.fake_http_only.write_text(FAKE_HTTP_ONLY_SRC, encoding="utf-8")
         self.procs: list[subprocess.Popen] = []
         self._old_portal_chrome = os.environ.get("PORTAL_CHROME")
-        self.process_executable = subprocess.check_output(
+        process_comm = subprocess.check_output(
             ["ps", "-p", str(os.getpid()), "-o", "comm="], text=True
         ).strip()
+        # macOS comm is the absolute executable, while Linux comm is commonly only
+        # "python3" even though `ps ... command=` starts with the absolute path.
+        # The production matcher intentionally requires exact executable identity,
+        # so make the fake's configured identity describe argv[0] on both OSes.
+        if Path(process_comm).is_absolute():
+            self.process_executable = process_comm
+        else:
+            process_command = subprocess.check_output(
+                ["ps", "-p", str(os.getpid()), "-o", "command="], text=True
+            ).strip()
+            self.process_executable = shlex.split(process_command)[0]
         os.environ["PORTAL_CHROME"] = self.process_executable
 
     def tearDown(self) -> None:
