@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import sys
+import struct
 import unittest
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -24,6 +26,21 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from tools.multi_position_sourcing import raw_cdp
+
+
+def _png_rgba(width: int, height: int, pixel: tuple[int, int, int, int]) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        body = kind + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body))
+
+    row = bytes(pixel) * width
+    raw = b"".join(b"\x00" + row for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
 
 
 class _RecTab(raw_cdp.CDPTab):
@@ -35,6 +52,9 @@ class _RecTab(raw_cdp.CDPTab):
         self._badge_label = None
         self._eval_raises = eval_raises
         self._eval_result = eval_result
+
+    def prove_badge_rendered(self, **_kwargs):
+        return True
 
     def eval(self, expr: str):
         self.evals.append(expr)
@@ -81,6 +101,12 @@ class BadgeJsTests(unittest.TestCase):
         self.assertNotIn("r.left+2,r.bottom-2", js)
         self.assertIn("r.width*0.25", js)
 
+    def test_png_render_proof_requires_a_substantial_red_badge_region(self):
+        red = _png_rgba(40, 20, (220, 38, 38, 255))
+        white = _png_rgba(40, 20, (255, 255, 255, 255))
+        self.assertTrue(raw_cdp._png_has_badge_color(red))
+        self.assertFalse(raw_cdp._png_has_badge_color(white))
+
     def test_clear_js_removes_by_id(self):
         js = raw_cdp._clear_js()
         self.assertIn("vh-automation-badge", js)
@@ -117,6 +143,15 @@ class MarkBusyTests(unittest.TestCase):
 
         self.assertFalse(missing.mark_busy("Codex"))
         self.assertTrue(confirmed.mark_busy("Codex"))
+
+    def test_mark_busy_requires_composited_screenshot_proof(self):
+        class OccludedTab(_RecTab):
+            def prove_badge_rendered(self, **_kwargs):
+                return False
+
+        tab = OccludedTab(eval_result=raw_cdp._BADGE_ID)
+        self.assertFalse(tab.mark_busy("Codex", expected_url="https://example.test/search"))
+        self.assertTrue(tab.badge_application_uncertain)
 
     def test_eval_rejects_runtime_exception_details(self):
         tab = _RecTab()

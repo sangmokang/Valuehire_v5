@@ -38,6 +38,9 @@ class FakeTab:
     def on(self, event: str, handler: object) -> None:
         self.events.append((event, handler))
 
+    def prove_badge_rendered(self, **_kwargs):
+        return True
+
 
 def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)

@@ -82,6 +82,9 @@ class FakeRawTab:
             raise AssertionError("atomic navigation must await the next exact lifecycle")
         return "fake-loader"
 
+    def prove_badge_rendered(self, **_kwargs) -> bool:
+        return True
+
     def wait_for_lifecycle(self, loader_id: str, event: str, _timeout: float) -> None:
         if (loader_id, event) != ("fake-loader", "DOMContentLoaded"):
             raise AssertionError("navigation must wait for the exact new loader")
