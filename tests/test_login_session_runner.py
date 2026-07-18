@@ -574,6 +574,7 @@ def test_presentation_gate_failure_before_dispatch_can_retry_same_episode() -> N
             mutation_gate=first_gate_fails,
             window_resolver=_window,
             window_capture=lambda _window_id: b"png",
+            application_activator=lambda pid: tab.mutations.append(f"activate:{pid}") or True,
         )
 
     assert tab.mutations == []
@@ -585,9 +586,10 @@ def test_presentation_gate_failure_before_dispatch_can_retry_same_episode() -> N
         mutation_gate=first_gate_fails,
         window_resolver=_window,
         window_capture=lambda _window_id: b"png",
+        application_activator=lambda pid: tab.mutations.append(f"activate:{pid}") or True,
     )
     assert locator.presentation_count == 1
-    assert tab.mutations == ["badge", "title", "focus"]
+    assert tab.mutations == ["badge", "title", "focus", "activate:4321"]
 
 
 def test_presentation_is_once_per_episode_but_new_episode_is_allowed() -> None:
@@ -597,6 +599,7 @@ def test_presentation_is_once_per_episode_but_new_episode_is_allowed() -> None:
         "mutation_gate": lambda: None,
         "window_resolver": _window,
         "window_capture": lambda _window_id: b"png",
+        "application_activator": lambda pid: tab.mutations.append(f"activate:{pid}") or True,
     }
     present_exact_login_window_once(tab, _ref(), episode_id="episode-a", **kwargs)
     with pytest.raises(RuntimeError, match="already presented"):

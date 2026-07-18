@@ -12,6 +12,7 @@ from tools.multi_position_sourcing.macos_window_locator import (
     CdpWindowIdentity,
     WindowBounds,
     WindowResolutionError,
+    activate_exact_macos_application,
     capture_exact_window_png,
     resolve_exact_macos_window,
 )
@@ -75,6 +76,58 @@ def test_resolve_exact_window_uses_pid_marker_and_cdp_bounds_not_first_fallback(
     assert marker in argv
     for value in ("10", "20", "1200", "800"):
         assert value in argv
+
+
+def test_preflight_can_resolve_one_hidden_window_before_exact_app_activation() -> None:
+    calls: list[list[str]] = []
+    payload = [{
+        "cg_window_id": 175,
+        "owner_pid": 4321,
+        "layer": 0,
+        "title": "",
+        "bounds": {"left": 10, "top": 20, "width": 1200, "height": 800},
+        "on_screen": False,
+    }]
+
+    def run(argv: list[str], **_kwargs):
+        calls.append(list(argv))
+        return _completed(argv, stdout=json.dumps(payload))
+
+    resolved = resolve_exact_macos_window(
+        CdpWindowIdentity(
+            browser_pid=4321,
+            target_id="target-abc123",
+            title_marker="",
+            bounds=WindowBounds(left=10, top=20, width=1200, height=800),
+        ),
+        require_on_screen=False,
+        run_command=run,
+        system_name="Darwin",
+    )
+
+    assert resolved.cg_window_id == 175
+    assert resolved.on_screen is False
+    assert calls[0][calls[0].index("--require-on-screen") + 1] == "false"
+
+
+def test_activate_exact_application_uses_only_bound_browser_pid() -> None:
+    calls: list[list[str]] = []
+
+    def run(argv: list[str], **_kwargs):
+        calls.append(list(argv))
+        return _completed(argv, stdout=json.dumps({"activated": True, "pid": 4321}))
+
+    assert activate_exact_macos_application(
+        4321,
+        run_command=run,
+        system_name="Darwin",
+    ) is True
+    assert calls == [[
+        "swift",
+        str(Path(__file__).resolve().parents[1] / "skills/login/scripts/macos_window_locator.swift"),
+        "--activate-pid",
+        "4321",
+    ]]
 
 
 @pytest.mark.parametrize(
