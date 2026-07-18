@@ -18,10 +18,19 @@
 - [x] 배선: enqueue = fleet_dispatch:159·discord_command_listener:200·fleet_worker:948/994 실호출부, idempotency_key = hermes_fleet_bridge 가 채움(고아 0).
 - [ ] 4b: V1(Codex) 독립 반증.
 
-## 비범위
+## 비범위 (V1 지적 처리 포함)
 - 라이브 실 DB 왕복(진짜 409 재현) — 조각 J(전용 테스트 큐).
 - 다른 유니크 제약(idempotency 외) 충돌의 세분류 — 현재 idempotency 인덱스가 유일한 관련 유니크.
 - 409 회수와 POST 사이의 TOCTOU 는 DB 유니크가 원자성 보장(회수는 이미 커밋된 행을 읽음).
+- **키↔요청내용·요청자 결합(V1 지적)**: 직결 경로의 idempotency_key = `discord:<message_id>` 는
+  Discord 가 발급한 전역 유니크 snowflake 를 수신기가 서버측에서 파생한다(INV-D3) — 같은 키 ⟺
+  같은 메시지 ⟺ 같은 내용이므로 기존 잡 회수가 정답이다. owner-agent 잡은 추가로
+  approval_sha256(내용+실행기+모드+승인)로 결합돼 있다(new_job_payload). 사용자가 임의의 비-discord
+  키를 직접 넣는 경우의 내용검증은 키 파생 책임(수신기, INV-D3) 영역이라 이 조각 밖.
+- **probe_auth 의 raw 상세(V1 지적)**: `probe_auth` 가 500 응답 본문을 200자까지 detail 로 반환해
+  헬스 알림으로 갈 수 있음(INV-D5 관점 raw 노출 후보). 그러나 이건 **enqueue-or-get 와 무관한
+  기존 기동-인증-프로브 경로**라 이 조각에서 고치지 않는다(하니스: 작업 중 새 문제는 분리). 후속
+  분리 조각으로 처리 권고(probe_auth detail redact).
 
 ## 적대 검증 로그
 - G 자기반증: 409-but-no-existing(다른 유니크 위반) → redact 예외 경로 테스트. 500 등 비-409 도 redact 확인.
