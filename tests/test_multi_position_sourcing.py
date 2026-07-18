@@ -736,6 +736,42 @@ class DirectSearchResultCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(connection_modes, ["raw_single_tab"])
         async_playwright.assert_not_called()
 
+    async def test_profile_only_raw_mode_never_deletes_managed_browser_profile(self) -> None:
+        class LockingPortalWorker:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            async def __aenter__(self) -> object:
+                raise ProfileLockError("busy")
+
+            async def __aexit__(self, *_exc: object) -> None:
+                return None
+
+        with patch(
+            "tools.multi_position_sourcing.portal_live_check.delete_profile_dir_if_confirmed",
+            side_effect=AssertionError("raw managed profile must never be deleted"),
+        ), patch(
+            "tools.multi_position_sourcing.portal_live_check.PortalWorker",
+            LockingPortalWorker,
+        ):
+            payload = await run_profile_only_live_search(
+                LiveSearchConfig(
+                    channel="saramin",
+                    keyword="backend",
+                    worker_id="default",
+                    profile_root=Path("/tmp/valuehire-test-profiles"),
+                    chrome_cdp_endpoint="http://127.0.0.1:9222",
+                    headless=False,
+                    searches_today=0,
+                    no_sleep=True,
+                    disable_auto_relogin=False,
+                    delete_profile_before_start=True,
+                    confirm_delete_profile="DELETE",
+                    profile_only=True,
+                )
+            )
+        self.assertFalse(payload["profile_deleted_before_start"])
+
     async def test_guarded_live_search_reports_profile_lock_without_traceback(self) -> None:
         class FakePlaywrightManager:
             async def __aenter__(self) -> object:

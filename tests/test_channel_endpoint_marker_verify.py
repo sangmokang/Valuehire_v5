@@ -146,6 +146,18 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
         )
         self.assertIs(target, search)
 
+    def test_multiple_exact_targets_fail_closed_instead_of_guessing(self) -> None:
+        targets = [
+            {"id": "one", "type": "page", "url": "https://www.jobkorea.co.kr/Corp/Person/Find"},
+            {"id": "two", "type": "page", "url": "https://www.jobkorea.co.kr/Corp/Person/Find?start=20"},
+        ]
+        with self.assertRaises(LookupError):
+            find_verified_channel_target(
+                "jobkorea",
+                list_tabs=lambda _endpoint: targets,
+                candidate_endpoints=["http://127.0.0.1:9224"],
+            )
+
     def test_explicit_remote_endpoint_is_not_rewritten_to_loopback(self) -> None:
         seen: list[str] = []
 

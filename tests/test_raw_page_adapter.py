@@ -118,12 +118,18 @@ class RawPageAdapterTests(unittest.TestCase):
                 super().__init__()
                 self.states = ["loading", "loading", "interactive"]
                 self.ready_reads = 0
+                self._badge_label = "Codex login target"
+                self.badge_refreshes = 0
 
             def eval(self, expr: str):
                 if "document.readyState" in expr:
                     self.ready_reads += 1
                     return self.states.pop(0)
                 return super().eval(expr)
+
+            def mark_busy(self, label: str):
+                self.asserted_label = label
+                self.badge_refreshes += 1
 
         tab = LoadingTab()
         _run(RawPage(tab).goto(
@@ -132,6 +138,8 @@ class RawPageAdapterTests(unittest.TestCase):
             timeout=1000,
         ))
         self.assertEqual(tab.ready_reads, 3)
+        self.assertEqual(tab.badge_refreshes, 1)
+        self.assertEqual(tab.asserted_label, "Codex login target")
 
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
