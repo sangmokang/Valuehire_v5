@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import json
+import fcntl
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
 
 import pytest
 
 from tools.codex_skill_sync.sync import sync_skills
+import tools.install_login_skill as installer_module
 from tools.install_login_skill import install_login_skill
 
 
@@ -41,6 +48,22 @@ def _frontmatter_keys(text: str) -> set[str]:
         for line in text[4:end].splitlines()
         if line and not line.startswith((" ", "\t", "-")) and ":" in line
     }
+
+
+def _copy_canonical_source(tmp_path: Path) -> Path:
+    fake_repo = tmp_path / "repo"
+    shutil.copytree(CANONICAL_DIR, fake_repo / "skills" / "login")
+    return fake_repo
+
+
+def _seed_agent_installs(home: Path) -> dict[str, dict[str, bytes]]:
+    expected: dict[str, dict[str, bytes]] = {}
+    for agent in ("claude", "codex", "hermes"):
+        target = home / f".{agent}" / "skills" / "login"
+        target.mkdir(parents=True)
+        (target / "sentinel.txt").write_text(f"old-{agent}", encoding="utf-8")
+        expected[agent] = _tree_bytes(target)
+    return expected
 
 
 def test_login_skill_is_portable_and_has_single_repo_source() -> None:
@@ -238,3 +261,174 @@ def test_installer_preflights_nested_asset_before_mutating_any_agent(tmp_path: P
         install_login_skill(repo_root=fake_repo, home=home)
     for agent, expected in before.items():
         assert (home / f".{agent}" / "skills" / "login" / "sentinel").read_bytes() == expected
+
+
+def test_installer_rejects_unknown_canonical_file_before_mutation(tmp_path: Path) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    source = fake_repo / "skills" / "login"
+    (source / "unexpected-secret.txt").write_text("must not be copied", encoding="utf-8")
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+
+    with pytest.raises(ValueError, match="unknown"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    for agent, tree in expected.items():
+        assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+
+
+@pytest.mark.parametrize(
+    ("relative_name", "invalid_bytes"),
+    [
+        ("browser-control-contract.json", b"{not-json"),
+        ("SKILL.md", b"---\nname: not-login\ndescription: wrong\n---\n"),
+        ("scripts/macos_window_locator.swift", b'import Foundation\nprint("not a locator")\n'),
+    ],
+)
+def test_installer_validates_canonical_payloads_before_mutation(
+    tmp_path: Path,
+    relative_name: str,
+    invalid_bytes: bytes,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    (fake_repo / "skills" / "login" / relative_name).write_bytes(invalid_bytes)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+
+    with pytest.raises(ValueError):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    for agent, tree in expected.items():
+        assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt("stop"), SystemExit(17)])
+def test_installer_rolls_back_all_agents_on_base_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interruption: BaseException,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    original_replace = Path.replace
+
+    def interrupted_replace(self: Path, target: Path) -> Path:
+        if ".login-skill-stage-" in str(self) and self.name == "codex":
+            raise interruption
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", interrupted_replace)
+    with pytest.raises(type(interruption)):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    for agent, tree in expected.items():
+        assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+
+
+def test_installer_preserves_untouched_targets_when_backup_phase_is_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    original_replace = Path.replace
+    codex_target = home / ".codex" / "skills" / "login"
+
+    def interrupted_backup(self: Path, target: Path) -> Path:
+        if self == codex_target and Path(target).name.startswith(".login-backup-"):
+            raise KeyboardInterrupt("backup interrupted")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", interrupted_backup)
+    with pytest.raises(KeyboardInterrupt, match="backup interrupted"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    for agent, tree in expected.items():
+        assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+
+
+def test_installer_verifies_installed_bytes_before_deleting_backups(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    original_replace = Path.replace
+
+    def corrupting_replace(self: Path, target: Path) -> Path:
+        result = original_replace(self, target)
+        if ".login-skill-stage-" in str(self) and self.name == "codex":
+            (Path(target) / "SKILL.md").write_text("corrupted after replace", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(Path, "replace", corrupting_replace)
+    with pytest.raises(RuntimeError, match="verification"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    for agent, tree in expected.items():
+        assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+
+
+def test_installer_rollback_continues_after_one_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    original_replace = Path.replace
+    original_rmtree = installer_module.shutil.rmtree
+    failed_once = False
+
+    def interrupted_replace(self: Path, target: Path) -> Path:
+        if ".login-skill-stage-" in str(self) and self.name == "codex":
+            raise RuntimeError("injected install failure")
+        return original_replace(self, target)
+
+    def flaky_rmtree(path: object, *args: object, **kwargs: object) -> None:
+        nonlocal failed_once
+        if Path(path) == home / ".claude" / "skills" / "login" and not failed_once:
+            failed_once = True
+            raise OSError("injected cleanup failure")
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "replace", interrupted_replace)
+    monkeypatch.setattr(installer_module.shutil, "rmtree", flaky_rmtree)
+    with pytest.raises(RuntimeError, match="injected install failure"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    for agent, tree in expected.items():
+        assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+
+
+def test_installer_serializes_cross_process_installs_with_home_lock(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    lock_path = home / ".login-skill-install.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    code = (
+        "from pathlib import Path; "
+        "from tools.install_login_skill import install_login_skill; "
+        "import sys; "
+        "install_login_skill(repo_root=Path(sys.argv[1]), home=Path(sys.argv[2]))"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", code, str(REPO), str(home)],
+        cwd=REPO,
+        env={**os.environ, "PYTHONPATH": str(REPO)},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        time.sleep(0.25)
+        assert process.poll() is None, "installer ignored the held cross-process lock"
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+    stdout, stderr = process.communicate(timeout=10)
+    assert process.returncode == 0, (stdout, stderr)
