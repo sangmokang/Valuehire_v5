@@ -859,7 +859,10 @@ class CDPTab:
             return False
         unsafe_tokens = (
             "paid", "purchase", "payment", "save", "send", "inmail", "proposal",
-            "유료", "결제", "차감", "저장", "발송", "제안",
+            "offer", "logout", "log-out", "signout", "sign-out", "message",
+            "compose", "checkout", "charge", "new-candidate", "new_candidate",
+            "delete", "remove", "session/switch", "switch-session",
+            "유료", "결제", "차감", "저장", "발송", "제안", "로그아웃",
         )
         action = (
             f"var xs=document.querySelectorAll({json.dumps(selector)});"
@@ -868,6 +871,7 @@ class CDPTab:
             f"if(e.href!=={json.dumps(destination_url)})return false;"
             "var d=new URL(e.href,location.href);"
             "if(d.protocol!=='https:'||d.origin!==location.origin)return false;"
+            f"if({json.dumps(unsafe_tokens)}.some(function(t){{return d.href.toLowerCase().includes(t);}}))return false;"
             f"if((e.getAttribute('target')||'').toLowerCase()!=={json.dumps(expected_target)})return false;"
             "if(e.hasAttribute('download')||e.closest('form'))return false;"
             "var s=getComputedStyle(e),r=e.getBoundingClientRect();"

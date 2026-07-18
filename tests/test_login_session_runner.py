@@ -9,9 +9,11 @@ import pytest
 from tools.multi_position_sourcing.session_guard import (
     AuthObservation,
     BrowserTargetRef,
+    ManagedBrowserProcess,
     SafeKeepaliveTarget,
     execute_keepalive_roundtrip,
     present_exact_login_window_once,
+    resolve_managed_browser_process,
     resolve_existing_target,
     wait_for_human_auth,
 )
@@ -24,6 +26,7 @@ def _ref(url: str = "https://www.linkedin.com/talent/home") -> BrowserTargetRef:
         target_id="target-exact",
         websocket_url="ws://target-exact",
         initial_url=url,
+        browser_pid=4321,
     )
 
 
@@ -51,13 +54,13 @@ def test_resolver_uses_one_managed_endpoint_and_exact_target_never_first_fallbac
         "id": "first-wrong",
         "type": "page",
         "url": "https://www.linkedin.com/talent/home",
-        "webSocketDebuggerUrl": "ws://wrong",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:9225/devtools/page/first-wrong",
     }
     exact = {
         "id": "target-exact",
         "type": "page",
         "url": "https://www.linkedin.com/talent/home",
-        "webSocketDebuggerUrl": "ws://exact",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:9225/devtools/page/target-exact",
     }
 
     def list_pages(endpoint: str):
@@ -71,7 +74,7 @@ def test_resolver_uses_one_managed_endpoint_and_exact_target_never_first_fallbac
         list_pages=list_pages,
     )
     assert ref.target_id == "target-exact"
-    assert ref.websocket_url == "ws://exact"
+    assert ref.websocket_url == "ws://127.0.0.1:9225/devtools/page/target-exact"
     assert calls == ["http://127.0.0.1:9225"]
 
     with pytest.raises(LookupError):
@@ -80,6 +83,55 @@ def test_resolver_uses_one_managed_endpoint_and_exact_target_never_first_fallbac
             managed_endpoint_resolver=lambda _site: "http://127.0.0.1:9225",
             list_pages=lambda endpoint: [wrong, exact],
         )
+
+
+def test_managed_browser_process_binds_exact_port_profile_and_root_pid() -> None:
+    class Result:
+        returncode = 0
+        stdout = """\
+  111 /Applications/Chrome --remote-debugging-port=9224 --user-data-dir=/tmp/other
+  222 /Applications/Chrome --remote-debugging-port=9225 '--user-data-dir=/tmp/LinkedIn Profile'
+  223 /Applications/Chrome --type=renderer --remote-debugging-port=9225 '--user-data-dir=/tmp/LinkedIn Profile'
+"""
+
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> Result:
+        calls.append(command)
+        assert kwargs == {
+            "capture_output": True,
+            "text": True,
+            "timeout": 15,
+            "check": False,
+        }
+        return Result()
+
+    process = resolve_managed_browser_process(
+        "linkedin_rps",
+        "http://127.0.0.1:9225",
+        runner=run,
+    )
+
+    assert process == ManagedBrowserProcess(222, "/tmp/LinkedIn Profile")
+    assert calls == [["ps", "ax", "-o", "pid=,command="]]
+
+
+def test_resolver_binds_process_before_page_and_rejects_endpoint_swap() -> None:
+    endpoints = iter(("http://127.0.0.1:9225", "http://127.0.0.1:9338"))
+    page_calls: list[str] = []
+
+    with pytest.raises(LookupError, match="changed"):
+        resolve_existing_target(
+            "linkedin_rps",
+            target_id="target-exact",
+            managed_endpoint_resolver=lambda _site: next(endpoints),
+            browser_process_resolver=lambda _site, endpoint: ManagedBrowserProcess(
+                222, "/tmp/linkedin"
+            ),
+            list_pages=lambda endpoint: page_calls.append(endpoint) or [],
+        )
+
+    assert page_calls == []
 
 
 @pytest.mark.parametrize(
@@ -415,8 +467,6 @@ def test_window_ambiguity_fails_before_title_badge_or_focus_mutation() -> None:
             return True
 
         def send(self, method: str, params: dict | None = None):
-            if method == "SystemInfo.getProcessInfo":
-                return {"processInfo": [{"type": "browser", "id": 4321}]}
             if method == "Browser.getWindowForTarget":
                 return {"bounds": {"left": 0, "top": 0, "width": 1200, "height": 800}}
             if method == "Page.bringToFront":

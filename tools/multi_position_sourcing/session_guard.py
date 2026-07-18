@@ -26,6 +26,8 @@ import json
 import math
 import os
 import re
+import shlex
+import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -50,6 +52,13 @@ class BrowserTargetRef:
     websocket_url: str
     initial_url: str
     profile_path: str = ""
+    browser_pid: int = 0
+
+
+@dataclass(frozen=True)
+class ManagedBrowserProcess:
+    browser_pid: int
+    profile_path: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +134,28 @@ _SITE_DOMAINS: dict[Site, str] = {
     "jobkorea": "jobkorea.co.kr",
     "linkedin_rps": "linkedin.com",
 }
+_SITE_TARGET_PATH_PREFIXES: dict[Site, tuple[str, ...]] = {
+    "saramin": (
+        "/zf_user/memcom/talent-pool/",
+        "/zf_user/member/resume-view",
+        "/zf_user/auth",
+        "/zf_user/company-viewer/certification",
+    ),
+    "jobkorea": (
+        "/corp/person/find",
+        "/login/",
+        "/searchfirm/",
+        "/recruit/co_read",
+        "/person/",
+    ),
+    "linkedin_rps": (
+        "/talent/",
+        "/login",
+        "/uas/login-cap",
+        "/checkpoint/",
+        "/enterprise-authentication/",
+    ),
+}
 _SITE_PROFILE_ENV: dict[Site, str] = {
     "saramin": "SARAMIN_PROFILE",
     "jobkorea": "JOBKOREA_PROFILE",
@@ -137,6 +168,12 @@ _SITE_DEFAULT_PROFILES: dict[Site, Path] = {
 }
 _UNSAFE_KEEPALIVE_LABELS = frozenset(
     {"paid", "save", "send", "modal", "new_candidate"}
+)
+_UNSAFE_KEEPALIVE_URL_TOKENS = (
+    "logout", "log-out", "signout", "sign-out", "inmail", "send", "message",
+    "compose", "proposal", "offer", "save", "payment", "purchase", "checkout",
+    "charge", "paid", "new-candidate", "new_candidate", "delete", "remove",
+    "session/switch", "switch-session",
 )
 
 DEFAULT_SNAPSHOT_ROOT = Path.home() / ".valuehire" / "session_snapshots"
@@ -162,10 +199,101 @@ def _target_identifier(target: Mapping[str, Any]) -> str:
     return str(target.get("id") or target.get("targetId") or "").strip()
 
 
+def _allowed_target_surface(site: Site, url: str) -> bool:
+    if not _official_site_url(site, url):
+        return False
+    try:
+        path = (urlsplit(url).path or "/").casefold()
+    except ValueError:
+        return False
+    return any(path.startswith(prefix) for prefix in _SITE_TARGET_PATH_PREFIXES[site])
+
+
+def _exact_target_websocket(endpoint: str, target_id: str, websocket_url: str) -> bool:
+    try:
+        http = urlsplit(endpoint)
+        ws = urlsplit(websocket_url)
+        http_port = http.port
+        ws_port = ws.port
+    except ValueError:
+        return False
+    return bool(
+        ws.scheme == "ws"
+        and ws.hostname in {"127.0.0.1", "localhost"}
+        and ws_port == http_port
+        and ws.username is None
+        and ws.password is None
+        and ws.query == ""
+        and ws.fragment == ""
+        and ws.path == f"/devtools/page/{target_id}"
+    )
+
+
 def _managed_profile_path(site: Site, env: Mapping[str, str] | None = None) -> str:
     source = os.environ if env is None else env
     configured = str(source.get(_SITE_PROFILE_ENV[site]) or "").strip()
     return configured or str(_SITE_DEFAULT_PROFILES[site])
+
+
+def resolve_managed_browser_process(
+    site: Site,
+    endpoint: str,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> ManagedBrowserProcess:
+    """Bind the already verified endpoint to one root Chrome PID/profile.
+
+    Page-target CDP sockets reject ``SystemInfo.getProcessInfo``.  The managed
+    endpoint resolver has already proved the exact profile/port pair, so this
+    read-only OS pass accepts only one root process declaring that exact port and
+    extracts its literal ``--user-data-dir`` argument.  Renderer/utility children
+    and ambiguous roots fail closed; command lines are never returned or logged.
+    """
+    if site not in _SITE_DOMAINS:
+        raise ValueError(f"unsupported login site: {site!r}")
+    local = _local_cdp_endpoint(endpoint)
+    port = urlsplit(local).port
+    try:
+        result = runner(
+            ["ps", "ax", "-o", "pid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except Exception as exc:
+        raise LookupError("managed browser process inspection failed") from exc
+    if int(getattr(result, "returncode", 1)) != 0:
+        raise LookupError("managed browser process inspection failed")
+    matches: list[ManagedBrowserProcess] = []
+    for raw_line in str(getattr(result, "stdout", "") or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        pid_text, separator, command = line.partition(" ")
+        if not separator or not pid_text.isascii() or not pid_text.isdigit():
+            continue
+        try:
+            argv = shlex.split(command)
+        except ValueError:
+            continue
+        if any(argument.startswith("--type=") for argument in argv):
+            continue
+        port_arg = f"--remote-debugging-port={port}"
+        profiles = [
+            argument.split("=", 1)[1]
+            for argument in argv
+            if argument.startswith("--user-data-dir=") and "=" in argument
+        ]
+        if port_arg not in argv or len(profiles) != 1 or not profiles[0]:
+            continue
+        pid = int(pid_text)
+        if pid <= 0:
+            continue
+        matches.append(ManagedBrowserProcess(pid, profiles[0]))
+    if len(matches) != 1:
+        raise LookupError(f"{site} managed browser root process match count was {len(matches)}")
+    return matches[0]
 
 
 def _local_cdp_endpoint(value: str) -> str:
@@ -193,6 +321,7 @@ def resolve_existing_target(
     *,
     target_id: str | None = None,
     managed_endpoint_resolver: Callable[[str], str] | None = None,
+    browser_process_resolver: Callable[[Site, str], ManagedBrowserProcess] | None = None,
     list_pages: Callable[[str], list[dict[str, Any]]] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> BrowserTargetRef:
@@ -205,7 +334,8 @@ def resolve_existing_target(
 
     if site not in _SITE_DOMAINS:
         raise ValueError(f"unsupported login site: {site!r}")
-    if managed_endpoint_resolver is None:
+    default_endpoint_resolver = managed_endpoint_resolver is None
+    if default_endpoint_resolver:
         from .portal_worker import resolve_managed_channel_cdp_endpoint
 
         managed_endpoint_resolver = resolve_managed_channel_cdp_endpoint
@@ -215,6 +345,18 @@ def resolve_existing_target(
         list_pages = raw_list_pages
 
     endpoint = _local_cdp_endpoint(str(managed_endpoint_resolver(site)).strip())
+    if browser_process_resolver is None and default_endpoint_resolver:
+        browser_process_resolver = resolve_managed_browser_process
+    process = (
+        browser_process_resolver(site, endpoint)
+        if browser_process_resolver is not None
+        else ManagedBrowserProcess(0, _managed_profile_path(site, env))
+    )
+    if browser_process_resolver is not None:
+        # Detect a process/port swap between the OS identity read and target list.
+        confirmed = _local_cdp_endpoint(str(managed_endpoint_resolver(site)).strip())
+        if confirmed != endpoint:
+            raise LookupError("managed browser endpoint changed during identity resolution")
     pages = list_pages(endpoint)
     wanted_id = str(target_id or "").strip()
     matches: list[Mapping[str, Any]] = []
@@ -224,7 +366,12 @@ def resolve_existing_target(
         current_id = _target_identifier(target)
         current_url = str(target.get("url") or "")
         websocket_url = str(target.get("webSocketDebuggerUrl") or "").strip()
-        if not current_id or not websocket_url or not _official_site_url(site, current_url):
+        if (
+            not current_id
+            or not websocket_url
+            or not _allowed_target_surface(site, current_url)
+            or not _exact_target_websocket(endpoint, current_id, websocket_url)
+        ):
             continue
         if wanted_id and current_id != wanted_id:
             continue
@@ -240,7 +387,8 @@ def resolve_existing_target(
         target_id=_target_identifier(selected),
         websocket_url=str(selected["webSocketDebuggerUrl"]),
         initial_url=str(selected["url"]),
-        profile_path=_managed_profile_path(site, env),
+        profile_path=process.profile_path,
+        browser_pid=process.browser_pid,
     )
 
 
@@ -407,6 +555,9 @@ def _safe_keepalive_descriptor(ref: BrowserTargetRef, target: SafeKeepaliveTarge
             return False
     except (TypeError, AttributeError):
         return False
+    unsafe_url_surface = " ".join(
+        (target.source_url, target.destination_url, target.selector)
+    ).casefold()
     return bool(
         target.target_id == ref.target_id
         and target.source_url == ref.initial_url
@@ -419,6 +570,7 @@ def _safe_keepalive_descriptor(ref: BrowserTargetRef, target: SafeKeepaliveTarge
         and target.clean_form is True
         and target.previously_opened_free is True
         and labels.isdisjoint(_UNSAFE_KEEPALIVE_LABELS)
+        and not any(token in unsafe_url_surface for token in _UNSAFE_KEEPALIVE_URL_TOKENS)
         and _official_site_url(ref.site, target.source_url)
         and _official_site_url(ref.site, target.destination_url)
         and _same_https_origin(target.source_url, target.destination_url)
@@ -442,6 +594,23 @@ def _tab_target_id(tab: Any) -> str:
     return str(value or "").strip()
 
 
+def _fresh_target_matches(tab: Any, ref: BrowserTargetRef, expected_url: str) -> bool:
+    """Revalidate the immutable attach binding with fresh CDP target info."""
+    if _tab_target_id(tab) != ref.target_id:
+        return False
+    try:
+        result = tab.send("Target.getTargetInfo", {"targetId": ref.target_id})
+    except Exception:
+        return False
+    info = result.get("targetInfo") if isinstance(result, Mapping) else None
+    return bool(
+        isinstance(info, Mapping)
+        and str(info.get("targetId") or "") == ref.target_id
+        and str(info.get("type") or "") == "page"
+        and str(info.get("url") or "") == expected_url
+    )
+
+
 def _auth_matches(observation: Any, expected_url: str) -> bool:
     return bool(
         isinstance(observation, AuthObservation)
@@ -452,7 +621,7 @@ def _auth_matches(observation: Any, expected_url: str) -> bool:
     )
 
 
-def _history_source_entry(tab: Any, source_url: str) -> int | str | None:
+def _history_source_entry(tab: Any, source_url: str) -> int | None:
     result = tab.send("Page.getNavigationHistory")
     if not isinstance(result, Mapping):
         return None
@@ -466,9 +635,44 @@ def _history_source_entry(tab: Any, source_url: str) -> int | str | None:
     if not isinstance(current, Mapping) or str(current.get("url") or "") != source_url:
         return None
     entry_id = current.get("id")
-    if isinstance(entry_id, bool) or not isinstance(entry_id, (int, str)) or entry_id == "":
+    if isinstance(entry_id, bool) or not isinstance(entry_id, int) or entry_id <= 0:
         return None
     return entry_id
+
+
+def _history_ready_for_restore(
+    tab: Any,
+    *,
+    source_entry_id: int,
+    source_url: str,
+    destination_url: str,
+) -> bool:
+    """Prove click added exactly one destination entry after the saved source."""
+    try:
+        result = tab.send("Page.getNavigationHistory")
+    except Exception:
+        return False
+    if not isinstance(result, Mapping):
+        return False
+    index = result.get("currentIndex")
+    entries = result.get("entries")
+    if (
+        isinstance(index, bool)
+        or not isinstance(index, int)
+        or not isinstance(entries, list)
+        or index <= 0
+        or index >= len(entries)
+    ):
+        return False
+    current = entries[index]
+    previous = entries[index - 1]
+    return bool(
+        isinstance(current, Mapping)
+        and isinstance(previous, Mapping)
+        and str(current.get("url") or "") == destination_url
+        and previous.get("id") == source_entry_id
+        and str(previous.get("url") or "") == source_url
+    )
 
 
 def _wait_for_authenticated_url(
@@ -511,7 +715,7 @@ def execute_keepalive_roundtrip(
 
     if not _safe_keepalive_descriptor(ref, target):
         return {"status": "skipped_unsafe", "restore_pending": False}
-    if _tab_target_id(tab) != ref.target_id:
+    if not _fresh_target_matches(tab, ref, target.source_url):
         return {"status": "skipped_target_mismatch", "restore_pending": False}
     try:
         if _tab_current_url(tab) != target.source_url:
@@ -529,14 +733,25 @@ def execute_keepalive_roundtrip(
     click = getattr(tab, "click_safe_link", None)
     if not callable(click):
         return {"status": "skipped_atomic_click_unavailable", "restore_pending": False}
+    click_error = False
     try:
         clicked = click(target)
     except Exception:
+        click_error = True
         clicked = False
+    if clicked is not True:
+        try:
+            live_after_attempt = _tab_current_url(tab)
+        except Exception:
+            live_after_attempt = ""
+        if live_after_attempt == target.destination_url:
+            clicked = True
+        elif live_after_attempt != target.source_url or click_error:
+            return {"status": "click_uncertain", "restore_pending": True}
     if clicked is not True:
         return {"status": "click_failed", "restore_pending": False}
 
-    if _tab_target_id(tab) != ref.target_id:
+    if not _fresh_target_matches(tab, ref, target.destination_url):
         return {"status": "target_changed", "restore_pending": True}
 
     destination_auth = _wait_for_authenticated_url(
@@ -546,6 +761,21 @@ def execute_keepalive_roundtrip(
         sleep=sleep,
         timeout_seconds=navigation_timeout_seconds,
     )
+    if not destination_auth:
+        return {
+            "status": "destination_unverified",
+            "restore_pending": True,
+        }
+    if not _history_ready_for_restore(
+        tab,
+        source_entry_id=source_entry_id,
+        source_url=target.source_url,
+        destination_url=target.destination_url,
+    ):
+        return {
+            "status": "history_changed",
+            "restore_pending": True,
+        }
 
     try:
         mutation_gate()
@@ -556,7 +786,7 @@ def execute_keepalive_roundtrip(
             "source_entry_id": source_entry_id,
             "destination_verified": destination_auth,
         }
-    if _tab_target_id(tab) != ref.target_id:
+    if not _fresh_target_matches(tab, ref, target.destination_url):
         return {
             "status": "target_changed",
             "restore_pending": True,
@@ -571,7 +801,7 @@ def execute_keepalive_roundtrip(
             "source_entry_id": source_entry_id,
         }
 
-    if _tab_target_id(tab) != ref.target_id:
+    if not _fresh_target_matches(tab, ref, target.source_url):
         return {
             "status": "target_changed_after_restore",
             "restore_pending": True,
@@ -616,24 +846,6 @@ def _login_title_marker(agent: str, site: Site, target_id: str) -> tuple[str, st
     return f"[LOGIN HERE][{clean_agent}][{site_label}][{suffix}]", suffix
 
 
-def _unique_browser_pid(tab: Any) -> int:
-    result = tab.send("SystemInfo.getProcessInfo")
-    values = result.get("processInfo") if isinstance(result, Mapping) else None
-    pids = {
-        int(item["id"])
-        for item in (values or ())
-        if isinstance(item, Mapping)
-        and str(item.get("type") or "").casefold() == "browser"
-        and not isinstance(item.get("id"), bool)
-        and isinstance(item.get("id"), (int, float))
-        and float(item["id"]).is_integer()
-        and int(item["id"]) > 0
-    }
-    if len(pids) != 1:
-        raise RuntimeError(f"unique browser PID match count was {len(pids)}")
-    return next(iter(pids))
-
-
 def present_exact_login_window_once(
     tab: Any,
     ref: BrowserTargetRef,
@@ -665,7 +877,9 @@ def present_exact_login_window_once(
     # Never echo the previous page title: it can contain a candidate name or a
     # search query.  Site + sanitized URL are reported separately.
     visible_title = f"{marker} {site_label} login"
-    browser_pid = _unique_browser_pid(tab)
+    browser_pid = ref.browser_pid
+    if isinstance(browser_pid, bool) or not isinstance(browser_pid, int) or browser_pid <= 0:
+        raise RuntimeError("exact managed browser PID is unavailable")
     window_result = tab.send("Browser.getWindowForTarget", {"targetId": ref.target_id})
     raw_bounds = window_result.get("bounds") if isinstance(window_result, Mapping) else None
     if not isinstance(raw_bounds, Mapping):
