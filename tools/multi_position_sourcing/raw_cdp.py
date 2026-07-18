@@ -8,8 +8,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import struct
 import time
 import urllib.request
+import zlib
 from types import SimpleNamespace
 from typing import Any
 
@@ -47,6 +49,93 @@ def _http_get(path: str, *, endpoint: str | None = None) -> Any:
 # 주입 실패가 실제 서치를 절대 깨지 않게 모든 호출을 best-effort 로 감싼다.
 _BADGE_ID = "vh-automation-badge"
 _BADGE_OFF_VALUES = {"1", "true", "yes", "on"}
+
+
+def _paeth_predictor(left: int, up: int, upper_left: int) -> int:
+    estimate = left + up - upper_left
+    left_distance = abs(estimate - left)
+    up_distance = abs(estimate - up)
+    upper_left_distance = abs(estimate - upper_left)
+    if left_distance <= up_distance and left_distance <= upper_left_distance:
+        return left
+    if up_distance <= upper_left_distance:
+        return up
+    return upper_left
+
+
+def _png_has_badge_color(data: bytes) -> bool:
+    """Decode Chrome's 8-bit RGB/RGBA PNG and require substantial badge red pixels."""
+    if not isinstance(data, bytes) or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return False
+    offset = 8
+    header: tuple[int, int, int, int, int, int, int] | None = None
+    compressed = bytearray()
+    try:
+        while offset + 12 <= len(data):
+            length = struct.unpack(">I", data[offset:offset + 4])[0]
+            kind = data[offset + 4:offset + 8]
+            payload_start = offset + 8
+            payload_end = payload_start + length
+            if payload_end + 4 > len(data):
+                return False
+            payload = data[payload_start:payload_end]
+            if kind == b"IHDR":
+                if length != 13:
+                    return False
+                header = struct.unpack(">IIBBBBB", payload)
+            elif kind == b"IDAT":
+                compressed.extend(payload)
+            elif kind == b"IEND":
+                break
+            offset = payload_end + 4
+        if header is None:
+            return False
+        width, height, depth, color_type, compression, filter_method, interlace = header
+        if (
+            width <= 0 or height <= 0 or width > 4096 or height > 4096
+            or depth != 8 or color_type not in {2, 6}
+            or compression != 0 or filter_method != 0 or interlace != 0
+        ):
+            return False
+        channels = 3 if color_type == 2 else 4
+        stride = width * channels
+        raw = zlib.decompress(bytes(compressed))
+        if len(raw) != height * (stride + 1):
+            return False
+        prior = bytearray(stride)
+        red_pixels = 0
+        total_pixels = width * height
+        position = 0
+        for _row in range(height):
+            filter_type = raw[position]
+            position += 1
+            scan = bytearray(raw[position:position + stride])
+            position += stride
+            if filter_type not in {0, 1, 2, 3, 4}:
+                return False
+            for index in range(stride):
+                left = scan[index - channels] if index >= channels else 0
+                up = prior[index]
+                upper_left = prior[index - channels] if index >= channels else 0
+                if filter_type == 1:
+                    scan[index] = (scan[index] + left) & 0xFF
+                elif filter_type == 2:
+                    scan[index] = (scan[index] + up) & 0xFF
+                elif filter_type == 3:
+                    scan[index] = (scan[index] + ((left + up) // 2)) & 0xFF
+                elif filter_type == 4:
+                    scan[index] = (
+                        scan[index] + _paeth_predictor(left, up, upper_left)
+                    ) & 0xFF
+            for pixel in range(0, stride, channels):
+                red, green, blue = scan[pixel:pixel + 3]
+                alpha = scan[pixel + 3] if channels == 4 else 255
+                if red >= 160 and green <= 105 and blue <= 105 and alpha >= 180:
+                    red_pixels += 1
+            prior = scan
+        return red_pixels >= max(16, total_pixels // 5)
+    except (ValueError, TypeError, struct.error, zlib.error):
+        return False
 
 
 def _resolve_badge_label(env: Any) -> str | None:
@@ -172,6 +261,23 @@ def _owned_navigation_js(
     )
 
 
+def _badge_rect_js(expected_url: str | None, badge_label: str) -> str:
+    url_guard = ""
+    if expected_url is not None:
+        url_guard = f"if(location.href!=={json.dumps(expected_url)})return false;"
+    return (
+        "(function(){"
+        + url_guard
+        + f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
+        f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
+        + _badge_visibility_js("b", "return false;")
+        + "var x=Math.max(0,r.left),y=Math.max(0,r.top);"
+        "var right=Math.min(window.innerWidth,r.right);"
+        "var bottom=Math.min(window.innerHeight,r.bottom);"
+        "return {x:x,y:y,width:right-x,height:bottom-y};})()"
+    )
+
+
 def list_pages(endpoint: str | None = None) -> list[dict]:
     """Return page targets from one explicit endpoint without mutating global env."""
     return [t for t in _http_get("/json", endpoint=endpoint) if t.get("type") == "page"]
@@ -280,9 +386,18 @@ class CDPTab:
             acknowledged = self.eval(_badge_js(label, expected_url=expected_url))
         except Exception:
             return False
-        self._badge_application_uncertain = False
         if acknowledged == _BADGE_ID:
-            return True
+            try:
+                if self.prove_badge_rendered(
+                    expected_url=expected_url,
+                    badge_label=label,
+                ):
+                    self._badge_application_uncertain = False
+                    return True
+            except Exception:
+                return False
+            return False
+        self._badge_application_uncertain = False
         self._badge_bound_url = None
         return False
 
@@ -296,6 +411,36 @@ class CDPTab:
             self.eval(_clear_js())
         except Exception:
             pass
+
+    def prove_badge_rendered(
+        self,
+        *,
+        expected_url: str | None,
+        badge_label: str,
+    ) -> bool:
+        rect = self.eval(_badge_rect_js(expected_url, badge_label))
+        if not isinstance(rect, dict):
+            return False
+        values = [rect.get(name) for name in ("x", "y", "width", "height")]
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+            return False
+        x, y, width, height = (float(value) for value in values)
+        if x < 0 or y < 0 or width < 8 or height < 8:
+            return False
+        result = self.send("Page.captureScreenshot", {
+            "format": "png",
+            "fromSurface": True,
+            "captureBeyondViewport": False,
+            "clip": {"x": x, "y": y, "width": width, "height": height, "scale": 1},
+        })
+        encoded = result.get("data") if isinstance(result, dict) else None
+        if not isinstance(encoded, str) or not encoded:
+            return False
+        try:
+            png = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            return False
+        return _png_has_badge_color(png)
 
     def navigate_if_owned(
         self,

@@ -167,6 +167,14 @@ class RawLocator:
             label = str(getattr(self._tab, "_badge_label", "") or "")
             if not expected_url or not label:
                 raise RuntimeError("raw DOM ownership proof is missing")
+            rendered = getattr(self._tab, "prove_badge_rendered", None)
+            if not callable(rendered) or await _tab_call(
+                self._tab,
+                "prove_badge_rendered",
+                expected_url=expected_url,
+                badge_label=label,
+            ) is not True:
+                raise RuntimeError("raw rendered badge ownership proof failed")
             expr = _ownership_js(expected_url, label, action)
             acknowledged = await _tab_call(self._tab, "eval", expr)
             if acknowledged is not True:
@@ -256,6 +264,14 @@ class RawPage:
             lifecycle = getattr(self._tab, "wait_for_next_lifecycle", None)
             if not origin_url or not label or not callable(navigator) or not callable(lifecycle):
                 raise RuntimeError("raw atomic navigation/loader proof is unavailable")
+            rendered = getattr(self._tab, "prove_badge_rendered", None)
+            if not callable(rendered) or await _tab_call(
+                self._tab,
+                "prove_badge_rendered",
+                expected_url=origin_url,
+                badge_label=label,
+            ) is not True:
+                raise RuntimeError("raw rendered badge ownership proof failed")
             navigation = await asyncio.wait_for(
                 _tab_call(
                     self._tab,
