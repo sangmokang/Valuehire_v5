@@ -258,31 +258,41 @@ cmd_cdp() {
     #    ⚠️ 경계 앵커 필수 — grep -F 접두 매칭은 /linkedin 이 /linkedin2 에도 걸려(V1 지적)
     #    엉뚱한 브라우저 포트를 잡을 수 있다. 인자값이 정확히 일치할 때만 채택한다.
     #    (--user-data-dir=<profile> 는 항상 공백으로 구분된 한 인자 → 양옆 공백 경계로 판별.)
-    local live_ports=()
+    local declared_ports=()
+    local exact_profile_processes=0
     local _cmd
     while IFS= read -r _cmd; do
       case " $_cmd " in
         *" --user-data-dir=$profile "*)
-          local candidate_port=""
-          candidate_port="$(printf '%s\n' "$_cmd" | grep -oE 'remote-debugging-port=[0-9]+' | head -1 | cut -d= -f2)"
-          if [[ -n "$candidate_port" ]] && cdp_alive "$candidate_port"; then
+          exact_profile_processes=$((exact_profile_processes + 1))
+          local candidate_port
+          while IFS= read -r candidate_port; do
+            [[ -n "$candidate_port" ]] || continue
             local seen=0 existing
-            for existing in "${live_ports[@]:-}"; do
+            for existing in "${declared_ports[@]:-}"; do
               [[ "$existing" == "$candidate_port" ]] && seen=1
             done
-            [[ "$seen" -eq 1 ]] || live_ports+=("$candidate_port")
-          fi ;;
+            [[ "$seen" -eq 1 ]] || declared_ports+=("$candidate_port")
+          done < <(printf '%s\n' "$_cmd" | grep -oE 'remote-debugging-port=[0-9]+' | cut -d= -f2) ;;
       esac
     done < <(ps ax -o command= 2>/dev/null)
     # 2) exact profile 프로세스에서 찾은 포트만 허용한다. 설정 포트가 살아있다는 이유만으로
     #    폴백하면 같은 포트의 다른 Chrome을 오인할 수 있다(다중 브라우저 환경 안전 위반).
-    if [[ "${#live_ports[@]}" -eq 1 ]]; then
-      echo "http://127.0.0.1:${live_ports[0]}"
-      return 0
-    fi
-    if [[ "${#live_ports[@]}" -gt 1 ]]; then
+    if [[ "${#declared_ports[@]}" -gt 1 ]]; then
       echo "❌ $name exact 프로필 Chrome이 여러 개입니다 — 어느 창에도 붙지 않습니다." >&2
       exit 4
+    fi
+    if [[ "${#declared_ports[@]}" -eq 1 ]]; then
+      if cdp_alive "${declared_ports[0]}"; then
+        echo "http://127.0.0.1:${declared_ports[0]}"
+        return 0
+      fi
+      echo "❌ $name exact 프로필 Chrome의 CDP가 응답하지 않습니다 — 새 창을 열지 말고 기다린 뒤 재확인하세요." >&2
+      exit 3
+    fi
+    if [[ "$exact_profile_processes" -gt 0 ]]; then
+      echo "❌ $name exact 프로필 Chrome에 CDP 포트가 없습니다 — 새 창을 열지 말고 상태를 확인하세요." >&2
+      exit 3
     fi
     # 3) exact profile Chrome 없음 → 재실행/추정 금지(사람 로그인·캡차 게이트 존중).
     echo "❌ $name CDP 없음 — 프로필로 살아있는 크롬이 없습니다. 'start' 후 그 창에서 직접 로그인/캡차 처리." >&2
