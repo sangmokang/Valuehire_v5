@@ -547,6 +547,35 @@ class CDPTab:
             pass
         self._release_badge_object()
 
+    def clear_busy(self, label: str, *, expected_url: str) -> bool:
+        """Remove only the exact rendered badge owned by this target episode."""
+        if (
+            not isinstance(label, str)
+            or not label
+            or self._badge_label != label
+            or self._badge_bound_url != expected_url
+        ):
+            return False
+        try:
+            acknowledged = self.eval_if_badge_owned(
+                "b.remove();return true;",
+                expected_url=expected_url,
+                badge_label=label,
+            )
+        except Exception:
+            return False
+        if acknowledged is not True:
+            return False
+        try:
+            self.send("Overlay.hideHighlight")
+        except Exception:
+            return False
+        self._release_badge_object()
+        self._badge_label = None
+        self._badge_bound_url = None
+        self._badge_application_uncertain = False
+        return True
+
     def _release_badge_object(self) -> None:
         object_id = getattr(self, "_badge_object_id", None)
         self._badge_object_id = None

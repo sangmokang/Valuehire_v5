@@ -597,6 +597,48 @@ class ProfileLock:
         self.release()
 
 
+def proved_owner_idle_seconds(snapshot: Any) -> float:
+    """Return one trustworthy idle proof or fail closed before mutation."""
+    value = getattr(snapshot, "idle_seconds", None)
+    if (
+        getattr(snapshot, "detection_status", "") != "ok"
+        or getattr(snapshot, "owner_activity_detected", True) is not False
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 180.0
+    ):
+        raise ProfileLockError("owner activity blocks raw browser mutation")
+    return float(value)
+
+
+def assert_raw_browser_mutation_allowed(
+    lock: ProfileLock,
+    *,
+    owner_snapshot: Callable[[], Any],
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Prove lease ownership and increasing OS idle before one raw mutation."""
+    lock.assert_owned()
+    try:
+        first = proved_owner_idle_seconds(owner_snapshot())
+    except ProfileLockError:
+        raise
+    except Exception as exc:
+        raise ProfileLockError("owner activity detection failed closed") from exc
+    sleep(1.0)
+    lock.assert_owned()
+    try:
+        second = proved_owner_idle_seconds(owner_snapshot())
+    except ProfileLockError:
+        raise
+    except Exception as exc:
+        raise ProfileLockError("owner activity detection failed closed") from exc
+    if second <= first:
+        raise ProfileLockError("owner idle proof did not increase during quiet dwell")
+    lock.assert_owned()
+
+
 def _ensure_real_profile_dir(config: PortalWorkerConfig) -> None:
     profile_root = Path(config.profile_root)
     channel_dir = profile_root / config.channel
@@ -935,38 +977,15 @@ class PortalWorker:
 
     @staticmethod
     def _proved_idle_seconds(snapshot: Any) -> float:
-        value = getattr(snapshot, "idle_seconds", None)
-        if (
-            getattr(snapshot, "detection_status", "") != "ok"
-            or getattr(snapshot, "owner_activity_detected", True) is not False
-            or isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(float(value))
-            or float(value) < 180.0
-        ):
-            raise ProfileLockError("owner activity blocks raw browser mutation")
-        return float(value)
+        return proved_owner_idle_seconds(snapshot)
 
     def _assert_raw_mutation_allowed(self) -> None:
         """Lease + two OS-idle proofs + quiet dwell before exactly one mutation."""
-        self._lock.assert_owned()
-        try:
-            first = self._proved_idle_seconds(self._owner_snapshot())
-        except ProfileLockError:
-            raise
-        except Exception as exc:
-            raise ProfileLockError("owner activity detection failed closed") from exc
-        self._mutation_sleep(1.0)
-        self._lock.assert_owned()
-        try:
-            second = self._proved_idle_seconds(self._owner_snapshot())
-        except ProfileLockError:
-            raise
-        except Exception as exc:
-            raise ProfileLockError("owner activity detection failed closed") from exc
-        if second <= first:
-            raise ProfileLockError("owner idle proof did not increase during quiet dwell")
-        self._lock.assert_owned()
+        assert_raw_browser_mutation_allowed(
+            self._lock,
+            owner_snapshot=self._owner_snapshot,
+            sleep=self._mutation_sleep,
+        )
 
     async def _attach_raw_target_cancellation_safe(self, attach: Any, target: dict) -> Any:
         attach_task = asyncio.create_task(asyncio.to_thread(attach, target, badge=False))

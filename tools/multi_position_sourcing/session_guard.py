@@ -1,22 +1,18 @@
 """로그인 세션가드 — exact target, 사람 로그인 대기, 안전 keepalive.
 
-직전 세션의 session_guard/vault/cdp_util/launch_chrome 아이디어(쿠키 스냅샷 롤링,
-2단계 판정, LinkedIn 단일기기·자동로그인 금지)를 **새 scripts/ 트리 없이** v5 기존
-인프라 위에 재작성한 것(2026-07-17 /st 지시 5). 역할 분담:
+기존 브라우저 하나에만 붙는 v5 인프라 위에서 세 가지를 강제한다.
 
 - 브라우저 접속: ``raw_cdp``(단일 탭 attach, 종료=WebSocket 해제만) 재사용 — 재발명 금지.
 - 사람 점유 감지: ``owner_activity.detect_owner_activity_snapshot`` 재사용.
   **keepalive 직전마다 호출이 필수**이며, 감지 실패는 fail-closed(사용 중 간주).
-- 자격증명 저장: ``portal_keychain``(키체인) 재사용 — 이 모듈은 비밀번호를 다루지 않는다.
+- 자격증명·쿠키를 읽거나 복사하거나 저장하지 않는다.
 
 이 모듈은 과거의 쿠키 판정 보조 함수도 호환용으로 남기지만 쿠키 존재를 keepalive
 성공으로 보지 않는다. 실제 성공은 exact target에서 allowlist 링크를 한 번 클릭하고,
 ``Page.navigateToHistoryEntry``로 원래 history entry를 복원한 뒤 URL과 로그인 마커를
 모두 재검증했을 때뿐이다.
 
-⚠️ CDP 쿠키 조회(``fetch_cookies_via_cdp``)는 **실크롬 왕복 검증 전 = 미검증** 상태다.
-실크롬에서 왕복(쿠키 조회 → 스냅샷 → 재조회 일치) 증거를 남기기 전까지 "검증됨"이라
-표기하지 않는다(/st 지시 5). 실패 시 None 을 돌려 2단계 판정이 probe 로 폴백한다.
+인증 증거는 exact target의 비밀 없는 DOM boolean과 URL만 매번 새로 읽는다.
 """
 
 from __future__ import annotations
@@ -27,6 +23,8 @@ import math
 import os
 import re
 import shlex
+import secrets
+import stat
 import subprocess
 import time
 from collections.abc import Callable, Mapping
@@ -36,10 +34,6 @@ from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 Site = Literal["saramin", "jobkorea", "linkedin_rps"]
-CookieEvidence = Literal["present", "absent", "unknown"]
-KeepaliveAction = Literal[
-    "skip_not_due", "skip_owner_active", "probe_readonly", "reauth", "human_wait",
-]
 
 
 @dataclass(frozen=True)
@@ -105,6 +99,7 @@ class LoginWindowLocator:
     screenshot_size_bytes: int
     presentation_count: int = 1
     _original_title: str = field(default="", repr=False, compare=False)
+    _marker: str = field(default="", repr=False, compare=False)
 
 # SOT-28 §4: 사람인·잡코리아 서버세션(JSESSIONID·ASP.NET_SessionId)은 20~30분 유휴
 # 만료 → 주기는 15분 이하. LinkedIn li_at 는 장수명 → 30분 읽기 전용이면 충분.
@@ -120,13 +115,6 @@ PROBE_URLS: dict[Site, str] = {
     "saramin": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
     "jobkorea": "https://www.jobkorea.co.kr/Corp/Person/Find",
     "linkedin_rps": "https://www.linkedin.com/talent/home",
-}
-
-# 1단계(쿠키) 판정에 쓰는 세션 쿠키 이름.
-SESSION_COOKIE_NAMES: dict[Site, tuple[str, ...]] = {
-    "saramin": ("JSESSIONID",),
-    "jobkorea": ("ASP.NET_SessionId",),
-    "linkedin_rps": ("li_at",),
 }
 
 _SITE_DOMAINS: dict[Site, str] = {
@@ -175,9 +163,6 @@ _UNSAFE_KEEPALIVE_URL_TOKENS = (
     "charge", "paid", "new-candidate", "new_candidate", "delete", "remove",
     "session/switch", "switch-session",
 )
-
-DEFAULT_SNAPSHOT_ROOT = Path.home() / ".valuehire" / "session_snapshots"
-
 
 def _official_site_url(site: Site, url: str) -> bool:
     try:
@@ -445,16 +430,27 @@ def wait_for_human_auth(
 def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     """Read fresh site auth/challenge markers without causing navigation or clicks."""
 
-    script = """
+    script = r"""
 (() => {
   const visible = (selector) => Array.from(document.querySelectorAll(selector)).some((e) => {
     const s = getComputedStyle(e); const r = e.getBoundingClientRect();
     return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0' && r.width > 0 && r.height > 0;
   });
-  const text = (document.body && document.body.innerText || '').slice(0, 50000);
+  const bodyText = document.body && document.body.innerText || '';
+  const folded = bodyText.toLowerCase();
+  const path = location.pathname.toLowerCase();
+  const challengePath = /\/(checkpoint|uas\/login-cap|enterprise-authentication|authwall)(\/|$)/.test(path);
+  const challengeControl = visible(
+    'iframe[src*="captcha"], [class*="captcha"], [id*="captcha"], input[name*="captcha"], input[autocomplete="one-time-code"]'
+  );
+  const challengePhrase = folded.includes('multiple sign-ins') ||
+    folded.includes('only one session') || folded.includes('보안문자') ||
+    folded.includes('인증번호') || folded.includes('2단계 인증');
   return {
     url: location.href,
-    text: text,
+    hasChallenge: challengePath || challengeControl || challengePhrase,
+    hasLogout: folded.includes('로그아웃') || folded.includes('log out'),
+    hasValueConnect: folded.includes('valueconnect') || folded.includes('value connect') || bodyText.includes('밸류커넥트'),
     saraminSearch: !!document.querySelector('input.search_input') && !!document.querySelector('#career_min') && !!document.querySelector('#career_max'),
     jobkoreaSearch: !!document.querySelector("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"),
     linkedinSearch: visible('a[href*="/talent/search"]'),
@@ -466,17 +462,11 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     if not isinstance(raw, Mapping):
         return AuthObservation(False, False, "", ())
     url = str(raw.get("url") or "")
-    text = str(raw.get("text") or "")
-    folded = f"{text} {url}".casefold()
-    challenge_tokens = (
-        "captcha", "checkpoint", "challenge", "authwall", "multiple sign-ins",
-        "only one session", "enterprise-authentication", "보안문자", "2단계", "인증번호",
-    )
-    challenge = any(token.casefold() in folded for token in challenge_tokens)
+    challenge = raw.get("hasChallenge") is True
     proofs: list[str] = []
     authenticated = False
     if site == "saramin":
-        account = "로그아웃" in text or "valueconnect" in folded or "value connect" in folded
+        account = raw.get("hasLogout") is True or raw.get("hasValueConnect") is True
         search = raw.get("saraminSearch") is True
         if account:
             proofs.append("account_or_logout")
@@ -484,8 +474,8 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
             proofs.append("talent_search_controls")
         authenticated = bool(account and search and _official_site_url(site, url))
     elif site == "jobkorea":
-        logout = "로그아웃" in text
-        account = "밸류커넥트" in text or "valueconnect" in folded or "value connect" in folded
+        logout = raw.get("hasLogout") is True
+        account = raw.get("hasValueConnect") is True
         search = raw.get("jobkoreaSearch") is True
         if logout and account:
             proofs.append("logout_and_account")
@@ -853,6 +843,7 @@ def present_exact_login_window_once(
     agent: str,
     mutation_gate: Callable[[], None],
     state: str = "AI_ATTACHED",
+    episode_id: str = "default",
     window_resolver: Callable[..., Any] | None = None,
     window_capture: Callable[..., bytes] | None = None,
 ) -> LoginWindowLocator:
@@ -909,12 +900,21 @@ def present_exact_login_window_once(
         bounds=bounds,
     ))
 
-    presentation_key = (ref.site, ref.endpoint, ref.target_id)
+    clean_episode = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(episode_id)).strip("-.")[:64]
+    if not clean_episode:
+        raise ValueError("auth episode id must have a safe non-empty form")
+    presentation_key = (ref.site, ref.endpoint, ref.target_id, clean_episode)
     if getattr(tab, "_vh_human_auth_presentation_key", None) == presentation_key:
         raise RuntimeError("exact login window was already presented for this auth episode")
-    # Claim before the first mutation: a partial failure must not cause repeated
-    # title/focus/capture attempts that steal the owner's foreground again.
+
+    # A gate rejection happens before the episode is claimed, so a later owner-idle
+    # retry can still present once.  Once a mutation may have been dispatched, the
+    # episode is claimed and repeated focus/capture is forbidden.
+    mutation_gate()
     setattr(tab, "_vh_human_auth_presentation_key", presentation_key)
+    marker_fn = getattr(tab, "mark_busy", None)
+    if not callable(marker_fn) or marker_fn(marker, expected_url=live_url) is not True:
+        raise RuntimeError("visible login-window marker could not be installed")
 
     mutation_gate()
     title_result = tab.eval(
@@ -924,11 +924,6 @@ def present_exact_login_window_once(
     )
     if title_result != visible_title:
         raise RuntimeError("exact target title marker could not be installed")
-
-    mutation_gate()
-    marker_fn = getattr(tab, "mark_busy", None)
-    if not callable(marker_fn) or marker_fn(marker, expected_url=live_url) is not True:
-        raise RuntimeError("visible login-window marker could not be installed")
 
     mutation_gate()
     tab.send("Page.bringToFront")
@@ -957,7 +952,365 @@ def present_exact_login_window_once(
         screenshot_sha256=hashlib.sha256(png).hexdigest(),
         screenshot_size_bytes=len(png),
         _original_title=original_title,
+        _marker=marker,
     )
+
+
+def cleanup_exact_login_presentation(
+    tab: Any,
+    ref: BrowserTargetRef,
+    locator: LoginWindowLocator,
+    *,
+    mutation_gate: Callable[[], None],
+) -> dict[str, Any]:
+    """Guardedly remove only this episode's badge/title on the original page.
+
+    A successful human login commonly replaces the document.  In that case the
+    marker disappeared with the old document and restoring its private title into
+    the new page would be wrong, so cleanup is a read-only no-op.  If the original
+    document remains, each cleanup mutation receives a fresh owner-idle gate.
+    """
+
+    if _tab_target_id(tab) != ref.target_id:
+        return {"status": "cleanup_target_changed", "cleanup_pending": True}
+    try:
+        live_url = _tab_current_url(tab)
+    except Exception:
+        return {"status": "cleanup_unreadable", "cleanup_pending": True}
+    if live_url != ref.initial_url:
+        return {"status": "cleanup_not_applicable_navigation_changed", "cleanup_pending": False}
+    if not _fresh_target_matches(tab, ref, ref.initial_url):
+        return {"status": "cleanup_target_changed", "cleanup_pending": True}
+
+    marker = locator._marker
+    if not marker or not locator.sanitized_title:
+        return {"status": "cleanup_identity_missing", "cleanup_pending": True}
+    mutations = 0
+    clear_busy = getattr(tab, "clear_busy", None)
+    if not callable(clear_busy):
+        return {"status": "cleanup_surface_missing", "cleanup_pending": True}
+    try:
+        mutation_gate()
+    except Exception:
+        return {"status": "cleanup_owner_active", "cleanup_pending": True}
+    if clear_busy(marker, expected_url=ref.initial_url) is not True:
+        return {"status": "cleanup_badge_unverified", "cleanup_pending": True}
+    mutations += 1
+
+    try:
+        current_title = str(tab.eval("document.title") or "")
+    except Exception:
+        return {
+            "status": "cleanup_title_unreadable",
+            "cleanup_pending": True,
+            "mutations": mutations,
+        }
+    if current_title == locator.sanitized_title:
+        try:
+            mutation_gate()
+        except Exception:
+            return {
+                "status": "cleanup_title_pending",
+                "cleanup_pending": True,
+                "mutations": mutations,
+            }
+        restored = tab.eval(
+            "(function(){if(location.href!==" + json.dumps(ref.initial_url) +
+            "||document.title!==" + json.dumps(locator.sanitized_title) +
+            ")return false;document.title=" + json.dumps(locator._original_title) +
+            ";return document.title===" + json.dumps(locator._original_title) + ";})()"
+        )
+        if restored is not True:
+            return {
+                "status": "cleanup_title_unverified",
+                "cleanup_pending": True,
+                "mutations": mutations,
+            }
+        mutations += 1
+    return {"status": "cleanup_ok", "cleanup_pending": False, "mutations": mutations}
+
+
+def _default_login_lease(site: Site) -> Any:
+    from .portal_worker import PortalWorkerConfig, ProfileLock
+
+    return ProfileLock(PortalWorkerConfig(
+        channel=site,
+        worker_id="default",
+        mode="headed",
+        connection_mode="raw_single_tab",
+    ))
+
+
+def _attach_exact_ref(target: Mapping[str, Any], *, badge: bool = False) -> Any:
+    from . import raw_cdp
+
+    return raw_cdp.attach(dict(target), badge=badge)
+
+
+def _public_locator_payload(locator: LoginWindowLocator) -> dict[str, Any]:
+    """Serialize only the intentional non-secret locator surface."""
+    return {
+        "event": "LOGIN_WINDOW_READY",
+        "agent": locator.agent,
+        "site": locator.site,
+        "browser_pid": locator.browser_pid,
+        "profile_path": locator.profile_path,
+        "cdp_endpoint": locator.cdp_endpoint,
+        "target_id_suffix": locator.target_id_suffix,
+        "sanitized_title": locator.sanitized_title,
+        "sanitized_url": locator.sanitized_url,
+        "cg_window_id": locator.cg_window_id,
+        "screenshot_sha256": locator.screenshot_sha256,
+        "screenshot_size_bytes": locator.screenshot_size_bytes,
+        "presentation_count": locator.presentation_count,
+    }
+
+
+def _disconnect_websocket_only(tab: Any | None) -> bool:
+    if tab is None:
+        return True
+    disconnect = getattr(tab, "disconnect", None)
+    if not callable(disconnect):
+        return False
+    try:
+        return disconnect() is True
+    except BaseException:
+        return False
+
+
+def run_human_auth_episode(
+    site: Site,
+    *,
+    agent: str,
+    target_id: str | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+    owner_snapshot: Callable[[], Any] | None = None,
+    mutation_sleep: Callable[[float], None] = time.sleep,
+    wait_sleep: Callable[[float], None] = time.sleep,
+    locator_sink: Callable[[Mapping[str, Any]], None] | None = None,
+    _lease_factory: Callable[[Site], Any] | None = None,
+    _target_resolver: Callable[..., BrowserTargetRef] | None = None,
+    _tab_attacher: Callable[..., Any] | None = None,
+    _auth_reader: Callable[[Any, Site], AuthObservation] | None = None,
+    _presenter: Callable[..., LoginWindowLocator] | None = None,
+    _auth_waiter: Callable[..., AuthObservation | None] | None = None,
+    _cleanup: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Run one exact existing-target auth handoff without creating browser state."""
+    if site not in _SITE_DOMAINS:
+        raise ValueError(f"unsupported login site: {site!r}")
+    clean_agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-.")[:24]
+    if not clean_agent:
+        raise ValueError("agent must have a safe visible name")
+    if owner_snapshot is None:
+        from .owner_activity import detect_owner_activity_snapshot
+
+        owner_snapshot = detect_owner_activity_snapshot
+    from .portal_worker import assert_raw_browser_mutation_allowed
+
+    lease_factory = _lease_factory or _default_login_lease
+    resolver = _target_resolver or resolve_existing_target
+    attacher = _tab_attacher or _attach_exact_ref
+    auth_reader = _auth_reader or read_auth_observation
+    presenter = _presenter or present_exact_login_window_once
+    waiter = _auth_waiter or wait_for_human_auth
+    cleanup = _cleanup or cleanup_exact_login_presentation
+    stop = stop_requested or (lambda: False)
+    sink = locator_sink or (lambda _payload: None)
+    lease = lease_factory(site)
+    tab: Any | None = None
+    locator: LoginWindowLocator | None = None
+    lease.acquire()
+    try:
+        ref = resolver(site, target_id=target_id)
+        mutation_gate = lambda: assert_raw_browser_mutation_allowed(
+            lease,
+            owner_snapshot=owner_snapshot,
+            sleep=mutation_sleep,
+        )
+        # Attach itself is read-only, but the gate here ensures a user who is
+        # actively driving this exact managed browser is never even shadowed.
+        mutation_gate()
+        tab = attacher({
+            "id": ref.target_id,
+            "type": "page",
+            "url": ref.initial_url,
+            "webSocketDebuggerUrl": ref.websocket_url,
+        }, badge=False)
+        if _tab_target_id(tab) != ref.target_id:
+            raise RuntimeError("attached target identity does not match resolved target")
+        initial_auth = auth_reader(tab, site)
+        if _auth_matches(initial_auth, ref.initial_url):
+            return {
+                "status": "authenticated",
+                "site": site,
+                "already_authenticated": True,
+                "auth_url": _sanitize_locator_url(initial_auth.url),
+                "proof_names": list(initial_auth.proof_names),
+            }
+
+        episode_id = secrets.token_hex(16)
+        locator = presenter(
+            tab,
+            ref,
+            agent=clean_agent,
+            mutation_gate=mutation_gate,
+            episode_id=episode_id,
+        )
+        public_locator = _public_locator_payload(locator)
+        sink(public_locator)
+        observation = waiter(
+            auth_probe=lambda: auth_reader(tab, site),
+            owner_snapshot=owner_snapshot,
+            sleep=wait_sleep,
+            stop_requested=stop,
+        )
+        if observation is None:
+            return {
+                "status": "human_auth_stopped",
+                "site": site,
+                "window": public_locator,
+            }
+        cleanup_result = cleanup(
+            tab,
+            ref,
+            locator,
+            mutation_gate=mutation_gate,
+        )
+        return {
+            "status": "authenticated",
+            "site": site,
+            "already_authenticated": False,
+            "auth_url": _sanitize_locator_url(observation.url),
+            "proof_names": list(observation.proof_names),
+            "window": public_locator,
+            "cleanup": cleanup_result,
+        }
+    finally:
+        _disconnect_websocket_only(tab)
+        lease.release()
+
+
+def _cleanup_keepalive_badge(
+    tab: Any,
+    ref: BrowserTargetRef,
+    label: str,
+    *,
+    mutation_gate: Callable[[], None],
+) -> dict[str, Any]:
+    try:
+        live_url = _tab_current_url(tab)
+    except Exception:
+        return {"status": "cleanup_unreadable", "cleanup_pending": True}
+    if live_url != ref.initial_url:
+        return {"status": "cleanup_not_applicable_navigation_changed", "cleanup_pending": False}
+    if not _fresh_target_matches(tab, ref, ref.initial_url):
+        return {"status": "cleanup_target_changed", "cleanup_pending": True}
+    clear_busy = getattr(tab, "clear_busy", None)
+    if not callable(clear_busy):
+        return {"status": "cleanup_surface_missing", "cleanup_pending": True}
+    try:
+        mutation_gate()
+    except Exception:
+        return {"status": "cleanup_owner_active", "cleanup_pending": True}
+    if clear_busy(label, expected_url=ref.initial_url) is not True:
+        return {"status": "cleanup_badge_unverified", "cleanup_pending": True}
+    return {"status": "cleanup_ok", "cleanup_pending": False}
+
+
+def run_safe_keepalive_episode(
+    site: Site,
+    target: SafeKeepaliveTarget,
+    *,
+    agent: str,
+    owner_snapshot: Callable[[], Any] | None = None,
+    mutation_sleep: Callable[[float], None] = time.sleep,
+    navigation_sleep: Callable[[float], None] = time.sleep,
+    _lease_factory: Callable[[Site], Any] | None = None,
+    _target_resolver: Callable[..., BrowserTargetRef] | None = None,
+    _tab_attacher: Callable[..., Any] | None = None,
+    _auth_reader: Callable[[Any, Site], AuthObservation] | None = None,
+    _roundtrip: Callable[..., dict[str, Any]] | None = None,
+    _cleanup_badge: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Run one guarded allowlisted link click and exact history Back."""
+    if site not in _SITE_DOMAINS:
+        raise ValueError(f"unsupported login site: {site!r}")
+    clean_agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-.")[:24]
+    if not clean_agent:
+        raise ValueError("agent must have a safe visible name")
+    if owner_snapshot is None:
+        from .owner_activity import detect_owner_activity_snapshot
+
+        owner_snapshot = detect_owner_activity_snapshot
+    from .portal_worker import assert_raw_browser_mutation_allowed
+
+    lease_factory = _lease_factory or _default_login_lease
+    resolver = _target_resolver or resolve_existing_target
+    attacher = _tab_attacher or _attach_exact_ref
+    auth_reader = _auth_reader or read_auth_observation
+    roundtrip = _roundtrip or execute_keepalive_roundtrip
+    cleanup_badge = _cleanup_badge or _cleanup_keepalive_badge
+    lease = lease_factory(site)
+    tab: Any | None = None
+    lease.acquire()
+    try:
+        ref = resolver(site, target_id=target.target_id)
+        mutation_gate = lambda: assert_raw_browser_mutation_allowed(
+            lease,
+            owner_snapshot=owner_snapshot,
+            sleep=mutation_sleep,
+        )
+        mutation_gate()
+        tab = attacher({
+            "id": ref.target_id,
+            "type": "page",
+            "url": ref.initial_url,
+            "webSocketDebuggerUrl": ref.websocket_url,
+        }, badge=False)
+        if _tab_target_id(tab) != ref.target_id:
+            raise RuntimeError("attached target identity does not match resolved target")
+        source_auth = auth_reader(tab, site)
+        if not _auth_matches(source_auth, target.source_url):
+            return {
+                "status": "auth_required",
+                "site": site,
+                "restore_pending": False,
+            }
+        if not _safe_keepalive_descriptor(ref, target):
+            return {
+                "status": "skipped_unsafe",
+                "site": site,
+                "restore_pending": False,
+            }
+        marker, _suffix = _login_title_marker(clean_agent, site, ref.target_id)
+        label = marker.replace("LOGIN HERE", "KEEPALIVE")
+        mutation_gate()
+        mark_busy = getattr(tab, "mark_busy", None)
+        if not callable(mark_busy) or mark_busy(label, expected_url=ref.initial_url) is not True:
+            return {
+                "status": "badge_failed",
+                "site": site,
+                "restore_pending": False,
+            }
+        result = roundtrip(
+            tab,
+            ref,
+            target,
+            auth_probe=lambda current: auth_reader(current, site),
+            mutation_gate=mutation_gate,
+            sleep=navigation_sleep,
+        )
+        cleanup_result = cleanup_badge(
+            tab,
+            ref,
+            label,
+            mutation_gate=mutation_gate,
+        )
+        return {**result, "site": site, "cleanup": cleanup_result}
+    finally:
+        _disconnect_websocket_only(tab)
+        lease.release()
 
 
 def keepalive_due(site: Site, *, last_at: float | None, now: float) -> bool:
@@ -967,178 +1320,110 @@ def keepalive_due(site: Site, *, last_at: float | None, now: float) -> bool:
     return (now - last_at) >= KEEPALIVE_INTERVAL_SECONDS[site]
 
 
-def classify_cookie_evidence(site: Site, cookies: list[dict[str, Any]] | None) -> CookieEvidence:
-    """Return domain-bound cookie evidence; values are never inspected or logged."""
-    if cookies is None:
-        return "unknown"
-    official = _SITE_DOMAINS[site]
-    for cookie in cookies:
-        name = str(cookie.get("name") or "")
-        domain = str(cookie.get("domain") or "").strip().lstrip(".").rstrip(".").casefold()
-        domain_ok = domain == official or domain.endswith("." + official)
-        if domain_ok and name in SESSION_COOKIE_NAMES[site]:
-            return "present"
-    return "absent"
+_SAFE_TARGET_JSON_KEYS = frozenset({
+    "target_id",
+    "source_url",
+    "selector",
+    "destination_url",
+    "method",
+    "target_attr",
+    "download",
+    "dedicated_tab",
+    "clean_form",
+    "previously_opened_free",
+    "risk_labels",
+})
 
 
-def decide_keepalive(
-    site: Site, *, due: bool, owner_active: bool, cookie_evidence: CookieEvidence,
-) -> KeepaliveAction:
-    """keepalive 1회차의 행동 결정 (순수함수 — 판정 우선순위가 곧 SOT-28 계약).
-
-    1) 사람 점유 최우선: owner_active 면 due 여도 건너뛴다(§4 — 사장님을 앞지르지 않는다).
-    2) due 아니면 아무것도 안 한다(분 단위 과잉 클릭 금지).
-    3) 쿠키 present/unknown → 진단 증거일 뿐이며 읽기 전용 probe가 필요하다.
-    5) absent → 사람인·잡코리아는 자동 재로그인(§3), LinkedIn 은 human_wait
-       (자동 폼 로그인 금지 + 계정당 단일 기기, §3a·§5).
-    """
-    if owner_active:
-        return "skip_owner_active"
-    if not due:
-        return "skip_not_due"
-    if cookie_evidence in {"present", "unknown"}:
-        return "probe_readonly"
-    if site == "linkedin_rps":
-        return "human_wait"
-    return "reauth"
-
-
-def save_cookie_snapshot(
-    site: Site, cookies: list[dict[str, Any]], *,
-    root: Path = DEFAULT_SNAPSHOT_ROOT, keep: int = 5, now: float | None = None,
-) -> Path:
-    """Persist only non-secret cookie metadata, never values or token material."""
-    root = Path(root)
-    root.mkdir(parents=True, exist_ok=True)
-    os.chmod(root, 0o700)
-    stamp = f"{(time.time() if now is None else now):.3f}".replace(".", "")
-    path = root / f"{site}-{stamp}.json"
-    safe_keys = ("name", "domain", "path", "secure", "httpOnly", "sameSite", "session")
-    metadata = [
-        {key: cookie[key] for key in safe_keys if key in cookie}
-        for cookie in cookies
-        if isinstance(cookie, Mapping)
-    ]
-    payload = {
-        "site": site,
-        "saved_at": now if now is not None else time.time(),
-        "cookies": metadata,
-    }
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
-    # O_CREAT 의 0600 은 "새 파일"에만 적용 — 선존재 파일은 이전 권한이 유지된다
-    # (V1 적대검증 반례 2026-07-18). 비밀 쿠키 파일이므로 무조건 0600 강제.
-    os.chmod(path, 0o600)
-    snapshots = sorted(root.glob(f"{site}-*.json"), key=lambda p: p.name)
-    for old in snapshots[:-keep]:
-        old.unlink(missing_ok=True)
-    return path
-
-
-def fetch_cookies_via_cdp(tab: Any) -> list[dict[str, Any]] | None:
-    """CDP 로 현재 브라우저의 쿠키를 읽는다 — ⚠️ 실크롬 왕복 검증 전(미검증).
-
-    ``raw_cdp.CDPTab.send`` 계약만 사용한다. Storage.getCookies(브라우저 전역) 우선,
-    구버전 호환으로 Network.getCookies 폴백. 어떤 실패든 None(=unknown 판정 → probe
-    폴백)으로 삼켜 keepalive 를 죽이지 않는다. 반환 쿠키는 비밀값 — 로그 금지.
-    """
-    for method in ("Storage.getCookies", "Network.getCookies"):
-        try:
-            result = tab.send(method)
-        except Exception:
-            continue
-        cookies = result.get("cookies") if isinstance(result, dict) else None
-        if isinstance(cookies, list):
-            return cookies
-    return None
-
-
-def run_keepalive_once(
-    site: Site, *,
-    owner_snapshot: Any,
-    tab_factory: Any,
-    last_at: float | None,
-    now: float | None = None,
-    snapshot_root: Path = DEFAULT_SNAPSHOT_ROOT,
-) -> dict[str, Any]:
-    """keepalive 1회차 오케스트레이션 — 판정 순서가 곧 계약.
-
-    ① owner_activity 확인(브라우저를 건드리기 **전**) → 사용 중이면 즉시 종료.
-    ② due 계산 → 아니면 종료. ③ 그때만 tab_factory() 로 CDP attach(읽기 전용) 후
-    쿠키 1단계 판정, present 면 스냅샷 롤링 저장. probe/reauth/human_wait 은 실행하지
-    않고 action 으로만 보고한다(실행은 기존 러너 — portal_login §3 자동 재로그인 경로).
-    끝나면 tab.close() = WebSocket 해제만(raw_cdp 계약 — 탭/브라우저는 살아있다).
-    """
-    now = time.time() if now is None else now
-    snap = owner_snapshot()
-    owner_active = bool(getattr(snap, "owner_activity_detected", True))
-    due = keepalive_due(site, last_at=last_at, now=now)
-    base = {"site": site, "at": now, "owner_active": owner_active, "due": due}
-    if owner_active or not due:
-        action = decide_keepalive(site, due=due, owner_active=owner_active,
-                                  cookie_evidence="unknown")
-        return {**base, "action": action, "cookie_evidence": None}
-    tab = tab_factory()
+def load_safe_keepalive_target(path_value: str | os.PathLike[str]) -> SafeKeepaliveTarget:
+    """Load one owner-audited descriptor without accepting extra secret fields."""
+    path = Path(path_value).expanduser()
     try:
-        cookies = fetch_cookies_via_cdp(tab)
-        evidence = classify_cookie_evidence(site, cookies)
-        action = decide_keepalive(site, due=True, owner_active=False, cookie_evidence=evidence)
-        if evidence == "present" and cookies is not None:
-            save_cookie_snapshot(site, cookies, root=snapshot_root, now=now)
-        return {**base, "action": action, "cookie_evidence": evidence}
-    finally:
-        try:
-            disconnect = getattr(tab, "disconnect", None)
-            if callable(disconnect):
-                disconnect()  # WebSocket only; never clear a badge while owner-active.
-            else:
-                tab.close()  # Legacy test/fake compatibility when no disconnect surface exists.
-        except Exception:
-            pass
-
-
-def _default_tab_factory(site: Site, *, target_id: str | None = None) -> Any:
-    from . import raw_cdp
-
-    ref = resolve_existing_target(site, target_id=target_id)
-    return raw_cdp.attach(
-        {
-            "id": ref.target_id,
-            "type": "page",
-            "url": ref.initial_url,
-            "webSocketDebuggerUrl": ref.websocket_url,
-        },
-        badge=False,
+        info = path.lstat()
+    except OSError as exc:
+        raise ValueError("safe keepalive target record is unavailable") from exc
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_size <= 0
+        or info.st_size > 64 * 1024
+        or info.st_mode & 0o022
+    ):
+        raise ValueError("safe keepalive target record is not a protected regular file")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise ValueError("safe keepalive target record has a different owner")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("safe keepalive target record is invalid JSON") from exc
+    if not isinstance(payload, Mapping) or set(payload) != _SAFE_TARGET_JSON_KEYS:
+        raise ValueError("safe keepalive target record has an unexpected schema")
+    risk_labels = payload.get("risk_labels")
+    if not isinstance(risk_labels, list) or not all(
+        isinstance(label, str) and 0 < len(label) <= 64 for label in risk_labels
+    ):
+        raise ValueError("safe keepalive risk labels are invalid")
+    for key in ("target_id", "source_url", "selector", "destination_url", "method", "target_attr"):
+        if not isinstance(payload.get(key), str) or not str(payload[key]).strip():
+            raise ValueError(f"safe keepalive {key} is invalid")
+    for key in ("download", "dedicated_tab", "clean_form", "previously_opened_free"):
+        if not isinstance(payload.get(key), bool):
+            raise ValueError(f"safe keepalive {key} is invalid")
+    if (
+        str(payload["method"]).strip().upper() != "GET"
+        or str(payload["target_attr"]).strip().casefold() not in {"", "_self"}
+        or payload["download"] is not False
+        or payload["dedicated_tab"] is not True
+        or payload["clean_form"] is not True
+        or payload["previously_opened_free"] is not True
+    ):
+        raise ValueError("safe keepalive target record is not a read-only audited link")
+    return SafeKeepaliveTarget(
+        target_id=str(payload["target_id"]),
+        source_url=str(payload["source_url"]),
+        selector=str(payload["selector"]),
+        destination_url=str(payload["destination_url"]),
+        method=str(payload["method"]),
+        target_attr=str(payload["target_attr"]),
+        download=payload["download"],
+        dedicated_tab=payload["dedicated_tab"],
+        clean_form=payload["clean_form"],
+        previously_opened_free=payload["previously_opened_free"],
+        risk_labels=tuple(risk_labels),
     )
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI: `python -m tools.multi_position_sourcing.session_guard --site saramin`.
-
-    결과 JSON 1줄(stdout). 쿠키 값은 절대 출력하지 않는다(evidence 분류만).
-    """
+    """CLI for the actual exact-target human-auth and keepalive runners."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="session keepalive one round (read-only)")
-    parser.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
-    parser.add_argument(
+    parser = argparse.ArgumentParser(description="exact existing-target login session guard")
+    commands = parser.add_subparsers(dest="command", required=True)
+    auth = commands.add_parser("human-auth", help="present one exact window and wait read-only")
+    auth.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
+    auth.add_argument("--agent", required=True)
+    auth.add_argument(
         "--target-id",
         default=None,
         help="exact existing CDP target id (required when the managed browser has multiple site tabs)",
     )
-    parser.add_argument("--last-at", type=float, default=None)
+    keepalive = commands.add_parser("keepalive", help="one audited click and exact history Back")
+    keepalive.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
+    keepalive.add_argument("--agent", required=True)
+    keepalive.add_argument("--safe-target-json", required=True)
     args = parser.parse_args(argv)
     site: Site = args.site
 
-    from .owner_activity import detect_owner_activity_snapshot
-
-    result = run_keepalive_once(
-        site,
-        owner_snapshot=detect_owner_activity_snapshot,
-        tab_factory=lambda: _default_tab_factory(site, target_id=args.target_id),
-        last_at=args.last_at,
-    )
+    if args.command == "human-auth":
+        result = run_human_auth_episode(
+            site,
+            agent=args.agent,
+            target_id=args.target_id,
+            locator_sink=lambda payload: print(json.dumps(payload, ensure_ascii=False)),
+        )
+    else:
+        target = load_safe_keepalive_target(args.safe_target_json)
+        result = run_safe_keepalive_episode(site, target, agent=args.agent)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

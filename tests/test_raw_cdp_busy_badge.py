@@ -259,6 +259,31 @@ class BadgeJsTests(unittest.TestCase):
 
 
 class MarkBusyTests(unittest.TestCase):
+    def test_clear_busy_removes_only_exact_owned_badge(self):
+        class OwnedObjectTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": True}}
+                return {}
+
+        tab = OwnedObjectTab()
+        tab._badge_label = "[LOGIN HERE][Codex]"
+        tab._badge_bound_url = "https://example.test/login"
+        tab._badge_object_id = "proven-badge-object"
+        tab._badge_application_uncertain = False
+
+        self.assertFalse(tab.clear_busy("other", expected_url="https://example.test/login"))
+        self.assertTrue(tab.clear_busy(
+            "[LOGIN HERE][Codex]",
+            expected_url="https://example.test/login",
+        ))
+        self.assertIsNone(tab._badge_label)
+        self.assertIsNone(tab._badge_bound_url)
+        call = next(params for method, params in tab.sends if method == "Runtime.callFunctionOn")
+        self.assertEqual(call["objectId"], "proven-badge-object")
+        self.assertIn("b.remove()", call["functionDeclaration"])
+
     def test_mark_busy_requires_exact_dom_acknowledgement(self):
         missing = _RecTab(eval_result=None)
         confirmed = _RecTab(eval_result=raw_cdp._BADGE_ID)

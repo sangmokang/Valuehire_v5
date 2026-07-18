@@ -9,8 +9,10 @@ import pytest
 from tools.multi_position_sourcing.session_guard import (
     AuthObservation,
     BrowserTargetRef,
+    LoginWindowLocator,
     ManagedBrowserProcess,
     SafeKeepaliveTarget,
+    cleanup_exact_login_presentation,
     execute_keepalive_roundtrip,
     present_exact_login_window_once,
     resolve_managed_browser_process,
@@ -490,6 +492,169 @@ def test_window_ambiguity_fails_before_title_badge_or_focus_mutation() -> None:
             window_capture=lambda _window_id: b"never",
         )
 
+    assert gates == []
+    assert tab.mutations == []
+
+
+class _PresentationTab:
+    target_id = "target-exact"
+
+    def __init__(self) -> None:
+        self.url = "https://www.linkedin.com/talent/home"
+        self.title = "LinkedIn Talent Solutions"
+        self.mutations: list[str] = []
+        self.busy_label = ""
+
+    def current_url(self) -> str:
+        return self.url
+
+    def eval(self, expression: str):
+        if expression == "document.title":
+            return self.title
+        if "return document.title===" in expression:
+            self.title = "LinkedIn Talent Solutions"
+            self.mutations.append("title_restore")
+            return True
+        if "document.title=" in expression:
+            self.title = "[LOGIN HERE][Codex][linkedin][target-exact] LinkedIn RPS login"
+            self.mutations.append("title")
+            return self.title
+        raise AssertionError(expression)
+
+    def mark_busy(self, label: str, *, expected_url: str) -> bool:
+        assert expected_url == self.url
+        self.busy_label = label
+        self.mutations.append("badge")
+        return True
+
+    def clear_busy(self, label: str, *, expected_url: str) -> bool:
+        if label != self.busy_label or expected_url != self.url:
+            return False
+        self.busy_label = ""
+        self.mutations.append("clear_badge")
+        return True
+
+    def send(self, method: str, params: dict | None = None):
+        if method == "Browser.getWindowForTarget":
+            return {"bounds": {"left": 0, "top": 0, "width": 1200, "height": 800}}
+        if method == "Page.bringToFront":
+            self.mutations.append("focus")
+            return {}
+        if method == "Target.getTargetInfo":
+            return {
+                "targetInfo": {
+                    "targetId": self.target_id,
+                    "type": "page",
+                    "url": self.url,
+                }
+            }
+        raise AssertionError((method, params))
+
+
+def _window(_identity):
+    return SimpleNamespace(cg_window_id=180)
+
+
+def test_presentation_gate_failure_before_dispatch_can_retry_same_episode() -> None:
+    tab = _PresentationTab()
+    attempts = 0
+
+    def first_gate_fails() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("owner active")
+
+    with pytest.raises(RuntimeError, match="owner active"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="episode-a",
+            mutation_gate=first_gate_fails,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+        )
+
+    assert tab.mutations == []
+    locator = present_exact_login_window_once(
+        tab,
+        _ref(),
+        agent="Codex",
+        episode_id="episode-a",
+        mutation_gate=first_gate_fails,
+        window_resolver=_window,
+        window_capture=lambda _window_id: b"png",
+    )
+    assert locator.presentation_count == 1
+    assert tab.mutations == ["badge", "title", "focus"]
+
+
+def test_presentation_is_once_per_episode_but_new_episode_is_allowed() -> None:
+    tab = _PresentationTab()
+    kwargs = {
+        "agent": "Codex",
+        "mutation_gate": lambda: None,
+        "window_resolver": _window,
+        "window_capture": lambda _window_id: b"png",
+    }
+    present_exact_login_window_once(tab, _ref(), episode_id="episode-a", **kwargs)
+    with pytest.raises(RuntimeError, match="already presented"):
+        present_exact_login_window_once(tab, _ref(), episode_id="episode-a", **kwargs)
+    present_exact_login_window_once(tab, _ref(), episode_id="episode-b", **kwargs)
+    assert tab.mutations.count("focus") == 2
+
+
+def test_handoff_cleanup_removes_owned_badge_and_restores_private_title_guardedly() -> None:
+    tab = _PresentationTab()
+    marker = "[LOGIN HERE][Codex][linkedin][target-exact]"
+    tab.busy_label = marker
+    tab.title = marker + " LinkedIn RPS login"
+    gates: list[str] = []
+    locator = LoginWindowLocator(
+        agent="Codex",
+        site="linkedin_rps",
+        browser_pid=4321,
+        profile_path="/tmp/profile",
+        cdp_endpoint="http://127.0.0.1:9225",
+        target_id_suffix="target-exact",
+        sanitized_title=tab.title,
+        sanitized_url=tab.url,
+        cg_window_id=180,
+        screenshot_sha256="a" * 64,
+        screenshot_size_bytes=3,
+        _original_title="LinkedIn Talent Solutions",
+        _marker=marker,
+    )
+
+    result = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: gates.append("gate"),
+    )
+
+    assert result == {"status": "cleanup_ok", "cleanup_pending": False, "mutations": 2}
+    assert gates == ["gate", "gate"]
+    assert tab.busy_label == ""
+    assert tab.title == "LinkedIn Talent Solutions"
+
+
+def test_handoff_cleanup_never_mutates_a_new_document() -> None:
+    tab = _PresentationTab()
+    tab.url = "https://www.linkedin.com/talent/home?after-login=1"
+    locator = LoginWindowLocator(
+        "Codex", "linkedin_rps", 4321, "/tmp/profile", "http://127.0.0.1:9225",
+        "target-exact", "login", "https://www.linkedin.com/login", 180, "a" * 64, 3,
+    )
+    gates: list[str] = []
+    result = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: gates.append("gate"),
+    )
+    assert result["status"] == "cleanup_not_applicable_navigation_changed"
     assert gates == []
     assert tab.mutations == []
 
