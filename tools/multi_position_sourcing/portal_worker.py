@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import os
 import re
+import subprocess
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,6 +86,64 @@ _CHANNEL_TARGET_RULE = {
     "jobkorea": ("jobkorea.co.kr", "/corp/person/find"),
     "linkedin_rps": ("linkedin.com", "/talent/"),
 }
+_CHANNEL_BROWSER_NAME = {
+    "saramin": "saramin",
+    "jobkorea": "jobkorea",
+    "linkedin_rps": "linkedin",
+}
+
+
+def resolve_managed_channel_cdp_endpoint(
+    channel: str,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> str:
+    """Resolve the live endpoint for the channel's exact managed profile.
+
+    The repository launcher identifies the running process by an exact user-data-dir
+    argument, then reads its real debugging port. Ambiguous, remote, or malformed output
+    fails closed so a same-site tab in another browser cannot be selected accidentally.
+    """
+    browser_name = _CHANNEL_BROWSER_NAME.get(channel)
+    if browser_name is None:
+        raise ValueError(f"channel {channel!r} 은 관리 브라우저 대상이 아니다")
+    script = Path(__file__).resolve().parents[2] / "scripts" / "portal_browsers.sh"
+    try:
+        result = runner(
+            [str(script), "cdp", browser_name],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LookupError(f"{channel} 관리 브라우저 endpoint 확인 실패") from exc
+    if int(getattr(result, "returncode", 1)) != 0:
+        raise LookupError(f"{channel} 관리 브라우저가 실행 중이지 않음")
+    lines = [
+        line.strip()
+        for line in str(getattr(result, "stdout", "")).splitlines()
+        if line.strip()
+    ]
+    if len(lines) != 1:
+        raise LookupError(f"{channel} 관리 브라우저 endpoint 출력이 모호함")
+    try:
+        parsed = urlsplit(lines[0])
+        port = parsed.port
+    except ValueError as exc:
+        raise LookupError(f"{channel} 관리 브라우저 endpoint가 잘못됨") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost"}
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise LookupError(f"{channel} 관리 브라우저 endpoint가 로컬 단일주소가 아님")
+    return f"http://127.0.0.1:{port}"
 
 
 def _target_matches_channel(channel: str, target: Mapping[str, Any]) -> bool:
@@ -782,10 +841,13 @@ class PortalWorker:
                 from . import raw_cdp
                 from .raw_page_adapter import RawPage
 
+                managed_endpoint = resolve_managed_channel_cdp_endpoint(
+                    self.config.channel
+                )
                 _endpoint, target = find_verified_channel_target(
                     self.config.channel,
                     list_tabs=raw_cdp.list_pages,
-                    value=self.config.chrome_cdp_endpoint,
+                    candidate_endpoints=[managed_endpoint],
                 )
                 self._raw_tab = raw_cdp.attach(target)
                 self._raw_page = RawPage(
