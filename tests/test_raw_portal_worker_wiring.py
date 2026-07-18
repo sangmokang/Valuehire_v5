@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -399,11 +401,15 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             def close(self) -> None:
                 self.close_calls += 1
 
-        active = SimpleNamespace(
-            owner_activity_detected=True,
-            idle_seconds=0.0,
-            detection_status="ok",
-        )
+        snapshots = iter((
+            SimpleNamespace(owner_activity_detected=True, idle_seconds=0.0, detection_status="ok"),
+            SimpleNamespace(owner_activity_detected=False, idle_seconds=200.0, detection_status="ok"),
+            SimpleNamespace(owner_activity_detected=False, idle_seconds=201.0, detection_status="ok"),
+        ))
+        handoff_waits: list[float] = []
+
+        async def handoff_sleep(seconds: float) -> None:
+            handoff_waits.append(seconds)
         tab = HandoffTab()
         with TemporaryDirectory(prefix="raw-handoff-active-") as root, patch(
             "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
@@ -415,14 +421,199 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                     profile_root=Path(root) / "profile",
                     connection_mode="raw_single_tab",
                 ),
-                owner_snapshot=lambda: active,
+                owner_snapshot=lambda: next(snapshots),
                 mutation_sleep=lambda _seconds: None,
+                handoff_sleep=handoff_sleep,
             )
             worker._lock.acquire()
             worker._raw_tab = tab
+            worker._raw_badge_applied = True
             await worker.stop()
-        self.assertEqual(tab.close_calls, 0)
+        self.assertEqual(handoff_waits, [5.0])
+        self.assertEqual(tab.close_calls, 1)
+        self.assertEqual(tab.disconnect_calls, 0)
+
+    async def test_attach_target_is_revalidated_before_badge_mutation(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+
+        class RacedTab(FakeRawTab):
+            def eval(self, expression: str):
+                if "location.href" in expression:
+                    return "https://evil.example/phish"
+                return super().eval(expression)
+
+        tab = RacedTab()
+        with TemporaryDirectory(prefix="raw-target-race-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            return_value=tab,
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
+            )
+            with self.assertRaises(RuntimeError):
+                await worker.start()
+        self.assertEqual(tab.badge_calls, 0)
         self.assertEqual(tab.disconnect_calls, 1)
+
+    async def test_cancelled_start_releases_lease_before_attach(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_dwell(_seconds: float) -> None:
+            entered.set()
+            release.wait(timeout=5)
+
+        with TemporaryDirectory(prefix="raw-cancel-start-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=blocking_dwell,
+            )
+            task = asyncio.create_task(worker.start())
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            try:
+                self.assertFalse(worker.config.lock_path.exists())
+            finally:
+                worker._lock.release()
+
+    async def test_cancelled_start_disconnects_attached_socket_before_releasing_lease(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+        entered = threading.Event()
+        release = threading.Event()
+        dwell_calls = 0
+
+        def second_blocking_dwell(_seconds: float) -> None:
+            nonlocal dwell_calls
+            dwell_calls += 1
+            if dwell_calls == 2:
+                entered.set()
+                release.wait(timeout=5)
+
+        tab = FakeRawTab()
+        with TemporaryDirectory(prefix="raw-cancel-attached-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            return_value=tab,
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=second_blocking_dwell,
+            )
+            task = asyncio.create_task(worker.start())
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            try:
+                self.assertEqual(tab.badge_calls, 0)
+                self.assertEqual(tab.disconnect_calls, 1)
+                self.assertFalse(worker.config.lock_path.exists())
+            finally:
+                worker._lock.release()
+
+    async def test_cancelled_stop_finishes_badge_and_socket_handoff_before_unlock(self) -> None:
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_dwell(_seconds: float) -> None:
+            entered.set()
+            release.wait(timeout=5)
+
+        class HandoffTab(FakeRawTab):
+            def __init__(self) -> None:
+                super().__init__()
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        tab = HandoffTab()
+        with TemporaryDirectory(prefix="raw-cancel-stop-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=blocking_dwell,
+            )
+            worker._lock.acquire()
+            worker._raw_tab = tab
+            worker._raw_badge_applied = True
+            task = asyncio.create_task(worker.stop())
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(tab.close_calls, 1)
+            self.assertFalse(worker.config.lock_path.exists())
 
     async def test_raw_mode_uses_shared_atomic_login_lease(self) -> None:
         with TemporaryDirectory(prefix="raw-shared-lease-") as root, patch(
