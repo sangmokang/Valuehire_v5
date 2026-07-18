@@ -54,6 +54,9 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertIn("innerHeight", js)
         self.assertIn("clipPath", js)
         self.assertIn("filter", js)
+        self.assertIn("elementFromPoint", js)
+        self.assertIn("checkVisibility", js)
+        self.assertIn("backgroundColor", js)
 
     def test_count_evaluates_query_selector_all_length(self) -> None:
         tab = FakeTab(results={"querySelectorAll": 3})

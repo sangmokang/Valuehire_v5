@@ -74,6 +74,10 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("getBoundingClientRect", js)
         self.assertIn("clipPath", js)
         self.assertIn("filter", js)
+        self.assertIn("elementFromPoint", js)
+        self.assertIn("checkVisibility", js)
+        self.assertIn("backgroundColor", js)
+        self.assertIn("important", js)
 
     def test_clear_js_removes_by_id(self):
         js = raw_cdp._clear_js()
