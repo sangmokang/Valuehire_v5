@@ -95,6 +95,12 @@ class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
                     return "밸류커넥트 로그아웃"
                 return ""
 
+            def nth(self, _index: int) -> "FakeLocator":
+                return self
+
+            async def is_visible(self) -> bool:
+                return bool(await self.count())
+
             async def click(self, timeout: int = 0) -> None:
                 return None
 

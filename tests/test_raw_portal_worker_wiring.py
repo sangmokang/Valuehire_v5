@@ -463,11 +463,29 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             async def inner_text(self, **_kwargs) -> str:
                 return self.page.text
 
+            @property
+            def first(self):
+                return self
+
+            def nth(self, _index: int):
+                return self
+
+            async def is_visible(self) -> bool:
+                selectors = {part.strip() for part in self.selector.split(",")}
+                return bool(selectors & self.page.visible)
+
         class ProofPage:
-            def __init__(self, url: str, text: str, present: set[str]) -> None:
+            def __init__(
+                self,
+                url: str,
+                text: str,
+                present: set[str],
+                visible: set[str] | None = None,
+            ) -> None:
                 self.url = url
                 self.text = text
                 self.present = present
+                self.visible = present if visible is None else visible
 
             def locator(self, selector: str):
                 return Locator(self, selector)
@@ -510,10 +528,22 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             "Sign in to LinkedIn Talent Solutions | 로그인",
             recruiter_search,
         )))
+        residual = recruiter_search | {'[data-test-recruiter-account-menu]'}
+        for login_wall in (
+            "Sign in | Email or phone | Password",
+            "Log in | Email or phone | Password",
+            "",
+        ):
+            self.assertFalse(await linkedin(ProofPage(
+                "https://www.linkedin.com/talent/home",
+                login_wall,
+                residual,
+                visible=set(),
+            )))
         self.assertTrue(await linkedin(ProofPage(
             "https://www.linkedin.com/talent/home",
             "Good evening, Sangmo | Recruiter",
-            recruiter_search | {'[data-test-recruiter-account-menu]'},
+            residual,
         )))
 
     async def test_raw_monitor_reads_fresh_login_redirect_url(self) -> None:

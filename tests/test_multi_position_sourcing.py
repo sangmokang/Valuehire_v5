@@ -408,6 +408,12 @@ class FakeAutoLoginLocator:
     def first(self) -> "FakeAutoLoginLocator":
         return self
 
+    def nth(self, _index: int) -> "FakeAutoLoginLocator":
+        return self
+
+    async def is_visible(self) -> bool:
+        return bool(await self.count())
+
     async def count(self) -> int:
         if self.selector == "body":
             return 1

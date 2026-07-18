@@ -103,6 +103,13 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertTrue(any("[2]" in expr for expr in tab.evals))
         self.assertIn("KeyboardEvent", tab.evals[-1])
 
+    def test_is_visible_requires_rendered_geometry(self) -> None:
+        tab = FakeTab(results={"getBoundingClientRect": True})
+        page = RawPage(tab)
+
+        self.assertTrue(_run(page.locator("button.account").is_visible()))
+        self.assertIn("getBoundingClientRect", tab.evals[-1])
+
     def test_goto_navigates_and_url_reads_location_href(self) -> None:
         tab = FakeTab(results={"location.href": "https://www.saramin.co.kr/x"})
         page = RawPage(tab)
