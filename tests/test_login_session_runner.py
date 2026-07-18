@@ -332,10 +332,19 @@ def test_keepalive_success_clicks_then_history_back_with_two_fresh_gates() -> No
         "gate1",
         "click",
         "url:projects",
+        "url:projects",
+        "history",
+        "url:projects",
+        "url:projects",
         "history",
         "gate2",
         "back:42",
         "url:home",
+        "url:home",
+        "history",
+        "url:home",
+        "url:home",
+        "history",
     ]
     assert tab.forbidden_calls == []
 

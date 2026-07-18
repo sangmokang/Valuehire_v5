@@ -22,7 +22,6 @@ import json
 import math
 import os
 import re
-import shlex
 import secrets
 import stat
 import subprocess
@@ -31,7 +30,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 Site = Literal["saramin", "jobkorea", "linkedin_rps"]
 
@@ -143,6 +142,7 @@ _SITE_TARGET_PATH_PREFIXES: dict[Site, tuple[str, ...]] = {
         "/uas/login-cap",
         "/checkpoint/",
         "/enterprise-authentication/",
+        "/authwall",
     ),
 }
 _SITE_PROFILE_ENV: dict[Site, str] = {
@@ -259,24 +259,39 @@ def resolve_managed_browser_process(
         pid_text, separator, command = line.partition(" ")
         if not separator or not pid_text.isascii() or not pid_text.isdigit():
             continue
-        try:
-            argv = shlex.split(command)
-        except ValueError:
+        # ``ps -o command=`` does not preserve argv quoting on macOS.  Parse
+        # Chrome's long options by their next `` --flag`` boundary so an
+        # unquoted profile such as ``--user-data-dir=/tmp/LinkedIn Profile``
+        # remains one literal value.  Ambiguous duplicate flags fail closed.
+        option_pattern = re.compile(
+            r"(?:^|\s)--(?P<name>[A-Za-z0-9][A-Za-z0-9-]*)"
+            r"(?:=(?P<value>.*?))?"
+            r"(?=\s+--[A-Za-z0-9][A-Za-z0-9-]*(?:=|\s|$)|$)"
+        )
+        options: dict[str, list[str | None]] = {}
+        for match in option_pattern.finditer(command):
+            options.setdefault(match.group("name"), []).append(match.group("value"))
+        if "type" in options:
             continue
-        if any(argument.startswith("--type=") for argument in argv):
+        ports = options.get("remote-debugging-port", [])
+        profiles = options.get("user-data-dir", [])
+        if len(ports) != 1 or str(ports[0] or "").strip() != str(port):
             continue
-        port_arg = f"--remote-debugging-port={port}"
-        profiles = [
-            argument.split("=", 1)[1]
-            for argument in argv
-            if argument.startswith("--user-data-dir=") and "=" in argument
-        ]
-        if port_arg not in argv or len(profiles) != 1 or not profiles[0]:
+        if len(profiles) != 1 or profiles[0] is None:
+            continue
+        profile = str(profiles[0]).strip()
+        if len(profile) >= 2 and profile[0] == profile[-1] and profile[0] in {"'", '"'}:
+            profile = profile[1:-1]
+        if (
+            not profile
+            or not os.path.isabs(profile)
+            or any(ord(character) < 32 or ord(character) == 127 for character in profile)
+        ):
             continue
         pid = int(pid_text)
         if pid <= 0:
             continue
-        matches.append(ManagedBrowserProcess(pid, profiles[0]))
+        matches.append(ManagedBrowserProcess(pid, profile))
     if len(matches) != 1:
         raise LookupError(f"{site} managed browser root process match count was {len(matches)}")
     return matches[0]
@@ -412,6 +427,7 @@ def wait_for_human_auth(
         valid_idle = (
             snapshot is not None
             and getattr(snapshot, "detection_status", "") == "ok"
+            and getattr(snapshot, "owner_activity_detected", True) is False
             and not isinstance(idle, bool)
             and isinstance(idle, (int, float))
             and math.isfinite(float(idle))
@@ -493,7 +509,11 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
             proofs.append("recruiter_account")
         if search:
             proofs.append("recruiter_search")
-        authenticated = bool(surface and account and search)
+        # Recruiter pages such as /talent/projects do not always render a
+        # /talent/search anchor.  The exact official talent surface plus the
+        # recruiter account control is the stable authentication proof; the
+        # search link remains optional corroborating evidence.
+        authenticated = bool(surface and account)
     return AuthObservation(
         authenticated=authenticated and not challenge,
         challenge=challenge,
@@ -527,6 +547,32 @@ def _same_https_origin(left: str, right: str) -> bool:
     )
 
 
+def _decoded_policy_surface(*values: str) -> str | None:
+    """Decode URL policy input repeatedly and reject ambiguous/control data."""
+
+    decoded_values: list[str] = []
+    try:
+        for value in values:
+            current = value
+            if any(ord(character) < 32 or ord(character) == 127 for character in current):
+                return None
+            for _decode_pass in range(4):
+                decoded = unquote(current, encoding="utf-8", errors="strict")
+                if decoded == current:
+                    break
+                current = decoded
+            # More than four encoding layers are not a legitimate audited
+            # descriptor surface.  Refuse instead of guessing its meaning.
+            if re.search(r"%[0-9A-Fa-f]{2}", current):
+                return None
+            if any(ord(character) < 32 or ord(character) == 127 for character in current):
+                return None
+            decoded_values.append(current.casefold())
+    except (UnicodeError, ValueError):
+        return None
+    return " ".join(decoded_values)
+
+
 def _safe_keepalive_descriptor(ref: BrowserTargetRef, target: SafeKeepaliveTarget) -> bool:
     try:
         if not all(
@@ -546,11 +592,14 @@ def _safe_keepalive_descriptor(ref: BrowserTargetRef, target: SafeKeepaliveTarge
             return False
     except (TypeError, AttributeError):
         return False
-    unsafe_url_surface = " ".join(
-        (target.source_url, target.destination_url, target.selector)
-    ).casefold()
+    unsafe_url_surface = _decoded_policy_surface(
+        target.source_url,
+        target.destination_url,
+        target.selector,
+    )
     return bool(
-        target.target_id == ref.target_id
+        unsafe_url_surface is not None
+        and target.target_id == ref.target_id
         and target.source_url == ref.initial_url
         and target.selector.strip()
         and "\x00" not in target.selector
@@ -666,24 +715,51 @@ def _history_ready_for_restore(
     )
 
 
-def _wait_for_authenticated_url(
+def _wait_for_stable_authenticated_target(
     tab: Any,
+    ref: BrowserTargetRef,
     expected_url: str,
     *,
     auth_probe: Callable[[Any], AuthObservation],
     sleep: Callable[[float], None],
     timeout_seconds: float,
-) -> bool:
+    history_probe: Callable[[], bool] | None = None,
+) -> str:
+    """Require two fresh, redirect-safe observations of one exact target.
+
+    CDP click and history restoration are asynchronous.  One URL/auth read can
+    observe a document immediately before a redirect, so each accepted sample
+    rechecks target identity and URL *after* the DOM auth probe, and success
+    requires two consecutive samples with the expected history shape.
+    """
+
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    consecutive = 0
     while True:
+        if _tab_target_id(tab) != ref.target_id:
+            return "target_changed"
         try:
-            if _auth_matches(auth_probe(tab), expected_url):
-                return True
+            before = _fresh_target_matches(tab, ref, expected_url)
+            observation = auth_probe(tab) if before else None
+            after = bool(
+                before
+                and _auth_matches(observation, expected_url)
+                and _fresh_target_matches(tab, ref, expected_url)
+                and _tab_current_url(tab) == expected_url
+            )
+            history_ok = history_probe is None or history_probe()
         except Exception:
-            return False
+            after = False
+            history_ok = False
+        if after and history_ok:
+            consecutive += 1
+            if consecutive >= 2:
+                return "ok"
+        else:
+            consecutive = 0
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return False
+            return "unverified"
         sleep(min(0.1, remaining))
 
 
@@ -737,34 +813,31 @@ def execute_keepalive_roundtrip(
             live_after_attempt = ""
         if live_after_attempt == target.destination_url:
             clicked = True
-        elif live_after_attempt != target.source_url or click_error:
+        elif live_after_attempt != target.source_url:
             return {"status": "click_uncertain", "restore_pending": True}
-    if clicked is not True:
+    if clicked is not True and not click_error:
         return {"status": "click_failed", "restore_pending": False}
 
-    if not _fresh_target_matches(tab, ref, target.destination_url):
-        return {"status": "target_changed", "restore_pending": True}
-
-    destination_auth = _wait_for_authenticated_url(
+    destination_state = _wait_for_stable_authenticated_target(
         tab,
+        ref,
         target.destination_url,
         auth_probe=auth_probe,
         sleep=sleep,
         timeout_seconds=navigation_timeout_seconds,
+        history_probe=lambda: _history_ready_for_restore(
+            tab,
+            source_entry_id=source_entry_id,
+            source_url=target.source_url,
+            destination_url=target.destination_url,
+        ),
     )
+    if destination_state == "target_changed":
+        return {"status": "target_changed", "restore_pending": True}
+    destination_auth = destination_state == "ok"
     if not destination_auth:
         return {
             "status": "destination_unverified",
-            "restore_pending": True,
-        }
-    if not _history_ready_for_restore(
-        tab,
-        source_entry_id=source_entry_id,
-        source_url=target.source_url,
-        destination_url=target.destination_url,
-    ):
-        return {
-            "status": "history_changed",
             "restore_pending": True,
         }
 
@@ -792,19 +865,22 @@ def execute_keepalive_roundtrip(
             "source_entry_id": source_entry_id,
         }
 
-    if not _fresh_target_matches(tab, ref, target.source_url):
-        return {
-            "status": "target_changed_after_restore",
-            "restore_pending": True,
-        }
-
-    restored_auth = _wait_for_authenticated_url(
+    restored_state = _wait_for_stable_authenticated_target(
         tab,
+        ref,
         target.source_url,
         auth_probe=auth_probe,
         sleep=sleep,
         timeout_seconds=navigation_timeout_seconds,
+        history_probe=lambda: _history_source_entry(tab, target.source_url) == source_entry_id,
     )
+    if restored_state == "target_changed":
+        return {
+            "status": "target_changed_after_restore",
+            "restore_pending": True,
+            "destination_verified": destination_auth,
+        }
+    restored_auth = restored_state == "ok"
     success = destination_auth and restored_auth
     return {
         "status": "ok" if success else "verification_failed",
@@ -921,6 +997,25 @@ def present_exact_login_window_once(
     # episode is claimed and repeated focus/capture is forbidden.
     mutation_gate()
     setattr(tab, "_vh_human_auth_presentation_key", presentation_key)
+    provisional_locator = LoginWindowLocator(
+        agent=re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-."),
+        site=ref.site,
+        browser_pid=browser_pid,
+        profile_path=ref.profile_path or _managed_profile_path(ref.site),
+        cdp_endpoint=ref.endpoint,
+        target_id_suffix=suffix,
+        sanitized_title=visible_title,
+        sanitized_url=_sanitize_locator_url(live_url),
+        cg_window_id=int(preflight_window.cg_window_id),
+        screenshot_sha256="",
+        screenshot_size_bytes=0,
+        application_activated=False,
+        _original_title=original_title,
+        _marker=marker,
+    )
+    # The runner can guardedly clean a partially presented episode even when a
+    # marker/title/focus/capture operation raises before this function returns.
+    setattr(tab, "_vh_human_auth_cleanup_locator", provisional_locator)
     marker_fn = getattr(tab, "mark_busy", None)
     if not callable(marker_fn) or marker_fn(marker, expected_url=live_url) is not True:
         raise RuntimeError("visible login-window marker could not be installed")
@@ -940,6 +1035,11 @@ def present_exact_login_window_once(
         title_marker=marker,
         bounds=bounds,
     )
+    # An inactive tab's document.title is not the OS CGWindowName until Chrome
+    # makes that exact page the active tab in its existing window.
+    mutation_gate()
+    tab.send("Page.bringToFront")
+
     marked_window = (
         resolve(marked_identity, require_on_screen=False)
         if window_resolver is None
@@ -949,14 +1049,11 @@ def present_exact_login_window_once(
         raise RuntimeError("exact login window identity changed after title marker")
 
     mutation_gate()
-    tab.send("Page.bringToFront")
-
-    mutation_gate()
     if activate(browser_pid) is not True:
         raise RuntimeError("exact managed browser application could not be activated")
 
     window = (
-        resolve(marked_identity, require_on_screen=True)
+        resolve(marked_identity, require_on_screen=True, require_frontmost=True)
         if window_resolver is None
         else resolve(marked_identity)
     )
@@ -965,7 +1062,7 @@ def present_exact_login_window_once(
     png = capture(window.cg_window_id)
     if not isinstance(png, bytes) or not png:
         raise RuntimeError("exact login-window capture is empty")
-    return LoginWindowLocator(
+    locator = LoginWindowLocator(
         agent=re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-."),
         site=ref.site,
         browser_pid=browser_pid,
@@ -981,6 +1078,8 @@ def present_exact_login_window_once(
         _original_title=original_title,
         _marker=marker,
     )
+    setattr(tab, "_vh_human_auth_cleanup_locator", locator)
+    return locator
 
 
 def cleanup_exact_login_presentation(
@@ -1106,6 +1205,50 @@ def _disconnect_websocket_only(tab: Any | None) -> bool:
         return False
 
 
+def _acquire_login_lease_read_only(
+    lease: Any,
+    *,
+    stop_requested: Callable[[], bool],
+    sleep: Callable[[float], None],
+) -> bool:
+    """Wait for the site lease without inspecting or mutating any browser."""
+
+    from .portal_worker import ProfileLockError
+
+    while True:
+        if stop_requested():
+            return False
+        try:
+            lease.acquire()
+            return True
+        except ProfileLockError:
+            if stop_requested():
+                return False
+            sleep(5.0)
+
+
+def _wait_for_initial_mutation_gate(
+    mutation_gate: Callable[[], None],
+    *,
+    stop_requested: Callable[[], bool],
+    sleep: Callable[[float], None],
+) -> bool:
+    """Yield in HUMAN_ACTIVE until the first attach/presentation may begin."""
+
+    from .portal_worker import ProfileLockError
+
+    while True:
+        if stop_requested():
+            return False
+        try:
+            mutation_gate()
+            return True
+        except ProfileLockError:
+            if stop_requested():
+                return False
+            sleep(5.0)
+
+
 def run_human_auth_episode(
     site: Site,
     *,
@@ -1147,9 +1290,17 @@ def run_human_auth_episode(
     sink = locator_sink or (lambda _payload: None)
     lease = lease_factory(site)
     tab: Any | None = None
+    ref: BrowserTargetRef | None = None
     locator: LoginWindowLocator | None = None
-    lease.acquire()
+    mutation_gate: Callable[[], None] | None = None
+    cleanup_attempted = False
     try:
+        if not _acquire_login_lease_read_only(
+            lease,
+            stop_requested=stop,
+            sleep=wait_sleep,
+        ):
+            return {"status": "human_auth_stopped", "site": site}
         ref = resolver(site, target_id=target_id)
         mutation_gate = lambda: assert_raw_browser_mutation_allowed(
             lease,
@@ -1158,7 +1309,13 @@ def run_human_auth_episode(
         )
         # Attach itself is read-only, but the gate here ensures a user who is
         # actively driving this exact managed browser is never even shadowed.
-        mutation_gate()
+        # HUMAN_ACTIVE is a read-only wait state, not a terminal error.
+        if not _wait_for_initial_mutation_gate(
+            mutation_gate,
+            stop_requested=stop,
+            sleep=wait_sleep,
+        ):
+            return {"status": "human_auth_stopped", "site": site}
         tab = attacher({
             "id": ref.target_id,
             "type": "page",
@@ -1194,11 +1351,20 @@ def run_human_auth_episode(
             stop_requested=stop,
         )
         if observation is None:
+            cleanup_attempted = True
+            cleanup_result = cleanup(
+                tab,
+                ref,
+                locator,
+                mutation_gate=mutation_gate,
+            )
             return {
                 "status": "human_auth_stopped",
                 "site": site,
                 "window": public_locator,
+                "cleanup": cleanup_result,
             }
+        cleanup_attempted = True
         cleanup_result = cleanup(
             tab,
             ref,
@@ -1215,6 +1381,31 @@ def run_human_auth_episode(
             "cleanup": cleanup_result,
         }
     finally:
+        if (
+            tab is not None
+            and ref is not None
+            and mutation_gate is not None
+            and not cleanup_attempted
+        ):
+            pending_locator = locator or getattr(
+                tab,
+                "_vh_human_auth_cleanup_locator",
+                None,
+            )
+            if isinstance(pending_locator, LoginWindowLocator):
+                cleanup_attempted = True
+                try:
+                    cleanup(
+                        tab,
+                        ref,
+                        pending_locator,
+                        mutation_gate=mutation_gate,
+                    )
+                except BaseException:
+                    # Preserve the original stop/error while still proving that
+                    # guarded cleanup was attempted.  Never fall back to an
+                    # unguarded UI mutation.
+                    pass
         _disconnect_websocket_only(tab)
         lease.release()
 
@@ -1281,15 +1472,35 @@ def run_safe_keepalive_episode(
     cleanup_badge = _cleanup_badge or _cleanup_keepalive_badge
     lease = lease_factory(site)
     tab: Any | None = None
-    lease.acquire()
+    ref: BrowserTargetRef | None = None
+    mutation_gate: Callable[[], None] | None = None
+    label = ""
+    badge_attempted = False
+    cleanup_attempted = False
     try:
+        _acquire_login_lease_read_only(
+            lease,
+            stop_requested=lambda: False,
+            sleep=navigation_sleep,
+        )
         ref = resolver(site, target_id=target.target_id)
         mutation_gate = lambda: assert_raw_browser_mutation_allowed(
             lease,
             owner_snapshot=owner_snapshot,
             sleep=mutation_sleep,
         )
-        mutation_gate()
+        try:
+            mutation_gate()
+        except Exception as exc:
+            from .portal_worker import ProfileLockError
+
+            if isinstance(exc, ProfileLockError):
+                return {
+                    "status": "skipped_owner_active",
+                    "site": site,
+                    "restore_pending": False,
+                }
+            raise
         tab = attacher({
             "id": ref.target_id,
             "type": "page",
@@ -1315,6 +1526,7 @@ def run_safe_keepalive_episode(
         label = marker.replace("LOGIN HERE", "KEEPALIVE")
         mutation_gate()
         mark_busy = getattr(tab, "mark_busy", None)
+        badge_attempted = True
         if not callable(mark_busy) or mark_busy(label, expected_url=ref.initial_url) is not True:
             return {
                 "status": "badge_failed",
@@ -1329,6 +1541,7 @@ def run_safe_keepalive_episode(
             mutation_gate=mutation_gate,
             sleep=navigation_sleep,
         )
+        cleanup_attempted = True
         cleanup_result = cleanup_badge(
             tab,
             ref,
@@ -1337,6 +1550,24 @@ def run_safe_keepalive_episode(
         )
         return {**result, "site": site, "cleanup": cleanup_result}
     finally:
+        if (
+            badge_attempted
+            and not cleanup_attempted
+            and tab is not None
+            and ref is not None
+            and mutation_gate is not None
+            and label
+        ):
+            cleanup_attempted = True
+            try:
+                cleanup_badge(
+                    tab,
+                    ref,
+                    label,
+                    mutation_gate=mutation_gate,
+                )
+            except BaseException:
+                pass
         _disconnect_websocket_only(tab)
         lease.release()
 
