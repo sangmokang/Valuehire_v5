@@ -65,3 +65,14 @@
   허용. 기존 linkedin `connect_over_cdp` 는 이미 제거 대상 부채. 조각 B 는 connect_over_cdp
   가 아니라 raw_cdp 단일 탭 + 실포트 탐색(portal_browsers.sh cdp) 경로를 재사용한다.
 - 고아 확정: 조각 A 단독 merge 금지(운영 호출자 0). 조각 B(raw 단일탭 배선)와 묶어 배송.
+
+## V2 적대검증 반영 (2026-07-18) — 정직성 정정
+- **"WIRED" 과장 정정**: 배선은 문법적 고아해소일 뿐, config default_factory+value-우선
+  때문에 채널 기본포트가 프로덕션에서 영구 미도달 = 무동작 스캐폴드. TODO-2b 실질
+  (saramin/jobkorea 를 portal_browsers.sh 크롬에 attach)은 이 조각에서 0% 전달.
+- 작업트리 회귀(isascii 봉인 revert) V2 적발 → 폐기, HEAD 19 passed 복원.
+- **조각 B(라이브) 강화 계약**: ① 마커를 substring 이 아닌 **host 단위** 매칭
+  (mylinkedin.com·notsaramin.co.kr 오탐 차단) ② 자동화 전용 크롬 식별(user-data-dir/
+  포트 배타성 확인)으로 사장님 개인 크롬 오접속 방지 ③ find_verified 를 start() 에
+  실제 배선(고아 해소) + 실크롬 라이브 attach 검증(사장님 입회).
+- ⛔ PR#149 단독 merge 금지 — 조각 B 실배선과 묶어야(V1·V2 일치).

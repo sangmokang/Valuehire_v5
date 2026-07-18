@@ -15,7 +15,7 @@
     "green_evidence": "focused 9(해석)+11(배선)+7(마커검증) / 전체 ./verify.sh 1763 passed, 4 xfailed exit 0",
     "mutant_check": "채널포트 saramin 9223→9999 2f · LINKEDIN_PORT 이름파손 1f · 배선(config값 무시) 1f · 마커검증 무력화 2f — 4종 모두 감지 후 원복",
     "sot_alignment": "포트·env 이름은 scripts/portal_browsers.sh:74-80 과 동일(재발명 아님)",
-    "wiring_status": "WIRED: start():672 가 _cdp_endpoint()→resolve_channel_cdp_endpoint 호출(고아 해소, grep 증명). linkedin 명시값 값-우선 보존(회귀0). find_verified_channel_endpoint(마커검증)는 실 start() 라이브 배선 전이라 아직 미배선 — 사장님 지시('라이브 없이 마커검증부터, 실배선 나중')에 따른 승인된 분할.",
+    "wiring_status": "COSMETIC-SCAFFOLD(V2 정정): start() 가 _cdp_endpoint()→resolve_channel_cdp_endpoint 를 호출해 문법적 고아는 해소됐으나, config.chrome_cdp_endpoint 가 default_factory 로 항상 채워지고 resolve 가 value-우선이라 **채널 기본포트 분기는 프로덕션에서 영구 미도달**. 즉 linkedin 은 배선 전후 동일 주소, saramin/jobkorea 는 여전히 launch_persistent_context — TODO-2b 실질(portal_browsers.sh 크롬 attach) 0% 전달. '채널 인지'는 스캐폴드일 뿐.",
     "test_quality": {
       "happy_path": true,
       "edge_cases": "채널 포트 env override·전역 env 우선·value 최우선·비숫자 포트 폴백·비http 전역 env 무시",
@@ -40,9 +40,18 @@
     "source_transcript": "tasks/af1de502cc4bcc0dd.output",
     "agentId": "af1de502cc4bcc0dd"
   },
-  "v2": null,
+  "v2": {
+    "author": "Claude reset (goal+verdict 만 읽음)",
+    "verdict": "pass-with-caveats",
+    "wiring_honesty": "cosmetic/inert — value-first 로 채널 기본포트 프로덕션 미도달. 고아 해소는 문법적으로만 사실, 채널 인지 능력 0 전달. G/V1 둘 다 이 무동작성 미표면화.",
+    "caught_regression": "작업트리에 커밋 안 된 회귀(isascii 봉인 revert→전각숫자 counter-AC 1 failed) 잠복 발견 — G/V1 놓침. checkout 으로 폐기, HEAD 19 passed 복원 확인.",
+    "marker_weakness": "find_verified 의 marker substring 매칭 느슨(mylinkedin.com·notsaramin.co.kr 오탐, 피싱 룩얼라이크 미방어) + 자동화 전용 크롬 식별(user-data-dir) 없음 → 사장님 개인 크롬 오접속 위험. 조각 B 계약에 host 단위 매칭+크롬 식별 추가 필요.",
+    "orphan": "find_verified_channel_endpoint 프로덕션 호출자 0(순수 고아). 문서상 조각 B 묶음 조건에서만 정당 — 단독 merge=죽은코드.",
+    "independent_repro": "HEAD: focused 19 passed / ./verify.sh 1764 passed exit 0. 작업트리(회귀): 1 failed(전각숫자).",
+    "test_weakening": "merge-base 대비 tests +208줄 순수추가, 삭제·약화 0"
+  },
   "three_way_agree": false,
-  "status": "조각 A(해석)+고아해소 배선 WIRED + 조각 B 마커검증 로직 GREEN. V1 pass-but-must-wire 반례 봉인. V2 대기. 실 라이브 start 배선은 사장님 세션 리스크로 별도.",
+  "status": "진행중 — 조각 A 해석 GREEN. 배선은 COSMETIC 스캐폴드(V2: 채널인지 프로덕션 미도달) + 마커검증 로직 GREEN이나 고아. TODO-2b 실질(saramin/jobkorea 실 attach)은 라이브 조각 B(사장님 세션 리스크). ⛔ PR#149 단독 merge 금지(V1·V2 일치).",
   "slice_b_marker_verify": {
     "claim": "find_verified_channel_endpoint 가 채널 후보 포트를 순회하며 대상 사이트 마커가 실제 있는 endpoint 만 채택, 없으면 LookupError(맹목 attach 금지). 라이브 실측 오접속(9222사람인/9223잡코리아) 방지.",
     "live_evidence": "수동 판정 필요 — 실 start() 배선·실크롬 attach 는 사장님 세션 리스크로 다음 라이브 조각(사장님 입회)"
