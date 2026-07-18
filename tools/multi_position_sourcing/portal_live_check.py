@@ -1436,17 +1436,13 @@ async def run_profile_only_live_search(config: LiveSearchConfig) -> dict[str, ob
             keyword=config.keyword,
         )
 
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError as exc:
-        raise RuntimeError("playwright is required for portal live profile-only check") from exc
-
     worker_config = PortalWorkerConfig(
         channel=config.channel,
         worker_id=config.worker_id,
         profile_root=config.profile_root,
         mode="headed" if config.channel == "linkedin_rps" else ("headless" if config.headless else "headed"),
         chrome_cdp_endpoint=config.chrome_cdp_endpoint,
+        connection_mode="raw_single_tab",
     )
     profile_deleted = delete_profile_dir_if_confirmed(
         worker_config.profile_dir,
@@ -1454,24 +1450,23 @@ async def run_profile_only_live_search(config: LiveSearchConfig) -> dict[str, ob
         confirm=config.confirm_delete_profile,
     )
     ready_check = ready_check_for_channel(config.channel)
-    async with async_playwright() as playwright:
-        try:
-            async with PortalWorker(worker_config, playwright=playwright) as worker:
-                attempt = await worker.run_one_search(
-                    config.keyword,
-                    ready_check=ready_check,
-                    monitor=SearchLivenessMonitor(config.channel),
-                )
-        except ProfileLockError:
-            return safe_profile_lock_blocked_payload(
-                site=config.channel,
-                worker_id=config.worker_id,
-                keyword=config.keyword,
-                mode="profile_only",
-                profile_deleted_before_start=profile_deleted,
-                snapshot_capture_required=False,
-                pacing_delay_seconds=pacing_delay_seconds,
+    try:
+        async with PortalWorker(worker_config) as worker:
+            attempt = await worker.run_one_search(
+                config.keyword,
+                ready_check=ready_check,
+                monitor=SearchLivenessMonitor(config.channel),
             )
+    except ProfileLockError:
+        return safe_profile_lock_blocked_payload(
+            site=config.channel,
+            worker_id=config.worker_id,
+            keyword=config.keyword,
+            mode="profile_only",
+            profile_deleted_before_start=profile_deleted,
+            snapshot_capture_required=False,
+            pacing_delay_seconds=pacing_delay_seconds,
+        )
     return safe_profile_only_result_payload(
         attempt,
         profile_deleted_before_start=profile_deleted,

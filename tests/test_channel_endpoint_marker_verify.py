@@ -26,7 +26,7 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
     def test_primary_port_with_marker_is_chosen(self) -> None:
         # 정상: 채널 1차 후보(saramin=9223)에 사람인 탭이 있으면 그대로.
         def list_tabs(ep):
-            return _tabs("https://www.saramin.co.kr/zf_user/x") if ":9223" in ep else []
+            return _tabs("https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search") if ":9223" in ep else []
         self.assertEqual(
             find_verified_channel_endpoint("saramin", list_tabs=list_tabs, env={}),
             "http://127.0.0.1:9223",
@@ -38,7 +38,7 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
             if ":9223" in ep:
                 return _tabs("https://www.jobkorea.co.kr/Corp/Person/Find")
             if ":9222" in ep:
-                return _tabs("https://www.saramin.co.kr/zf_user/memcom")
+                return _tabs("https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search")
             return []
         self.assertEqual(
             find_verified_channel_endpoint("saramin", list_tabs=list_tabs, env={}),
@@ -64,7 +64,7 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
             if ":9223" in ep:
                 raise ConnectionError("dead")
             if ":9224" in ep:
-                return _tabs("https://www.saramin.co.kr/x")
+                return _tabs("https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search")
             return []
         self.assertEqual(
             find_verified_channel_endpoint(

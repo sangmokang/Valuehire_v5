@@ -14,15 +14,20 @@ page.on(이벤트 모니터=재로그인 감지)은 조각 B2 에서 배선(여�
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from typing import Any
 
 
-def _maybe_await(value: Any) -> Any:
-    # tab.eval 이 동기(FakeTab)든 async(실 CDPTab 래핑)든 동일 처리.
-    if asyncio.iscoroutine(value):
-        return value
-    return value
+async def _tab_call(tab: Any, method: str, *args: Any, **kwargs: Any) -> Any:
+    """Run blocking raw-CDP calls off the event loop; keep async fakes supported."""
+    fn = getattr(tab, method)
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    result = await asyncio.to_thread(fn, *args, **kwargs)
+    if asyncio.iscoroutine(result):
+        return await result
+    return result
 
 
 class RawLocator:
@@ -40,11 +45,14 @@ class RawLocator:
     def first(self) -> "RawLocator":
         return RawLocator(self._tab, self._selector, index=0)
 
+    def nth(self, index: int) -> "RawLocator":
+        return RawLocator(self._tab, self._selector, index=index)
+
     async def count(self) -> int:
         expr = f"document.querySelectorAll({json.dumps(self._selector)}).length"
-        return int(await _resolve(self._tab.eval(expr)) or 0)
+        return int(await _tab_call(self._tab, "eval", expr) or 0)
 
-    async def fill(self, value: str) -> None:
+    async def fill(self, value: str, **_kwargs: Any) -> None:
         el = self._sel_js
         expr = (
             "(function(){var e=" + el + ";if(!e)return false;"
@@ -53,41 +61,67 @@ class RawLocator:
             "e.dispatchEvent(new Event('change',{bubbles:true}));"
             "return true;})()"
         )
-        await _resolve(self._tab.eval(expr))
+        await _tab_call(self._tab, "eval", expr)
 
-    async def click(self) -> None:
+    async def click(self, **_kwargs: Any) -> None:
         expr = "(function(){var e=" + self._sel_js + ";if(e)e.click();return !!e;})()"
-        await _resolve(self._tab.eval(expr))
+        await _tab_call(self._tab, "eval", expr)
+
+    async def press(self, key: str, **_kwargs: Any) -> None:
+        key_js = json.dumps(key)
+        expr = (
+            "(function(){var e=" + self._sel_js + ";if(!e)return false;"
+            f"var k={key_js};"
+            "['keydown','keypress','keyup'].forEach(function(t){"
+            "e.dispatchEvent(new KeyboardEvent(t,{key:k,bubbles:true}));});"
+            "if(k==='Enter'&&e.form&&e.form.requestSubmit){e.form.requestSubmit();}"
+            "return true;})()"
+        )
+        await _tab_call(self._tab, "eval", expr)
+
+    async def get_attribute(self, name: str) -> str | None:
+        expr = (
+            "(function(){var e=" + self._sel_js + ";return e?e.getAttribute("
+            + json.dumps(name) + "):null;})()"
+        )
+        value = await _tab_call(self._tab, "eval", expr)
+        return None if value is None else str(value)
 
     async def inner_text(self) -> str:
         expr = "(function(){var e=" + self._sel_js + ";return e?e.innerText:'';})()"
-        return str(await _resolve(self._tab.eval(expr)) or "")
+        return str(await _tab_call(self._tab, "eval", expr) or "")
 
 
 class RawPage:
-    def __init__(self, tab: Any) -> None:
+    def __init__(self, tab: Any, *, initial_url: str = "") -> None:
         self._tab = tab
+        self._url = initial_url
 
     def locator(self, selector: str) -> RawLocator:
         return RawLocator(self._tab, selector)
 
     async def goto(self, url: str, *, wait_until: str | None = None, timeout: int | None = None) -> None:
-        wait_ms = int(timeout) if timeout else 4000
-        result = self._tab.navigate(url, wait_ms=wait_ms)
-        await _resolve(result)
+        self._url = url
+        action = _tab_call(self._tab, "navigate", url, wait_ms=0)
+        if timeout and timeout > 0:
+            await asyncio.wait_for(action, timeout=float(timeout) / 1000.0)
+        else:
+            await action
 
     async def wait_for_timeout(self, ms: float) -> None:
         await asyncio.sleep(float(ms) / 1000.0)
 
-    async def url(self) -> str:
-        return str(await _resolve(self._tab.eval("location.href")) or "")
+    @property
+    def url(self) -> str:
+        return self._url
+
+    async def current_url(self) -> str:
+        value = await _tab_call(self._tab, "eval", "location.href")
+        if value:
+            self._url = str(value)
+        return self._url
 
     def on(self, event: str, handler: Any) -> None:
-        # 조각 B1: 이벤트 모니터(재로그인 감지)는 조각 B2 에서 CDP 이벤트로 배선.
-        return None
-
-
-async def _resolve(value: Any) -> Any:
-    if asyncio.iscoroutine(value):
-        return await value
-    return value
+        subscribe = getattr(self._tab, "on", None)
+        if callable(subscribe):
+            subscribe(event, handler)

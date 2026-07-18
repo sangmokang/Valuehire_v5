@@ -206,6 +206,19 @@ class RawCdpEnvTests(unittest.TestCase):
             os.environ.pop("CDP_HTTP", None)
             srv.shutdown()
 
+    def test_list_pages_explicit_endpoint_wins_without_global_env_mutation(self) -> None:
+        srv, hits = self._serve_recording()
+        port = srv.server_address[1]
+        try:
+            os.environ["CDP_HTTP"] = "http://127.0.0.1:1"
+            from tools.multi_position_sourcing import raw_cdp
+            raw_cdp.list_pages(f"http://127.0.0.1:{port}")
+            self.assertTrue(any(path.startswith("/json") for path in hits))
+            self.assertEqual(os.environ["CDP_HTTP"], "http://127.0.0.1:1")
+        finally:
+            os.environ.pop("CDP_HTTP", None)
+            srv.shutdown()
+
     def test_default_fallback_9222(self) -> None:
         os.environ.pop("CDP_HTTP", None)
         sys.path.insert(0, str(REPO))

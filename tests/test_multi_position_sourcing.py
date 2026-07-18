@@ -682,6 +682,8 @@ class DirectSearchResultCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/tmp/", encoded)
 
     async def test_profile_only_live_search_reports_profile_lock_without_traceback(self) -> None:
+        connection_modes: list[str] = []
+
         class FakePlaywrightManager:
             async def __aenter__(self) -> object:
                 return object()
@@ -690,8 +692,8 @@ class DirectSearchResultCollectionTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         class LockingPortalWorker:
-            def __init__(self, *_args: object, **_kwargs: object) -> None:
-                pass
+            def __init__(self, config: object, **_kwargs: object) -> None:
+                connection_modes.append(str(getattr(config, "connection_mode", "")))
 
             async def __aenter__(self) -> object:
                 raise ProfileLockError("profile already locked for saramin/worker-a")
@@ -731,7 +733,8 @@ class DirectSearchResultCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["snapshot_capture_required"])
         self.assertNotIn("saramin/worker-a", encoded)
         self.assertNotIn("/tmp/valuehire-test-profiles", encoded)
-        async_playwright.assert_called_once()
+        self.assertEqual(connection_modes, ["raw_single_tab"])
+        async_playwright.assert_not_called()
 
     async def test_guarded_live_search_reports_profile_lock_without_traceback(self) -> None:
         class FakePlaywrightManager:

@@ -10,6 +10,7 @@ import json
 import os
 import time
 import urllib.request
+from types import SimpleNamespace
 from typing import Any
 
 # websocket(websocket-client)는 실제 CDP 연결(CDPTab)에서만 필요하다. 모듈 최상단에서 import 하면
@@ -34,8 +35,9 @@ def _cdp_base() -> str:
     return os.environ.get("CDP_HTTP") or CDP_HTTP or _CDP_DEFAULT
 
 
-def _http_get(path: str) -> Any:
-    with urllib.request.urlopen(_cdp_base() + path, timeout=10) as r:
+def _http_get(path: str, *, endpoint: str | None = None) -> Any:
+    base = (endpoint or _cdp_base()).rstrip("/")
+    with urllib.request.urlopen(base + path, timeout=10) as r:
         return json.loads(r.read().decode())
 
 
@@ -89,8 +91,9 @@ def _clear_js() -> str:
     )
 
 
-def list_pages() -> list[dict]:
-    return [t for t in _http_get("/json") if t.get("type") == "page"]
+def list_pages(endpoint: str | None = None) -> list[dict]:
+    """Return page targets from one explicit endpoint without mutating global env."""
+    return [t for t in _http_get("/json", endpoint=endpoint) if t.get("type") == "page"]
 
 
 def new_tab(url: str = "about:blank") -> dict:
@@ -118,8 +121,38 @@ class CDPTab:
         )
         self._id = 0
         self._badge_label: str | None = None
+        self._event_handlers: dict[str, list[Any]] = {}
         self.send("Page.enable")
         self.send("Runtime.enable")
+        self.send("Network.enable")
+
+    def on(self, event: str, handler: Any) -> None:
+        """Register the small Playwright-style event surface used by the worker."""
+        self._event_handlers.setdefault(event, []).append(handler)
+
+    def _dispatch_event(self, message: dict[str, Any]) -> None:
+        method = message.get("method")
+        params = message.get("params") or {}
+        event = ""
+        payload: Any = None
+        if method == "Network.responseReceived":
+            response = params.get("response") or {}
+            event = "response"
+            payload = SimpleNamespace(
+                status=response.get("status", 0),
+                url=response.get("url", ""),
+            )
+        elif method == "Page.frameNavigated":
+            frame = params.get("frame") or {}
+            event = "framenavigated"
+            payload = SimpleNamespace(url=frame.get("url", ""))
+        if not event:
+            return
+        for handler in tuple(self._event_handlers.get(event, ())):
+            try:
+                handler(payload)
+            except Exception:
+                continue
 
     def send(self, method: str, params: dict | None = None, timeout: float = 30.0) -> dict:
         self._id += 1
@@ -132,6 +165,8 @@ class CDPTab:
                 msg = json.loads(self.ws.recv())
             except Exception:
                 continue
+            if "method" in msg:
+                self._dispatch_event(msg)
             if msg.get("id") == mid:
                 if "error" in msg:
                     raise RuntimeError(f"{method} error: {msg['error']}")

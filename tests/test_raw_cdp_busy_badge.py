@@ -115,6 +115,29 @@ class MarkBusyTests(unittest.TestCase):
         self.assertEqual(tab._badge_label, "x")
 
 
+class RawEventBridgeTests(unittest.TestCase):
+    def test_response_and_navigation_events_reach_worker_handlers(self):
+        tab = _RecTab()
+        tab._event_handlers = {}
+        responses = []
+        frames = []
+        tab.on("response", responses.append)
+        tab.on("framenavigated", frames.append)
+
+        tab._dispatch_event({
+            "method": "Network.responseReceived",
+            "params": {"response": {"status": 401, "url": "https://example.test/login"}},
+        })
+        tab._dispatch_event({
+            "method": "Page.frameNavigated",
+            "params": {"frame": {"url": "https://example.test/checkpoint"}},
+        })
+
+        self.assertEqual(responses[0].status, 401)
+        self.assertEqual(responses[0].url, "https://example.test/login")
+        self.assertEqual(frames[0].url, "https://example.test/checkpoint")
+
+
 class AutoBadgeOnAttachTests(unittest.TestCase):
     def test_maybe_auto_badge_calls_mark_busy(self):
         tab = _RecTab()

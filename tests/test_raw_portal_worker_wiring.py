@@ -7,7 +7,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from tools.multi_position_sourcing.portal_worker import PortalWorker, PortalWorkerConfig
+from tools.multi_position_sourcing.portal_worker import (
+    PortalWorker,
+    PortalWorkerConfig,
+    SearchLivenessMonitor,
+)
+from tools.multi_position_sourcing.raw_page_adapter import RawPage
 
 
 class ForbiddenPlaywright:
@@ -22,6 +27,12 @@ class FakeRawTab:
     def eval(self, expression: str):
         if "location.href" in expression:
             return "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
+        if ".length" in expression and "querySelectorAll" in expression:
+            return 1
+        if "getAttribute" in expression:
+            return "https://www.saramin.co.kr/zf_user/member/resume-view?idx=42"
+        if "innerText" in expression:
+            return "ROS2 robotics engineer"
         return None
 
     def navigate(self, _url: str, wait_ms: int = 0) -> None:
@@ -75,13 +86,36 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 playwright=ForbiddenPlaywright(),
             )
             await worker.start()
-            page = await worker._acquire_search_page()
+            result = await worker.run_one_search(
+                "robotics",
+                ready_check=lambda _page: _async_true(),
+            )
+            page = worker._raw_page
             await worker.stop()
 
         self.assertIs(page._tab, tab)
         self.assertEqual(attached, [exact_target])
+        self.assertEqual(result.status, "searched")
+        self.assertEqual(len(result.candidate_cards), 1)
+        self.assertIn("idx=42", result.candidate_cards[0].profile_url)
         self.assertEqual(tab.disconnect_calls, 1)
         self.assertIsNone(worker.browser)
+
+    async def test_raw_monitor_reads_fresh_login_redirect_url(self) -> None:
+        class RedirectTab(FakeRawTab):
+            def eval(self, expression: str):
+                if "location.href" in expression:
+                    return "https://www.saramin.co.kr/zf_user/auth?ut=c"
+                return super().eval(expression)
+
+        cause = await SearchLivenessMonitor("saramin").check_page(
+            RawPage(RedirectTab(), initial_url="https://www.saramin.co.kr/")
+        )
+        self.assertEqual(cause, "login_redirect")
+
+
+async def _async_true() -> bool:
+    return True
 
 
 if __name__ == "__main__":

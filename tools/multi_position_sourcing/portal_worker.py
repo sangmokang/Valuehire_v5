@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 try:  # pragma: no cover - platform-specific branches are exercised via helpers
     import fcntl as _fcntl
@@ -24,6 +25,7 @@ from .portal_safety import safe_artifact_url, safe_exception_label
 from .selectors import DEFAULT_SELECTOR_MAP
 
 PortalLaunchMode = Literal["headed", "headless"]
+PortalConnectionMode = Literal["persistent_context", "raw_single_tab"]
 SearchStatus = Literal["searched", "not_ready", "selector_missing", "error"]
 
 PROFILE_WORKER_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -76,20 +78,75 @@ def resolve_channel_cdp_endpoint(
     return f"http://127.0.0.1:{port}"
 
 
-# 채널별 로그인 탭 마커(URL 부분문자열). 실제 그 사이트 탭이 endpoint 에 있는지 검증용.
-_CHANNEL_URL_MARKER = {
-    "saramin": "saramin.co.kr",
-    "jobkorea": "jobkorea.co.kr",
-    "linkedin_rps": "linkedin.com",
+# 채널별 검색 target 규칙. host 부분문자열은 룩얼라이크 도메인을 허용하므로
+# exact host/subdomain 경계와 검색 surface path를 함께 확인한다.
+_CHANNEL_TARGET_RULE = {
+    "saramin": ("saramin.co.kr", "/zf_user/memcom/"),
+    "jobkorea": ("jobkorea.co.kr", "/corp/person/find"),
+    "linkedin_rps": ("linkedin.com", "/talent/"),
 }
+
+
+def _target_matches_channel(channel: str, target: Mapping[str, Any]) -> bool:
+    if target.get("type") != "page":
+        return False
+    domain, path_marker = _CHANNEL_TARGET_RULE[channel]
+    try:
+        parsed = urlsplit(str(target.get("url") or ""))
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").rstrip(".").casefold()
+    host_ok = host == domain or host.endswith("." + domain)
+    return bool(host_ok and path_marker in (parsed.path or "").casefold())
+
+
+def find_verified_channel_target(
+    channel: str,
+    *,
+    list_tabs: Callable[[str], list[dict]],
+    value: str | None = None,
+    env: Mapping[str, str] | None = None,
+    candidate_ports: list[int] | None = None,
+    candidate_endpoints: list[str] | None = None,
+) -> tuple[str, dict]:
+    """Return one verified endpoint and exact existing page target atomically."""
+    if channel not in _CHANNEL_TARGET_RULE:
+        raise ValueError(f"channel {channel!r} 은 마커 검증 대상이 아니다(포털 채널만)")
+    if candidate_ports is not None and candidate_endpoints is not None:
+        raise ValueError("candidate_ports and candidate_endpoints are mutually exclusive")
+    primary = resolve_channel_cdp_endpoint(channel, value=value, env=env)
+    if candidate_endpoints is not None:
+        ordered = list(candidate_endpoints)
+    elif candidate_ports is not None:
+        ordered = [f"http://127.0.0.1:{port}" for port in candidate_ports]
+    else:
+        fallbacks = [
+            f"http://127.0.0.1:{port}"
+            for port in (*_CHANNEL_CDP_DEFAULT_PORT.values(), 9222)
+        ]
+        ordered = list(dict.fromkeys([primary, *fallbacks]))
+    for endpoint in ordered:
+        try:
+            tabs = list_tabs(endpoint)
+        except Exception:
+            continue
+        for tab in tabs or ():
+            if _target_matches_channel(channel, tab):
+                return endpoint, tab
+    raise LookupError(
+        f"{channel} exact 검색 target을 후보 endpoint에서 못 찾음 "
+        "— 기존 자동화 브라우저의 로그인/검색 화면 확인 필요(맹목 attach 금지)"
+    )
 
 
 def find_verified_channel_endpoint(
     channel: str,
     *,
     list_tabs: Callable[[str], list[dict]],
+    value: str | None = None,
     env: Mapping[str, str] | None = None,
     candidate_ports: list[int] | None = None,
+    candidate_endpoints: list[str] | None = None,
 ) -> str:
     """대상 사이트 로그인 탭이 실제로 있는 CDP endpoint 를 찾는다(오접속 방지).
 
@@ -103,30 +160,15 @@ def find_verified_channel_endpoint(
     ``list_tabs(endpoint) -> [{"url": ...}, ...]`` 는 라이브 분리를 위해 주입한다
     (실사용은 raw_cdp 단일탭 HTTP /json, SOT-26 INV5 — 전체 connectOverCDP 아님).
     """
-    if channel not in _CHANNEL_URL_MARKER:
-        raise ValueError(f"channel {channel!r} 은 마커 검증 대상이 아니다(포털 채널만)")
-    marker = _CHANNEL_URL_MARKER[channel]
-    primary = int(resolve_channel_cdp_endpoint(channel, env=env).rsplit(":", 1)[1])
-    if candidate_ports is None:
-        # 1차 후보 먼저, 그다음 나머지 채널 기본 포트 + 9222(실측상 사람인이 뜬 곳).
-        ordered = [primary] + [
-            p for p in (*_CHANNEL_CDP_DEFAULT_PORT.values(), 9222) if p != primary
-        ]
-    else:
-        ordered = candidate_ports
-    for port in ordered:
-        endpoint = f"http://127.0.0.1:{port}"
-        try:
-            tabs = list_tabs(endpoint)
-        except Exception:
-            continue  # 죽은/무응답 포트 — 다음 후보로
-        for tab in tabs or ():
-            if marker in (tab.get("url") or ""):
-                return endpoint
-    raise LookupError(
-        f"{channel} 로그인 탭(마커 {marker})을 어떤 후보 포트({ordered})에서도 못 찾음 "
-        "— portal_browsers.sh 로 기동/로그인 상태 확인 필요(맹목 attach 금지)"
+    endpoint, _target = find_verified_channel_target(
+        channel,
+        list_tabs=list_tabs,
+        value=value,
+        env=env,
+        candidate_ports=candidate_ports,
+        candidate_endpoints=candidate_endpoints,
     )
+    return endpoint
 
 
 def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
@@ -223,6 +265,23 @@ def _value_from_attr_or_method(value: Any, attr: str, default: Any = None) -> An
     return resolved
 
 
+async def _current_page_url(page: Any) -> str:
+    """Read a fresh URL when the adapter offers it; otherwise use page.url."""
+    reader = getattr(page, "current_url", None)
+    if callable(reader):
+        try:
+            return str(await _maybe_await(reader()) or "")
+        except Exception:
+            pass
+    value = getattr(page, "url", "")
+    if callable(value):
+        try:
+            value = await _maybe_await(value())
+        except Exception:
+            value = ""
+    return str(value or "")
+
+
 def login_redirect_cause(channel: Channel, url: str) -> str:
     lowered = url.lower()
     if channel == "saramin" and ("/zf_user/auth" in lowered or "login" in lowered):
@@ -262,7 +321,7 @@ class SearchLivenessMonitor:
             self.reauth_cause = redirect_cause
 
     async def check_page(self, page: Any) -> str:
-        redirect_cause = login_redirect_cause(self.channel, str(getattr(page, "url", "") or ""))
+        redirect_cause = login_redirect_cause(self.channel, await _current_page_url(page))
         if redirect_cause:
             self.reauth_cause = redirect_cause
         return self.reauth_cause
@@ -276,6 +335,7 @@ class PortalWorkerConfig:
     mode: PortalLaunchMode = "headed"
     launch_args: tuple[str, ...] = ()
     chrome_cdp_endpoint: str = field(default_factory=resolve_chrome_cdp_endpoint)
+    connection_mode: PortalConnectionMode = "persistent_context"
     viewport_width: int = 1440
     viewport_height: int = 1000
     search_timeout_seconds: float = 60.0
@@ -284,6 +344,8 @@ class PortalWorkerConfig:
         object.__setattr__(self, "profile_root", validate_portal_profile_root(self.profile_root))
         if self.channel == "public_web":
             raise PortalWorkerConfigError("public_web does not require a protected portal worker")
+        if self.connection_mode not in {"persistent_context", "raw_single_tab"}:
+            raise PortalWorkerConfigError("unknown portal connection mode")
         if not PROFILE_WORKER_ID_RE.match(self.worker_id) or self.worker_id in {".", ".."}:
             raise PortalWorkerConfigError("worker_id must be a safe file-name token")
         if self.channel == "linkedin_rps":
@@ -682,6 +744,7 @@ class PortalWorker:
         self._blocked_next_mode: PortalLaunchMode | None = None
         # raw attach 채널(사람인·잡코리아)이 심는 RawPage. None 이면 기존 launch/linkedin 경로.
         self._raw_page: Any | None = None
+        self._raw_tab: Any | None = None
 
     @property
     def context(self) -> Any:
@@ -715,6 +778,22 @@ class PortalWorker:
             return
         self._lock.acquire()
         try:
+            if self.config.connection_mode == "raw_single_tab":
+                from . import raw_cdp
+                from .raw_page_adapter import RawPage
+
+                _endpoint, target = find_verified_channel_target(
+                    self.config.channel,
+                    list_tabs=raw_cdp.list_pages,
+                    value=self.config.chrome_cdp_endpoint,
+                )
+                self._raw_tab = raw_cdp.attach(target)
+                self._raw_page = RawPage(
+                    self._raw_tab,
+                    initial_url=str(target.get("url") or ""),
+                )
+                self._started = True
+                return
             self._playwright = self._provided_playwright
             if self._playwright is None:
                 from playwright.async_api import async_playwright
@@ -753,9 +832,26 @@ class PortalWorker:
                 )
             self._started = True
         except Exception:
+            await self._disconnect_raw_tab_if_possible()
             self._lock.release()
             await self._close_playwright_manager_if_possible()
             raise
+
+    async def _disconnect_raw_tab_if_possible(self) -> None:
+        tab = self._raw_tab
+        self._raw_tab = None
+        if tab is None:
+            return
+        disconnect = getattr(tab, "close", None)
+        if not callable(disconnect):
+            return
+        try:
+            if inspect.iscoroutinefunction(disconnect):
+                await disconnect()
+            else:
+                await asyncio.to_thread(disconnect)
+        except Exception:
+            return
 
     async def stop(self) -> None:
         # SOT-28 §4(세션 상시 유지)·§12 현상6(TODO-2): 어떤 채널도 로그인 세션이
@@ -764,6 +860,8 @@ class PortalWorker:
         self._context = None
         self._browser = None
         try:
+            await self._disconnect_raw_tab_if_possible()
+            self._raw_page = None
             await self._close_playwright_manager_if_possible()
         finally:
             self._lock.release()
