@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "skill": "login",
   "supported_agents": ["claude", "codex", "hermes"],
   "platform": "macos",
@@ -20,12 +20,12 @@
       "next": ["AI_ATTACHED"]
     },
     "AI_ATTACHED": {
-      "allowed_actions": ["attach_one_raw_cdp_target", "install_badge", "read_state"],
+      "allowed_actions": ["attach_one_raw_cdp_target", "install_badge", "present_exact_login_window_once", "read_state"],
       "next": ["HUMAN_AUTH", "AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
     },
     "HUMAN_AUTH": {
       "allowed_actions": ["read_state", "wait"],
-      "forbidden_actions": ["navigate", "click", "type", "submit", "close", "focus_again"],
+      "forbidden_actions": ["navigate", "reload", "back", "click", "type", "submit", "popup_close", "close", "focus", "focus_again", "new_page"],
       "poll_interval_seconds": 5,
       "quiet_after_success_seconds": 15,
       "timeout_seconds": null,
@@ -36,7 +36,7 @@
       "next": ["KEEPALIVE", "AUTH_LOST", "HANDOFF"]
     },
     "KEEPALIVE": {
-      "allowed_actions": ["read_state", "skip", "navigate_dedicated_safe_tab"],
+      "allowed_actions": ["read_state", "skip", "click_allowlisted_same_origin_get", "read_navigation_history", "restore_previous_history_entry"],
       "next": ["AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
     },
     "AUTH_LOST": {
@@ -67,7 +67,7 @@
   },
   "browser_limits": {
     "max_new_windows_when_browser_exists": 0,
-    "max_new_tabs_per_site": 1,
+    "max_new_tabs_per_site": 0,
     "max_attached_targets_per_site": 1
   },
   "forbidden_calls": [
@@ -91,14 +91,66 @@
     "no_keylogging": true,
     "no_browser_content_surveillance_for_activity": true
   },
+  "exact_window": {
+    "resolver": "Swift CoreGraphics",
+    "script": "skills/login/scripts/macos_window_locator.swift",
+    "join_keys": ["browser_pid", "cdp_window_bounds", "sanitized_title_marker"],
+    "ambiguity": "fail_closed",
+    "capture": "screencapture -x -l <CGWindowID>",
+    "capture_scope": "exact_window_only",
+    "required_locator_fields": [
+      "agent",
+      "site",
+      "browser_pid",
+      "profile_path",
+      "cdp_endpoint",
+      "target_id_suffix",
+      "sanitized_title",
+      "sanitized_url",
+      "cg_window_id"
+    ],
+    "forbid_first_window_or_title_substring_fallback": true
+  },
+  "human_auth": {
+    "presentation_state": "AI_ATTACHED",
+    "title_prefix_template": "[LOGIN HERE][<agent>][<site>][<target-id-suffix>]",
+    "max_presentations_per_episode": 1,
+    "allowed_during_wait": ["read_auth_marker", "read_owner_idle", "wait"],
+    "minimum_poll_seconds": 5,
+    "quiet_after_owner_input_seconds": 15,
+    "timeout_seconds": null,
+    "success_condition": "fresh_site_auth_marker_and_owner_quiet",
+    "outer_timeout_may_cancel": false,
+    "restore_original_title_on_handoff": true
+  },
   "keepalive": {
-    "check_after_seconds": 1800,
+    "interval_seconds": {
+      "saramin": 900,
+      "jobkorea": 900,
+      "linkedin_rps": 1800
+    },
     "navigation_default": "skip",
     "require_fresh_owner_idle_check": true,
     "require_clean_form": true,
     "require_dedicated_safe_tab": true,
     "allow_only_previously_opened_free_profile": true,
-    "forbid_paid_or_new_candidate_view": true
+    "forbid_paid_or_new_candidate_view": true,
+    "safe_link": {
+      "interaction": "single_click",
+      "same_origin": true,
+      "method": "GET",
+      "forbid_target_blank": true,
+      "forbid_download": true,
+      "forbid_paid_save_send_modal": true
+    },
+    "require_same_target_before_and_after_click": true,
+    "require_authenticated_destination": true,
+    "restore_method": "Page.navigateToHistoryEntry",
+    "restore_entry": "previous_entry_from_Page.getNavigationHistory",
+    "goto_fallback": false,
+    "require_second_mutation_guard_before_restore": true,
+    "owner_active_after_click": "set_restore_pending_and_wait",
+    "success_condition": "same_target_original_url_and_auth_marker_restored"
   },
   "site_proof": {
     "saramin": {
