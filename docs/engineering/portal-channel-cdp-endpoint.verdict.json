@@ -51,9 +51,9 @@
     "test_weakening": "merge-base 대비 tests +208줄 순수추가, 삭제·약화 0"
   },
   "three_way_agree": false,
-  "status": "진행중 — 조각 A 해석 GREEN. 배선은 COSMETIC 스캐폴드(V2: 채널인지 프로덕션 미도달) + 마커검증 로직 GREEN이나 고아. TODO-2b 실질(saramin/jobkorea 실 attach)은 라이브 조각 B(사장님 세션 리스크). ⛔ PR#149 단독 merge 금지(V1·V2 일치).",
+  "status": "조각 A 해석 GREEN + 마커검증 로직 GREEN·라이브 read-only 실증(오접속 방지 작동). 배선은 여전히 COSMETIC(실 start() attach 이행은 playwright↔raw 재설계=별도 대공사). PR#149 단독 merge 금지 유지.",
   "slice_b_marker_verify": {
     "claim": "find_verified_channel_endpoint 가 채널 후보 포트를 순회하며 대상 사이트 마커가 실제 있는 endpoint 만 채택, 없으면 LookupError(맹목 attach 금지). 라이브 실측 오접속(9222사람인/9223잡코리아) 방지.",
-    "live_evidence": "수동 판정 필요 — 실 start() 배선·실크롬 attach 는 사장님 세션 리스크로 다음 라이브 조각(사장님 입회)"
+    "live_evidence": "라이브 read-only(/json 조회, 세션 무해) 실증 2026-07-18: find_verified_channel_endpoint 가 실환경에서 saramin→9222(기본 9223 아님, 실제 사람인 탭 있는 곳 정확)·jobkorea→9224 정확 선택. linkedin_rps→LookupError(9225 빈탭=미로그인, 맹목 attach 안 하고 멈춤=세션 보호). 오접속 방지+미로그인 보호 라이브 확인."
   }
 }
