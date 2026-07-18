@@ -36,6 +36,12 @@ class FakeRawTab:
         self._badge_label = None
 
     def eval(self, expression: str):
+        if "vh-automation-badge" in expression:
+            if "e.value=" in expression:
+                self.fill_calls += 1
+            if ".click()" in expression:
+                self.click_calls += 1
+            return True
         if "document.readyState" in expression:
             return "interactive"
         if "location.href" in expression:

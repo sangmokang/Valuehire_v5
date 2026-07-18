@@ -21,6 +21,19 @@ from typing import Any, Callable
 
 
 MutationGuard = Callable[[], Any]
+OwnershipUrl = Callable[[], str]
+_BADGE_ID = "vh-automation-badge"
+
+
+def _ownership_js(expected_url: str, badge_label: str, action: str = "return true;") -> str:
+    return (
+        "(function(){"
+        f"if(location.href!=={json.dumps(expected_url)})return false;"
+        f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
+        f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
+        + action
+        + "})()"
+    )
 
 
 async def _run_mutation_guard(guard: MutationGuard | None) -> None:
@@ -52,11 +65,15 @@ class RawLocator:
         selector: str,
         index: int = 0,
         mutation_guard: MutationGuard | None = None,
+        ownership_url: OwnershipUrl | None = None,
+        require_badge: bool = False,
     ) -> None:
         self._tab = tab
         self._selector = selector
         self._index = index
         self._mutation_guard = mutation_guard
+        self._ownership_url = ownership_url
+        self._require_badge = require_badge
 
     @property
     def _elements_js(self) -> str:
@@ -82,6 +99,8 @@ class RawLocator:
             self._selector,
             index=0,
             mutation_guard=self._mutation_guard,
+            ownership_url=self._ownership_url,
+            require_badge=self._require_badge,
         )
 
     def nth(self, index: int) -> "RawLocator":
@@ -90,6 +109,8 @@ class RawLocator:
             self._selector,
             index=index,
             mutation_guard=self._mutation_guard,
+            ownership_url=self._ownership_url,
+            require_badge=self._require_badge,
         )
 
     async def count(self) -> int:
@@ -110,31 +131,45 @@ class RawLocator:
     async def fill(self, value: str, **_kwargs: Any) -> None:
         await _run_mutation_guard(self._mutation_guard)
         el = self._sel_js
-        expr = (
-            "(function(){var e=" + el + ";if(!e)return false;"
+        action = (
+            "var e=" + el + ";if(!e)return false;"
             f"e.value={json.dumps(value)};"
             "e.dispatchEvent(new Event('input',{bubbles:true}));"
             "e.dispatchEvent(new Event('change',{bubbles:true}));"
-            "return true;})()"
+            "return true;"
         )
-        await _tab_call(self._tab, "eval", expr)
+        await self._run_mutation(action)
 
     async def click(self, **_kwargs: Any) -> None:
         await _run_mutation_guard(self._mutation_guard)
-        expr = "(function(){var e=" + self._sel_js + ";if(e)e.click();return !!e;})()"
-        await _tab_call(self._tab, "eval", expr)
+        action = "var e=" + self._sel_js + ";if(!e)return false;e.click();return true;"
+        await self._run_mutation(action)
 
     async def press(self, key: str, **_kwargs: Any) -> None:
         await _run_mutation_guard(self._mutation_guard)
         key_js = json.dumps(key)
-        expr = (
-            "(function(){var e=" + self._sel_js + ";if(!e)return false;"
+        action = (
+            "var e=" + self._sel_js + ";if(!e)return false;"
             f"var k={key_js};"
             "['keydown','keypress','keyup'].forEach(function(t){"
             "e.dispatchEvent(new KeyboardEvent(t,{key:k,bubbles:true}));});"
             "if(k==='Enter'&&e.form&&e.form.requestSubmit){e.form.requestSubmit();}"
-            "return true;})()"
+            "return true;"
         )
+        await self._run_mutation(action)
+
+    async def _run_mutation(self, action: str) -> None:
+        if self._require_badge:
+            expected_url = self._ownership_url() if self._ownership_url else ""
+            label = str(getattr(self._tab, "_badge_label", "") or "")
+            if not expected_url or not label:
+                raise RuntimeError("raw DOM ownership proof is missing")
+            expr = _ownership_js(expected_url, label, action)
+            acknowledged = await _tab_call(self._tab, "eval", expr)
+            if acknowledged is not True:
+                raise RuntimeError("raw DOM ownership or selector proof failed")
+            return
+        expr = "(function(){" + action + "})()"
         await _tab_call(self._tab, "eval", expr)
 
     async def get_attribute(self, name: str) -> str | None:
@@ -169,7 +204,21 @@ class RawPage:
             self._tab,
             selector,
             mutation_guard=self._mutation_guard,
+            ownership_url=lambda: self._url,
+            require_badge=self._require_badge,
         )
+
+    async def _prove_dom_ownership(self, expected_url: str) -> None:
+        label = str(getattr(self._tab, "_badge_label", "") or "")
+        if not expected_url or not label:
+            raise RuntimeError("raw DOM ownership proof is missing")
+        acknowledged = await _tab_call(
+            self._tab,
+            "eval",
+            _ownership_js(expected_url, label),
+        )
+        if acknowledged is not True:
+            raise RuntimeError("raw DOM ownership proof failed")
 
     async def _refresh_busy_badge(self, *, expected_url: str | None = None) -> None:
         label = getattr(self._tab, "_badge_label", None)
@@ -193,11 +242,13 @@ class RawPage:
             raise RuntimeError("visible automation marker refresh failed")
 
     async def goto(self, url: str, *, wait_until: str | None = None, timeout: int | None = None) -> None:
-        self._url = url
+        origin_url = self._url
         timeout_seconds = float(timeout) / 1000.0 if timeout and timeout > 0 else 30.0
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
         await _run_mutation_guard(self._mutation_guard)
+        if self._require_badge:
+            await self._prove_dom_ownership(origin_url)
         action = _tab_call(self._tab, "navigate", url, wait_ms=0)
         navigation = await asyncio.wait_for(action, timeout=timeout_seconds)
         if isinstance(navigation, dict):
@@ -205,6 +256,7 @@ class RawPage:
                 raise RuntimeError("raw navigation failed")
             if navigation.get("isDownload") is True:
                 raise RuntimeError("raw navigation download was rejected")
+        self._url = url
         loader_id = ""
         if isinstance(navigation, dict):
             loader_id = str(navigation.get("loaderId") or "")

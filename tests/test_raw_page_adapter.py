@@ -243,12 +243,18 @@ class RawPageAdapterTests(unittest.TestCase):
                 raise AssertionError("no loader must not be treated as the old document")
 
             def eval(self, expr: str):
+                if "vh-automation-badge" in expr:
+                    return True
                 if "document.readyState" in expr:
                     return "complete"
                 return super().eval(expr)
 
         with self.assertRaisesRegex(RuntimeError, "loader"):
-            _run(RawPage(NoLoaderTab(), require_badge=True).goto(
+            _run(RawPage(
+                NoLoaderTab(),
+                initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+                require_badge=True,
+            ).goto(
                 "https://www.jobkorea.co.kr/Corp/Person/Find",
                 wait_until="domcontentloaded",
                 timeout=1000,
@@ -261,8 +267,17 @@ class RawPageAdapterTests(unittest.TestCase):
             def mark_busy(self, _label: str):
                 return True
 
+            def eval(self, expr: str):
+                if "vh-automation-badge" in expr:
+                    return True
+                return super().eval(expr)
+
         with self.assertRaisesRegex(RuntimeError, "loader"):
-            _run(RawPage(NoLoaderTab(), require_badge=True).goto(
+            _run(RawPage(
+                NoLoaderTab(),
+                initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+                require_badge=True,
+            ).goto(
                 "https://www.jobkorea.co.kr/Corp/Person/Find",
             ))
 
