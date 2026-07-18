@@ -258,14 +258,18 @@ class CDPTab:
         except Exception:
             pass
 
-    def close(self):
+    def close(self) -> bool:
         # 작업 끝 → 배지 제거(사장님이 이어받을 때 '사용중' 잔상 안 남게).
-        try:
-            if getattr(self, "_badge_label", None):
-                self.eval(_clear_js())
-        except Exception:
-            pass
+        if getattr(self, "_badge_label", None):
+            try:
+                acknowledged = self.eval(_clear_js())
+            except Exception:
+                return False
+            if acknowledged is not True:
+                return False
+            self._badge_label = None
         self.disconnect()
+        return True
 
 
 def _maybe_auto_badge(tab: "CDPTab", env: Any) -> None:

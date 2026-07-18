@@ -1086,7 +1086,8 @@ class PortalWorker:
             try:
                 await self._finish_raw_handoff_despite_cancellation()
             finally:
-                self._lock.release()
+                if self._raw_tab is None:
+                    self._lock.release()
                 await self._close_playwright_manager_if_possible()
             raise
 
@@ -1096,10 +1097,10 @@ class PortalWorker:
             return False
         try:
             if inspect.iscoroutinefunction(method):
-                await method()
+                result = await method()
             else:
-                await asyncio.to_thread(method)
-            return True
+                result = await asyncio.to_thread(method)
+            return result is not False
         except Exception:
             return False
 
@@ -1107,9 +1108,11 @@ class PortalWorker:
         tab = self._raw_tab
         if tab is None:
             return
+        handed_off = False
         try:
             if not self._raw_badge_applied:
                 await self._invoke_raw_tab_method(tab, "disconnect")
+                handed_off = True
                 return
             while True:
                 try:
@@ -1119,16 +1122,19 @@ class PortalWorker:
                         self._lock.assert_owned()
                     except ProfileLockError:
                         await self._invoke_raw_tab_method(tab, "disconnect")
+                        handed_off = True
                         return
                     await self._handoff_sleep(5.0)
                     continue
                 if not await self._invoke_raw_tab_method(tab, "close"):
-                    await self._invoke_raw_tab_method(tab, "disconnect")
+                    raise RuntimeError("visible automation marker handoff failed")
+                handed_off = True
                 return
         finally:
-            if self._raw_tab is tab:
-                self._raw_tab = None
-            self._raw_badge_applied = False
+            if handed_off:
+                if self._raw_tab is tab:
+                    self._raw_tab = None
+                self._raw_badge_applied = False
 
     async def _finish_raw_handoff_despite_cancellation(self) -> None:
         if self._raw_tab is None:
@@ -1156,7 +1162,8 @@ class PortalWorker:
             self._raw_page = None
             await self._close_playwright_manager_if_possible()
         finally:
-            self._lock.release()
+            if self._raw_tab is None:
+                self._lock.release()
             self._started = False
 
     async def _close_playwright_manager_if_possible(self) -> None:
