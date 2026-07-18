@@ -11,6 +11,7 @@ from tools.multi_position_sourcing.session_guard import (
     BrowserTargetRef,
     SafeKeepaliveTarget,
     execute_keepalive_roundtrip,
+    present_exact_login_window_once,
     resolve_existing_target,
     wait_for_human_auth,
 )
@@ -149,6 +150,7 @@ def test_human_auth_requires_auth_marker_and_fifteen_seconds_quiet() -> None:
 
 class _KeepaliveTab:
     def __init__(self) -> None:
+        self.target_id = "target-exact"
         self.url = "https://www.linkedin.com/talent/home"
         self.trace: list[str] = []
         self.forbidden_calls: list[str] = []
@@ -250,6 +252,86 @@ def test_owner_returns_after_click_sets_restore_pending_and_never_backs() -> Non
     assert tab.forbidden_calls == []
 
 
+def test_target_identity_change_after_click_never_sends_back() -> None:
+    tab = _KeepaliveTab()
+
+    def click_and_swap(target: SafeKeepaliveTarget) -> bool:
+        tab.trace.append("click")
+        tab.url = target.destination_url
+        tab.target_id = "different-target"
+        return True
+
+    tab.click_safe_link = click_and_swap
+    gates: list[str] = []
+    result = execute_keepalive_roundtrip(
+        tab,
+        _ref(),
+        _safe(),
+        auth_probe=lambda current: AuthObservation(
+            authenticated=True,
+            challenge=False,
+            url=current.current_url(),
+            proof_names=("recruiter_nav",),
+        ),
+        mutation_gate=lambda: gates.append("gate"),
+    )
+
+    assert result["status"] == "target_changed"
+    assert result["restore_pending"] is True
+    assert gates == ["gate"]
+    assert not any(item.startswith("back:") for item in tab.trace)
+
+
+def test_window_ambiguity_fails_before_title_badge_or_focus_mutation() -> None:
+    class Tab:
+        target_id = "target-exact"
+
+        def __init__(self) -> None:
+            self.mutations: list[str] = []
+
+        def current_url(self) -> str:
+            return "https://www.linkedin.com/talent/home"
+
+        def eval(self, expression: str):
+            if expression == "document.title":
+                return "LinkedIn Talent Solutions"
+            self.mutations.append("title")
+            return "[LOGIN HERE][Codex][linkedin][target-exact] LinkedIn Talent Solutions"
+
+        def mark_busy(self, *_args, **_kwargs) -> bool:
+            self.mutations.append("badge")
+            return True
+
+        def send(self, method: str, params: dict | None = None):
+            if method == "SystemInfo.getProcessInfo":
+                return {"processInfo": [{"type": "browser", "id": 4321}]}
+            if method == "Browser.getWindowForTarget":
+                return {"bounds": {"left": 0, "top": 0, "width": 1200, "height": 800}}
+            if method == "Page.bringToFront":
+                self.mutations.append("focus")
+                return {}
+            raise AssertionError(method)
+
+    tab = Tab()
+    gates: list[str] = []
+
+    def ambiguous(_identity):
+        raise RuntimeError("ambiguous window")
+
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            mutation_gate=lambda: gates.append("gate"),
+            window_resolver=ambiguous,
+            window_capture=lambda _window_id: b"never",
+        )
+
+    assert gates == []
+    assert tab.mutations == []
+
+
 @pytest.mark.parametrize(
     "override",
     [
@@ -281,4 +363,3 @@ def test_unsafe_keepalive_candidate_never_mutates(override: dict[str, object]) -
     assert result["status"] == "skipped_unsafe"
     assert gates == []
     assert tab.trace == []
-
