@@ -3,7 +3,7 @@
   "mode": "code-change",
   "risk": "L2",
   "generator": {
-    "claim": "resolve_channel_cdp_endpoint(channel) 가 portal_browsers.sh 포트(saramin=9223/jobkorea=9224/linkedin_rps=9225)와 정합하는 채널별 CDP endpoint 를 우선순위(value>전역env>채널포트env>채널기본)로 해석한다. public_web은 ValueError. 기존 launch 방식·소비처 미변경.",
+    "claim": "resolve_channel_cdp_endpoint(channel) 가 portal_browsers.sh 포트(saramin=9223/jobkorea=9224/linkedin_rps=9225)와 정합하는 채널별 CDP endpoint 를 우선순위(value>전역env>채널포트env>채널기본)로 해석한다. public_web은 ValueError. 기존 launch 방식·소비처 미변경. [완결] linkedin_rps start() 의 CDP endpoint 해석을 이 함수로 통과(_cdp_endpoint 메서드)해 고아를 해소 — 값-우선이라 기존 config 동작 보존, config 비면 채널 기본 포트로 폴백.",
     "changed_files": [
       "tools/multi_position_sourcing/portal_worker.py",
       "tests/test_portal_channel_cdp_endpoint.py"
@@ -12,9 +12,9 @@
     "command": "./verify.sh",
     "exit_code": 0,
     "green_evidence": "focused 9 passed(포트범위·LINKEDIN_PORT 추가) / 전체는 V1 샌드박스서 11 failed(환경제한: 소켓bind·SQLite·pkill 금지)—신규함수 무관, 정상환경 1752 passed",
-    "mutant_check": "채널 기본포트 saramin 9223→9999 → 2 failed 감지 → 원복 7 passed",
+    "mutant_check": "채널 기본포트 saramin 9223→9999 → 2 failed 감지 → 원복 7 passed | 배선 뮤턴트: _cdp_endpoint value=None(값무시) → preserves_explicit 1 failed 감지·원복.",
     "sot_alignment": "포트·env 이름은 scripts/portal_browsers.sh:74-80 과 동일(재발명 아님)",
-    "wiring_status": "ORPHAN-BY-DESIGN: 이 순수 함수는 아직 프로덕션 start() 가 호출하지 않는다. TODO-2b 는 diff 300줄+라이브 실크롬 검증이 필요해 SOT-30 게이트3(분할)에 따라 2조각으로 나눴고, 이 조각 A(기반)를 조각 B(start() connect_over_cdp 이행)가 소비한다. 조각 B PR 에서 엔트리→새코드 배선 grep 으로 고아 해소 예정. goal 비범위 참조.",
+    "wiring_status": "RESOLVED — start()(portal_worker.py:672)가 self._cdp_endpoint()(:646→resolve_channel_cdp_endpoint) 호출. grep 증명 첨부. 기존 test_browser_policy(7777→규칙위반) 테스트가 배선된 경로를 그대로 통과=동작 보존. 사람인·잡코리아 실이전(connect_over_cdp 전환+마커검증)은 조각 B(라이브 필수) 유지.",
     "test_quality": {
       "happy_path": true,
       "edge_cases": "채널 포트 env override·전역 env 우선·value 최우선·비숫자 포트 폴백·비http 전역 env 무시",
@@ -41,5 +41,5 @@
   },
   "v2": null,
   "three_way_agree": false,
-  "status": "조각 A GREEN(9 tests)+V1 반례 2봉인. 고아=must-wire → 조각 B(raw 단일탭)와 묶어 배송. PR#149 단독 merge 보류"
+  "status": "완결 대기 — G GREEN(배선 포함), 고아 해소, V1·V2 재검증 진행"
 }
