@@ -832,6 +832,58 @@ class CDPTab:
             raise RuntimeError("Runtime.evaluate returned an error object")
         return result.get("value")
 
+    def current_url(self) -> str:
+        """Read the URL of this exact target without consulting global tab state."""
+        return str(self.eval("location.href") or "")
+
+    def click_safe_link(self, target: Any) -> bool:
+        """Atomically validate and click one allowlisted same-origin GET anchor.
+
+        The descriptor is policy-checked by ``session_guard`` first.  This final
+        browser-side check closes the selector/DOM race at the mutation boundary
+        and remains bound to the rendered ownership badge and exact source URL.
+        """
+
+        source_url = str(getattr(target, "source_url", "") or "")
+        destination_url = str(getattr(target, "destination_url", "") or "")
+        selector = str(getattr(target, "selector", "") or "")
+        expected_target = str(getattr(target, "target_attr", "") or "").casefold()
+        badge_label = str(getattr(self, "_badge_label", "") or "")
+        if not source_url or not destination_url or not selector or not badge_label:
+            return False
+        unsafe_tokens = (
+            "paid", "purchase", "payment", "save", "send", "inmail", "proposal",
+            "유료", "결제", "차감", "저장", "발송", "제안",
+        )
+        action = (
+            f"var xs=document.querySelectorAll({json.dumps(selector)});"
+            "if(xs.length!==1)return false;var e=xs[0];"
+            "if(!e||e.tagName!=='A')return false;"
+            f"if(e.href!=={json.dumps(destination_url)})return false;"
+            "var d=new URL(e.href,location.href);"
+            "if(d.protocol!=='https:'||d.origin!==location.origin)return false;"
+            f"if((e.getAttribute('target')||'').toLowerCase()!=={json.dumps(expected_target)})return false;"
+            "if(e.hasAttribute('download')||e.closest('form'))return false;"
+            "var s=getComputedStyle(e),r=e.getBoundingClientRect();"
+            "if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0'||r.width<=0||r.height<=0)return false;"
+            "var dirty=Array.from(document.querySelectorAll('input,textarea,select')).some(function(x){"
+            "if(x.disabled||x.type==='hidden')return false;"
+            "if(x.tagName==='SELECT')return Array.from(x.options).some(function(o){return o.selected!==o.defaultSelected;});"
+            "if(x.type==='checkbox'||x.type==='radio')return x.checked!==x.defaultChecked;"
+            "return x.value!==x.defaultValue;});if(dirty)return false;"
+            "var modal=Array.from(document.querySelectorAll('[aria-modal=true],dialog[open],[role=dialog],.modal.show')).some(function(x){"
+            "var z=getComputedStyle(x),q=x.getBoundingClientRect();return z.display!=='none'&&z.visibility!=='hidden'&&q.width>0&&q.height>0;});"
+            "if(modal)return false;"
+            "var label=((e.innerText||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.title||'')).toLowerCase();"
+            f"if({json.dumps(unsafe_tokens)}.some(function(t){{return label.includes(t);}}))return false;"
+            "e.click();return true;"
+        )
+        return self.eval_if_badge_owned(
+            action,
+            expected_url=source_url,
+            badge_label=badge_label,
+        ) is True
+
     def screenshot(self, path: str) -> str:
         r = self.send("Page.captureScreenshot", {"format": "png"})
         data = base64.b64decode(r["data"])
