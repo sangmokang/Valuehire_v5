@@ -111,16 +111,40 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
             "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
             "webSocketDebuggerUrl": "ws://exact",
         }
+        stale = {
+            "id": "stale",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/tutorial",
+            "webSocketDebuggerUrl": "ws://stale",
+        }
 
         endpoint, target = find_verified_channel_target(
             "saramin",
-            list_tabs=lambda _endpoint: [fake, worker, exact],
+            list_tabs=lambda _endpoint: [fake, worker, stale, exact],
             env={},
             candidate_endpoints=["http://remote.example:9338"],
         )
 
         self.assertEqual(endpoint, "http://remote.example:9338")
         self.assertIs(target, exact)
+
+    def test_linkedin_session_lock_is_not_a_search_target(self) -> None:
+        locked = {
+            "id": "locked",
+            "type": "page",
+            "url": "https://www.linkedin.com/talent/enterprise-authentication/sessions",
+        }
+        search = {
+            "id": "search",
+            "type": "page",
+            "url": "https://www.linkedin.com/talent/hire/1/discover/recruiterSearch",
+        }
+        _endpoint, target = find_verified_channel_target(
+            "linkedin_rps",
+            list_tabs=lambda _endpoint: [locked, search],
+            candidate_endpoints=["http://127.0.0.1:9225"],
+        )
+        self.assertIs(target, search)
 
     def test_explicit_remote_endpoint_is_not_rewritten_to_loopback(self) -> None:
         seen: list[str] = []

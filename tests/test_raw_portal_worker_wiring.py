@@ -52,6 +52,22 @@ class FakeRawTab:
 
 
 class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
+    async def test_raw_workers_share_one_channel_lock_regardless_of_worker_id(self) -> None:
+        with TemporaryDirectory(prefix="raw-lock-") as root:
+            first = PortalWorkerConfig(
+                channel="saramin",
+                worker_id="worker-a",
+                profile_root=Path(root),
+                connection_mode="raw_single_tab",
+            )
+            second = PortalWorkerConfig(
+                channel="saramin",
+                worker_id="worker-b",
+                profile_root=Path(root),
+                connection_mode="raw_single_tab",
+            )
+        self.assertEqual(first.lock_path, second.lock_path)
+
     async def test_raw_mode_attaches_exact_existing_target_without_playwright(self) -> None:
         fake_target = {
             "id": "fake",

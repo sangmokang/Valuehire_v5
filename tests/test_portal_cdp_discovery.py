@@ -165,6 +165,26 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0, "살아있는 크롬 없을 때 0 종료 금지")
         self.assertEqual(out.stdout.strip(), "", "엔드포인트를 지어내면 안 됨")
 
+    def test_cdp_rejects_unrelated_profile_on_configured_port(self) -> None:
+        configured = _free_port()
+        wanted = self.tmp / "wanted_profile"
+        unrelated = self.tmp / "unrelated_profile"
+        wanted.mkdir(parents=True, exist_ok=True)
+        self._launch_fake(unrelated, configured)
+        env = {
+            **os.environ,
+            "SARAMIN_PORT": str(configured),
+            "SARAMIN_PROFILE": str(wanted),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "saramin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+
 
 class RawCdpEnvTests(unittest.TestCase):
     """raw_cdp 가 CDP_HTTP env 를 호출 시점에 읽는지(관측가능 동작으로 단언)."""

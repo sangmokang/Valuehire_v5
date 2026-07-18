@@ -68,7 +68,10 @@ class RawPageAdapterTests(unittest.TestCase):
     def test_inner_text_returns_element_text(self) -> None:
         tab = FakeTab(results={"innerText": "결과 12건"})
         page = RawPage(tab)
-        self.assertEqual(_run(page.locator("body").inner_text()), "결과 12건")
+        self.assertEqual(
+            _run(page.locator("body").inner_text(timeout=5000)),
+            "결과 12건",
+        )
 
     def test_selector_with_quotes_is_escaped(self) -> None:
         # injection 방지: 따옴표·백슬래시 든 selector 가 JS 를 깨지 않게 이스케이프.
