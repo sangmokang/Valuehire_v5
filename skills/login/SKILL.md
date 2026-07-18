@@ -62,12 +62,12 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 
 사람에게 인증을 넘기기 전에 정확한 CDP target과 macOS 창을 다음 순서로 1:1 결합한다.
 
-1. 관리된 site endpoint를 가진 **정확한 기존 Chrome 프로세스**의 명령행에서 `--remote-debugging-port`, `--user-data-dir`, browser PID를 결합한다. page target WebSocket의 `SystemInfo.getProcessInfo`에 PID를 묻거나 포트를 추측하지 않는다. 같은 endpoint/profile을 주장하는 루트 프로세스가 0개 또는 여러 개면 중단한다.
+1. 관리된 site endpoint를 가진 **정확한 기존 Chrome 프로세스**의 명령행에서 `--remote-debugging-port`, `--user-data-dir`, browser PID를 결합한다. macOS `ps -o command=`가 argv 따옴표를 보존하지 않으므로 다음 ` --flag` 경계까지를 값으로 읽어 공백 포함 profile path를 자르지 않는다. page target WebSocket의 `SystemInfo.getProcessInfo`에 PID를 묻거나 포트를 추측하지 않는다. 같은 endpoint/profile을 주장하는 루트 프로세스가 0개 또는 여러 개면 중단한다.
 2. 그 endpoint의 정확한 기존 target id와 `Browser.getWindowForTarget` bounds를 읽고, 스킬 폴더 기준 상대 경로 `scripts/macos_window_locator.swift`를 실행한다. 먼저 title marker 없이 **같은 PID + CDP bounds**로 현재 Space 밖 창까지 포함해 유일한 CGWindowID를 preflight한다. 0개이거나 여러 개면 어떤 title·배지·focus도 보내지 않고 fail-closed 한다.
-3. 인계 직전 해당 target에만 `[LOGIN HERE][<agent>][<site>][<target-id-suffix>]` **title prefix**와 `vh-automation-badge`를 붙인다. 그 다음 **같은 PID + 같은 bounds + prefix marker**로 다시 해석한 CGWindowID가 preflight와 같을 때만 `Page.bringToFront`와 PID-bound `NSRunningApplication.activate`를 각각 fresh guard 뒤 1회 실행한다. 활성화 후 같은 CGWindowID가 on-screen인지 다시 증명한다. title `contains`나 첫 창 fallback은 금지다.
+3. 인계 직전 해당 target에만 `[LOGIN HERE][<agent>][<site>][<target-id-suffix>]` **title prefix**와 `vh-automation-badge`를 붙인다. 비활성 탭의 `document.title`은 OS 창 제목에 아직 반영되지 않으므로 fresh guard 뒤 `Page.bringToFront`를 먼저 1회 실행하고, 그 다음 **같은 PID + 같은 bounds + prefix marker**로 다시 해석한 CGWindowID가 preflight와 같은지 확인한다. 이어 PID-bound `NSRunningApplication.activate`를 fresh guard 뒤 1회 실행하고, 활성화 후 같은 CGWindowID가 on-screen이면서 전역 최상단 layer-0 창인지 증명한다. title `contains`나 첫 창 fallback은 금지다.
 4. 사용자에게 agent, site, 브라우저 PID, profile path, CDP endpoint, target id 끝자리, 정제한 title, query/fragment를 제거한 URL, CGWindowID, 앱 활성화 증거를 반드시 표시한다.
-5. 스크린샷이 필요하면 전체 화면이 아니라 `screencapture -x -l <CGWindowID>`로 그 창만 캡처한다. 다른 PID의 창 제목은 출력하거나 캡처하지 않는다.
-6. `HUMAN_AUTH` 진입 후에는 5초 이상 간격으로 fresh 로그인 마커와 OS idle만 읽는다. 시간제한은 없으며, 성공 마커와 마지막 사람 입력 후 15초 조용함이 모두 성립해야 재개한다.
+5. 스크린샷이 필요하면 전체 화면이 아니라 `screencapture -x -l <CGWindowID>`로 그 창만 캡처한다. 다른 PID의 창 제목은 출력하거나 캡처하지 않는다. 0700 임시 디렉터리와 0600 PNG 삭제가 실패하면 성공으로 숨기지 않고 fail-closed 한다.
+6. `HUMAN_AUTH` 진입 후에는 5초 이상 간격으로 fresh 로그인 마커와 OS idle만 읽는다. 시간제한은 없으며, 성공 마커, `owner_activity_detected=false`, 마지막 사람 입력 후 15초 조용함이 모두 성립해야 재개한다.
 
 ### 세 에이전트 공용 점유권
 
@@ -174,7 +174,7 @@ PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \
   --target-id '<existing-target-id>'
 ```
 
-이 명령은 정확한 창을 1회 표시한 뒤 locator JSON을 출력하고, `HUMAN_AUTH` 동안 timeout 없이 읽기 전용으로 기다린다. Ctrl-C 같은 명시적 외부 중단에서도 창·탭·프로필은 유지하고 CDP 연결만 해제한다.
+이 명령은 lease 충돌이나 `HUMAN_ACTIVE`를 종료 오류로 취급하지 않고 브라우저 무조작 상태로 기다린다. 허용 상태가 되면 정확한 창을 1회 표시한 뒤 locator JSON을 출력하고, `HUMAN_AUTH` 동안 timeout 없이 읽기 전용으로 기다린다. 정상 완료·명시적 stop·Ctrl-C·표시/출력/대기 예외 모두에서 fresh guard로 title/배지 cleanup을 시도하고, 막히면 `cleanup_pending`으로 둔 채 창·탭·프로필은 유지하고 CDP 연결만 해제한다.
 
 세션 유지는 아래 정식 진입점만 쓴다. `--safe-target-json`은 사람이 사전 감사한 정확한 기존 target의 동일 origin·GET·`_self`·무료 읽기 전용 링크 레코드여야 한다. 최소한 `target_id`, `source_url`, `selector`, `destination_url`, `method`, `target_attr`, `download`, `dedicated_tab`, `clean_form`, `previously_opened_free`, `risk_labels`를 담는다. 레코드가 있어도 실행기가 위험 URL/selector denylist, 동일 origin, fresh DOM link 속성, target id, navigation history 추가·복원을 다시 증명한다. 파일이 없거나 값/증명이 하나라도 틀리면 fail-closed SKIP한다.
 
@@ -185,7 +185,7 @@ PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard keepalive \
   --safe-target-json '<pre-audited-safe-target.json>'
 ```
 
-keepalive는 동일 target의 allowlist 링크 1회 click과 `Page.navigateToHistoryEntry(previous_entry)` Browser Back 왕복만 허용한다. 새 탭·새 창·`goto(source_url)` fallback·재시도는 없다.
+keepalive는 동일 target의 allowlist 링크 1회 click과 `Page.navigateToHistoryEntry(previous_entry)` Browser Back 왕복만 허용한다. URL·selector는 최대 4회 percent-decode한 표면까지 위험 토큰을 검사하고, 남은 percent triplet은 거부한다. click과 Back의 비동기 이동은 exact target·URL·로그인·history를 연속 2회 안정 확인하며 auth probe 직후 target을 다시 읽는다. 새 탭·새 창·`goto(source_url)` fallback·재시도는 없다.
 
 ## 5. 사이트별 결정적 증명
 
@@ -243,10 +243,10 @@ KEEPALIVE 규칙:
 4. 허용 대상은 이미 정상적으로 무료 열람했던 프로필 상세 또는 talent pool/home 안의 allowlist 링크다. 새 후보, 유료/차감 프로필, `target=_blank`, download, 팝업, 모달, 저장, 제안, InMail, Send는 0회다.
 5. 클릭 전 source target id, 정확한 source URL, `Page.getNavigationHistory`의 현재 entry와 이전 entry를 기록한다.
 6. 사이트 lease token + OS idle 2회 + 1초 dwell의 새 mutation guard를 통과한 뒤 allowlist 링크를 단 1회 클릭한다.
-7. 동일 target id, 예상한 destination URL, fresh 로그인 마커를 확인한다. 하나라도 다르면 성공으로 기록하지 않고 중단한다.
+7. 동일 target id, 예상한 destination URL, fresh 로그인 마커, source→destination history를 **연속 2회** 확인한다. auth probe 직후 target/URL을 다시 읽어 즉시 checkpoint로 redirect된 표본을 성공으로 인정하지 않는다. 하나라도 다르면 성공으로 기록하지 않고 중단한다.
 8. 복원 직전 lease/idle mutation guard를 **새로** 통과한 후 `Page.navigateToHistoryEntry(previous_entry)`로 Browser Back한다. `goto(source_url)` fallback과 재시도는 금지다.
 9. 클릭 후 사람 활동이 감지되거나 두 번째 guard가 실패하면 Back을 보내지 않고 `restore_pending=true`로 두어 사람에게 양보한다.
-10. 동일 target id·정확한 원래 URL·fresh 로그인 마커가 모두 복원된 후에만 `last_verified_at`, `last_keepalive_at`, `session_age_seconds`를 갱신한다.
+10. 동일 target id·정확한 원래 URL·fresh 로그인 마커·원래 history entry가 **연속 2회** 복원된 후에만 `last_verified_at`, `last_keepalive_at`, `session_age_seconds`를 갱신한다.
 11. 로그인 화면으로 바뀌면 반복 새로고침하지 않고 `AUTH_LOST`로 전이한다.
 
 KEEPALIVE는 세션 영구 보장을 뜻하지 않는다. 실제로 관찰한 지속시간만 보고한다.
