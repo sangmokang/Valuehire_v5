@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import tempfile
+import uuid
 from pathlib import Path
 
 
@@ -11,30 +13,79 @@ AGENT_DIRS = {
     "codex": ".codex",
     "hermes": ".hermes",
 }
-REQUIRED_FILES = ("SKILL.md", "browser-control-contract.json")
+REQUIRED_FILES = (
+    "SKILL.md",
+    "browser-control-contract.json",
+    "scripts/macos_window_locator.swift",
+)
+
+
+def _validate_source_tree(source: Path) -> None:
+    for relative_name in REQUIRED_FILES:
+        path = source / relative_name
+        if not path.is_file() or path.stat().st_size == 0:
+            raise FileNotFoundError(f"login skill source missing or empty: {path}")
+    for path in (source, *source.rglob("*")):
+        if path.is_symlink():
+            raise ValueError(f"login skill source symlink rejected: {path}")
+
+
+def _staged_tree(source: Path, staging_root: Path, agent: str) -> Path:
+    staged = staging_root / agent
+    shutil.copytree(source, staged, copy_function=shutil.copy2)
+    return staged
 
 
 def install_login_skill(*, repo_root: Path, home: Path) -> dict[str, str]:
-    """정본 두 파일만 세 에이전트의 `skills/login`에 멱등 설치한다."""
+    """정본 login 트리 전체를 세 에이전트 폴더에 멱등·stale-free 설치한다."""
     source = Path(repo_root).resolve() / "skills" / "login"
     home = Path(home).expanduser().resolve()
-    for name in REQUIRED_FILES:
-        path = source / name
-        if not path.is_file() or path.stat().st_size == 0:
-            raise FileNotFoundError(f"login skill source missing or empty: {path}")
+    # Validate the complete source before touching any agent installation.
+    _validate_source_tree(source)
 
-    installed: dict[str, str] = {}
-    for agent, hidden_dir in AGENT_DIRS.items():
-        target = home / hidden_dir / "skills" / "login"
-        target.mkdir(parents=True, exist_ok=True)
-        for name in REQUIRED_FILES:
-            src = source / name
-            dst = target / name
-            tmp = target / f".{name}.tmp"
-            shutil.copyfile(src, tmp)
-            tmp.replace(dst)
-        installed[agent] = str(target)
-    return installed
+    home.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(tempfile.mkdtemp(prefix=".login-skill-stage-", dir=home))
+    targets = {
+        agent: home / hidden_dir / "skills" / "login"
+        for agent, hidden_dir in AGENT_DIRS.items()
+    }
+    staged: dict[str, Path] = {}
+    backups: dict[str, Path] = {}
+    installed_agents: list[str] = []
+    try:
+        # Build every replacement first so a copy failure cannot partially
+        # update one agent while leaving the others on the previous version.
+        for agent in AGENT_DIRS:
+            staged[agent] = _staged_tree(source, staging_root, agent)
+
+        try:
+            for agent, target in targets.items():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.is_symlink():
+                    raise ValueError(f"login skill target symlink rejected: {target}")
+                if target.exists():
+                    backup = target.parent / f".login-backup-{uuid.uuid4().hex}"
+                    target.replace(backup)
+                    backups[agent] = backup
+
+            for agent, target in targets.items():
+                staged[agent].replace(target)
+                installed_agents.append(agent)
+        except Exception:
+            for agent in reversed(installed_agents):
+                target = targets[agent]
+                if target.exists():
+                    shutil.rmtree(target)
+            for agent, backup in backups.items():
+                if backup.exists():
+                    backup.replace(targets[agent])
+            raise
+
+        for backup in backups.values():
+            shutil.rmtree(backup)
+        return {agent: str(target) for agent, target in targets.items()}
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
 
 
 def main(argv: list[str] | None = None) -> int:
