@@ -78,6 +78,8 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("checkVisibility", js)
         self.assertIn("backgroundColor", js)
         self.assertIn("important", js)
+        self.assertNotIn("r.left+2,r.bottom-2", js)
+        self.assertIn("r.width*0.25", js)
 
     def test_clear_js_removes_by_id(self):
         js = raw_cdp._clear_js()
