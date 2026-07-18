@@ -31,6 +31,9 @@ def _ownership_js(expected_url: str, badge_label: str, action: str = "return tru
         f"if(location.href!=={json.dumps(expected_url)})return false;"
         f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
         f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
+        "var s=window.getComputedStyle(b),r=b.getBoundingClientRect();"
+        "if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0'||"
+        "r.width<=0||r.height<=0)return false;"
         + action
         + "})()"
     )
@@ -248,7 +251,48 @@ class RawPage:
         deadline = loop.time() + timeout_seconds
         await _run_mutation_guard(self._mutation_guard)
         if self._require_badge:
-            await self._prove_dom_ownership(origin_url)
+            label = str(getattr(self._tab, "_badge_label", "") or "")
+            navigator = getattr(self._tab, "navigate_if_owned", None)
+            lifecycle = getattr(self._tab, "wait_for_next_lifecycle", None)
+            if not origin_url or not label or not callable(navigator) or not callable(lifecycle):
+                raise RuntimeError("raw atomic navigation/loader proof is unavailable")
+            navigation = await asyncio.wait_for(
+                _tab_call(
+                    self._tab,
+                    "navigate_if_owned",
+                    url,
+                    expected_url=origin_url,
+                    badge_label=label,
+                ),
+                timeout=timeout_seconds,
+            )
+            if not isinstance(navigation, dict) or navigation.get("ownershipAcknowledged") is not True:
+                raise RuntimeError("raw DOM ownership proof failed before navigation")
+            cursor = navigation.get("lifecycleCursor")
+            if isinstance(cursor, bool) or not isinstance(cursor, int):
+                raise RuntimeError("raw navigation loader proof is missing")
+            if wait_until is None:
+                wait_until = "domcontentloaded"
+            lifecycle_name = {
+                "domcontentloaded": "DOMContentLoaded",
+                "load": "load",
+                "networkidle": "networkIdle",
+                "commit": "init",
+            }.get(wait_until, "DOMContentLoaded")
+            remaining = max(0.001, deadline - loop.time())
+            await asyncio.wait_for(
+                _tab_call(
+                    self._tab,
+                    "wait_for_next_lifecycle",
+                    cursor,
+                    lifecycle_name,
+                    remaining,
+                ),
+                timeout=remaining,
+            )
+            self._url = url
+            await self._refresh_busy_badge(expected_url=url)
+            return
         action = _tab_call(self._tab, "navigate", url, wait_ms=0)
         navigation = await asyncio.wait_for(action, timeout=timeout_seconds)
         if isinstance(navigation, dict):
@@ -260,15 +304,9 @@ class RawPage:
         loader_id = ""
         if isinstance(navigation, dict):
             loader_id = str(navigation.get("loaderId") or "")
-        if self._require_badge and not loader_id:
-            raise RuntimeError("raw navigation loader proof is missing")
         if wait_until is None:
-            if not self._require_badge:
-                return
-            wait_until = "domcontentloaded"
+            return
         lifecycle = getattr(self._tab, "wait_for_lifecycle", None)
-        if self._require_badge and not callable(lifecycle):
-            raise RuntimeError("raw navigation lifecycle proof is unavailable")
         if loader_id and callable(lifecycle):
             lifecycle_name = {
                 "domcontentloaded": "DOMContentLoaded",

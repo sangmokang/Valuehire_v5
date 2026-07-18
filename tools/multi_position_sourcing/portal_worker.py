@@ -968,6 +968,21 @@ class PortalWorker:
             raise ProfileLockError("owner idle proof did not increase during quiet dwell")
         self._lock.assert_owned()
 
+    async def _attach_raw_target_cancellation_safe(self, attach: Any, target: dict) -> Any:
+        attach_task = asyncio.create_task(asyncio.to_thread(attach, target, badge=False))
+        cancelled = False
+        while not attach_task.done():
+            try:
+                await asyncio.shield(attach_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+        tab = await attach_task
+        self._raw_tab = tab
+        if cancelled:
+            raise asyncio.CancelledError
+        return tab
+
     @property
     def context(self) -> Any:
         if self._context is None:
@@ -1016,7 +1031,10 @@ class PortalWorker:
                 if not badge_label:
                     raise RuntimeError("visible automation marker is required for raw mode")
                 await asyncio.to_thread(self._assert_raw_mutation_allowed)
-                self._raw_tab = raw_cdp.attach(target, badge=False)
+                self._raw_tab = await self._attach_raw_target_cancellation_safe(
+                    raw_cdp.attach,
+                    target,
+                )
                 fresh_url = str(
                     await asyncio.to_thread(self._raw_tab.eval, "location.href") or ""
                 )
@@ -1031,12 +1049,18 @@ class PortalWorker:
                 self._lock.assert_owned()
                 if not url_matches_channel_surface(self.config.channel, fresh_url):
                     raise RuntimeError("attached target changed during ownership guard")
-                if self._raw_tab.mark_busy(
-                    badge_label,
-                    expected_url=fresh_url,
-                ) is not True:
+                marker_applied = False
+                try:
+                    marker_applied = self._raw_tab.mark_busy(
+                        badge_label,
+                        expected_url=fresh_url,
+                    ) is True
+                finally:
+                    self._raw_badge_applied = marker_applied or bool(
+                        getattr(self._raw_tab, "badge_application_uncertain", False)
+                    )
+                if not marker_applied:
                     raise RuntimeError("visible automation marker could not be applied")
-                self._raw_badge_applied = True
                 self._raw_page = RawPage(
                     self._raw_tab,
                     initial_url=fresh_url,
@@ -1111,7 +1135,8 @@ class PortalWorker:
         handed_off = False
         try:
             if not self._raw_badge_applied:
-                await self._invoke_raw_tab_method(tab, "disconnect")
+                if not await self._invoke_raw_tab_method(tab, "disconnect"):
+                    raise RuntimeError("raw target socket disconnect failed")
                 handed_off = True
                 return
             while True:
@@ -1121,7 +1146,8 @@ class PortalWorker:
                     try:
                         self._lock.assert_owned()
                     except ProfileLockError:
-                        await self._invoke_raw_tab_method(tab, "disconnect")
+                        if not await self._invoke_raw_tab_method(tab, "disconnect"):
+                            raise RuntimeError("raw target socket disconnect failed")
                         handed_off = True
                         return
                     await self._handoff_sleep(5.0)

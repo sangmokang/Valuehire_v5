@@ -90,11 +90,38 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
     )
 
 
-def _clear_js() -> str:
+def _clear_js(*, expected_url: str | None = None) -> str:
+    url_guard = ""
+    if expected_url is not None:
+        url_guard = (
+            f"if(location.href!=={json.dumps(expected_url, ensure_ascii=False)})"
+            "{return false;}"
+        )
     return (
         "(function(){"
-        f"var e=document.getElementById({json.dumps(_BADGE_ID)});"
+        + url_guard
+        + f"var e=document.getElementById({json.dumps(_BADGE_ID)});"
         "if(e){e.remove();}return true;})()"
+    )
+
+
+def _owned_navigation_js(
+    url: str,
+    *,
+    expected_url: str,
+    badge_label: str,
+) -> str:
+    return (
+        "(function(){"
+        f"if(location.href!=={json.dumps(expected_url)})return false;"
+        f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
+        f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
+        "var s=window.getComputedStyle(b),r=b.getBoundingClientRect();"
+        "if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0'||"
+        "r.width<=0||r.height<=0)return false;"
+        f"var u={json.dumps(url)};"
+        "setTimeout(function(){location.assign(u);},0);"
+        "return true;})()"
     )
 
 
@@ -128,12 +155,21 @@ class CDPTab:
         )
         self._id = 0
         self._badge_label: str | None = None
+        self._badge_bound_url: str | None = None
+        self._badge_application_uncertain = False
         self._event_handlers: dict[str, list[Any]] = {}
         self._lifecycle_events: list[tuple[str, str]] = []
-        self.send("Page.enable")
-        self.send("Runtime.enable")
-        self.send("Network.enable")
-        self.send("Page.setLifecycleEventsEnabled", {"enabled": True})
+        try:
+            self.send("Page.enable")
+            self.send("Runtime.enable")
+            self.send("Network.enable")
+            self.send("Page.setLifecycleEventsEnabled", {"enabled": True})
+        except BaseException:
+            try:
+                self.ws.close()
+            except Exception:
+                pass
+            raise
 
     def on(self, event: str, handler: Any) -> None:
         """Register the small Playwright-style event surface used by the worker."""
@@ -191,11 +227,21 @@ class CDPTab:
         """화면에 '사용중' 배지를 띄운다. 라벨을 기억해 navigate 후 재주입한다.
         배지는 부가기능 — 주입 실패해도 예외를 던지지 않는다(실 서치 보호)."""
         self._badge_label = label
+        self._badge_bound_url = expected_url
+        self._badge_application_uncertain = True
         try:
             acknowledged = self.eval(_badge_js(label, expected_url=expected_url))
         except Exception:
             return False
-        return acknowledged == _BADGE_ID
+        self._badge_application_uncertain = False
+        if acknowledged == _BADGE_ID:
+            return True
+        self._badge_bound_url = None
+        return False
+
+    @property
+    def badge_application_uncertain(self) -> bool:
+        return bool(getattr(self, "_badge_application_uncertain", False))
 
     def clear_badge(self) -> None:
         self._badge_label = None
@@ -203,6 +249,24 @@ class CDPTab:
             self.eval(_clear_js())
         except Exception:
             pass
+
+    def navigate_if_owned(
+        self,
+        url: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+    ) -> dict[str, Any]:
+        cursor = len(self._lifecycle_events)
+        acknowledged = self.eval(_owned_navigation_js(
+            url,
+            expected_url=expected_url,
+            badge_label=badge_label,
+        ))
+        return {
+            "ownershipAcknowledged": acknowledged is True,
+            "lifecycleCursor": cursor,
+        }
 
     def navigate(self, url: str, wait_ms: int = 4000) -> dict:
         result = self.send("Page.navigate", {"url": url})
@@ -231,6 +295,27 @@ class CDPTab:
                 self._dispatch_event(message)
         raise TimeoutError(f"Page lifecycle event timed out: {event}")
 
+    def wait_for_next_lifecycle(
+        self,
+        cursor: int,
+        event: str,
+        timeout: float = 30.0,
+    ) -> str:
+        deadline = time.time() + timeout
+        start = max(0, int(cursor))
+        while time.time() < deadline:
+            for loader_id, name in self._lifecycle_events[start:]:
+                if name == event:
+                    return loader_id
+            self.ws.settimeout(max(0.1, deadline - time.time()))
+            try:
+                message = json.loads(self.ws.recv())
+            except Exception:
+                continue
+            if "method" in message:
+                self._dispatch_event(message)
+        raise TimeoutError(f"Page next lifecycle event timed out: {event}")
+
     def eval(self, expr: str) -> Any:
         r = self.send("Runtime.evaluate", {
             "expression": expr,
@@ -251,25 +336,29 @@ class CDPTab:
             f.write(data)
         return path
 
-    def disconnect(self) -> None:
+    def disconnect(self) -> bool:
         """Close only this raw WebSocket; never mutate or destroy the browser target."""
         try:
             self.ws.close()
         except Exception:
-            pass
+            return False
+        return getattr(self.ws, "connected", False) is not True
 
     def close(self) -> bool:
         # 작업 끝 → 배지 제거(사장님이 이어받을 때 '사용중' 잔상 안 남게).
         if getattr(self, "_badge_label", None):
             try:
-                acknowledged = self.eval(_clear_js())
+                acknowledged = self.eval(_clear_js(
+                    expected_url=getattr(self, "_badge_bound_url", None),
+                ))
             except Exception:
                 return False
             if acknowledged is not True:
                 return False
             self._badge_label = None
-        self.disconnect()
-        return True
+            self._badge_bound_url = None
+            self._badge_application_uncertain = False
+        return self.disconnect()
 
 
 def _maybe_auto_badge(tab: "CDPTab", env: Any) -> None:
