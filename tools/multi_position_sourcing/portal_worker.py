@@ -37,6 +37,38 @@ LINKEDIN_SINGLE_WORKER_ID = "default"
 CHROME_CDP_ENDPOINT_ENV = "VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT"
 DEFAULT_CHROME_CDP_ENDPOINT = "http://127.0.0.1:9222"
 
+# 채널별 CDP 포트·env — scripts/portal_browsers.sh:74-80 과 정확히 동일해야 한다(SOT 정합).
+# TODO-2b: 사람인·잡코리아도 이 포트로 뜬 크롬에 attach 하기 위한 기반(조각 A).
+_CHANNEL_CDP_DEFAULT_PORT = {"saramin": 9223, "jobkorea": 9224, "linkedin_rps": 9225}
+_CHANNEL_CDP_PORT_ENV = {
+    "saramin": "SARAMIN_PORT",
+    "jobkorea": "JOBKOREA_PORT",
+    "linkedin_rps": "LINKEDIN_PORT",
+}
+
+
+def resolve_channel_cdp_endpoint(
+    channel: str, *, value: str | None = None, env: Mapping[str, str] | None = None
+) -> str:
+    """채널→CDP HTTP endpoint 해석. portal_browsers.sh 포트와 정합.
+
+    우선순위: value(http) > 전역 env(VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT, http) >
+    채널별 포트 env(SARAMIN_PORT 등) > 채널 기본 포트(9223/9224/9225).
+    public_web 은 CDP 대상이 아니다 → ValueError.
+    """
+    if channel not in _CHANNEL_CDP_DEFAULT_PORT:
+        raise ValueError(f"channel {channel!r} 은 CDP attach 대상이 아니다(포털 채널만)")
+    if env is None:
+        env = os.environ
+    if value and value.strip().startswith("http"):
+        return value.strip()
+    genv = (env.get(CHROME_CDP_ENDPOINT_ENV) or "").strip()
+    if genv.startswith("http"):
+        return genv
+    port_raw = (env.get(_CHANNEL_CDP_PORT_ENV[channel]) or "").strip()
+    port = port_raw if port_raw.isdigit() else str(_CHANNEL_CDP_DEFAULT_PORT[channel])
+    return f"http://127.0.0.1:{port}"
+
 
 def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
     """Resolve the Chrome CDP endpoint.
