@@ -78,6 +78,7 @@ class MacWindowRef:
     title: str
     bounds: WindowBounds
     on_screen: bool
+    frontmost_layer0: bool
 
 
 def _default_swift_script() -> Path:
@@ -99,6 +100,7 @@ def _payload_window(value: Any) -> MacWindowRef | None:
     layer = value.get("layer")
     title = value.get("title")
     on_screen = value.get("on_screen")
+    frontmost_layer0 = value.get("frontmost_layer0")
     raw_bounds = value.get("bounds")
     if (
         isinstance(window_id, bool)
@@ -112,6 +114,7 @@ def _payload_window(value: Any) -> MacWindowRef | None:
         or layer != 0
         or not isinstance(title, str)
         or not isinstance(on_screen, bool)
+        or not isinstance(frontmost_layer0, bool)
         or not isinstance(raw_bounds, dict)
     ):
         return None
@@ -130,6 +133,7 @@ def _payload_window(value: Any) -> MacWindowRef | None:
         title=title,
         bounds=bounds,
         on_screen=on_screen,
+        frontmost_layer0=frontmost_layer0,
     )
 
 
@@ -141,6 +145,7 @@ def resolve_exact_macos_window(
     swift_script: Path | None = None,
     bounds_tolerance: float = DEFAULT_BOUNDS_TOLERANCE,
     require_on_screen: bool = True,
+    require_frontmost: bool = False,
 ) -> MacWindowRef:
     """Map a browser PID + CDP bounds + non-secret title marker to one CGWindow.
 
@@ -155,6 +160,8 @@ def resolve_exact_macos_window(
         raise WindowResolutionError("invalid window bounds tolerance")
     if not isinstance(require_on_screen, bool):
         raise WindowResolutionError("require_on_screen must be boolean")
+    if not isinstance(require_frontmost, bool):
+        raise WindowResolutionError("require_frontmost must be boolean")
     script = Path(swift_script) if swift_script is not None else _default_swift_script()
     if not script.is_file() or script.stat().st_size <= 0:
         raise WindowResolutionError("bundled Swift window locator is missing")
@@ -207,6 +214,8 @@ def resolve_exact_macos_window(
         if candidate.owner_pid != identity.browser_pid:
             continue
         if require_on_screen and candidate.on_screen is not True:
+            continue
+        if require_frontmost and candidate.frontmost_layer0 is not True:
             continue
         if identity.title_marker and not candidate.title.startswith(identity.title_marker):
             continue
@@ -299,4 +308,7 @@ def capture_exact_window_png(
     except OSError as exc:
         raise WindowResolutionError("secure exact-window capture failed") from exc
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception as exc:
+            raise WindowResolutionError("secure temporary capture cleanup failed") from exc
