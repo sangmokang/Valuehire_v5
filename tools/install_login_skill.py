@@ -113,6 +113,7 @@ def _validate_swift_locator(payload: bytes) -> None:
         "CGWindowListCopyWindowInfo",
         "kCGWindowOwnerPID",
         "kCGWindowNumber",
+        "frontmost_layer0",
         "NSRunningApplication",
         "--activate-pid",
     )
@@ -191,13 +192,55 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def _find_install_residues(home: Path) -> tuple[Path, ...]:
+    """Return only installer-owned transaction artifacts in known locations."""
+    residues: list[Path] = []
+    if home.is_dir():
+        residues.extend(
+            path
+            for path in home.iterdir()
+            if path.name.startswith(".login-skill-stage-")
+        )
+    for hidden_dir in AGENT_DIRS.values():
+        skills_root = home / hidden_dir / "skills"
+        if not skills_root.is_dir() or skills_root.is_symlink():
+            continue
+        residues.extend(
+            path
+            for path in skills_root.iterdir()
+            if path.name.startswith((".login-backup-", ".login-failed-"))
+        )
+    return tuple(sorted(residues, key=str))
+
+
+def _verify_source_unchanged(source: Path, expected_files: Mapping[str, bytes]) -> None:
+    try:
+        current_files = _validate_source_tree(source)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("login skill source changed during installation") from exc
+    if current_files != dict(expected_files):
+        raise RuntimeError("login skill source changed during installation")
+
+
+def _optional_tree_snapshot(
+    target: Path,
+) -> tuple[dict[str, bytes], frozenset[str]] | None:
+    if not _path_exists(target):
+        return None
+    return _tree_snapshot(target)
+
+
 def _rollback_install(
     *,
     targets: Mapping[str, Path],
     backups: Mapping[str, Path],
     install_attempts: frozenset[str],
-) -> None:
-    """Best-effort rollback of every target without ever masking the root failure."""
+    original_snapshots: Mapping[
+        str, tuple[dict[str, bytes], frozenset[str]] | None
+    ],
+) -> tuple[str, ...]:
+    """Best-effort rollback, returning every failure for an explicit verdict."""
+    failures: list[str] = []
     quarantines: list[Path] = []
     for agent in reversed(tuple(AGENT_DIRS)):
         target = targets[agent]
@@ -216,20 +259,39 @@ def _rollback_install(
                 try:
                     target.replace(quarantine)
                     quarantines.append(quarantine)
-                except BaseException:
-                    continue
+                except BaseException as exc:
+                    failures.append(
+                        f"{agent} target removal and quarantine failed: {type(exc).__name__}"
+                    )
         if backup_exists and backup is not None and not _path_exists(target):
             try:
                 backup.replace(target)
-            except BaseException:
+            except BaseException as exc:
                 # Leave the uniquely named backup in place for manual recovery.
-                continue
+                failures.append(f"{agent} backup restore failed: {type(exc).__name__}")
 
     for quarantine in quarantines:
         try:
             _remove_path(quarantine)
-        except BaseException:
-            pass
+        except BaseException as exc:
+            failures.append(
+                f"quarantine cleanup failed for {quarantine}: {type(exc).__name__}"
+            )
+
+    for agent, target in targets.items():
+        expected = original_snapshots[agent]
+        try:
+            actual = _optional_tree_snapshot(target)
+        except (OSError, ValueError) as exc:
+            failures.append(f"{agent} rollback verification failed: {type(exc).__name__}")
+            continue
+        if actual != expected:
+            failures.append(f"{agent} rollback verification failed: tree differs")
+
+    for agent, backup in backups.items():
+        if _path_exists(backup):
+            failures.append(f"{agent} backup residue remains: {backup}")
+    return tuple(failures)
 
 
 def _reject_target_symlink(target: Path, *, home: Path) -> None:
@@ -278,6 +340,12 @@ def install_login_skill(*, repo_root: Path, home: Path) -> dict[str, str]:
         # Re-read under the install lock and use these bytes as the immutable
         # transaction snapshot. Staging verifies concurrent source drift.
         expected_files = _validate_source_tree(source)
+        preexisting_residues = _find_install_residues(home)
+        if preexisting_residues:
+            raise RuntimeError(
+                "login skill installer residue requires manual recovery: "
+                + ", ".join(str(path) for path in preexisting_residues)
+            )
         staging_root = Path(tempfile.mkdtemp(prefix=".login-skill-stage-", dir=home))
         targets = {
             agent: home / hidden_dir / "skills" / "login"
@@ -286,13 +354,19 @@ def install_login_skill(*, repo_root: Path, home: Path) -> dict[str, str]:
         staged: dict[str, Path] = {}
         backups: dict[str, Path] = {}
         install_attempts: set[str] = set()
+        original_snapshots: dict[
+            str, tuple[dict[str, bytes], frozenset[str]] | None
+        ] = {}
+
+        # Preparation is still non-mutating with respect to all three target
+        # trees. A staging cleanup failure is nevertheless an install failure,
+        # never a successful return with a hidden residue.
         try:
             for agent in AGENT_DIRS:
                 staged[agent] = _staged_tree(source, staging_root, agent, expected_files)
 
             # Reject source additions or edits that raced the staging copy.
-            if _validate_source_tree(source) != expected_files:
-                raise RuntimeError("login skill source changed during installation")
+            _verify_source_unchanged(source, expected_files)
 
             # Reject every unsafe destination before moving the first target.
             for target in targets.values():
@@ -302,48 +376,113 @@ def install_login_skill(*, repo_root: Path, home: Path) -> dict[str, str]:
             for target in targets.values():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 _reject_target_symlink(target, home=home)
-
+            original_snapshots = {
+                agent: _optional_tree_snapshot(target)
+                for agent, target in targets.items()
+            }
+        except BaseException as exc:
             try:
-                for agent, target in targets.items():
-                    if target.exists():
-                        backup = target.parent / f".login-backup-{uuid.uuid4().hex}"
-                        # Record the planned path before replace so rollback
-                        # also handles an interrupt raised just after rename.
-                        backups[agent] = backup
-                        target.replace(backup)
+                _remove_path(staging_root)
+            except BaseException as cleanup_exc:
+                raise RuntimeError(
+                    "login skill preparation cleanup incomplete: "
+                    f"{type(cleanup_exc).__name__}"
+                ) from exc
+            raise
 
-                for agent, target in targets.items():
-                    # Likewise, mark the attempt before replace in case a
-                    # wrapper raises after the atomic rename completed.
-                    install_attempts.add(agent)
-                    staged[agent].replace(target)
+        try:
+            for agent, target in targets.items():
+                if target.exists():
+                    backup = target.parent / f".login-backup-{uuid.uuid4().hex}"
+                    # Record the planned path before replace so rollback also
+                    # handles an interrupt raised just after the rename.
+                    backups[agent] = backup
+                    target.replace(backup)
 
-                # All three trees must match recursively before any backup is
-                # destroyed. A mismatch is an install failure and rolls back.
-                for agent, target in targets.items():
-                    _verify_tree_matches(target, expected_files, label=f"{agent} post-install")
-            except BaseException:
+            for agent, target in targets.items():
+                # Mark the attempt before replace in case a wrapper raises
+                # after the atomic rename completed.
+                install_attempts.add(agent)
+                staged[agent].replace(target)
+
+            # Verify all replacements and then re-read the canonical source.
+            # This late check closes source drift after the first target swap.
+            for agent, target in targets.items():
+                _verify_tree_matches(target, expected_files, label=f"{agent} post-install")
+            _verify_source_unchanged(source, expected_files)
+        except BaseException as exc:
+            rollback_failures = list(
                 _rollback_install(
                     targets=targets,
                     backups=backups,
                     install_attempts=frozenset(install_attempts),
+                    original_snapshots=original_snapshots,
                 )
-                raise
-
-            # Post-install verification is complete: backups are no longer
-            # needed. Cleanup is best-effort and cannot invalidate installed
-            # trees that have already been proven byte-identical.
-            for backup in backups.values():
-                try:
-                    _remove_path(backup)
-                except BaseException:
-                    pass
-            return {agent: str(target) for agent, target in targets.items()}
-        finally:
+            )
             try:
                 _remove_path(staging_root)
-            except BaseException:
-                pass
+            except BaseException as cleanup_exc:
+                rollback_failures.append(
+                    f"staging cleanup failed: {type(cleanup_exc).__name__}"
+                )
+            rollback_residues = _find_install_residues(home)
+            if rollback_residues:
+                rollback_failures.append(
+                    "transaction residue remains: "
+                    + ", ".join(str(path) for path in rollback_residues)
+                )
+            if rollback_failures:
+                raise RuntimeError(
+                    "login skill rollback incomplete; manual recovery required: "
+                    + "; ".join(rollback_failures)
+                ) from exc
+            raise
+
+        # Replacement is committed only if every cleanup succeeds and a final
+        # source/target/residue gate still proves one exact canonical tree.
+        cleanup_failures: list[str] = []
+        for backup in backups.values():
+            try:
+                _remove_path(backup)
+            except BaseException as exc:
+                cleanup_failures.append(
+                    f"backup cleanup failed for {backup}: {type(exc).__name__}"
+                )
+        try:
+            _remove_path(staging_root)
+        except BaseException as exc:
+            cleanup_failures.append(
+                f"staging cleanup failed for {staging_root}: {type(exc).__name__}"
+            )
+
+        final_failures: list[str] = []
+        try:
+            _verify_source_unchanged(source, expected_files)
+        except RuntimeError as exc:
+            final_failures.append(str(exc))
+        for agent, target in targets.items():
+            try:
+                _verify_tree_matches(target, expected_files, label=f"{agent} final")
+            except RuntimeError as exc:
+                final_failures.append(str(exc))
+        residues = _find_install_residues(home)
+        if residues:
+            cleanup_failures.append(
+                "transaction residue remains: "
+                + ", ".join(str(path) for path in residues)
+            )
+
+        if final_failures:
+            details = final_failures + cleanup_failures
+            raise RuntimeError(
+                "login skill final verification failed: " + "; ".join(details)
+            )
+        if cleanup_failures:
+            raise RuntimeError(
+                "login skill cleanup incomplete; manual recovery required: "
+                + "; ".join(cleanup_failures)
+            )
+        return {agent: str(target) for agent, target in targets.items()}
 
 
 def main(argv: list[str] | None = None) -> int:

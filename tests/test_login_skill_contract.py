@@ -175,6 +175,7 @@ def test_codex_sync_classifies_login_as_full(tmp_path: Path) -> None:
 def test_machine_contract_is_identical_and_fail_closed() -> None:
     canonical = json.loads(_text(CONTRACT))
     assert _text(CONTRACT) == _text(CLAUDE_CONTRACT)
+    assert canonical["schema_version"] == "1.3.0"
     assert canonical["state_machine"]["HUMAN_AUTH"]["allowed_actions"] == ["read_state", "wait"]
     assert canonical["state_machine"]["HUMAN_AUTH"]["timeout_seconds"] is None
     assert canonical["browser_limits"] == {
@@ -203,13 +204,24 @@ def test_machine_contract_is_identical_and_fail_closed() -> None:
     assert canonical["exact_window"]["resolver"] == "Swift CoreGraphics"
     assert canonical["exact_window"]["ambiguity"] == "fail_closed"
     assert canonical["exact_window"]["capture"] == "screencapture -x -l <CGWindowID>"
+    assert canonical["exact_window"][
+        "require_exact_cg_window_id_frontmost_layer0_after_activation"
+    ] is True
+    assert canonical["exact_window"]["capture_cleanup_failure"] == "fail_closed"
     assert canonical["human_auth"]["max_presentations_per_episode"] == 1
     assert canonical["human_auth"]["minimum_poll_seconds"] == 5
     assert canonical["human_auth"]["quiet_after_owner_input_seconds"] == 15
     assert canonical["human_auth"]["timeout_seconds"] is None
+    assert canonical["human_auth"]["success_requires_owner_activity_detected_false"] is True
+    assert canonical["human_auth"]["cleanup_attempted_on_stop_or_base_exception"] is True
     assert canonical["badge"]["required_before_first_mutation"] is True
     assert canonical["ownership_lease"]["acquire"] == "atomic_mkdir"
     assert canonical["ownership_lease"]["required_before_discover_or_create"] is True
+    assert canonical["managed_process"]["profile_flag_parser"] == (
+        "macos_ps_unquoted_long_option_boundaries"
+    )
+    assert canonical["keepalive"]["safe_link"]["unsafe_url_decode_passes"] == 4
+    assert canonical["keepalive"]["stable_consecutive_target_auth_history_proofs"] == 2
     assert canonical["mutation_guard"] == {
         "required_before_every_mutation": True,
         "idle_checks": 2,
@@ -248,6 +260,7 @@ def test_installer_targets_only_three_agent_skill_directories(tmp_path: Path) ->
         assert _tree_bytes(target) == _tree_bytes(CANONICAL_DIR)
         assert not (target / "stale.txt").exists()
         assert (target.parent / "sibling" / "sentinel").read_text() == "keep me"
+    assert _installer_residues(tmp_path) == []
 
 
 def test_login_tree_contains_bundled_swift_window_locator() -> None:
