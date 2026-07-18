@@ -64,6 +64,24 @@ class FakeRawTab:
             raise AssertionError("Playwright timeout was misused as a fixed raw sleep")
         return {"loaderId": "fake-loader"}
 
+    def navigate_if_owned(
+        self,
+        url: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+    ) -> dict[str, object]:
+        if self.eval("location.href") != expected_url or not badge_label:
+            return {"ownershipAcknowledged": False, "lifecycleCursor": 0}
+        self.navigation_calls += 1
+        self.last_navigation_url = url
+        return {"ownershipAcknowledged": True, "lifecycleCursor": 0}
+
+    def wait_for_next_lifecycle(self, cursor: int, event: str, _timeout: float) -> str:
+        if (cursor, event) != (0, "DOMContentLoaded"):
+            raise AssertionError("atomic navigation must await the next exact lifecycle")
+        return "fake-loader"
+
     def wait_for_lifecycle(self, loader_id: str, event: str, _timeout: float) -> None:
         if (loader_id, event) != ("fake-loader", "DOMContentLoaded"):
             raise AssertionError("navigation must wait for the exact new loader")
@@ -792,6 +810,57 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(worker.config.lock_path.exists())
             finally:
                 worker._lock.release()
+
+    async def test_slow_attach_does_not_freeze_event_loop_and_cancel_cleans_socket(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+        entered = threading.Event()
+        release = threading.Event()
+        tab = FakeRawTab()
+
+        def slow_attach(_target: dict, badge: bool = True):
+            self.assertFalse(badge)
+            entered.set()
+            release.wait(timeout=0.6)
+            return tab
+
+        with TemporaryDirectory(prefix="raw-slow-attach-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            side_effect=slow_attach,
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
+            )
+            loop = asyncio.get_running_loop()
+            started_at = loop.time()
+            task = asyncio.create_task(worker.start())
+            await asyncio.to_thread(entered.wait, 1.0)
+            self.assertLess(loop.time() - started_at, 0.25)
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(tab.disconnect_calls, 1)
+            self.assertFalse(worker.config.lock_path.exists())
 
     async def test_cancelled_stop_finishes_badge_and_socket_handoff_before_unlock(self) -> None:
         entered = threading.Event()
