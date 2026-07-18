@@ -1,0 +1,39 @@
+{
+  "claim_id": "discord-idempotent-enqueue-01",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "enqueue 가 idempotency_key 409 충돌 시 기존 잡을 회수해 반환(같은 이벤트 2회→잡 1개), 409/기타 HTTP 오류의 raw DB 본문은 JobQueueConflictError 로 감싸 미노출. job_by_idempotency_key 조회 헬퍼 추가.",
+    "changed_files": [
+      "tools/multi_position_sourcing/job_queue.py",
+      "tests/test_idempotent_enqueue.py"
+    ],
+    "red_evidence": "RED 커밋: ImportError(JobQueueConflictError 부재)로 collection 실패.",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "focused 91 passed. 전체 ./verify.sh(V1 수정 후): 1754 passed, 4 xfailed, 102 subtests passed in 41.81s (exit 0).",
+    "mutant_check": "M1 409회수 무력화→returns_existing 1 failed. M2 redact 제거→leak/redacted 3 failed. M3 idem 문자열강제 되돌림(and idem_raw)→int_zero 1 failed. 전부 감지·원복(커밋 후).",
+    "wiring": "enqueue 호출부 fleet_dispatch.py:159·discord_command_listener.py:200·fleet_worker.py:948/994. idempotency_key 생산: hermes_fleet_bridge.py:186(명시)·:326(자연어 idempotency:discord:<msg_id>). 실경로 연결 확인(고아 0)."
+  },
+  "v1": {
+    "author": "Codex CLI read-only. tasks/bw7o6hhvb.output.",
+    "verdict": "fail ('합치면 안 됩니다')",
+    "findings": [
+      "F4: idempotency_key=0(int) 은 유효 payload 지만 'and idem' 거짓값이라 회수 스킵 — DB 부분인덱스(params->>key 문자열 non-empty)와 불일치. → idem='' if None else str(idem_raw) 로 인덱스 의미에 정합. RED 선커밋 후 봉인.",
+      "F5: '중복' 테스트가 enqueue 를 1회만 호출(실제 2회 아님). → 상태 있는 fake DB 로 실제 2회 호출·삽입 1회 단언 테스트 추가 + int0·빈키 경계 테스트 추가.",
+      "F3(범위밖): probe_auth 가 500 raw 본문 200자를 detail 로 반환→헬스알림 노출 가능(INV-D5). enqueue-or-get 와 무관한 기존 기동프로브 경로 — 하니스 '작업 중 새 문제 분리' 로 후속 조각 권고(고치지 않음).",
+      "결합(설계근거): 직결 키=discord:<msg_id> snowflake 서버측 파생(INV-D3)이라 같은키=같은메시지=같은내용 → 회수 정답. owner-agent 는 approval_sha256 추가결합. 임의 비-discord 키 내용검증은 수신기(INV-D3) 책임."
+    ],
+    "url_encoding_check": "V1 확인: &,=,공백,개행,/ → %26,%3D,%20,%0A,%2F 로 인코딩, 단일 필터+limit=1 만 생성(PostgREST injection 불가).",
+    "resolution": "F4·F5 봉인(RED→GREEN). F3·결합은 범위 판단 후 goal 비범위에 명시."
+  },
+  "failed_attempts": [],
+  "three_way_agree": true,
+  "status": "GREEN(1754 passed)+V1 F4/F5 봉인+V2 pass+뮤턴트 3/3 — 3자 일치, 배송 가능",
+  "v2": {
+    "author": "Claude reset subagent(수정본 대상). tasks/aa1af78d36daa991a.output.",
+    "verdict": "pass",
+    "evidence": "F4(int0 회수·빈키/None/공백 정합)·F5(실제2회→삽입1회)·raw미노출(from None __cause__=None, traceback 전체 SECRET 없음)·URL인코딩 injection불가·뮤턴트 3/3·회수조건↔DB인덱스 1:1(문자열/정수/공백/None/유니코드) 전부 실측 재현. 91 passed.",
+    "minor_note": "bool/float 스칼라 키는 Python str()('True'/'0.0')이 Postgres ->>('true'/'0')와 달라 회수를 놓칠 수 있으나 (a)실경로 키는 항상 문자열 discord:<snowflake> (b)오작동 방향이 fail-closed(오회수 아님) 라 비블로커. 후속 보강 권고."
+  }
+}
