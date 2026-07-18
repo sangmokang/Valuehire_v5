@@ -47,5 +47,42 @@ class RawPage:
   RawPage 로 이행(run_one_search 가 RawPage 로 그대로 돌게). page.on 모니터(재로그인 감지) 배선.
 - 조각 B3: 실크롬 라이브 검증(사람인 검색 1건, 세션 보존) — 사장님 입회.
 
+## 조각 B2 완결 계약 (2026-07-18, PR #149)
+
+전역 기본을 바꾸면 `portal_login`·스냅샷·복구가 요구하는 Playwright context가 깨진다.
+따라서 실제 운영 소비자는 `portal_live_check.run_profile_only_live_search` 한 경로만
+`connection_mode="raw_single_tab"`으로 opt-in 한다. 기존 guarded/login/snapshot 경로는
+이 PR의 비범위이며 기존 persistent-context 동작을 보존한다.
+
+입력 도메인:
+
+| 입력 | 허용 | 결과 |
+|---|---:|---|
+| `connection_mode="persistent_context"` | 예 | 기존 Playwright 경로 그대로 |
+| `connection_mode="raw_single_tab"`, 보호 포털 3사 | 예 | 기존 exact target 1개만 raw attach |
+| `type != "page"` | 아니오 | 후보에서 제외 |
+| `notsaramin.co.kr` 같은 부분문자열 룩얼라이크 | 아니오 | exact host 규칙으로 제외 |
+| 대상 사이트 target 없음/죽은 endpoint | 아니오 | `LookupError`, 새 창·새 탭 fallback 없음 |
+
+결정 표:
+
+| 상황 | attach | 브라우저/탭 생성 | 종료 |
+|---|---:|---:|---|
+| raw 검색 성공 | exact target 1개 | 0 | WebSocket+배지만 해제, 탭/창은 유지 |
+| raw 발견 실패 | 0 | 0 | fail-closed |
+| persistent 기본 | 기존 계약 | 기존 계약 | 기존 계약 |
+
+추가 인수 기준:
+
+- RawLocator는 생산 호출면 `nth/get_attribute/press`를 지원하여 카드가 조용히 0건으로
+  유실되지 않는다.
+- `RawPage.url`은 문자열 property이며, fresh URL 확인은 별도 async read로 로그인
+  리다이렉트를 검출한다.
+- Playwright `timeout=45000`은 raw `navigate(wait_ms=45000)`로 전달하지 않는다.
+- `find_verified_channel_target`은 endpoint와 exact target을 한 번에 반환하여 재탐색
+  TOCTOU를 만들지 않는다.
+- 실브라우저 쓰기 검증은 이번 턴에 하지 않는다. mock end-to-end에서 전체 브라우저
+  연결, 새 탭 생성, 브라우저·탭 파괴가 모두 0임을 먼저 증명한다.
+
 ## 적대 검증 로그
 - `portal-raw-attach-adapter.verdict.json` 참조.

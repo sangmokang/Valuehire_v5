@@ -20,6 +20,8 @@ class FakeTab:
     def __init__(self, results=None):
         self.evals: list[str] = []
         self.navigations: list[str] = []
+        self.navigation_waits: list[int] = []
+        self.events: list[tuple[str, object]] = []
         self._results = results or {}
 
     def eval(self, expr: str):
@@ -31,6 +33,10 @@ class FakeTab:
 
     def navigate(self, url: str, wait_ms: int = 0):
         self.navigations.append(url)
+        self.navigation_waits.append(wait_ms)
+
+    def on(self, event: str, handler: object) -> None:
+        self.events.append((event, handler))
 
 
 def _run(coro):
@@ -79,18 +85,30 @@ class RawPageAdapterTests(unittest.TestCase):
         page = RawPage(tab)
         self.assertEqual(_run(page.locator(".item").first.inner_text()), "첫번째")
 
+    def test_nth_get_attribute_and_press_cover_production_surface(self) -> None:
+        tab = FakeTab(results={"getAttribute": "/profile/42"})
+        page = RawPage(tab)
+        item = page.locator("a.profile").nth(2)
+        self.assertEqual(_run(item.get_attribute("href")), "/profile/42")
+        _run(item.press("Enter"))
+        self.assertTrue(any("[2]" in expr for expr in tab.evals))
+        self.assertIn("KeyboardEvent", tab.evals[-1])
+
     def test_goto_navigates_and_url_reads_location_href(self) -> None:
         tab = FakeTab(results={"location.href": "https://www.saramin.co.kr/x"})
         page = RawPage(tab)
-        _run(page.goto("https://www.saramin.co.kr/x"))
+        _run(page.goto("https://www.saramin.co.kr/x", timeout=45000))
         self.assertEqual(tab.navigations[-1], "https://www.saramin.co.kr/x")
-        self.assertEqual(_run(page.url()), "https://www.saramin.co.kr/x")
+        self.assertEqual(page.url, "https://www.saramin.co.kr/x")
+        self.assertEqual(_run(page.current_url()), "https://www.saramin.co.kr/x")
+        self.assertNotEqual(tab.navigation_waits[-1], 45000)
 
-    def test_on_is_noop_in_b1(self) -> None:
-        # 조각 B1: 이벤트 모니터는 아직 no-op(조각 B2). 예외만 안 나면 됨.
+    def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
         page = RawPage(tab)
-        page.on("response", lambda r: None)  # 예외 없이 통과
+        handler = lambda _response: None
+        page.on("response", handler)
+        self.assertEqual(tab.events, [("response", handler)])
 
 
 if __name__ == "__main__":

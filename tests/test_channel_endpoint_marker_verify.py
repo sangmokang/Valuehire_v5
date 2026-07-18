@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import unittest
 
-from tools.multi_position_sourcing.portal_worker import find_verified_channel_endpoint
+from tools.multi_position_sourcing.portal_worker import (
+    find_verified_channel_endpoint,
+    find_verified_channel_target,
+)
 
 
 def _tabs(*urls):
@@ -87,6 +90,51 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
     def test_public_web_rejected(self) -> None:
         with self.assertRaises(ValueError):
             find_verified_channel_endpoint("public_web", list_tabs=lambda ep: [], env={})
+
+    def test_exact_page_target_rejects_lookalike_host_and_non_page(self) -> None:
+        fake = {
+            "id": "fake",
+            "type": "page",
+            "url": "https://notsaramin.co.kr/zf_user/memcom",
+            "webSocketDebuggerUrl": "ws://fake",
+        }
+        worker = {
+            "id": "worker",
+            "type": "service_worker",
+            "url": "https://www.saramin.co.kr/zf_user/memcom",
+            "webSocketDebuggerUrl": "ws://worker",
+        }
+        exact = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+
+        endpoint, target = find_verified_channel_target(
+            "saramin",
+            list_tabs=lambda _endpoint: [fake, worker, exact],
+            env={},
+            candidate_endpoints=["http://remote.example:9338"],
+        )
+
+        self.assertEqual(endpoint, "http://remote.example:9338")
+        self.assertIs(target, exact)
+
+    def test_explicit_remote_endpoint_is_not_rewritten_to_loopback(self) -> None:
+        seen: list[str] = []
+
+        def list_tabs(endpoint: str):
+            seen.append(endpoint)
+            return _tabs("https://www.jobkorea.co.kr/Corp/Person/Find")
+
+        endpoint, _target = find_verified_channel_target(
+            "jobkorea",
+            list_tabs=list_tabs,
+            env={"VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT": "http://remote.example:9338"},
+        )
+        self.assertEqual(endpoint, "http://remote.example:9338")
+        self.assertEqual(seen[0], "http://remote.example:9338")
 
 
 if __name__ == "__main__":
