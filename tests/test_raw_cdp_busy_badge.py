@@ -227,10 +227,10 @@ class MarkBusyTests(unittest.TestCase):
             def eval(self, expr: str):
                 self.evals.append(expr)
                 return {
-                    "x": 0,
+                    "x": 20.25,
                     "y": 0,
-                    "width": 100,
-                    "height": 50,
+                    "width": 39.5,
+                    "height": 28.796875,
                     "viewportWidth": 100,
                     "viewportHeight": 50,
                 }
@@ -257,6 +257,14 @@ class MarkBusyTests(unittest.TestCase):
         highlight_calls = [params for method, params in tab.sends if method == "Overlay.highlightRect"]
         self.assertEqual(len(highlight_calls), 1)
         self.assertEqual(highlight_calls[0]["color"], {"r": 17, "g": 203, "b": 91, "a": 1})
+        self.assertEqual(
+            {name: highlight_calls[0][name] for name in ("x", "y", "width", "height")},
+            {"x": 20, "y": 0, "width": 40, "height": 29},
+        )
+        self.assertTrue(all(
+            isinstance(highlight_calls[0][name], int)
+            for name in ("x", "y", "width", "height")
+        ))
         node_calls = [params for method, params in tab.sends if method == "Overlay.highlightNode"]
         self.assertEqual(len(node_calls), 1)
         self.assertEqual(node_calls[0]["nodeId"], 11)
