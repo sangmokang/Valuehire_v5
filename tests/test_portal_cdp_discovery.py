@@ -53,6 +53,10 @@ socketserver.TCPServer.allow_reuse_address = True
 with socketserver.TCPServer(("127.0.0.1", port), H) as srv:
     srv.serve_forever()
 """
+FAKE_HTTP_ONLY_SRC = FAKE_CHROME_SRC.replace(
+    "self.wfile.write(b'{\"Browser\":\"Chrome/fake\"}')",
+    "self.wfile.write(b'{}')",
+)
 
 
 def _free_port() -> int:
@@ -81,6 +85,8 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="cdp_discovery_"))
         self.fake_chrome = self.tmp / "fake_chrome.py"
         self.fake_chrome.write_text(FAKE_CHROME_SRC, encoding="utf-8")
+        self.fake_http_only = self.tmp / "fake_http_only.py"
+        self.fake_http_only.write_text(FAKE_HTTP_ONLY_SRC, encoding="utf-8")
         self.procs: list[subprocess.Popen] = []
         self._old_portal_chrome = os.environ.get("PORTAL_CHROME")
         os.environ["PORTAL_CHROME"] = sys.executable
@@ -107,6 +113,19 @@ class CdpDiscoveryTests(unittest.TestCase):
         )
         self.procs.append(p)
         self.assertTrue(_wait_port(port), f"fake 크롬 포트 {port} 안 뜸")
+
+    def _launch_http_only(self, profile: Path, port: int) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(self.fake_http_only),
+                f"--user-data-dir={profile}",
+                f"--remote-debugging-port={port}",
+            ],
+        )
+        self.procs.append(process)
+        self.assertTrue(_wait_port(port), f"fake HTTP port {port} 안 뜸")
 
     def _launch_hung(self, profile: Path, port: int) -> None:
         profile.mkdir(parents=True, exist_ok=True)
@@ -236,6 +255,25 @@ class CdpDiscoveryTests(unittest.TestCase):
         env = {
             **os.environ,
             "PORTAL_CHROME": str(self.tmp / "expected-real-chrome"),
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+
+    def test_cdp_rejects_plain_http_200_without_browser_version_proof(self) -> None:
+        profile = self.tmp / "plain_http_profile"
+        actual = _free_port()
+        self._launch_http_only(profile, actual)
+        env = {
+            **os.environ,
+            "PORTAL_CHROME": sys.executable,
             "LINKEDIN_PROFILE": str(profile),
             "LINKEDIN_PORT": str(_free_port()),
         }
