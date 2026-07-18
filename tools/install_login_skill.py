@@ -108,10 +108,13 @@ def _validate_machine_contract(payload: bytes) -> None:
 def _validate_swift_locator(payload: bytes) -> None:
     text = _decode_utf8(payload, label="macos_window_locator.swift")
     required_markers = (
+        "import AppKit",
         "import CoreGraphics",
         "CGWindowListCopyWindowInfo",
         "kCGWindowOwnerPID",
         "kCGWindowNumber",
+        "NSRunningApplication",
+        "--activate-pid",
     )
     missing = [marker for marker in required_markers if marker not in text]
     if missing:

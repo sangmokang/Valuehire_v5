@@ -108,6 +108,10 @@
     "preflight_join_keys": ["browser_pid", "cdp_window_bounds"],
     "marked_join_keys": ["browser_pid", "cdp_window_bounds", "title_prefix_marker"],
     "require_same_cg_window_id_before_and_after_marker": true,
+    "preflight_includes_offscreen_spaces": true,
+    "activation": ["Page.bringToFront", "PID-bound NSRunningApplication.activate"],
+    "activation_each_requires_fresh_mutation_guard": true,
+    "require_same_cg_window_id_on_screen_after_activation": true,
     "title_match": "prefix_only",
     "ambiguity": "fail_closed",
     "capture": "screencapture -x -l <CGWindowID>",
@@ -121,7 +125,8 @@
       "target_id_suffix",
       "sanitized_title",
       "sanitized_url",
-      "cg_window_id"
+      "cg_window_id",
+      "application_activated"
     ],
     "forbid_first_window_or_title_substring_fallback": true,
     "preflight_failure_mutations": 0

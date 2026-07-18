@@ -98,6 +98,7 @@ class LoginWindowLocator:
     screenshot_sha256: str
     screenshot_size_bytes: int
     presentation_count: int = 1
+    application_activated: bool = True
     _original_title: str = field(default="", repr=False, compare=False)
     _marker: str = field(default="", repr=False, compare=False)
 
@@ -846,6 +847,7 @@ def present_exact_login_window_once(
     episode_id: str = "default",
     window_resolver: Callable[..., Any] | None = None,
     window_capture: Callable[..., bytes] | None = None,
+    application_activator: Callable[[int], bool] | None = None,
 ) -> LoginWindowLocator:
     """Mark, focus, resolve and capture one exact login window in AI_ATTACHED.
 
@@ -878,6 +880,7 @@ def present_exact_login_window_once(
     from .macos_window_locator import (
         CdpWindowIdentity,
         WindowBounds,
+        activate_exact_macos_application,
         capture_exact_window_png,
         resolve_exact_macos_window,
     )
@@ -890,15 +893,21 @@ def present_exact_login_window_once(
     )
     resolve = window_resolver or resolve_exact_macos_window
     capture = window_capture or capture_exact_window_png
+    activate = application_activator or activate_exact_macos_application
     # First resolve by exact PID+bounds without reading any title.  If this is
     # ambiguous, fail before title/badge/focus mutations.  After focus, resolve
     # again with the unique marker and require the same CGWindowID.
-    preflight_window = resolve(CdpWindowIdentity(
+    preflight_identity = CdpWindowIdentity(
         browser_pid=browser_pid,
         target_id=ref.target_id,
         title_marker="",
         bounds=bounds,
-    ))
+    )
+    preflight_window = (
+        resolve(preflight_identity, require_on_screen=False)
+        if window_resolver is None
+        else resolve(preflight_identity)
+    )
 
     clean_episode = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(episode_id)).strip("-.")[:64]
     if not clean_episode:
@@ -925,15 +934,32 @@ def present_exact_login_window_once(
     if title_result != visible_title:
         raise RuntimeError("exact target title marker could not be installed")
 
-    mutation_gate()
-    tab.send("Page.bringToFront")
-
-    window = resolve(CdpWindowIdentity(
+    marked_identity = CdpWindowIdentity(
         browser_pid=browser_pid,
         target_id=ref.target_id,
         title_marker=marker,
         bounds=bounds,
-    ))
+    )
+    marked_window = (
+        resolve(marked_identity, require_on_screen=False)
+        if window_resolver is None
+        else resolve(marked_identity)
+    )
+    if marked_window.cg_window_id != preflight_window.cg_window_id:
+        raise RuntimeError("exact login window identity changed after title marker")
+
+    mutation_gate()
+    tab.send("Page.bringToFront")
+
+    mutation_gate()
+    if activate(browser_pid) is not True:
+        raise RuntimeError("exact managed browser application could not be activated")
+
+    window = (
+        resolve(marked_identity, require_on_screen=True)
+        if window_resolver is None
+        else resolve(marked_identity)
+    )
     if window.cg_window_id != preflight_window.cg_window_id:
         raise RuntimeError("exact login window identity changed after focus")
     png = capture(window.cg_window_id)
@@ -951,6 +977,7 @@ def present_exact_login_window_once(
         cg_window_id=int(window.cg_window_id),
         screenshot_sha256=hashlib.sha256(png).hexdigest(),
         screenshot_size_bytes=len(png),
+        application_activated=True,
         _original_title=original_title,
         _marker=marker,
     )
@@ -1063,6 +1090,7 @@ def _public_locator_payload(locator: LoginWindowLocator) -> dict[str, Any]:
         "screenshot_sha256": locator.screenshot_sha256,
         "screenshot_size_bytes": locator.screenshot_size_bytes,
         "presentation_count": locator.presentation_count,
+        "application_activated": locator.application_activated,
     }
 
 

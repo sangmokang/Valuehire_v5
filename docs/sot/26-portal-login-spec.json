@@ -24,7 +24,7 @@
     "INV6: 사람 개입(2FA·캡차·체크포인트·멀티세션 락)이 필요하면 정확한 CDP target과 해당 endpoint/profile을 가진 기존 Chrome 루트 프로세스 PID를 Swift CoreGraphics의 유일한 CGWindowID에 1:1로 결합한다. title 변경 전 PID+bounds preflight와 title prefix 변경 후 PID+bounds+prefix 해석이 같은 CGWindowID여야 한다. 결과가 0개/여러 개면 fail-closed한다. 해당 창에만 로그인 title·배지를 표시하고 1회 표면화한 후 HUMAN_AUTH에서는 읽기·대기 외 브라우저 조작을 0회로 유지한다."
   ],
   "human_auth_control": {
-    "window_resolution": "managed site endpoint -> exact existing root browser process command line(--remote-debugging-port + --user-data-dir) -> browser PID/profile -> exact target id -> Browser.getWindowForTarget bounds -> CoreGraphics PID+bounds preflight -> target-only title prefix+badge -> CoreGraphics same PID+bounds+prefix -> same unique CGWindowID",
+    "window_resolution": "managed site endpoint -> exact existing root browser process command line(--remote-debugging-port + --user-data-dir) -> browser PID/profile -> exact target id -> Browser.getWindowForTarget bounds -> CoreGraphics PID+bounds offscreen-inclusive preflight -> target-only title prefix+badge -> CoreGraphics same PID+bounds+prefix same CGWindowID -> guarded Page.bringToFront + PID-bound AppKit activation -> same CGWindowID on-screen proof",
     "browser_pid_source": "exact managed root Chrome process command line; page-target SystemInfo.getProcessInfo is not used",
     "window_locator_script": "scripts/macos_window_locator.swift",
     "required_locator_fields": [
@@ -36,7 +36,8 @@
       "target_id_suffix",
       "sanitized_title",
       "sanitized_url_without_query_or_fragment",
-      "CGWindowID"
+      "CGWindowID",
+      "application_activated"
     ],
     "title_prefix": "[LOGIN HERE][<agent>][<site>][<target-id-suffix>]",
     "capture_command": "screencapture -x -l <CGWindowID>",

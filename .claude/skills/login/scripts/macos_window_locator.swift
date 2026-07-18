@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
@@ -10,6 +11,7 @@ private struct Options {
     let width: Double
     let height: Double
     let tolerance: Double
+    let requireOnScreen: Bool
 }
 
 private func fail(_ message: String, code: Int32 = 2) -> Never {
@@ -19,8 +21,7 @@ private func fail(_ message: String, code: Int32 = 2) -> Never {
     exit(code)
 }
 
-private func parseOptions() -> Options {
-    let arguments = Array(CommandLine.arguments.dropFirst())
+private func parseOptions(_ arguments: [String]) -> Options {
     guard arguments.count.isMultiple(of: 2) else {
         fail("window locator requires flag/value pairs")
     }
@@ -37,7 +38,7 @@ private func parseOptions() -> Options {
         values[flag] = arguments[index + 1]
         index += 2
     }
-    let expected = Set(["--pid", "--marker", "--left", "--top", "--width", "--height", "--tolerance"])
+    let expected = Set(["--pid", "--marker", "--left", "--top", "--width", "--height", "--tolerance", "--require-on-screen"])
     guard Set(values.keys) == expected,
           let pidText = values["--pid"], let pid = Int(pidText), pid > 0,
           let marker = values["--marker"],
@@ -46,7 +47,9 @@ private func parseOptions() -> Options {
           let widthText = values["--width"], let width = Double(widthText), width.isFinite, width > 0,
           let heightText = values["--height"], let height = Double(heightText), height.isFinite, height > 0,
           let toleranceText = values["--tolerance"], let tolerance = Double(toleranceText),
-          tolerance.isFinite, tolerance >= 0 else {
+          tolerance.isFinite, tolerance >= 0,
+          let requireOnScreenText = values["--require-on-screen"],
+          ["true", "false"].contains(requireOnScreenText) else {
         fail("invalid window locator values")
     }
     return Options(
@@ -56,7 +59,8 @@ private func parseOptions() -> Options {
         top: top,
         width: width,
         height: height,
-        tolerance: tolerance
+        tolerance: tolerance,
+        requireOnScreen: requireOnScreenText == "true"
     )
 }
 
@@ -68,7 +72,23 @@ private func near(_ actual: Double, _ expected: Double, tolerance: Double) -> Bo
     abs(actual - expected) <= tolerance
 }
 
-private let options = parseOptions()
+private let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments.count == 2, arguments[0] == "--activate-pid" {
+    guard let pid = Int(arguments[1]), pid > 0,
+          let application = NSRunningApplication(processIdentifier: pid_t(pid)) else {
+        fail("invalid or unavailable application PID")
+    }
+    let activated = application.activate(options: [])
+    let payload: [String: Any] = ["activated": activated, "pid": pid]
+    guard JSONSerialization.isValidJSONObject(payload),
+          let output = try? JSONSerialization.data(withJSONObject: payload, options: []) else {
+        fail("could not encode activation result", code: 1)
+    }
+    FileHandle.standardOutput.write(output)
+    exit(activated ? 0 : 1)
+}
+
+private let options = parseOptions(arguments)
 guard let rawWindows = CGWindowListCopyWindowInfo(
     [.optionAll, .excludeDesktopElements],
     kCGNullWindowID
@@ -84,8 +104,6 @@ for window in rawWindows {
           ownerPID == options.pid,
           let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue,
           layer == 0,
-          let onScreen = (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue,
-          onScreen,
           let bounds = window[kCGWindowBounds as String] as? [String: Any],
           let left = number(bounds, "X"),
           let top = number(bounds, "Y"),
@@ -97,6 +115,10 @@ for window in rawWindows {
           near(height, options.height, tolerance: options.tolerance),
           let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
           windowID > 0 else {
+        continue
+    }
+    let onScreen = (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
+    if options.requireOnScreen && !onScreen {
         continue
     }
     // The first, pre-focus pass intentionally uses an empty marker and must not
@@ -121,7 +143,7 @@ for window in rawWindows {
             "width": width,
             "height": height,
         ],
-        "on_screen": true,
+        "on_screen": onScreen,
     ])
 }
 

@@ -63,9 +63,9 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 사람에게 인증을 넘기기 전에 정확한 CDP target과 macOS 창을 다음 순서로 1:1 결합한다.
 
 1. 관리된 site endpoint를 가진 **정확한 기존 Chrome 프로세스**의 명령행에서 `--remote-debugging-port`, `--user-data-dir`, browser PID를 결합한다. page target WebSocket의 `SystemInfo.getProcessInfo`에 PID를 묻거나 포트를 추측하지 않는다. 같은 endpoint/profile을 주장하는 루트 프로세스가 0개 또는 여러 개면 중단한다.
-2. 그 endpoint의 정확한 기존 target id와 `Browser.getWindowForTarget` bounds를 읽고, 스킬 폴더 기준 상대 경로 `scripts/macos_window_locator.swift`를 실행한다. 먼저 title marker 없이 **같은 PID + CDP bounds**로 유일한 CGWindowID를 preflight한다. 0개이거나 여러 개면 어떤 title·배지·focus도 보내지 않고 fail-closed 한다.
-3. 인계 직전 해당 target에만 `[LOGIN HERE][<agent>][<site>][<target-id-suffix>]` **title prefix**와 `vh-automation-badge`를 붙인다. 그 다음 **같은 PID + 같은 bounds + prefix marker**로 다시 해석한 CGWindowID가 preflight와 같을 때만, 정확한 PID의 앱과 해당 창을 단 1회 앞으로 보여준다. title `contains`나 첫 창 fallback은 금지다.
-4. 사용자에게 agent, site, 브라우저 PID, profile path, CDP endpoint, target id 끝자리, 정제한 title, query/fragment를 제거한 URL, CGWindowID를 반드시 표시한다.
+2. 그 endpoint의 정확한 기존 target id와 `Browser.getWindowForTarget` bounds를 읽고, 스킬 폴더 기준 상대 경로 `scripts/macos_window_locator.swift`를 실행한다. 먼저 title marker 없이 **같은 PID + CDP bounds**로 현재 Space 밖 창까지 포함해 유일한 CGWindowID를 preflight한다. 0개이거나 여러 개면 어떤 title·배지·focus도 보내지 않고 fail-closed 한다.
+3. 인계 직전 해당 target에만 `[LOGIN HERE][<agent>][<site>][<target-id-suffix>]` **title prefix**와 `vh-automation-badge`를 붙인다. 그 다음 **같은 PID + 같은 bounds + prefix marker**로 다시 해석한 CGWindowID가 preflight와 같을 때만 `Page.bringToFront`와 PID-bound `NSRunningApplication.activate`를 각각 fresh guard 뒤 1회 실행한다. 활성화 후 같은 CGWindowID가 on-screen인지 다시 증명한다. title `contains`나 첫 창 fallback은 금지다.
+4. 사용자에게 agent, site, 브라우저 PID, profile path, CDP endpoint, target id 끝자리, 정제한 title, query/fragment를 제거한 URL, CGWindowID, 앱 활성화 증거를 반드시 표시한다.
 5. 스크린샷이 필요하면 전체 화면이 아니라 `screencapture -x -l <CGWindowID>`로 그 창만 캡처한다. 다른 PID의 창 제목은 출력하거나 캡처하지 않는다.
 6. `HUMAN_AUTH` 진입 후에는 5초 이상 간격으로 fresh 로그인 마커와 OS idle만 읽는다. 시간제한은 없으며, 성공 마커와 마지막 사람 입력 후 15초 조용함이 모두 성립해야 재개한다.
 

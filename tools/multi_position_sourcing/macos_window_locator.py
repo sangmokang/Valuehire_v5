@@ -111,7 +111,7 @@ def _payload_window(value: Any) -> MacWindowRef | None:
         or not isinstance(layer, int)
         or layer != 0
         or not isinstance(title, str)
-        or on_screen is not True
+        or not isinstance(on_screen, bool)
         or not isinstance(raw_bounds, dict)
     ):
         return None
@@ -129,7 +129,7 @@ def _payload_window(value: Any) -> MacWindowRef | None:
         owner_pid=owner_pid,
         title=title,
         bounds=bounds,
-        on_screen=True,
+        on_screen=on_screen,
     )
 
 
@@ -140,6 +140,7 @@ def resolve_exact_macos_window(
     system_name: str | None = None,
     swift_script: Path | None = None,
     bounds_tolerance: float = DEFAULT_BOUNDS_TOLERANCE,
+    require_on_screen: bool = True,
 ) -> MacWindowRef:
     """Map a browser PID + CDP bounds + non-secret title marker to one CGWindow.
 
@@ -152,6 +153,8 @@ def resolve_exact_macos_window(
         raise WindowResolutionError(f"exact macOS window resolution unavailable on {system or 'unknown'}")
     if not math.isfinite(bounds_tolerance) or bounds_tolerance < 0:
         raise WindowResolutionError("invalid window bounds tolerance")
+    if not isinstance(require_on_screen, bool):
+        raise WindowResolutionError("require_on_screen must be boolean")
     script = Path(swift_script) if swift_script is not None else _default_swift_script()
     if not script.is_file() or script.stat().st_size <= 0:
         raise WindowResolutionError("bundled Swift window locator is missing")
@@ -173,6 +176,8 @@ def resolve_exact_macos_window(
         _number_arg(identity.bounds.height),
         "--tolerance",
         _number_arg(bounds_tolerance),
+        "--require-on-screen",
+        "true" if require_on_screen else "false",
     ]
     try:
         result = run_command(
@@ -201,6 +206,8 @@ def resolve_exact_macos_window(
             continue
         if candidate.owner_pid != identity.browser_pid:
             continue
+        if require_on_screen and candidate.on_screen is not True:
+            continue
         if identity.title_marker and not candidate.title.startswith(identity.title_marker):
             continue
         if not identity.bounds.matches(candidate.bounds, tolerance=bounds_tolerance):
@@ -209,6 +216,45 @@ def resolve_exact_macos_window(
     if len(matches) != 1:
         raise WindowResolutionError(f"exact window match count was {len(matches)}")
     return matches[0]
+
+
+def activate_exact_macos_application(
+    browser_pid: int,
+    *,
+    run_command: RunCommand = subprocess.run,
+    system_name: str | None = None,
+    swift_script: Path | None = None,
+) -> bool:
+    """Activate only the root browser process already bound to the exact target."""
+    system = system_name or platform.system()
+    if system != "Darwin":
+        raise WindowResolutionError(f"exact macOS app activation unavailable on {system or 'unknown'}")
+    if isinstance(browser_pid, bool) or not isinstance(browser_pid, int) or browser_pid <= 0:
+        raise WindowResolutionError("browser PID must be a positive integer")
+    script = Path(swift_script) if swift_script is not None else _default_swift_script()
+    if not script.is_file() or script.stat().st_size <= 0:
+        raise WindowResolutionError("bundled Swift window locator is missing")
+    argv = ["swift", str(script), "--activate-pid", str(browser_pid)]
+    try:
+        result = run_command(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        raise WindowResolutionError("exact browser application activation could not run") from exc
+    if result.returncode != 0:
+        raise WindowResolutionError("exact browser application activation failed")
+    try:
+        payload = json.loads(result.stdout or "")
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise WindowResolutionError("exact browser application activation returned invalid JSON") from exc
+    if not isinstance(payload, dict) or payload != {"activated": True, "pid": browser_pid}:
+        raise WindowResolutionError("exact browser application activation was not proven")
+    return True
 
 
 def capture_exact_window_png(
