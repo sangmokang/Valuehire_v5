@@ -89,7 +89,10 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.fake_http_only.write_text(FAKE_HTTP_ONLY_SRC, encoding="utf-8")
         self.procs: list[subprocess.Popen] = []
         self._old_portal_chrome = os.environ.get("PORTAL_CHROME")
-        os.environ["PORTAL_CHROME"] = sys.executable
+        self.process_executable = subprocess.check_output(
+            ["ps", "-p", str(os.getpid()), "-o", "comm="], text=True
+        ).strip()
+        os.environ["PORTAL_CHROME"] = self.process_executable
 
     def tearDown(self) -> None:
         for p in self.procs:
@@ -273,7 +276,7 @@ class CdpDiscoveryTests(unittest.TestCase):
         self._launch_http_only(profile, actual)
         env = {
             **os.environ,
-            "PORTAL_CHROME": sys.executable,
+            "PORTAL_CHROME": self.process_executable,
             "LINKEDIN_PROFILE": str(profile),
             "LINKEDIN_PORT": str(_free_port()),
         }

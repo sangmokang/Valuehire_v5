@@ -171,7 +171,7 @@ class RawPage:
             mutation_guard=self._mutation_guard,
         )
 
-    async def _refresh_busy_badge(self) -> None:
+    async def _refresh_busy_badge(self, *, expected_url: str | None = None) -> None:
         label = getattr(self._tab, "_badge_label", None)
         marker = getattr(self._tab, "mark_busy", None)
         if not label or not callable(marker):
@@ -179,7 +179,16 @@ class RawPage:
                 raise RuntimeError("visible automation marker is missing")
             return
         await _run_mutation_guard(self._mutation_guard)
-        applied = await _tab_call(self._tab, "mark_busy", label)
+        if expected_url is None:
+            expected_url = str(
+                await _tab_call(self._tab, "eval", "location.href") or ""
+            )
+        applied = await _tab_call(
+            self._tab,
+            "mark_busy",
+            label,
+            expected_url=expected_url,
+        )
         if self._require_badge and applied is not True:
             raise RuntimeError("visible automation marker refresh failed")
 
@@ -226,7 +235,7 @@ class RawPage:
                 ),
                 timeout=remaining,
             )
-            await self._refresh_busy_badge()
+            await self._refresh_busy_badge(expected_url=url)
             return
         ready_states = {"complete"}
         if wait_until in {"domcontentloaded", "commit"}:
@@ -240,7 +249,7 @@ class RawPage:
                 timeout=remaining,
             ) or "")
             if state in ready_states:
-                await self._refresh_busy_badge()
+                await self._refresh_busy_badge(expected_url=url)
                 return
             await asyncio.sleep(min(0.1, remaining))
 

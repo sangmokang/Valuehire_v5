@@ -60,13 +60,20 @@ def _resolve_badge_label(env: Any) -> str | None:
     return f"{base} · {task}" if task else base
 
 
-def _badge_js(label: str) -> str:
+def _badge_js(label: str, *, expected_url: str | None = None) -> str:
     """상단중앙 고정 배지 주입 JS. pointer-events:none 로 사장님 클릭을 막지 않는다.
     idempotent: 기존 배지를 먼저 제거해 중복이 쌓이지 않는다."""
     text = json.dumps(label, ensure_ascii=False)
+    url_guard = ""
+    if expected_url is not None:
+        url_guard = (
+            f"if(location.href!=={json.dumps(expected_url, ensure_ascii=False)})"
+            "{return null;}"
+        )
     return (
         "(function(){"
-        f"var id={json.dumps(_BADGE_ID)};"
+        + url_guard
+        + f"var id={json.dumps(_BADGE_ID)};"
         "var e=document.getElementById(id);"
         "if(e){e.remove();}"
         "e=document.createElement('div');"
@@ -180,12 +187,12 @@ class CDPTab:
                 return msg.get("result", {})
         raise TimeoutError(f"{method} timed out")
 
-    def mark_busy(self, label: str) -> bool:
+    def mark_busy(self, label: str, *, expected_url: str | None = None) -> bool:
         """화면에 '사용중' 배지를 띄운다. 라벨을 기억해 navigate 후 재주입한다.
         배지는 부가기능 — 주입 실패해도 예외를 던지지 않는다(실 서치 보호)."""
         self._badge_label = label
         try:
-            acknowledged = self.eval(_badge_js(label))
+            acknowledged = self.eval(_badge_js(label, expected_url=expected_url))
         except Exception:
             return False
         return acknowledged == _BADGE_ID

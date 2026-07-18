@@ -134,8 +134,9 @@ class RawPageAdapterTests(unittest.TestCase):
                     return self.states.pop(0)
                 return super().eval(expr)
 
-            def mark_busy(self, label: str):
+            def mark_busy(self, label: str, *, expected_url: str | None = None):
                 self.asserted_label = label
+                self.asserted_url = expected_url
                 self.badge_refreshes += 1
 
         tab = LoadingTab()
@@ -179,7 +180,7 @@ class RawPageAdapterTests(unittest.TestCase):
         class MissingBadgeTab(FakeTab):
             _badge_label = "Codex"
 
-            def mark_busy(self, _label: str):
+            def mark_busy(self, _label: str, *, expected_url: str | None = None):
                 return None
 
         with self.assertRaisesRegex(RuntimeError, "marker refresh"):

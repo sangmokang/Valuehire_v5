@@ -65,7 +65,11 @@ class FakeRawTab:
     def on(self, _event: str, _handler: object) -> None:
         return None
 
-    def mark_busy(self, label: str) -> bool:
+    def mark_busy(self, label: str, *, expected_url: str | None = None) -> bool:
+        if expected_url is not None:
+            current = self.eval("location.href")
+            if current != expected_url:
+                return False
         self._badge_label = label
         self.badge_calls += 1
         return True
@@ -235,7 +239,7 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         }
 
         class MarkerFailTab(FakeRawTab):
-            def mark_busy(self, _label: str) -> bool:
+            def mark_busy(self, _label: str, *, expected_url: str | None = None) -> bool:
                 return False
 
         tab = MarkerFailTab()

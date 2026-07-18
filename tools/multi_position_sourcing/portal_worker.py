@@ -1031,9 +1031,12 @@ class PortalWorker:
                 self._lock.assert_owned()
                 if not url_matches_channel_surface(self.config.channel, fresh_url):
                     raise RuntimeError("attached target changed during ownership guard")
-                self._raw_badge_applied = True
-                if self._raw_tab.mark_busy(badge_label) is not True:
+                if self._raw_tab.mark_busy(
+                    badge_label,
+                    expected_url=fresh_url,
+                ) is not True:
                     raise RuntimeError("visible automation marker could not be applied")
+                self._raw_badge_applied = True
                 self._raw_page = RawPage(
                     self._raw_tab,
                     initial_url=fresh_url,

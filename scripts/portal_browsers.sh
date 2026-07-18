@@ -94,7 +94,12 @@ CHANNELS=(
 LOGIN_HINTS='login|/auth|signin|sign-in|checkpoint|authwall|uas/login'
 # ──────────────────────────────────────────────────────────────────────
 
-cdp_alive() { curl -s --max-time 2 "http://127.0.0.1:$1/json/version" >/dev/null 2>&1; }
+cdp_alive() {
+  local version
+  version="$(curl -s --max-time 2 "http://127.0.0.1:$1/json/version" 2>/dev/null)" || return 1
+  printf '%s' "$version" \
+    | grep -Eq '"Browser"[[:space:]]*:[[:space:]]*"(Chrome|Chromium|HeadlessChrome)/'
+}
 
 cdp_url() {
   curl -s --max-time 2 "http://127.0.0.1:$1/json" 2>/dev/null \
@@ -264,6 +269,11 @@ cmd_cdp() {
     while IFS= read -r _cmd; do
       case " $_cmd " in
         *" --user-data-dir=$profile "*)
+          local chrome_prefix="$CHROME "
+          case "$_cmd" in
+            "$CHROME"|"$chrome_prefix"*) ;;
+            *) continue ;;
+          esac
           # Chrome renderer/GPU/utility 자식도 부모의 profile/CDP 인자를 상속한다.
           # --type=... 자식은 별도 브라우저가 아니므로 root 중복 판정과 포트
           # 소유권 증명에서 제외한다. 실제 browser root 에는 --type 인자가 없다.
