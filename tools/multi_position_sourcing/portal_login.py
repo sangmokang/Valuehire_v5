@@ -88,6 +88,21 @@ async def _body_text(page: Any, limit: int = 3000) -> str:
         return ""
 
 
+async def _has_visible_locator(page: Any, selector: str, *, limit: int = 20) -> bool:
+    """Require a freshly rendered marker; hidden residual DOM never proves auth."""
+    try:
+        locator = page.locator(selector)
+        count = min(int(await locator.count()), limit)
+        for index in range(count):
+            candidate = locator.nth(index)
+            is_visible = getattr(candidate, "is_visible", None)
+            if callable(is_visible) and bool(await is_visible()):
+                return True
+    except Exception:
+        return False
+    return False
+
+
 # 보안챌린지/세션락 감지 토큰. SOT26 block_detection.unified_regex 의 **부분집합**이다(전체가 아님).
 # 왜 부분집합인가(adversarial V2/V3 재현): 이 함수는 로그인/준비체크에서 페이지 innerText 를 스캔하는데,
 # ready_check 는 talent-pool/home 등 후보·마케팅 텍스트가 있는 표면도 훑는다. 그래서 후보 경력에 흔한
@@ -376,15 +391,22 @@ async def _linkedin_rps_ready(page: Any) -> bool:
     text = await _body_text(page)
     folded = text.casefold()
     if (
-        "sign in to linkedin" in folded
+        "sign in" in folded
+        or "log in" in folded
+        or "email or phone" in folded
+        or "forgot password" in folded
         or "join linkedin" in folded
         or ("로그인" in text and "로그아웃" not in text)
     ):
         return False
     if _has_security_challenge(text, url):
         return False
-    has_recruiter_search = await page.locator(LINKEDIN_RECRUITER_SEARCH_SELECTOR).count()
-    has_recruiter_account = await page.locator(LINKEDIN_RECRUITER_ACCOUNT_SELECTOR).count()
+    has_recruiter_search = await _has_visible_locator(
+        page, LINKEDIN_RECRUITER_SEARCH_SELECTOR
+    )
+    has_recruiter_account = await _has_visible_locator(
+        page, LINKEDIN_RECRUITER_ACCOUNT_SELECTOR
+    )
     return bool(has_recruiter_search and has_recruiter_account)
 
 

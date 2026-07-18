@@ -96,6 +96,17 @@ class RawLocator:
         expr = f"{self._elements_js}.length"
         return int(await _tab_call(self._tab, "eval", expr) or 0)
 
+    async def is_visible(self) -> bool:
+        element = self._sel_js
+        expr = (
+            "(function(){var e=" + element + ";if(!e)return false;"
+            "var s=window.getComputedStyle(e);"
+            "var r=e.getBoundingClientRect();"
+            "return s.display!=='none'&&s.visibility!=='hidden'&&"
+            "s.opacity!=='0'&&r.width>0&&r.height>0;})()"
+        )
+        return await _tab_call(self._tab, "eval", expr) is True
+
     async def fill(self, value: str, **_kwargs: Any) -> None:
         await _run_mutation_guard(self._mutation_guard)
         el = self._sel_js
