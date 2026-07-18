@@ -102,6 +102,19 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.procs.append(p)
         self.assertTrue(_wait_port(port), f"fake 크롬 포트 {port} 안 뜸")
 
+    def _launch_hung(self, profile: Path, port: int) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                f"--user-data-dir={profile}",
+                f"--remote-debugging-port={port}",
+            ],
+        )
+        self.procs.append(process)
+
     def test_cdp_discovers_actual_running_port_over_config(self) -> None:
         # 설정 포트와 다른 실제 포트로 크롬이 떠 있는 상황(9225 vs 9338 재현).
         actual = _free_port()
@@ -171,6 +184,27 @@ class CdpDiscoveryTests(unittest.TestCase):
         second = _free_port()
         self._launch_fake(profile, first)
         self._launch_fake(profile, second)
+        env = {
+            **os.environ,
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertIn("여러", out.stderr)
+
+    def test_cdp_fails_closed_when_duplicate_exact_profile_has_one_hung_port(self) -> None:
+        profile = self.tmp / "ambiguous_hung_profile"
+        live = _free_port()
+        hung = _free_port()
+        self._launch_fake(profile, live)
+        self._launch_hung(profile, hung)
         env = {
             **os.environ,
             "LINKEDIN_PROFILE": str(profile),
