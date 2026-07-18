@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import unittest
 
-from tools.multi_position_sourcing.portal_worker import resolve_channel_cdp_endpoint
+from tools.multi_position_sourcing.portal_worker import (
+    PortalWorker,
+    PortalWorkerConfig,
+    resolve_channel_cdp_endpoint,
+)
 
 
 class ResolveChannelCdpEndpointTests(unittest.TestCase):
@@ -77,6 +81,26 @@ class ResolveChannelCdpEndpointTests(unittest.TestCase):
             resolve_channel_cdp_endpoint("jobkorea", env={"VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT": "  "}),
             "http://127.0.0.1:9224",
         )
+
+
+class WorkerCdpEndpointWiringTests(unittest.TestCase):
+    """배선(R4·고아 해소): 워커의 CDP endpoint 해석이 resolve_channel_cdp_endpoint 를
+    실제로 통과한다 — 순수 함수를 프로덕션 경로(start())에 연결해 고아를 없앤다.
+    linkedin_rps 는 이미 connect_over_cdp 로 붙으므로 이 경로만 배선하고(동작 보존:
+    명시 config 값이 값-우선으로 그대로 이김), 사람인·잡코리아 실이전은 조각 B(라이브)."""
+
+    def test_worker_cdp_endpoint_preserves_explicit_config_value(self) -> None:
+        cfg = PortalWorkerConfig(
+            channel="linkedin_rps", chrome_cdp_endpoint="http://127.0.0.1:7777")
+        w = PortalWorker(cfg, playwright=object())
+        self.assertEqual(w._cdp_endpoint(), "http://127.0.0.1:7777")
+
+    def test_worker_cdp_endpoint_falls_back_to_channel_port_when_value_empty(self) -> None:
+        # config 값이 비면 채널 기본 포트(linkedin=9225)로 — 채널 인지가 실제 작동함을 증명.
+        cfg = PortalWorkerConfig(channel="linkedin_rps", chrome_cdp_endpoint="")
+        w = PortalWorker(cfg, playwright=object())
+        self.assertEqual(
+            w._cdp_endpoint(env={}), "http://127.0.0.1:9225")
 
 
 if __name__ == "__main__":
