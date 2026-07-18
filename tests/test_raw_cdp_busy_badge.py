@@ -164,6 +164,22 @@ class BadgeJsTests(unittest.TestCase):
             expected_rgb=challenge[:3],
         ))
 
+    def test_png_render_proof_rejects_missing_iend_and_non_finite_geometry(self):
+        screenshot = _png_rgba(40, 20, (17, 203, 91, 255))
+        missing_iend = screenshot[:-12]
+        kwargs = {
+            "css_rect": {"x": 0, "y": 0, "width": 40, "height": 20},
+            "css_viewport": {"width": 40, "height": 20},
+            "expected_rgb": (17, 203, 91),
+        }
+        self.assertFalse(raw_cdp._png_region_matches_color(missing_iend, **kwargs))
+        self.assertFalse(raw_cdp._png_region_matches_color(
+            screenshot,
+            css_rect={"x": float("nan"), "y": 0, "width": 40, "height": 20},
+            css_viewport={"width": 40, "height": 20},
+            expected_rgb=(17, 203, 91),
+        ))
+
     def test_clear_js_removes_by_id(self):
         js = raw_cdp._clear_js()
         self.assertIn("vh-automation-badge", js)
@@ -244,6 +260,10 @@ class MarkBusyTests(unittest.TestCase):
                     return {"root": {"nodeId": 7}}
                 if method == "DOM.querySelector":
                     return {"nodeId": 11}
+                if method == "DOM.resolveNode":
+                    return {"object": {"objectId": "badge-object-11"}}
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": True}}
                 return {}
 
         tab = OverlayTab()
@@ -274,9 +294,52 @@ class MarkBusyTests(unittest.TestCase):
             "nodeId": 7,
             "selector": "#vh-automation-badge",
         }), tab.sends)
+        validation_calls = [params for method, params in tab.sends if method == "Runtime.callFunctionOn"]
+        self.assertEqual(len(validation_calls), 2)
+        self.assertTrue(all(call["objectId"] == "badge-object-11" for call in validation_calls))
         screenshot_calls = [params for method, params in tab.sends if method == "Page.captureScreenshot"]
         self.assertEqual(len(screenshot_calls), 1)
         self.assertNotIn("clip", screenshot_calls[0], "shifted clip drops CDP Overlay pixels")
+
+    def test_render_proof_rejects_id_replacement_before_highlight(self):
+        challenge = (17, 203, 91)
+        screenshot = _png_rgba(100, 50, (*challenge, 255))
+
+        class ReplacedNodeTab(_RecTab):
+            def eval(self, expr: str):
+                return {
+                    "x": 0,
+                    "y": 0,
+                    "width": 100,
+                    "height": 50,
+                    "viewportWidth": 100,
+                    "viewportHeight": 50,
+                }
+
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Page.captureScreenshot":
+                    import base64
+                    return {"data": base64.b64encode(screenshot).decode("ascii")}
+                if method == "DOM.getDocument":
+                    return {"root": {"nodeId": 7}}
+                if method == "DOM.querySelector":
+                    return {"nodeId": 99}
+                if method == "DOM.resolveNode":
+                    return {"object": {"objectId": "replacement-object"}}
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": False}}
+                return {}
+
+        tab = ReplacedNodeTab()
+        with patch.object(raw_cdp, "_overlay_challenge_color", return_value=challenge):
+            self.assertFalse(raw_cdp.CDPTab.prove_badge_rendered(
+                tab,
+                expected_url="https://example.test/search",
+                badge_label="Codex",
+            ))
+        self.assertFalse(any(method == "Overlay.highlightNode" for method, _params in tab.sends))
+        self.assertTrue(any(method == "Overlay.hideHighlight" for method, _params in tab.sends))
 
     def test_clear_badge_hides_browser_owned_overlay(self):
         tab = _RecTab(eval_result=True)

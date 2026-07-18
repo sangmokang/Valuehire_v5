@@ -450,6 +450,82 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertEqual(tab.asserted_lifecycle[:2], (0, "DOMContentLoaded"))
         self.assertEqual(tab.refresh_calls, [("Codex", destination)])
 
+    def test_required_click_rechecks_owner_guard_after_render_proof(self) -> None:
+        owner = {"active": False}
+        guard_calls = []
+
+        class OwnerReturnsTab(FakeTab):
+            _badge_label = "Codex"
+
+            def __init__(self):
+                super().__init__()
+                self.portal_mutations = 0
+
+            def prove_badge_rendered(self, **_kwargs):
+                owner["active"] = True
+                return True
+
+            def eval(self, expr: str):
+                if ".click()" in expr:
+                    self.portal_mutations += 1
+                return True
+
+        def guard() -> None:
+            guard_calls.append(owner["active"])
+            if owner["active"]:
+                raise RuntimeError("owner active")
+
+        tab = OwnerReturnsTab()
+        page = RawPage(
+            tab,
+            initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+            require_badge=True,
+            mutation_guard=guard,
+        )
+        with self.assertRaisesRegex(RuntimeError, "owner active"):
+            _run(page.locator("button").click())
+        self.assertEqual(guard_calls, [False, True])
+        self.assertEqual(tab.portal_mutations, 0)
+
+    def test_required_navigation_rechecks_owner_guard_after_render_proof(self) -> None:
+        owner = {"active": False}
+        guard_calls = []
+
+        class OwnerReturnsTab(FakeTab):
+            _badge_label = "Codex"
+
+            def __init__(self):
+                super().__init__()
+                self.atomic_calls = 0
+
+            def prove_badge_rendered(self, **_kwargs):
+                owner["active"] = True
+                return True
+
+            def navigate_if_owned(self, *_args, **_kwargs):
+                self.atomic_calls += 1
+                return {"ownershipAcknowledged": True, "lifecycleCursor": 0}
+
+            def wait_for_next_lifecycle(self, *_args, **_kwargs):
+                return "loader"
+
+        def guard() -> None:
+            guard_calls.append(owner["active"])
+            if owner["active"]:
+                raise RuntimeError("owner active")
+
+        tab = OwnerReturnsTab()
+        page = RawPage(
+            tab,
+            initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+            require_badge=True,
+            mutation_guard=guard,
+        )
+        with self.assertRaisesRegex(RuntimeError, "owner active"):
+            _run(page.goto("https://www.jobkorea.co.kr/Corp/Person/Find?keyword=robotics"))
+        self.assertEqual(guard_calls, [False, True])
+        self.assertEqual(tab.atomic_calls, 0)
+
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
         page = RawPage(tab)
