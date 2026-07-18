@@ -94,7 +94,12 @@ CHANNELS=(
 LOGIN_HINTS='login|/auth|signin|sign-in|checkpoint|authwall|uas/login'
 # ──────────────────────────────────────────────────────────────────────
 
-cdp_alive() { curl -s --max-time 2 "http://127.0.0.1:$1/json/version" >/dev/null 2>&1; }
+cdp_alive() {
+  local version
+  version="$(curl -s --max-time 2 "http://127.0.0.1:$1/json/version" 2>/dev/null)" || return 1
+  printf '%s' "$version" \
+    | grep -Eq '"Browser"[[:space:]]*:[[:space:]]*"(Chrome|Chromium|HeadlessChrome)/'
+}
 
 cdp_url() {
   curl -s --max-time 2 "http://127.0.0.1:$1/json" 2>/dev/null \
@@ -258,22 +263,54 @@ cmd_cdp() {
     #    ⚠️ 경계 앵커 필수 — grep -F 접두 매칭은 /linkedin 이 /linkedin2 에도 걸려(V1 지적)
     #    엉뚱한 브라우저 포트를 잡을 수 있다. 인자값이 정확히 일치할 때만 채택한다.
     #    (--user-data-dir=<profile> 는 항상 공백으로 구분된 한 인자 → 양옆 공백 경계로 판별.)
-    local live_port=""
+    local declared_ports=()
+    local exact_profile_processes=0
     local _cmd
     while IFS= read -r _cmd; do
       case " $_cmd " in
         *" --user-data-dir=$profile "*)
-          live_port="$(printf '%s\n' "$_cmd" | grep -oE 'remote-debugging-port=[0-9]+' | head -1 | cut -d= -f2)"
-          [[ -n "$live_port" ]] && break ;;
+          local chrome_prefix="$CHROME "
+          case "$_cmd" in
+            "$CHROME"|"$chrome_prefix"*) ;;
+            *) continue ;;
+          esac
+          # Chrome renderer/GPU/utility 자식도 부모의 profile/CDP 인자를 상속한다.
+          # --type=... 자식은 별도 브라우저가 아니므로 root 중복 판정과 포트
+          # 소유권 증명에서 제외한다. 실제 browser root 에는 --type 인자가 없다.
+          case " $_cmd " in
+            *" --type="*) continue ;;
+          esac
+          exact_profile_processes=$((exact_profile_processes + 1))
+          local candidate_port
+          while IFS= read -r candidate_port; do
+            [[ -n "$candidate_port" ]] || continue
+            local seen=0 existing
+            for existing in "${declared_ports[@]:-}"; do
+              [[ "$existing" == "$candidate_port" ]] && seen=1
+            done
+            [[ "$seen" -eq 1 ]] || declared_ports+=("$candidate_port")
+          done < <(printf '%s\n' "$_cmd" | grep -oE 'remote-debugging-port=[0-9]+' | cut -d= -f2) ;;
       esac
     done < <(ps ax -o command= 2>/dev/null)
-    # 2) 실제 포트가 있고 CDP 가 응답하면 그걸 쓴다. 없으면 설정 포트로 한 번 더 확인(표준 폴백).
-    local try
-    for try in "$live_port" "$port"; do
-      [[ -n "$try" ]] || continue
-      if cdp_alive "$try"; then echo "http://127.0.0.1:$try"; return 0; fi
-    done
-    # 3) 살아있는 크롬 없음 → 재실행/추정 금지(사람 로그인·캡차 게이트 존중, 봇행동 금지).
+    # 2) exact profile 프로세스에서 찾은 포트만 허용한다. 설정 포트가 살아있다는 이유만으로
+    #    폴백하면 같은 포트의 다른 Chrome을 오인할 수 있다(다중 브라우저 환경 안전 위반).
+    if [[ "$exact_profile_processes" -gt 1 || "${#declared_ports[@]}" -gt 1 ]]; then
+      echo "❌ $name exact 프로필 Chrome이 여러 개입니다 — 어느 창에도 붙지 않습니다." >&2
+      exit 4
+    fi
+    if [[ "${#declared_ports[@]}" -eq 1 ]]; then
+      if cdp_alive "${declared_ports[0]}"; then
+        echo "http://127.0.0.1:${declared_ports[0]}"
+        return 0
+      fi
+      echo "❌ $name exact 프로필 Chrome의 CDP가 응답하지 않습니다 — 새 창을 열지 말고 기다린 뒤 재확인하세요." >&2
+      exit 3
+    fi
+    if [[ "$exact_profile_processes" -gt 0 ]]; then
+      echo "❌ $name exact 프로필 Chrome에 CDP 포트가 없습니다 — 새 창을 열지 말고 상태를 확인하세요." >&2
+      exit 3
+    fi
+    # 3) exact profile Chrome 없음 → 재실행/추정 금지(사람 로그인·캡차 게이트 존중).
     echo "❌ $name CDP 없음 — 프로필로 살아있는 크롬이 없습니다. 'start' 후 그 창에서 직접 로그인/캡차 처리." >&2
     exit 3
   done

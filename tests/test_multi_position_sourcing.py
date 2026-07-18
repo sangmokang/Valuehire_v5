@@ -42,6 +42,8 @@ from tools.multi_position_sourcing.keywords import keyword_plan_for_channel
 from tools.multi_position_sourcing.models import CandidateResultCard, QueueItem
 from tools.multi_position_sourcing.portal_login import (
     HumanInterventionOptions,
+    LINKEDIN_RECRUITER_ACCOUNT_SELECTOR,
+    LINKEDIN_RECRUITER_SEARCH_SELECTOR,
     _has_security_challenge,
     _wait_for_human_intervention,
 )
@@ -407,14 +409,27 @@ class FakeAutoLoginLocator:
     def first(self) -> "FakeAutoLoginLocator":
         return self
 
+    def nth(self, _index: int) -> "FakeAutoLoginLocator":
+        return self
+
+    async def is_visible(self) -> bool:
+        return bool(await self.count())
+
     async def count(self) -> int:
         if self.selector == "body":
             return 1
-        if self.selector == "input.search_input, #career_min, #career_max":
+        if self.selector in {
+            "input.search_input",
+            "#career_min",
+            "#career_max",
+            "input.search_input, #career_min, #career_max",
+        }:
             return 1 if self.page.logged_in else 0
         if self.selector == "#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']":
             return 1 if self.page.logged_in else 0
-        if self.selector == 'a[href*="/talent/search"], input[role="combobox"]':
+        if self.selector == LINKEDIN_RECRUITER_SEARCH_SELECTOR:
+            return 1 if self.page.logged_in else 0
+        if self.selector == LINKEDIN_RECRUITER_ACCOUNT_SELECTOR:
             return 1 if self.page.logged_in else 0
         return 1 if self.selector in self.page.available_selectors else 0
 
@@ -428,7 +443,7 @@ class FakeAutoLoginLocator:
             self.page.url = self.page.ready_url
 
     async def inner_text(self, **_kwargs: object) -> str:
-        return "로그아웃" if self.page.logged_in else "로그인"
+        return "밸류커넥트 로그아웃" if self.page.logged_in else "로그인"
 
 
 class FakeAutoLoginPage:
@@ -682,6 +697,8 @@ class DirectSearchResultCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/tmp/", encoded)
 
     async def test_profile_only_live_search_reports_profile_lock_without_traceback(self) -> None:
+        connection_modes: list[str] = []
+
         class FakePlaywrightManager:
             async def __aenter__(self) -> object:
                 return object()
@@ -690,8 +707,8 @@ class DirectSearchResultCollectionTests(unittest.IsolatedAsyncioTestCase):
                 return None
 
         class LockingPortalWorker:
-            def __init__(self, *_args: object, **_kwargs: object) -> None:
-                pass
+            def __init__(self, config: object, **_kwargs: object) -> None:
+                connection_modes.append(str(getattr(config, "connection_mode", "")))
 
             async def __aenter__(self) -> object:
                 raise ProfileLockError("profile already locked for saramin/worker-a")
@@ -731,7 +748,44 @@ class DirectSearchResultCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["snapshot_capture_required"])
         self.assertNotIn("saramin/worker-a", encoded)
         self.assertNotIn("/tmp/valuehire-test-profiles", encoded)
-        async_playwright.assert_called_once()
+        self.assertEqual(connection_modes, ["raw_single_tab"])
+        async_playwright.assert_not_called()
+
+    async def test_profile_only_raw_mode_never_deletes_managed_browser_profile(self) -> None:
+        class LockingPortalWorker:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            async def __aenter__(self) -> object:
+                raise ProfileLockError("busy")
+
+            async def __aexit__(self, *_exc: object) -> None:
+                return None
+
+        with patch(
+            "tools.multi_position_sourcing.portal_live_check.delete_profile_dir_if_confirmed",
+            side_effect=AssertionError("raw managed profile must never be deleted"),
+        ), patch(
+            "tools.multi_position_sourcing.portal_live_check.PortalWorker",
+            LockingPortalWorker,
+        ):
+            payload = await run_profile_only_live_search(
+                LiveSearchConfig(
+                    channel="saramin",
+                    keyword="backend",
+                    worker_id="default",
+                    profile_root=Path("/tmp/valuehire-test-profiles"),
+                    chrome_cdp_endpoint="http://127.0.0.1:9222",
+                    headless=False,
+                    searches_today=0,
+                    no_sleep=True,
+                    disable_auto_relogin=False,
+                    delete_profile_before_start=True,
+                    confirm_delete_profile="DELETE",
+                    profile_only=True,
+                )
+            )
+        self.assertFalse(payload["profile_deleted_before_start"])
 
     async def test_guarded_live_search_reports_profile_lock_without_traceback(self) -> None:
         class FakePlaywrightManager:
@@ -11836,7 +11890,8 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_aborts_when_login_marker_is_lost_during_search(self) -> None:
         context = FakeContext(available_selectors={'input[name="searchword"]', 'button[name="search"]'})
         playwright = FakePlaywright(context)
-        ready_results = [True, False]
+        # attached target precheck, post-navigation check, post-submit loss
+        ready_results = [True, True, False]
 
         async def ready_check(_page: FakePage) -> bool:
             return ready_results.pop(0)

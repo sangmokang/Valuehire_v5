@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
+import math
 import os
 import re
+import secrets
+import time
+import subprocess
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 try:  # pragma: no cover - platform-specific branches are exercised via helpers
     import fcntl as _fcntl
@@ -24,6 +30,7 @@ from .portal_safety import safe_artifact_url, safe_exception_label
 from .selectors import DEFAULT_SELECTOR_MAP
 
 PortalLaunchMode = Literal["headed", "headless"]
+PortalConnectionMode = Literal["persistent_context", "raw_single_tab"]
 SearchStatus = Literal["searched", "not_ready", "selector_missing", "error"]
 
 PROFILE_WORKER_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -31,11 +38,232 @@ DEFAULT_PROFILE_ROOT = Path(
     os.environ.get("VALUEHIRE_PORTAL_PROFILE_ROOT")
     or Path.home() / ".valuehire" / "portal_profiles"
 )
+RAW_SINGLE_TARGET_LOCK_ROOT = Path(
+    Path.home() / ".valuehire" / "browser_locks"
+)
 FORBIDDEN_PROFILE_ARTIFACT_ROOT = Path("artifacts")
 LINKEDIN_SINGLE_WORKER_ID = "default"
 
 CHROME_CDP_ENDPOINT_ENV = "VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT"
 DEFAULT_CHROME_CDP_ENDPOINT = "http://127.0.0.1:9222"
+
+# 채널별 CDP 포트·env — scripts/portal_browsers.sh:74-80 과 정확히 동일해야 한다(SOT 정합).
+# TODO-2b: 사람인·잡코리아도 이 포트로 뜬 크롬에 attach 하기 위한 기반(조각 A).
+_CHANNEL_CDP_DEFAULT_PORT = {"saramin": 9223, "jobkorea": 9224, "linkedin_rps": 9225}
+_CHANNEL_CDP_PORT_ENV = {
+    "saramin": "SARAMIN_PORT",
+    "jobkorea": "JOBKOREA_PORT",
+    "linkedin_rps": "LINKEDIN_PORT",
+}
+
+
+def resolve_channel_cdp_endpoint(
+    channel: str, *, value: str | None = None, env: Mapping[str, str] | None = None
+) -> str:
+    """채널→CDP HTTP endpoint 해석. portal_browsers.sh 포트와 정합.
+
+    우선순위: value(http) > 전역 env(VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT, http) >
+    채널별 포트 env(SARAMIN_PORT 등) > 채널 기본 포트(9223/9224/9225).
+    public_web 은 CDP 대상이 아니다 → ValueError.
+    """
+    if channel not in _CHANNEL_CDP_DEFAULT_PORT:
+        raise ValueError(f"channel {channel!r} 은 CDP attach 대상이 아니다(포털 채널만)")
+    if env is None:
+        env = os.environ
+    if value and value.strip().startswith("http"):
+        return value.strip()
+    genv = (env.get(CHROME_CDP_ENDPOINT_ENV) or "").strip()
+    if genv.startswith("http"):
+        return genv
+    port_raw = (env.get(_CHANNEL_CDP_PORT_ENV[channel]) or "").strip()
+    # 유효 TCP 포트(1..65535)만 채택 — isdigit() 만으론 0·65536 같은 무효값이 새어
+    # 엉뚱한 주소로 attach 할 수 있다(V1 반례). 전각 숫자('９２２３')는 isdigit()==True 지만
+    # URL 에 그대로 박혀 깨진 endpoint 를 만들므로 ASCII 숫자만 인정한다(V2 반례 N1).
+    # 무효면 채널 기본 포트로 폴백.
+    port = port_raw if (port_raw.isascii() and port_raw.isdigit()
+                        and 1 <= int(port_raw) <= 65535) \
+        else str(_CHANNEL_CDP_DEFAULT_PORT[channel])
+    return f"http://127.0.0.1:{port}"
+
+
+# 채널별 검색 target 규칙. host 부분문자열은 룩얼라이크 도메인을 허용하므로
+# exact host/subdomain 경계와 검색 surface path를 함께 확인한다.
+_CHANNEL_TARGET_RULE = {
+    "saramin": (
+        "saramin.co.kr",
+        ("/zf_user/memcom/talent-pool/main/search",),
+    ),
+    "jobkorea": ("jobkorea.co.kr", ("/corp/person/find",)),
+    "linkedin_rps": (
+        "linkedin.com",
+        ("/talent/home", "/talent/search", "/talent/hire/"),
+    ),
+}
+_CHANNEL_BROWSER_NAME = {
+    "saramin": "saramin",
+    "jobkorea": "jobkorea",
+    "linkedin_rps": "linkedin",
+}
+
+
+def resolve_managed_channel_cdp_endpoint(
+    channel: str,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> str:
+    """Resolve the live endpoint for the channel's exact managed profile.
+
+    The repository launcher identifies the running process by an exact user-data-dir
+    argument, then reads its real debugging port. Ambiguous, remote, or malformed output
+    fails closed so a same-site tab in another browser cannot be selected accidentally.
+    """
+    browser_name = _CHANNEL_BROWSER_NAME.get(channel)
+    if browser_name is None:
+        raise ValueError(f"channel {channel!r} 은 관리 브라우저 대상이 아니다")
+    script = Path(__file__).resolve().parents[2] / "scripts" / "portal_browsers.sh"
+    try:
+        result = runner(
+            [str(script), "cdp", browser_name],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LookupError(f"{channel} 관리 브라우저 endpoint 확인 실패") from exc
+    if int(getattr(result, "returncode", 1)) != 0:
+        raise LookupError(f"{channel} 관리 브라우저가 실행 중이지 않음")
+    lines = [
+        line.strip()
+        for line in str(getattr(result, "stdout", "")).splitlines()
+        if line.strip()
+    ]
+    if len(lines) != 1:
+        raise LookupError(f"{channel} 관리 브라우저 endpoint 출력이 모호함")
+    try:
+        parsed = urlsplit(lines[0])
+        port = parsed.port
+    except ValueError as exc:
+        raise LookupError(f"{channel} 관리 브라우저 endpoint가 잘못됨") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost"}
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise LookupError(f"{channel} 관리 브라우저 endpoint가 로컬 단일주소가 아님")
+    return f"http://127.0.0.1:{port}"
+
+
+def _target_matches_channel(channel: str, target: Mapping[str, Any]) -> bool:
+    if target.get("type") != "page":
+        return False
+    return url_matches_channel_surface(channel, str(target.get("url") or ""))
+
+
+def url_matches_channel_surface(channel: str, url: str) -> bool:
+    """Bind a protected surface to HTTPS, official host boundary, and exact path."""
+    rule = _CHANNEL_TARGET_RULE.get(channel)
+    if rule is None:
+        return False
+    domain, path_markers = rule
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    if (
+        parsed.scheme.casefold() != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return False
+    host = (parsed.hostname or "").rstrip(".").casefold()
+    host_ok = host == domain or host.endswith("." + domain)
+    path = (parsed.path or "").casefold()
+    path_ok = any(
+        path == marker or (marker.endswith("/") and path.startswith(marker))
+        for marker in path_markers
+    )
+    return bool(host_ok and path_ok)
+
+
+def find_verified_channel_target(
+    channel: str,
+    *,
+    list_tabs: Callable[[str], list[dict]],
+    value: str | None = None,
+    env: Mapping[str, str] | None = None,
+    candidate_ports: list[int] | None = None,
+    candidate_endpoints: list[str] | None = None,
+) -> tuple[str, dict]:
+    """Return one verified endpoint and exact existing page target atomically."""
+    if channel not in _CHANNEL_TARGET_RULE:
+        raise ValueError(f"channel {channel!r} 은 마커 검증 대상이 아니다(포털 채널만)")
+    if candidate_ports is not None and candidate_endpoints is not None:
+        raise ValueError("candidate_ports and candidate_endpoints are mutually exclusive")
+    primary = resolve_channel_cdp_endpoint(channel, value=value, env=env)
+    if candidate_endpoints is not None:
+        ordered = list(candidate_endpoints)
+    elif candidate_ports is not None:
+        ordered = [f"http://127.0.0.1:{port}" for port in candidate_ports]
+    else:
+        fallbacks = [
+            f"http://127.0.0.1:{port}"
+            for port in (*_CHANNEL_CDP_DEFAULT_PORT.values(), 9222)
+        ]
+        ordered = list(dict.fromkeys([primary, *fallbacks]))
+    for endpoint in ordered:
+        try:
+            tabs = list_tabs(endpoint)
+        except Exception:
+            continue
+        matches = [tab for tab in (tabs or ()) if _target_matches_channel(channel, tab)]
+        if len(matches) == 1:
+            return endpoint, matches[0]
+        if len(matches) > 1:
+            raise LookupError(
+                f"{channel} exact 검색 target이 여러 개라 자동 선택하지 않음"
+            )
+    raise LookupError(
+        f"{channel} exact 검색 target을 후보 endpoint에서 못 찾음 "
+        "— 기존 자동화 브라우저의 로그인/검색 화면 확인 필요(맹목 attach 금지)"
+    )
+
+
+def find_verified_channel_endpoint(
+    channel: str,
+    *,
+    list_tabs: Callable[[str], list[dict]],
+    value: str | None = None,
+    env: Mapping[str, str] | None = None,
+    candidate_ports: list[int] | None = None,
+    candidate_endpoints: list[str] | None = None,
+) -> str:
+    """대상 사이트 로그인 탭이 실제로 있는 CDP endpoint 를 찾는다(오접속 방지).
+
+    라이브 실측(2026-07-18)에서 실제 포트가 스크립트 기본과 뒤섞여 있었다
+    (9222=사람인, 9223=잡코리아). 채널→기본포트만 믿고 attach 하면 엉뚱한 크롬에
+    붙는다. 그래서 1차 후보(resolve_channel_cdp_endpoint) 포트부터 후보 포트들을
+    순회하며, 그 endpoint 의 탭 목록에 대상 사이트 마커 URL 이 실제로 있는 첫
+    endpoint 를 채택한다(SOT-26 §2 발견 알고리즘). 죽은 포트는 건너뛴다.
+    어디에도 없으면 LookupError — 맹목 attach 하지 않는다.
+
+    ``list_tabs(endpoint) -> [{"url": ...}, ...]`` 는 라이브 분리를 위해 주입한다
+    (실사용은 raw_cdp 단일탭 HTTP /json, SOT-26 INV5 — 전체 connectOverCDP 아님).
+    """
+    endpoint, _target = find_verified_channel_target(
+        channel,
+        list_tabs=list_tabs,
+        value=value,
+        env=env,
+        candidate_ports=candidate_ports,
+        candidate_endpoints=candidate_endpoints,
+    )
+    return endpoint
 
 
 def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
@@ -132,6 +360,23 @@ def _value_from_attr_or_method(value: Any, attr: str, default: Any = None) -> An
     return resolved
 
 
+async def _current_page_url(page: Any) -> str:
+    """Read a fresh URL when the adapter offers it; otherwise use page.url."""
+    reader = getattr(page, "current_url", None)
+    if callable(reader):
+        try:
+            return str(await _maybe_await(reader()) or "")
+        except Exception:
+            pass
+    value = getattr(page, "url", "")
+    if callable(value):
+        try:
+            value = await _maybe_await(value())
+        except Exception:
+            value = ""
+    return str(value or "")
+
+
 def login_redirect_cause(channel: Channel, url: str) -> str:
     lowered = url.lower()
     if channel == "saramin" and ("/zf_user/auth" in lowered or "login" in lowered):
@@ -171,7 +416,7 @@ class SearchLivenessMonitor:
             self.reauth_cause = redirect_cause
 
     async def check_page(self, page: Any) -> str:
-        redirect_cause = login_redirect_cause(self.channel, str(getattr(page, "url", "") or ""))
+        redirect_cause = login_redirect_cause(self.channel, await _current_page_url(page))
         if redirect_cause:
             self.reauth_cause = redirect_cause
         return self.reauth_cause
@@ -185,6 +430,7 @@ class PortalWorkerConfig:
     mode: PortalLaunchMode = "headed"
     launch_args: tuple[str, ...] = ()
     chrome_cdp_endpoint: str = field(default_factory=resolve_chrome_cdp_endpoint)
+    connection_mode: PortalConnectionMode = "persistent_context"
     viewport_width: int = 1440
     viewport_height: int = 1000
     search_timeout_seconds: float = 60.0
@@ -193,6 +439,8 @@ class PortalWorkerConfig:
         object.__setattr__(self, "profile_root", validate_portal_profile_root(self.profile_root))
         if self.channel == "public_web":
             raise PortalWorkerConfigError("public_web does not require a protected portal worker")
+        if self.connection_mode not in {"persistent_context", "raw_single_tab"}:
+            raise PortalWorkerConfigError("unknown portal connection mode")
         if not PROFILE_WORKER_ID_RE.match(self.worker_id) or self.worker_id in {".", ".."}:
             raise PortalWorkerConfigError("worker_id must be a safe file-name token")
         if self.channel == "linkedin_rps":
@@ -207,6 +455,9 @@ class PortalWorkerConfig:
 
     @property
     def lock_path(self) -> Path:
+        if self.connection_mode == "raw_single_tab":
+            site = _CHANNEL_BROWSER_NAME[self.channel]
+            return RAW_SINGLE_TARGET_LOCK_ROOT / f"login-{site}.lock"
         return self.profile_dir / ".profile.lock"
 
     @property
@@ -232,9 +483,13 @@ class ProfileLock:
     def __init__(self, config: PortalWorkerConfig) -> None:
         self.config = config
         self._handle: Any | None = None
+        self._lease_token: str | None = None
 
     def acquire(self) -> None:
         _ensure_real_profile_dir(self.config)
+        if self.config.connection_mode == "raw_single_tab":
+            self._acquire_raw_lease()
+            return
         handle = _open_real_profile_lock(self.config.lock_path)
         try:
             _lock_handle(handle)
@@ -257,7 +512,56 @@ class ProfileLock:
             raise
         self._handle = handle
 
+    @property
+    def _raw_owner_path(self) -> Path:
+        return self.config.lock_path / "owner.json"
+
+    def _acquire_raw_lease(self) -> None:
+        token = secrets.token_hex(24)
+        try:
+            self.config.lock_path.mkdir(mode=0o700)
+        except (FileExistsError, OSError) as exc:
+            raise ProfileLockError(
+                f"profile already locked for {self.config.channel}/{self.config.worker_id}"
+            ) from exc
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(self._raw_owner_path, flags, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as owner:
+                json.dump({"token": token, "pid": os.getpid()}, owner, sort_keys=True)
+                owner.write("\n")
+                owner.flush()
+        except Exception as exc:
+            try:
+                self.config.lock_path.rmdir()
+            except OSError:
+                pass
+            raise ProfileLockError("raw browser lease initialization failed") from exc
+        self._lease_token = token
+
+    def assert_owned(self) -> None:
+        if self.config.connection_mode != "raw_single_tab":
+            if self._handle is None:
+                raise ProfileLockError("profile lock ownership was lost")
+            return
+        token = self._lease_token
+        lock_path = self.config.lock_path
+        owner_path = self._raw_owner_path
+        if not token or lock_path.is_symlink() or owner_path.is_symlink():
+            raise ProfileLockError("raw browser lease ownership was lost")
+        try:
+            payload = json.loads(owner_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise ProfileLockError("raw browser lease ownership was lost") from exc
+        if payload.get("token") != token:
+            raise ProfileLockError("raw browser lease ownership was lost")
+
     def release(self) -> None:
+        if self.config.connection_mode == "raw_single_tab":
+            self._release_raw_lease()
+            return
         if self._handle is None:
             return
         handle = self._handle
@@ -270,6 +574,20 @@ class ProfileLock:
             handle.close()
         except Exception:
             pass
+
+    def _release_raw_lease(self) -> None:
+        token = self._lease_token
+        self._lease_token = None
+        if not token:
+            return
+        try:
+            payload = json.loads(self._raw_owner_path.read_text(encoding="utf-8"))
+            if payload.get("token") != token:
+                return
+            self._raw_owner_path.unlink()
+            self.config.lock_path.rmdir()
+        except (OSError, ValueError, TypeError):
+            return
 
     def __enter__(self) -> ProfileLock:
         self.acquire()
@@ -292,6 +610,12 @@ def _ensure_real_profile_dir(config: PortalWorkerConfig) -> None:
         if not path.exists():
             path.mkdir(exist_ok=True)
         _reject_unsafe_profile_path(path)
+    if config.connection_mode == "raw_single_tab":
+        lock_dir = config.lock_path.parent
+        _reject_unsafe_profile_path(lock_dir)
+        if not lock_dir.exists():
+            lock_dir.mkdir(parents=True, exist_ok=True)
+        _reject_unsafe_profile_path(lock_dir)
 
 
 def _reject_unsafe_profile_path(path: Path) -> None:
@@ -579,7 +903,15 @@ ReadyCheck = Callable[[Any], Awaitable[bool]]
 
 
 class PortalWorker:
-    def __init__(self, config: PortalWorkerConfig, *, playwright: Any | None = None) -> None:
+    def __init__(
+        self,
+        config: PortalWorkerConfig,
+        *,
+        playwright: Any | None = None,
+        owner_snapshot: Callable[[], Any] | None = None,
+        mutation_sleep: Callable[[float], None] | None = None,
+        handoff_sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
         self.config = config
         self._provided_playwright = playwright
         self._playwright_manager: Any | None = None
@@ -589,6 +921,98 @@ class PortalWorker:
         self._browser: Any | None = None
         self._started = False
         self._blocked_next_mode: PortalLaunchMode | None = None
+        # raw attach 채널(사람인·잡코리아)이 심는 RawPage. None 이면 기존 launch/linkedin 경로.
+        self._raw_page: Any | None = None
+        self._raw_tab: Any | None = None
+        self._raw_badge_applied = False
+        if owner_snapshot is None:
+            from .owner_activity import detect_owner_activity_snapshot
+
+            owner_snapshot = detect_owner_activity_snapshot
+        self._owner_snapshot = owner_snapshot
+        self._mutation_sleep = mutation_sleep or time.sleep
+        self._handoff_sleep = handoff_sleep or asyncio.sleep
+
+    @staticmethod
+    def _proved_idle_seconds(snapshot: Any) -> float:
+        value = getattr(snapshot, "idle_seconds", None)
+        if (
+            getattr(snapshot, "detection_status", "") != "ok"
+            or getattr(snapshot, "owner_activity_detected", True) is not False
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < 180.0
+        ):
+            raise ProfileLockError("owner activity blocks raw browser mutation")
+        return float(value)
+
+    def _assert_raw_mutation_allowed(self) -> None:
+        """Lease + two OS-idle proofs + quiet dwell before exactly one mutation."""
+        self._lock.assert_owned()
+        try:
+            first = self._proved_idle_seconds(self._owner_snapshot())
+        except ProfileLockError:
+            raise
+        except Exception as exc:
+            raise ProfileLockError("owner activity detection failed closed") from exc
+        self._mutation_sleep(1.0)
+        self._lock.assert_owned()
+        try:
+            second = self._proved_idle_seconds(self._owner_snapshot())
+        except ProfileLockError:
+            raise
+        except Exception as exc:
+            raise ProfileLockError("owner activity detection failed closed") from exc
+        if second <= first:
+            raise ProfileLockError("owner idle proof did not increase during quiet dwell")
+        self._lock.assert_owned()
+
+    async def _attach_raw_target_cancellation_safe(self, attach: Any, target: dict) -> Any:
+        attach_task = asyncio.create_task(asyncio.to_thread(attach, target, badge=False))
+        cancelled = False
+        while not attach_task.done():
+            try:
+                await asyncio.shield(attach_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+        tab = await attach_task
+        self._raw_tab = tab
+        if cancelled:
+            raise asyncio.CancelledError
+        return tab
+
+    async def _mark_raw_badge_cancellation_safe(
+        self,
+        badge_label: str,
+        expected_url: str,
+    ) -> bool:
+        tab = self._raw_tab
+        if tab is None:
+            raise RuntimeError("raw target disappeared before ownership marker")
+        marker_task = asyncio.create_task(asyncio.to_thread(
+            tab.mark_busy,
+            badge_label,
+            expected_url=expected_url,
+        ))
+        cancelled = False
+        while not marker_task.done():
+            try:
+                await asyncio.shield(marker_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+        marker_applied = False
+        try:
+            marker_applied = await marker_task is True
+            return marker_applied
+        finally:
+            self._raw_badge_applied = marker_applied or bool(
+                getattr(tab, "badge_application_uncertain", False)
+            )
+            if cancelled:
+                raise asyncio.CancelledError
 
     @property
     def context(self) -> Any:
@@ -608,11 +1032,68 @@ class PortalWorker:
         """Record a next-boot policy without mutating this worker's browser mode."""
         self._blocked_next_mode = next_mode
 
+    def _cdp_endpoint(self, *, env: Mapping[str, str] | None = None) -> str:
+        """연결할 CDP endpoint — 채널 인지 해석(TODO-2b 조각 A 배선, 고아 해소).
+
+        명시 config 값(chrome_cdp_endpoint)이 값-우선으로 그대로 이겨 기존 동작을 보존하고,
+        비어 있을 때만 채널 기본 포트(portal_browsers.sh 정합: linkedin=9225 등)로 폴백한다.
+        사람인·잡코리아 start() 의 connect_over_cdp 실이전은 조각 B(라이브 검증 필수)."""
+        return resolve_channel_cdp_endpoint(
+            self.config.channel, value=self.config.chrome_cdp_endpoint, env=env)
+
     async def start(self) -> None:
         if self._started:
             return
         self._lock.acquire()
         try:
+            if self.config.connection_mode == "raw_single_tab":
+                from . import raw_cdp
+                from .raw_page_adapter import RawPage
+
+                managed_endpoint = resolve_managed_channel_cdp_endpoint(
+                    self.config.channel
+                )
+                _endpoint, target = find_verified_channel_target(
+                    self.config.channel,
+                    list_tabs=raw_cdp.list_pages,
+                    candidate_endpoints=[managed_endpoint],
+                )
+                badge_label = raw_cdp._resolve_badge_label(os.environ)
+                if not badge_label:
+                    raise RuntimeError("visible automation marker is required for raw mode")
+                await asyncio.to_thread(self._assert_raw_mutation_allowed)
+                self._raw_tab = await self._attach_raw_target_cancellation_safe(
+                    raw_cdp.attach,
+                    target,
+                )
+                fresh_url = str(
+                    await asyncio.to_thread(self._raw_tab.eval, "location.href") or ""
+                )
+                if not url_matches_channel_surface(self.config.channel, fresh_url):
+                    raise RuntimeError("attached target changed before ownership marker")
+                await asyncio.to_thread(self._assert_raw_mutation_allowed)
+                # owner-idle quiet dwell 중에도 사람이 같은 탭을 이동할 수 있다.
+                # 마지막 mutation guard 뒤 live URL 을 다시 결박한 다음에만 배지를 심는다.
+                fresh_url = str(
+                    await asyncio.to_thread(self._raw_tab.eval, "location.href") or ""
+                )
+                self._lock.assert_owned()
+                if not url_matches_channel_surface(self.config.channel, fresh_url):
+                    raise RuntimeError("attached target changed during ownership guard")
+                marker_applied = await self._mark_raw_badge_cancellation_safe(
+                    badge_label,
+                    fresh_url,
+                )
+                if not marker_applied:
+                    raise RuntimeError("visible automation marker could not be applied")
+                self._raw_page = RawPage(
+                    self._raw_tab,
+                    initial_url=fresh_url,
+                    require_badge=True,
+                    mutation_guard=self._assert_raw_mutation_allowed,
+                )
+                self._started = True
+                return
             self._playwright = self._provided_playwright
             if self._playwright is None:
                 from playwright.async_api import async_playwright
@@ -624,12 +1105,14 @@ class PortalWorker:
                 # 검문소(fail-closed): 붙으려는 CDP 주소가 규칙(SOT)과 다르면 멈춘다.
                 from .browser_policy import assert_browser_ready
 
+                # 조각 A 배선: endpoint 를 채널 인지 해석기로 통과(값-우선=동작 보존).
+                endpoint = self._cdp_endpoint()
                 assert_browser_ready(
                     "portal_automation",
-                    connected_endpoint=self.config.chrome_cdp_endpoint,
+                    connected_endpoint=endpoint,
                 )
                 self._browser = await self._playwright.chromium.connect_over_cdp(
-                    self.config.chrome_cdp_endpoint
+                    endpoint
                 )
                 contexts = getattr(self._browser, "contexts", ())
                 self._context = contexts[0] if contexts else await self._browser.new_context()
@@ -648,10 +1131,76 @@ class PortalWorker:
                     },
                 )
             self._started = True
-        except Exception:
-            self._lock.release()
-            await self._close_playwright_manager_if_possible()
+        except BaseException:
+            try:
+                await self._finish_raw_handoff_despite_cancellation()
+            finally:
+                if self._raw_tab is None:
+                    self._lock.release()
+                await self._close_playwright_manager_if_possible()
             raise
+
+    async def _invoke_raw_tab_method(self, tab: Any, method_name: str) -> bool:
+        method = getattr(tab, method_name, None)
+        if not callable(method):
+            return False
+        try:
+            if inspect.iscoroutinefunction(method):
+                result = await method()
+            else:
+                result = await asyncio.to_thread(method)
+            return result is not False
+        except Exception:
+            return False
+
+    async def _disconnect_raw_tab_if_possible(self) -> None:
+        tab = self._raw_tab
+        if tab is None:
+            return
+        handed_off = False
+        try:
+            if not self._raw_badge_applied:
+                if not await self._invoke_raw_tab_method(tab, "disconnect"):
+                    raise RuntimeError("raw target socket disconnect failed")
+                handed_off = True
+                return
+            while True:
+                try:
+                    await asyncio.to_thread(self._assert_raw_mutation_allowed)
+                except ProfileLockError:
+                    try:
+                        self._lock.assert_owned()
+                    except ProfileLockError:
+                        if not await self._invoke_raw_tab_method(tab, "disconnect"):
+                            raise RuntimeError("raw target socket disconnect failed")
+                        handed_off = True
+                        return
+                    await self._handoff_sleep(5.0)
+                    continue
+                if not await self._invoke_raw_tab_method(tab, "close"):
+                    raise RuntimeError("visible automation marker handoff failed")
+                handed_off = True
+                return
+        finally:
+            if handed_off:
+                if self._raw_tab is tab:
+                    self._raw_tab = None
+                self._raw_badge_applied = False
+
+    async def _finish_raw_handoff_despite_cancellation(self) -> None:
+        if self._raw_tab is None:
+            return
+        cleanup = asyncio.create_task(self._disconnect_raw_tab_if_possible())
+        cancelled = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+        await cleanup
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def stop(self) -> None:
         # SOT-28 §4(세션 상시 유지)·§12 현상6(TODO-2): 어떤 채널도 로그인 세션이
@@ -660,9 +1209,12 @@ class PortalWorker:
         self._context = None
         self._browser = None
         try:
+            await self._finish_raw_handoff_despite_cancellation()
+            self._raw_page = None
             await self._close_playwright_manager_if_possible()
         finally:
-            self._lock.release()
+            if self._raw_tab is None:
+                self._lock.release()
             self._started = False
 
     async def _close_playwright_manager_if_possible(self) -> None:
@@ -708,6 +1260,15 @@ class PortalWorker:
                 reason=f"portal search timed out after {timeout:g}s",
             )
 
+    async def _acquire_search_page(self) -> Any:
+        """검색용 페이지 획득. raw attach 채널은 self._raw_page(RawPage) 를 쓰고,
+        그 외(launch/linkedin)는 context.new_page() 위임.
+
+        _raw_page 는 조각 B2b-2 의 start() raw 분기가 심는다(기본 None → 기존 동작 보존)."""
+        if self._raw_page is not None:
+            return self._raw_page
+        return await self.context.new_page()
+
     async def _run_one_search_body(
         self,
         keyword: str,
@@ -717,9 +1278,40 @@ class PortalWorker:
     ) -> PortalSearchAttempt:
         page: Any | None = None
         try:
-            page = await self.context.new_page()
+            page = await self._acquire_search_page()
+            if self._raw_page is not None and ready_check is None:
+                return PortalSearchAttempt(
+                    channel=self.config.channel,
+                    worker_id=self.config.worker_id,
+                    keyword=keyword,
+                    status="not_ready",
+                    reason="login proof is required before raw navigation",
+                    url=safe_artifact_url(getattr(page, "url", "")),
+                    reauth_cause="login_proof_required",
+                )
             monitor = monitor or SearchLivenessMonitor(self.config.channel)
             monitor.attach(page)
+            reauth_cause = await monitor.check_page(page)
+            if reauth_cause:
+                return PortalSearchAttempt(
+                    channel=self.config.channel,
+                    worker_id=self.config.worker_id,
+                    keyword=keyword,
+                    status="not_ready",
+                    reason="reauth required before navigation",
+                    url=safe_artifact_url(getattr(page, "url", "")),
+                    reauth_cause=reauth_cause,
+                )
+            if ready_check is not None and not await ready_check(page):
+                return PortalSearchAttempt(
+                    channel=self.config.channel,
+                    worker_id=self.config.worker_id,
+                    keyword=keyword,
+                    status="not_ready",
+                    reason="login marker missing on attached target",
+                    url=safe_artifact_url(getattr(page, "url", "")),
+                    reauth_cause="login_marker_missing",
+                )
             await _goto_search_surface(page, self.config.channel, keyword)
             reauth_cause = await monitor.check_page(page)
             if reauth_cause:

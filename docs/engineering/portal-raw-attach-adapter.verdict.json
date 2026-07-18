@@ -1,0 +1,41 @@
+{
+  "claim_id": "portal-raw-attach-adapter-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "RawPage/RawLocator가 production search surface를 exact raw target 위에서 제공하며, required mode의 fill/click/press/navigation은 exact URL + browser-owned visible marker + selector + lease/owner proof를 동일한 resolved badge object의 Runtime.callFunctionOn에 결박한다.",
+    "production_surface": [
+      "locator/count/is_visible/fill/click/press/get_attribute/inner_text/first/nth",
+      "url/current_url/on",
+      "atomic owned navigation + exact next lifecycle",
+      "JSON escaping for selector/value/url/label"
+    ],
+    "lifecycle": "attach와 initial badge acknowledgement는 off-event-loop cancellation-safe이고, constructor/partial badge/socket/clear 실패는 정확히 ack되지 않으면 raw state와 lease를 보존한다.",
+    "green_evidence": "HEAD 3c0eda1: local adapter/raw/wiring 85 passed; independent focused 457 passed + 8 subtests; actual headful Chromium adversarial matrix PASS; ./verify.sh 1865 passed, 4 xfailed, 105 subtests, exit 0.",
+    "mutation_guards": [
+      "canonical per-channel atomic lease and token",
+      "two owner-idle snapshots >=180s with increasing idle across dwell",
+      "exact official URL",
+      "full-viewport PNG nonce challenge plus immutable label-derived custom tag in browser Overlay",
+      "same resolved connected badge object retained across post-proof owner guard",
+      "exact tag/id/text/aria/title/role plus ancestor display/visibility/opacity and viewport geometry",
+      "selector/action boolean acknowledgement",
+      "synchronous location.assign plus next lifecycle correlation"
+    ]
+  },
+  "adversarial_reviews": [
+    {
+      "reviewer": "V1 fresh independent",
+      "head": "3c0eda1",
+      "verdict": "PASS"
+    },
+    {
+      "reviewer": "V2 actual Chromium",
+      "head": "3c0eda1",
+      "verdict": "PASS",
+      "evidence": "Actual headful Chromium: page overlay/pseudo/modal cannot spoof browser marker; delayed aria mutation does not alter immutable canonical tag; exact clone and owner-return races yield zero mutation; stale Overlay clears; cross-document reproof required."
+    }
+  ],
+  "three_way_agree": true,
+  "status": "GREEN — adapter is production-wired in profile_only raw_single_tab search; no orphan remains."
+}

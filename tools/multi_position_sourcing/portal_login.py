@@ -18,6 +18,7 @@ from .portal_worker import (
     PortalWorkerConfig,
     _close_page_if_possible,
     resolve_chrome_cdp_endpoint,
+    url_matches_channel_surface,
 )
 
 DEFAULT_PROFILE_ROOT_PATH = str(DEFAULT_PROFILE_ROOT)
@@ -27,6 +28,13 @@ DEFAULT_CHANNEL_TIMEOUT_SECONDS = 180
 SARAMIN_SEARCH_URL = "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
 JOBKOREA_SEARCH_URL = "https://www.jobkorea.co.kr/Corp/Person/Find"
 LINKEDIN_RPS_HOME_URL = "https://www.linkedin.com/talent/home"
+LINKEDIN_RECRUITER_SEARCH_SELECTOR = (
+    'a[href*="/talent/search"]'
+)
+LINKEDIN_RECRUITER_ACCOUNT_SELECTOR = (
+    '[data-test-recruiter-account-menu], '
+    '[data-test-recruiter-nav-user-menu]'
+)
 ReadyCheck = Callable[[Any], Awaitable[bool]]
 PreflightSnapshotCapture = Callable[..., Awaitable[dict[str, object]]]
 
@@ -71,11 +79,27 @@ async def _close_popups(page: Any) -> None:
             pass
 
 
-async def _body_text(page: Any, limit: int = 3000) -> str:
+async def _body_text(page: Any, limit: int | None = 3000) -> str:
     try:
-        return (await page.locator("body").inner_text(timeout=5000))[:limit]
+        text = await page.locator("body").inner_text(timeout=5000)
+        return text if limit is None else text[:limit]
     except Exception:
         return ""
+
+
+async def _has_visible_locator(page: Any, selector: str, *, limit: int = 20) -> bool:
+    """Require a freshly rendered marker; hidden residual DOM never proves auth."""
+    try:
+        locator = page.locator(selector)
+        count = min(int(await locator.count()), limit)
+        for index in range(count):
+            candidate = locator.nth(index)
+            is_visible = getattr(candidate, "is_visible", None)
+            if callable(is_visible) and bool(await is_visible()):
+                return True
+    except Exception:
+        return False
+    return False
 
 
 # 보안챌린지/세션락 감지 토큰. SOT26 block_detection.unified_regex 의 **부분집합**이다(전체가 아님).
@@ -300,37 +324,66 @@ async def _saramin_search_ready(page: Any) -> bool:
     text = await _body_text(page)
     if _has_security_challenge(text, getattr(page, "url", "")):
         return False
-    if "talent-pool" not in getattr(page, "url", ""):
+    if not url_matches_channel_surface("saramin", str(getattr(page, "url", ""))):
         try:
             await page.goto("https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search", wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(1500)
             await _close_popups(page)
         except Exception:
             return False
+    if not url_matches_channel_surface("saramin", str(getattr(page, "url", ""))):
+        return False
     text = await _body_text(page)
-    has_search = await page.locator("input.search_input, #career_min, #career_max").count()
-    return bool(has_search or "로그아웃" in text)
+    if "로그인" in text and "로그아웃" not in text:
+        return False
+    account_marker = (
+        "로그아웃" in text
+        or "밸류커넥트" in text
+        or "value connect" in text.casefold()
+        or "valueconnect" in text.casefold()
+    )
+    search_input = await page.locator("input.search_input").count()
+    career_min = await page.locator("#career_min").count()
+    career_max = await page.locator("#career_max").count()
+    return bool(account_marker and search_input and career_min and career_max)
 
 
 async def _jobkorea_search_ready(page: Any) -> bool:
     text = await _body_text(page)
     if _has_security_challenge(text, getattr(page, "url", "")):
         return False
-    if "/Corp/Person/Find" not in getattr(page, "url", ""):
+    if not url_matches_channel_surface("jobkorea", str(getattr(page, "url", ""))):
         try:
             await page.goto("https://www.jobkorea.co.kr/Corp/Person/Find", wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(1500)
             await _close_popups(page)
         except Exception:
             return False
-    return bool(await page.locator("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']").count())
+    if not url_matches_channel_surface("jobkorea", str(getattr(page, "url", ""))):
+        return False
+    text = await _body_text(page)
+    if "로그인" in text and "로그아웃" not in text:
+        return False
+    has_logout = "로그아웃" in text
+    folded = text.casefold()
+    has_account = (
+        "밸류커넥트" in text
+        or "value connect" in folded
+        or "valueconnect" in folded
+    )
+    has_search = await page.locator(
+        "#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"
+    ).count()
+    return bool(has_logout and has_account and has_search)
 
 
 async def _linkedin_rps_ready(page: Any) -> bool:
     text = await _body_text(page)
     if _has_security_challenge(text, getattr(page, "url", "")):
         return False
-    if "/talent/" not in getattr(page, "url", "") or "login" in getattr(page, "url", "").lower():
+    if not url_matches_channel_surface(
+        "linkedin_rps", str(getattr(page, "url", ""))
+    ):
         try:
             await page.goto("https://www.linkedin.com/talent/home", wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(2000)
@@ -338,12 +391,30 @@ async def _linkedin_rps_ready(page: Any) -> bool:
         except Exception:
             return False
     url = getattr(page, "url", "")
-    if "/talent/" not in url or "login" in url.lower():
+    if not url_matches_channel_surface("linkedin_rps", str(url)):
         return False
-    # A logged-out LinkedIn redirects /talent/* back to a login wall, so also require a
-    # Recruiter search affordance — a URL check alone is not a reliable login marker.
-    has_recruiter_search = await page.locator('a[href*="/talent/search"], input[role="combobox"]').count()
-    return bool(has_recruiter_search)
+    text = await _body_text(page, limit=None)
+    if not text.strip():
+        return False
+    folded = text.casefold()
+    if (
+        "sign in" in folded
+        or "log in" in folded
+        or "email or phone" in folded
+        or "forgot password" in folded
+        or "join linkedin" in folded
+        or ("로그인" in text and "로그아웃" not in text)
+    ):
+        return False
+    if _has_security_challenge(text, url):
+        return False
+    has_recruiter_search = await _has_visible_locator(
+        page, LINKEDIN_RECRUITER_SEARCH_SELECTOR
+    )
+    has_recruiter_account = await _has_visible_locator(
+        page, LINKEDIN_RECRUITER_ACCOUNT_SELECTOR
+    )
+    return bool(has_recruiter_search and has_recruiter_account)
 
 
 def ready_check_for_channel(channel: Channel) -> ReadyCheck:

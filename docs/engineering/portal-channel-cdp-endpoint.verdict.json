@@ -1,0 +1,61 @@
+{
+  "claim_id": "portal-channel-cdp-endpoint-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "portal_live_check의 profile_only 정식 경로가 portal_browsers.sh로 exact 관리 Chrome root/CDP를 증명하고, 공식 로그인된 page target 하나만 raw WebSocket으로 attach하여 검색한다. 새 창·새 탭·전체 브라우저 attach·탭 close는 0이며, lease/owner-idle/visible badge/URL/DOM ownership을 모든 mutation과 handoff에 결박한다.",
+    "changed_files": [
+      "scripts/portal_browsers.sh",
+      "tools/multi_position_sourcing/portal_live_check.py",
+      "tools/multi_position_sourcing/portal_login.py",
+      "tools/multi_position_sourcing/portal_worker.py",
+      "tools/multi_position_sourcing/raw_cdp.py",
+      "tools/multi_position_sourcing/raw_page_adapter.py",
+      "tests/test_channel_endpoint_marker_verify.py",
+      "tests/test_multi_position_sourcing.py",
+      "tests/test_portal_cdp_discovery.py",
+      "tests/test_portal_channel_cdp_endpoint.py",
+      "tests/test_portal_preflight_autologin.py",
+      "tests/test_raw_cdp_busy_badge.py",
+      "tests/test_raw_page_adapter.py",
+      "tests/test_raw_portal_worker_wiring.py",
+      "tests/test_search_page_acquisition.py"
+    ],
+    "red_evidence": "각 계약을 RED commit으로 먼저 고정: endpoint/target 배선, exact profile/root, loader/auth/visible marker, shared lease/owner idle, cancellation/handoff, Chrome identity, atomic badge/DOM ownership/navigation, socket/partial-ack uncertainty, slow attach/mark_busy cancellation, compositor occlusion, PNG provenance/CRC/IEND/DPR, integer Overlay geometry, stable resolved-node identity, post-proof owner return, exact-clone race, stale tooltip, immutable human locator, required-mode legacy fallback 제거.",
+    "green_evidence": "HEAD 3c0eda1: V1 independent 457 passed + 8 subtests; V2 actual headful Chromium matrix + local raw/adapter/wiring 85 passed; ./verify.sh 1865 passed, 4 xfailed, 105 subtests, exit 0.",
+    "wiring_status": "WIRED: run_profile_only_live_search -> PortalWorker(connection_mode=raw_single_tab) -> resolve_managed_channel_cdp_endpoint -> find_verified_channel_target -> exact raw target attach -> RawPage production search body.",
+    "session_preservation": "stop/handoff removes only acknowledged visible badge and raw WebSocket. Browser, profile, context, page target and login session are not closed or deleted.",
+    "fail_closed": [
+      "configured Chrome executable/profile root mismatch",
+      "renderer/helper-only or duplicate browser roots",
+      "non-CDP HTTP responder or hung/no-port process",
+      "ambiguous/missing/non-page/lookalike/insecure target",
+      "owner active or lease/token loss",
+      "generic/hidden/non-Recruiter login proof",
+      "URL or badge ownership race",
+      "page-owned red overlay/pseudo/modal spoof (browser Overlay nonce challenge)",
+      "mutable aria tooltip spoof (immutable label-derived custom tag; Accessibility Name suppressed)",
+      "exact-clone replacement between proof and action (same resolved object retained)",
+      "owner return during compositor proof (guard repeated at mutation boundary)",
+      "badge clear/socket close/constructor/attach acknowledgement uncertainty",
+      "navigation loader or DOM selector acknowledgement loss"
+    ]
+  },
+  "adversarial_reviews": [
+    {
+      "reviewer": "V1 fresh independent",
+      "head": "3c0eda1",
+      "verdict": "PASS",
+      "evidence": "457 passed, 8 subtests. RGB/RGBA filters 0-4, DPR 2x3 crop, CRC/IEND/nonfinite rejection, generated JS compilation, exact-clone zero mutation, stable-object required mode and cleanup all PASS."
+    },
+    {
+      "reviewer": "V2 actual Chromium",
+      "head": "3c0eda1",
+      "verdict": "PASS",
+      "evidence": "Actual headful Chromium: fractional rect/int Overlay, cover/pseudo/modal, delayed aria PAGE-SPOOF, exact clone, same-object action/navigation, clear/cross-nav/reinject all PASS; immutable canonical tag remained byte-identical and visible; local focused 85 passed."
+    }
+  ],
+  "historical_correction": "초기 verdict의 COSMETIC-SCAFFOLD/0%/단독 merge 금지는 조각 A/B1 시점 판정이었다. 같은 PR에서 B2 production wiring과 adversarial lifecycle sealing까지 완료되어 이 최종 판정이 우선한다.",
+  "three_way_agree": true,
+  "status": "GREEN — PR #149 standalone merge allowed for the profile_only raw-single-target portal search scope. Login-page discovery/window locator/keepalive remain a separate login-skill task and are not claimed here."
+}

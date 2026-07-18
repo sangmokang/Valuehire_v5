@@ -15,6 +15,7 @@ from __future__ import annotations
 import http.server
 import importlib
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -53,6 +54,10 @@ socketserver.TCPServer.allow_reuse_address = True
 with socketserver.TCPServer(("127.0.0.1", port), H) as srv:
     srv.serve_forever()
 """
+FAKE_HTTP_ONLY_SRC = FAKE_CHROME_SRC.replace(
+    "self.wfile.write(b'{\"Browser\":\"Chrome/fake\"}')",
+    "self.wfile.write(b'{}')",
+)
 
 
 def _free_port() -> int:
@@ -81,7 +86,25 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="cdp_discovery_"))
         self.fake_chrome = self.tmp / "fake_chrome.py"
         self.fake_chrome.write_text(FAKE_CHROME_SRC, encoding="utf-8")
+        self.fake_http_only = self.tmp / "fake_http_only.py"
+        self.fake_http_only.write_text(FAKE_HTTP_ONLY_SRC, encoding="utf-8")
         self.procs: list[subprocess.Popen] = []
+        self._old_portal_chrome = os.environ.get("PORTAL_CHROME")
+        process_comm = subprocess.check_output(
+            ["ps", "-p", str(os.getpid()), "-o", "comm="], text=True
+        ).strip()
+        # macOS comm is the absolute executable, while Linux comm is commonly only
+        # "python3" even though `ps ... command=` starts with the absolute path.
+        # The production matcher intentionally requires exact executable identity,
+        # so make the fake's configured identity describe argv[0] on both OSes.
+        if Path(process_comm).is_absolute():
+            self.process_executable = process_comm
+        else:
+            process_command = subprocess.check_output(
+                ["ps", "-p", str(os.getpid()), "-o", "command="], text=True
+            ).strip()
+            self.process_executable = shlex.split(process_command)[0]
+        os.environ["PORTAL_CHROME"] = self.process_executable
 
     def tearDown(self) -> None:
         for p in self.procs:
@@ -91,6 +114,18 @@ class CdpDiscoveryTests(unittest.TestCase):
                 p.wait(timeout=5)
             except Exception:
                 p.kill()
+        if self._old_portal_chrome is None:
+            os.environ.pop("PORTAL_CHROME", None)
+        else:
+            os.environ["PORTAL_CHROME"] = self._old_portal_chrome
+
+    def _record_child_executable(self, pid: int) -> None:
+        """Use the exact argv[0] that `portal_browsers.sh` will see in `ps`."""
+        process_command = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "command="], text=True
+        ).strip()
+        self.process_executable = shlex.split(process_command)[0]
+        os.environ["PORTAL_CHROME"] = self.process_executable
 
     def _launch_fake(self, profile: Path, port: int) -> None:
         profile.mkdir(parents=True, exist_ok=True)
@@ -101,6 +136,60 @@ class CdpDiscoveryTests(unittest.TestCase):
         )
         self.procs.append(p)
         self.assertTrue(_wait_port(port), f"fake 크롬 포트 {port} 안 뜸")
+        self._record_child_executable(p.pid)
+
+    def _launch_http_only(self, profile: Path, port: int) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(self.fake_http_only),
+                f"--user-data-dir={profile}",
+                f"--remote-debugging-port={port}",
+            ],
+        )
+        self.procs.append(process)
+        self.assertTrue(_wait_port(port), f"fake HTTP port {port} 안 뜸")
+        self._record_child_executable(process.pid)
+
+    def _launch_hung(self, profile: Path, port: int) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                f"--user-data-dir={profile}",
+                f"--remote-debugging-port={port}",
+            ],
+        )
+        self.procs.append(process)
+
+    def _launch_hung_without_port(self, profile: Path) -> None:
+        profile.mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                f"--user-data-dir={profile}",
+            ],
+        )
+        self.procs.append(process)
+
+    def _launch_renderer_helper(self, profile: Path, port: int) -> None:
+        """Chrome child processes inherit profile/CDP args but are not browsers."""
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                "--type=renderer",
+                f"--user-data-dir={profile}",
+                f"--remote-debugging-port={port}",
+            ],
+        )
+        self.procs.append(process)
 
     def test_cdp_discovers_actual_running_port_over_config(self) -> None:
         # 설정 포트와 다른 실제 포트로 크롬이 떠 있는 상황(9225 vs 9338 재현).
@@ -122,6 +211,25 @@ class CdpDiscoveryTests(unittest.TestCase):
             out.stdout.strip(), f"http://127.0.0.1:{actual}",
             f"설정({cfg}) 아닌 실제 살아있는 포트({actual})를 출력해야 한다. stdout={out.stdout!r} stderr={out.stderr!r}",
         )
+
+    def test_cdp_does_not_count_renderer_helper_as_second_browser(self) -> None:
+        profile = self.tmp / "profile_with_renderer"
+        actual = _free_port()
+        self._launch_fake(profile, actual)
+        self._launch_renderer_helper(profile, actual)
+        env = {
+            **os.environ,
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertEqual(out.returncode, 0, f"stderr={out.stderr}")
+        self.assertEqual(out.stdout.strip(), f"http://127.0.0.1:{actual}")
 
     def test_cdp_ignores_prefix_overlapping_profile(self) -> None:
         # V1 지적: /linkedin 이 /linkedin2 에도 접두 매칭돼 엉뚱한 브라우저 포트를 잡으면 안 된다.
@@ -165,6 +273,126 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0, "살아있는 크롬 없을 때 0 종료 금지")
         self.assertEqual(out.stdout.strip(), "", "엔드포인트를 지어내면 안 됨")
 
+    def test_cdp_rejects_non_configured_executable_with_chrome_shaped_args(self) -> None:
+        profile = self.tmp / "impostor_profile"
+        actual = _free_port()
+        self._launch_fake(profile, actual)
+        env = {
+            **os.environ,
+            "PORTAL_CHROME": str(self.tmp / "expected-real-chrome"),
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+
+    def test_cdp_rejects_plain_http_200_without_browser_version_proof(self) -> None:
+        profile = self.tmp / "plain_http_profile"
+        actual = _free_port()
+        self._launch_http_only(profile, actual)
+        env = {
+            **os.environ,
+            "PORTAL_CHROME": self.process_executable,
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+
+    def test_cdp_fails_closed_when_two_exact_profile_processes_are_live(self) -> None:
+        profile = self.tmp / "ambiguous_profile"
+        first = _free_port()
+        second = _free_port()
+        self._launch_fake(profile, first)
+        self._launch_fake(profile, second)
+        env = {
+            **os.environ,
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertIn("여러", out.stderr)
+
+    def test_cdp_fails_closed_when_duplicate_exact_profile_has_one_hung_port(self) -> None:
+        profile = self.tmp / "ambiguous_hung_profile"
+        live = _free_port()
+        hung = _free_port()
+        self._launch_fake(profile, live)
+        self._launch_hung(profile, hung)
+        env = {
+            **os.environ,
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertIn("여러", out.stderr)
+
+    def test_cdp_fails_closed_when_duplicate_exact_profile_has_no_port(self) -> None:
+        profile = self.tmp / "ambiguous_no_port_profile"
+        live = _free_port()
+        self._launch_fake(profile, live)
+        self._launch_hung_without_port(profile)
+        env = {
+            **os.environ,
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertIn("여러", out.stderr)
+
+    def test_cdp_rejects_unrelated_profile_on_configured_port(self) -> None:
+        configured = _free_port()
+        wanted = self.tmp / "wanted_profile"
+        unrelated = self.tmp / "unrelated_profile"
+        wanted.mkdir(parents=True, exist_ok=True)
+        self._launch_fake(unrelated, configured)
+        env = {
+            **os.environ,
+            "SARAMIN_PORT": str(configured),
+            "SARAMIN_PROFILE": str(wanted),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "saramin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+
 
 class RawCdpEnvTests(unittest.TestCase):
     """raw_cdp 가 CDP_HTTP env 를 호출 시점에 읽는지(관측가능 동작으로 단언)."""
@@ -202,6 +430,19 @@ class RawCdpEnvTests(unittest.TestCase):
                 any(p.startswith("/json") for p in hits),
                 f"raw_cdp 가 CDP_HTTP env 엔드포인트로 붙지 않음. hits={hits}",
             )
+        finally:
+            os.environ.pop("CDP_HTTP", None)
+            srv.shutdown()
+
+    def test_list_pages_explicit_endpoint_wins_without_global_env_mutation(self) -> None:
+        srv, hits = self._serve_recording()
+        port = srv.server_address[1]
+        try:
+            os.environ["CDP_HTTP"] = "http://127.0.0.1:1"
+            from tools.multi_position_sourcing import raw_cdp
+            raw_cdp.list_pages(f"http://127.0.0.1:{port}")
+            self.assertTrue(any(path.startswith("/json") for path in hits))
+            self.assertEqual(os.environ["CDP_HTTP"], "http://127.0.0.1:1")
         finally:
             os.environ.pop("CDP_HTTP", None)
             srv.shutdown()

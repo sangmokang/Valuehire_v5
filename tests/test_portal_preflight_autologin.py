@@ -73,10 +73,11 @@ class PortalSessionPreflightPayloadTests(unittest.TestCase):
 class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_ready_preflight_session_pages_are_closed(self) -> None:
         ready_selectors = {
-            "saramin": {"input.search_input, #career_min, #career_max"},
+            "saramin": {"input.search_input", "#career_min", "#career_max"},
             "jobkorea": {"#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"},
-            "linkedin_rps": {'a[href*="/talent/search"], input[role="combobox"]'},
+            "linkedin_rps": {portal_login.LINKEDIN_RECRUITER_SEARCH_SELECTOR},
         }
+        ready_selectors["linkedin_rps"].add(portal_login.LINKEDIN_RECRUITER_ACCOUNT_SELECTOR)
 
         class FakeLocator:
             def __init__(self, page: "FakePage", selector: str) -> None:
@@ -90,7 +91,15 @@ class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
                 return 1 if self.selector in ready_selectors[self.page.channel] else 0
 
             async def inner_text(self, timeout: int = 0) -> str:
-                return ""
+                if self.page.channel in {"saramin", "jobkorea"}:
+                    return "밸류커넥트 로그아웃"
+                return "Good evening, Sangmo | Recruiter"
+
+            def nth(self, _index: int) -> "FakeLocator":
+                return self
+
+            async def is_visible(self) -> bool:
+                return bool(await self.count())
 
             async def click(self, timeout: int = 0) -> None:
                 return None
@@ -211,12 +220,14 @@ class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
                 self.first = self
 
             async def count(self) -> int:
-                if self.selector == "input.search_input, #career_min, #career_max":
+                if self.selector in {"input.search_input", "#career_min", "#career_max"}:
                     return 1 if len(self.page.goto_calls) >= 2 else 0  # type: ignore[attr-defined]
                 return 0
 
             async def inner_text(self, timeout: int = 0) -> str:
-                return ""
+                if len(self.page.goto_calls) >= 2:  # type: ignore[attr-defined]
+                    return "밸류커넥트 로그아웃"
+                return "로그인"
 
             async def click(self, timeout: int = 0) -> None:
                 return None
