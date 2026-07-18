@@ -461,6 +461,8 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 return int(bool(selectors & self.page.present))
 
             async def inner_text(self, **_kwargs) -> str:
+                if self.page.body_raises:
+                    raise RuntimeError("DOM read failed")
                 return self.page.text
 
             @property
@@ -481,11 +483,13 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 text: str,
                 present: set[str],
                 visible: set[str] | None = None,
+                body_raises: bool = False,
             ) -> None:
                 self.url = url
                 self.text = text
                 self.present = present
                 self.visible = present if visible is None else visible
+                self.body_raises = body_raises
 
             def locator(self, selector: str):
                 return Locator(self, selector)
@@ -507,6 +511,16 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             "밸류커넥트 | 로그아웃",
             saramin_fields,
         )))
+        self.assertFalse(await saramin(ProofPage(
+            "https://notsaramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "밸류커넥트 | 로그아웃",
+            saramin_fields,
+        )))
+        self.assertFalse(await saramin(ProofPage(
+            "http://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "밸류커넥트 | 로그아웃",
+            saramin_fields,
+        )))
 
         jobkorea = ready_check_for_channel("jobkorea")
         keyword = {"#txtKeyword"}
@@ -517,6 +531,11 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         )))
         self.assertTrue(await jobkorea(ProofPage(
             "https://www.jobkorea.co.kr/Corp/Person/Find",
+            "밸류커넥트 | 로그아웃",
+            keyword,
+        )))
+        self.assertFalse(await jobkorea(ProofPage(
+            "https://jobkorea.evil.example/Corp/Person/Find",
             "밸류커넥트 | 로그아웃",
             keyword,
         )))
@@ -540,6 +559,17 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 residual,
                 visible=set(),
             )))
+        self.assertFalse(await linkedin(ProofPage(
+            "https://www.linkedin.com/talent/home",
+            "",
+            residual,
+        )))
+        self.assertFalse(await linkedin(ProofPage(
+            "https://www.linkedin.com/talent/home",
+            "unused",
+            residual,
+            body_raises=True,
+        )))
         generic_linkedin = {
             'input[role="combobox"]',
             '[data-test-global-nav-profile]',
@@ -548,6 +578,21 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             "https://www.linkedin.com/talent/home",
             "Welcome to LinkedIn. Upgrade to Recruiter to continue.",
             generic_linkedin,
+        )))
+        self.assertFalse(await linkedin(ProofPage(
+            "https://linkedin.evil.example/talent/home",
+            "Good evening, Sangmo | Recruiter",
+            residual,
+        )))
+        self.assertFalse(await linkedin(ProofPage(
+            "https://notlinkedin.com/talent/home",
+            "Good evening, Sangmo | Recruiter",
+            residual,
+        )))
+        self.assertFalse(await linkedin(ProofPage(
+            "https://user:pass@www.linkedin.com/talent/home",
+            "Good evening, Sangmo | Recruiter",
+            residual,
         )))
         self.assertTrue(await linkedin(ProofPage(
             "https://www.linkedin.com/talent/home",
