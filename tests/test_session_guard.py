@@ -65,9 +65,9 @@ class DecideKeepaliveTests(unittest.TestCase):
         action = decide_keepalive("saramin", due=False, owner_active=False, cookie_evidence="present")
         self.assertEqual(action, "skip_not_due")
 
-    def test_cookie_present_never_opens_page(self) -> None:
+    def test_cookie_present_is_only_diagnostic_and_still_requires_real_probe(self) -> None:
         action = decide_keepalive("jobkorea", due=True, owner_active=False, cookie_evidence="present")
-        self.assertEqual(action, "cookie_only_ok")
+        self.assertEqual(action, "probe_readonly")
 
     def test_cookie_unknown_probes_readonly_once(self) -> None:
         action = decide_keepalive("jobkorea", due=True, owner_active=False, cookie_evidence="unknown")
@@ -95,6 +95,10 @@ class CookieEvidenceTests(unittest.TestCase):
         self.assertEqual(classify_cookie_evidence("linkedin_rps", cookies), "present")
         self.assertEqual(classify_cookie_evidence("saramin", cookies), "absent")
         self.assertEqual(classify_cookie_evidence("saramin", None), "unknown")
+
+    def test_unrelated_domain_cookie_never_proves_session(self) -> None:
+        cookies = [{"name": "JSESSIONID", "value": "secret", "domain": ".evil.example"}]
+        self.assertEqual(classify_cookie_evidence("saramin", cookies), "absent")
 
 
 class ProbeUrlTests(unittest.TestCase):
@@ -135,6 +139,7 @@ class SnapshotRollingTests(unittest.TestCase):
             data = json.loads(newest.read_text())
             self.assertEqual(data["site"], "saramin")
             self.assertEqual(data["cookies"][0]["name"], "JSESSIONID")
+            self.assertNotIn("value", data["cookies"][0], "plaintext cookie secret must never persist")
 
 
 class RunKeepaliveOnceTests(unittest.TestCase):
@@ -149,7 +154,7 @@ class RunKeepaliveOnceTests(unittest.TestCase):
         self.assertEqual(result["action"], "skip_owner_active")
         self.assertEqual(touched, [], "사장님 사용 중엔 CDP attach 자체를 하면 안 된다")
 
-    def test_cookie_present_saves_rolling_snapshot_and_disconnects_only(self) -> None:
+    def test_cookie_present_never_counts_as_keepalive_success_or_persists_secret(self) -> None:
         class FakeTab:
             def __init__(self) -> None:
                 self.closed = 0
@@ -168,8 +173,10 @@ class RunKeepaliveOnceTests(unittest.TestCase):
                 tab_factory=lambda: tab,
                 last_at=None, now=100.0, snapshot_root=Path(root),
             )
-            self.assertEqual(result["action"], "cookie_only_ok")
+            self.assertEqual(result["action"], "probe_readonly")
             self.assertEqual(len(list(Path(root).glob("saramin-*.json"))), 1)
+            stored = json.loads(next(Path(root).glob("saramin-*.json")).read_text())
+            self.assertNotIn("value", stored["cookies"][0])
         self.assertEqual(tab.closed, 1, "종료 = WebSocket 해제(close) 1회만")
 
     def test_cookie_fetch_failure_falls_back_to_probe_action(self) -> None:

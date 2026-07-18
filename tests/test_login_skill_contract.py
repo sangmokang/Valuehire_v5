@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tools.codex_skill_sync.sync import sync_skills
 from tools.install_login_skill import install_login_skill
 
@@ -22,6 +24,14 @@ def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
 def _frontmatter_keys(text: str) -> set[str]:
     assert text.startswith("---\n")
     end = text.find("\n---", 4)
@@ -35,8 +45,7 @@ def _frontmatter_keys(text: str) -> set[str]:
 
 def test_login_skill_is_portable_and_has_single_repo_source() -> None:
     canonical = _text(CANONICAL)
-    claude = _text(CLAUDE)
-    assert canonical == claude
+    assert _tree_bytes(CANONICAL_DIR) == _tree_bytes(CLAUDE_DIR)
     assert _frontmatter_keys(canonical) == {"name", "description"}
     assert "name: login" in canonical
     assert all(agent in canonical for agent in ("Claude", "Codex", "Hermes"))
@@ -68,7 +77,7 @@ def test_login_skill_reuses_browser_and_never_closes_human_session() -> None:
         "기존 브라우저",
         "새 브라우저를 열지 않는다",
         "새 창 0개",
-        "새 탭 1개",
+        "새 탭 0개",
         "context.close()",
         "browser.close()",
         "창을 닫지 않는다",
@@ -134,7 +143,7 @@ def test_machine_contract_is_identical_and_fail_closed() -> None:
     assert canonical["state_machine"]["HUMAN_AUTH"]["timeout_seconds"] is None
     assert canonical["browser_limits"] == {
         "max_new_windows_when_browser_exists": 0,
-        "max_new_tabs_per_site": 1,
+        "max_new_tabs_per_site": 0,
         "max_attached_targets_per_site": 1,
     }
     assert set(canonical["forbidden_calls"]) >= {
@@ -148,6 +157,20 @@ def test_machine_contract_is_identical_and_fail_closed() -> None:
     assert canonical["keepalive"]["navigation_default"] == "skip"
     assert canonical["keepalive"]["require_fresh_owner_idle_check"] is True
     assert canonical["keepalive"]["require_dedicated_safe_tab"] is True
+    assert canonical["keepalive"]["interval_seconds"] == {
+        "saramin": 900,
+        "jobkorea": 900,
+        "linkedin_rps": 1800,
+    }
+    assert canonical["keepalive"]["restore_method"] == "Page.navigateToHistoryEntry"
+    assert canonical["keepalive"]["goto_fallback"] is False
+    assert canonical["exact_window"]["resolver"] == "Swift CoreGraphics"
+    assert canonical["exact_window"]["ambiguity"] == "fail_closed"
+    assert canonical["exact_window"]["capture"] == "screencapture -x -l <CGWindowID>"
+    assert canonical["human_auth"]["max_presentations_per_episode"] == 1
+    assert canonical["human_auth"]["minimum_poll_seconds"] == 5
+    assert canonical["human_auth"]["quiet_after_owner_input_seconds"] == 15
+    assert canonical["human_auth"]["timeout_seconds"] is None
     assert canonical["badge"]["required_before_first_mutation"] is True
     assert canonical["ownership_lease"]["acquire"] == "atomic_mkdir"
     assert canonical["ownership_lease"]["required_before_discover_or_create"] is True
@@ -174,10 +197,44 @@ def test_skill_does_not_recommend_unsafe_legacy_login_runner() -> None:
 
 
 def test_installer_targets_only_three_agent_skill_directories(tmp_path: Path) -> None:
+    for agent in ("claude", "codex", "hermes"):
+        target = tmp_path / f".{agent}" / "skills" / "login"
+        target.mkdir(parents=True)
+        (target / "stale.txt").write_text("remove me", encoding="utf-8")
+        sibling = tmp_path / f".{agent}" / "skills" / "sibling"
+        sibling.mkdir(parents=True)
+        (sibling / "sentinel").write_text("keep me", encoding="utf-8")
     result = install_login_skill(repo_root=REPO, home=tmp_path)
     assert set(result) == {"claude", "codex", "hermes"}
     for agent, path in result.items():
         target = Path(path)
         assert target == tmp_path / f".{agent}" / "skills" / "login"
-        assert (target / "SKILL.md").read_bytes() == CANONICAL.read_bytes()
-        assert (target / "browser-control-contract.json").read_bytes() == CONTRACT.read_bytes()
+        assert _tree_bytes(target) == _tree_bytes(CANONICAL_DIR)
+        assert not (target / "stale.txt").exists()
+        assert (target.parent / "sibling" / "sentinel").read_text() == "keep me"
+
+
+def test_login_tree_contains_bundled_swift_window_locator() -> None:
+    locator = CANONICAL_DIR / "scripts" / "macos_window_locator.swift"
+    assert locator.is_file() and locator.stat().st_size > 0
+    assert b"CoreGraphics" in locator.read_bytes()
+
+
+def test_installer_preflights_nested_asset_before_mutating_any_agent(tmp_path: Path) -> None:
+    fake_repo = tmp_path / "repo"
+    source = fake_repo / "skills" / "login"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("x", encoding="utf-8")
+    (source / "browser-control-contract.json").write_text("{}", encoding="utf-8")
+    home = tmp_path / "home"
+    before: dict[str, bytes] = {}
+    for agent in ("claude", "codex", "hermes"):
+        target = home / f".{agent}" / "skills" / "login"
+        target.mkdir(parents=True)
+        sentinel = target / "sentinel"
+        sentinel.write_text(agent, encoding="utf-8")
+        before[agent] = sentinel.read_bytes()
+    with pytest.raises(FileNotFoundError):
+        install_login_skill(repo_root=fake_repo, home=home)
+    for agent, expected in before.items():
+        assert (home / f".{agent}" / "skills" / "login" / "sentinel").read_bytes() == expected

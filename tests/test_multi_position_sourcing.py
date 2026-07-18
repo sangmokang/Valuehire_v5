@@ -11952,7 +11952,7 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker.calls, 2)
         self.assertEqual(recovered, ["http_401"])
 
-    async def test_human_intervention_waits_until_manual_resolution_is_ready(self) -> None:
+    async def test_legacy_human_intervention_delegates_to_exact_window_runner(self) -> None:
         class FakePage:
             url = "https://example.com/checkpoint"
 
@@ -11980,9 +11980,10 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
             note="checkpoint detected",
         )
 
-        self.assertTrue(result["ready"])
-        self.assertEqual(result["login"], "human_intervention_ok")
-        self.assertEqual(page.waits, 1)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["login"], "human_auth_runner_required")
+        self.assertEqual(page.waits, 0)
+        self.assertEqual(page.ready_checks, 0)
 
     async def test_human_intervention_can_be_disabled_for_headless_runs(self) -> None:
         class FakePage:
