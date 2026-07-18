@@ -28,6 +28,12 @@
     "resolution": "F4·F5 봉인(RED→GREEN). F3·결합은 범위 판단 후 goal 비범위에 명시."
   },
   "failed_attempts": [],
-  "three_way_agree": false,
-  "status": "G GREEN(1754 passed)+V1 fail→F4·F5 봉인·F3 범위분리+뮤턴트 3/3 — V2 재검증 대기"
+  "three_way_agree": true,
+  "status": "GREEN(1754 passed)+V1 F4/F5 봉인+V2 pass+뮤턴트 3/3 — 3자 일치, 배송 가능",
+  "v2": {
+    "author": "Claude reset subagent(수정본 대상). tasks/aa1af78d36daa991a.output.",
+    "verdict": "pass",
+    "evidence": "F4(int0 회수·빈키/None/공백 정합)·F5(실제2회→삽입1회)·raw미노출(from None __cause__=None, traceback 전체 SECRET 없음)·URL인코딩 injection불가·뮤턴트 3/3·회수조건↔DB인덱스 1:1(문자열/정수/공백/None/유니코드) 전부 실측 재현. 91 passed.",
+    "minor_note": "bool/float 스칼라 키는 Python str()('True'/'0.0')이 Postgres ->>('true'/'0')와 달라 회수를 놓칠 수 있으나 (a)실경로 키는 항상 문자열 discord:<snowflake> (b)오작동 방향이 fail-closed(오회수 아님) 라 비블로커. 후속 보강 권고."
+  }
 }
