@@ -43,6 +43,29 @@ def _png_rgba(width: int, height: int, pixel: tuple[int, int, int, int]) -> byte
     )
 
 
+def _png_rgba_pixels(
+    width: int,
+    height: int,
+    pixels: list[tuple[int, int, int, int]],
+) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        body = kind + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body))
+
+    if len(pixels) != width * height:
+        raise ValueError("pixel count mismatch")
+    rows = []
+    for y in range(height):
+        row = pixels[y * width:(y + 1) * width]
+        rows.append(b"\x00" + b"".join(bytes(pixel) for pixel in row))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"".join(rows)))
+        + chunk(b"IEND", b"")
+    )
+
+
 class _RecTab(raw_cdp.CDPTab):
     """ws 없이 eval/send 를 기록하는 CDPTab(생성자 우회)."""
 
@@ -101,11 +124,43 @@ class BadgeJsTests(unittest.TestCase):
         self.assertNotIn("r.left+2,r.bottom-2", js)
         self.assertIn("r.width*0.25", js)
 
-    def test_png_render_proof_requires_a_substantial_red_badge_region(self):
-        red = _png_rgba(40, 20, (220, 38, 38, 255))
-        white = _png_rgba(40, 20, (255, 255, 255, 255))
-        self.assertTrue(raw_cdp._png_has_badge_color(red))
-        self.assertFalse(raw_cdp._png_has_badge_color(white))
+    def test_png_render_proof_crops_full_viewport_and_requires_overlay_challenge_color(self):
+        width, height = 100, 50
+        challenge = (17, 203, 91, 255)
+        pixels = [(255, 255, 255, 255)] * (width * height)
+        for y in range(5, 15):
+            for x in range(20, 60):
+                pixels[y * width + x] = challenge
+        screenshot = _png_rgba_pixels(width, height, pixels)
+
+        self.assertTrue(raw_cdp._png_region_matches_color(
+            screenshot,
+            css_rect={"x": 20, "y": 5, "width": 40, "height": 10},
+            css_viewport={"width": 100, "height": 50},
+            expected_rgb=challenge[:3],
+        ))
+        self.assertFalse(raw_cdp._png_region_matches_color(
+            screenshot,
+            css_rect={"x": 0, "y": 20, "width": 40, "height": 10},
+            css_viewport={"width": 100, "height": 50},
+            expected_rgb=challenge[:3],
+        ))
+
+    def test_png_render_proof_maps_css_coordinates_to_scaled_screenshot(self):
+        width, height = 200, 100
+        challenge = (31, 79, 211, 255)
+        pixels = [(255, 255, 255, 255)] * (width * height)
+        for y in range(10, 30):
+            for x in range(40, 120):
+                pixels[y * width + x] = challenge
+        screenshot = _png_rgba_pixels(width, height, pixels)
+
+        self.assertTrue(raw_cdp._png_region_matches_color(
+            screenshot,
+            css_rect={"x": 20, "y": 5, "width": 40, "height": 10},
+            css_viewport={"width": 100, "height": 50},
+            expected_rgb=challenge[:3],
+        ))
 
     def test_clear_js_removes_by_id(self):
         js = raw_cdp._clear_js()
@@ -152,6 +207,49 @@ class MarkBusyTests(unittest.TestCase):
         tab = OccludedTab(eval_result=raw_cdp._BADGE_ID)
         self.assertFalse(tab.mark_busy("Codex", expected_url="https://example.test/search"))
         self.assertTrue(tab.badge_application_uncertain)
+
+    def test_render_proof_uses_browser_owned_overlay_and_full_viewport_screenshot(self):
+        challenge = (17, 203, 91)
+        screenshot = _png_rgba(100, 50, (*challenge, 255))
+
+        class OverlayTab(_RecTab):
+            def eval(self, expr: str):
+                self.evals.append(expr)
+                return {
+                    "x": 0,
+                    "y": 0,
+                    "width": 100,
+                    "height": 50,
+                    "viewportWidth": 100,
+                    "viewportHeight": 50,
+                }
+
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Page.captureScreenshot":
+                    import base64
+                    return {"data": base64.b64encode(screenshot).decode("ascii")}
+                return {}
+
+        tab = OverlayTab()
+        with patch.object(raw_cdp, "_overlay_challenge_color", return_value=challenge):
+            self.assertTrue(tab.prove_badge_rendered(
+                expected_url="https://example.test/search",
+                badge_label="Codex",
+            ))
+
+        highlight_calls = [params for method, params in tab.sends if method == "Overlay.highlightRect"]
+        self.assertGreaterEqual(len(highlight_calls), 2)
+        self.assertEqual(highlight_calls[0]["color"], {"r": 17, "g": 203, "b": 91, "a": 1})
+        screenshot_calls = [params for method, params in tab.sends if method == "Page.captureScreenshot"]
+        self.assertEqual(len(screenshot_calls), 1)
+        self.assertNotIn("clip", screenshot_calls[0], "shifted clip drops CDP Overlay pixels")
+
+    def test_clear_badge_hides_browser_owned_overlay(self):
+        tab = _RecTab(eval_result=True)
+        tab._badge_label = "Codex"
+        tab.clear_badge()
+        self.assertIn(("Overlay.hideHighlight", None), tab.sends)
 
     def test_eval_rejects_runtime_exception_details(self):
         tab = _RecTab()
@@ -263,6 +361,27 @@ class MarkBusyTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 raw_cdp.CDPTab("ws://fake")
         self.assertEqual(socket.close_calls, 1)
+
+    def test_constructor_enables_dom_and_overlay_domains(self):
+        class Socket:
+            connected = True
+
+            def close(self):
+                self.connected = False
+
+        socket = Socket()
+        websocket_module = SimpleNamespace(
+            create_connection=lambda *_args, **_kwargs: socket,
+        )
+        calls = []
+        with patch.dict(sys.modules, {"websocket": websocket_module}), patch.object(
+            raw_cdp.CDPTab,
+            "send",
+            side_effect=lambda method, params=None: calls.append((method, params)) or {},
+        ):
+            raw_cdp.CDPTab("ws://fake")
+        self.assertIn(("DOM.enable", None), calls)
+        self.assertIn(("Overlay.enable", None), calls)
 
 
 class RawEventBridgeTests(unittest.TestCase):
