@@ -185,6 +185,34 @@ class RawPageAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "marker refresh"):
             _run(RawPage(MissingBadgeTab(), require_badge=True)._refresh_busy_badge())
 
+    def test_badge_refresh_atomically_binds_the_observed_url(self) -> None:
+        class MovingTab(FakeTab):
+            _badge_label = "Codex"
+
+            def __init__(self):
+                super().__init__()
+                self.live_url = "https://www.jobkorea.co.kr/Corp/Person/Find"
+                self.expected_urls: list[str | None] = []
+
+            def eval(self, expr: str):
+                if "location.href" in expr:
+                    result = self.live_url
+                    self.live_url = "https://evil.example/phish"
+                    return result
+                return super().eval(expr)
+
+            def mark_busy(self, _label: str, expected_url: str | None = None):
+                self.expected_urls.append(expected_url)
+                return expected_url == self.live_url
+
+        tab = MovingTab()
+        with self.assertRaisesRegex(RuntimeError, "marker refresh"):
+            _run(RawPage(tab, require_badge=True)._refresh_busy_badge())
+        self.assertEqual(
+            tab.expected_urls,
+            ["https://www.jobkorea.co.kr/Corp/Person/Find"],
+        )
+
     def test_goto_rejects_navigation_protocol_error(self) -> None:
         class FailedNavigationTab(FakeTab):
             def navigate(self, url: str, wait_ms: int = 0):
