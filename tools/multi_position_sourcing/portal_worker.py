@@ -810,6 +810,13 @@ class PortalWorker:
                 reason=f"portal search timed out after {timeout:g}s",
             )
 
+    async def _acquire_search_page(self) -> Any:
+        """검색용 페이지 획득. 기본(launch/linkedin)은 context.new_page() 위임.
+
+        조각 B2b: 사람인·잡코리아 raw attach 채널은 이 메서드를 override 하지 않고,
+        raw 단일탭에 붙은 RawPage 를 반환하도록 확장한다(현재는 기본 경로만)."""
+        return await self.context.new_page()
+
     async def _run_one_search_body(
         self,
         keyword: str,
@@ -819,7 +826,7 @@ class PortalWorker:
     ) -> PortalSearchAttempt:
         page: Any | None = None
         try:
-            page = await self.context.new_page()
+            page = await self._acquire_search_page()
             monitor = monitor or SearchLivenessMonitor(self.config.channel)
             monitor.attach(page)
             await _goto_search_surface(page, self.config.channel, keyword)
