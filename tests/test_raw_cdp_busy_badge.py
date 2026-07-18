@@ -192,16 +192,28 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn(expected, js)
         self.assertIn("return null", js)
 
-    def test_owned_navigation_is_one_guarded_runtime_evaluation(self):
-        tab = _RecTab(eval_result=True)
+    def test_owned_navigation_is_atomic_on_the_proven_badge_object(self):
+        class OwnedObjectTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": True}}
+                return {}
+
+        tab = OwnedObjectTab(eval_result=True)
         tab._lifecycle_events = []
+        tab._badge_object_id = "proven-badge-object"
         result = tab.navigate_if_owned(
             "https://www.jobkorea.co.kr/Corp/Person/Find?keyword=robotics",
             expected_url="https://www.jobkorea.co.kr/Corp/Person/Find",
             badge_label="Codex",
         )
         self.assertTrue(result["ownershipAcknowledged"])
-        js = tab.evals[-1]
+        self.assertFalse(tab.evals, "fresh getElementById lookup reopens an exact-clone race")
+        calls = [(method, params) for method, params in tab.sends if method == "Runtime.callFunctionOn"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]["objectId"], "proven-badge-object")
+        js = calls[0][1]["functionDeclaration"]
         self.assertIn("location.href", js)
         self.assertIn("vh-automation-badge", js)
         self.assertIn("getComputedStyle", js)
@@ -209,6 +221,25 @@ class BadgeJsTests(unittest.TestCase):
         self.assertNotIn("setTimeout", js)
         self.assertIn("aria-label", js)
         self.assertIn("vh-automation-status", js)
+
+    def test_owned_dom_action_is_atomic_on_the_proven_badge_object(self):
+        class OwnedObjectTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": True}}
+                return {}
+
+        tab = OwnedObjectTab()
+        tab._badge_object_id = "proven-badge-object"
+        self.assertTrue(tab.eval_if_badge_owned(
+            "var target=document.querySelector('button');target.click();return true;",
+            expected_url="https://example.test/search",
+            badge_label="Codex",
+        ))
+        call = next(params for method, params in tab.sends if method == "Runtime.callFunctionOn")
+        self.assertEqual(call["objectId"], "proven-badge-object")
+        self.assertIn("target.click", call["functionDeclaration"])
 
     def test_badge_rect_proof_binds_readable_tooltip_identity(self):
         js = raw_cdp._badge_rect_js("https://example.test/search", "Codex")
@@ -297,6 +328,8 @@ class MarkBusyTests(unittest.TestCase):
         validation_calls = [params for method, params in tab.sends if method == "Runtime.callFunctionOn"]
         self.assertEqual(len(validation_calls), 2)
         self.assertTrue(all(call["objectId"] == "badge-object-11" for call in validation_calls))
+        self.assertEqual(tab._badge_object_id, "badge-object-11")
+        self.assertFalse(any(method == "Runtime.releaseObject" for method, _params in tab.sends))
         screenshot_calls = [params for method, params in tab.sends if method == "Page.captureScreenshot"]
         self.assertEqual(len(screenshot_calls), 1)
         self.assertNotIn("clip", screenshot_calls[0], "shifted clip drops CDP Overlay pixels")
