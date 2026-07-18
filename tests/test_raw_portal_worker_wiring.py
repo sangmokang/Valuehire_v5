@@ -862,6 +862,62 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tab.disconnect_calls, 1)
             self.assertFalse(worker.config.lock_path.exists())
 
+    async def test_slow_badge_ack_does_not_freeze_event_loop_and_cancel_hands_off(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+        entered = threading.Event()
+        release = threading.Event()
+
+        class SlowBadgeTab(FakeRawTab):
+            badge_application_uncertain = False
+
+            def mark_busy(self, label: str, *, expected_url: str | None = None) -> bool:
+                self._badge_label = label
+                entered.set()
+                release.wait(timeout=0.6)
+                self.badge_calls += 1
+                return expected_url == target["url"]
+
+        tab = SlowBadgeTab()
+        with TemporaryDirectory(prefix="raw-slow-badge-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            return_value=tab,
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
+            )
+            loop = asyncio.get_running_loop()
+            started_at = loop.time()
+            task = asyncio.create_task(worker.start())
+            await asyncio.to_thread(entered.wait, 1.0)
+            self.assertLess(loop.time() - started_at, 0.25)
+            task.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertEqual(tab.badge_calls, 1)
+            self.assertEqual(tab.disconnect_calls, 1)
+            self.assertFalse(worker.config.lock_path.exists())
+
     async def test_cancelled_stop_finishes_badge_and_socket_handoff_before_unlock(self) -> None:
         entered = threading.Event()
         release = threading.Event()
