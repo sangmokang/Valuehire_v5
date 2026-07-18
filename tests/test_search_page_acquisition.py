@@ -51,6 +51,24 @@ class AcquireSearchPageTests(unittest.TestCase):
             self.assertIs(page, ctx._page)
             self.assertEqual(ctx.new_page_calls, 1)
 
+    def test_raw_page_when_present_is_used_and_context_untouched(self) -> None:
+        # B2b-1 배선점: raw attach 채널이 _raw_page 를 심으면 그걸 쓰고 context.new_page 미호출.
+        with TemporaryDirectory(prefix="asp_") as root:
+            w = self._worker(root)
+            ctx = FakeContext()
+            w._context = ctx
+            sentinel = object()
+            w._raw_page = sentinel  # start() 의 raw 분기가 심을 자리(B2b-2)
+            page = _run(w._acquire_search_page())
+            self.assertIs(page, sentinel)
+            self.assertEqual(ctx.new_page_calls, 0, "raw 모드면 context.new_page 를 안 부른다")
+
+    def test_raw_page_defaults_none_preserves_launch(self) -> None:
+        # 기본값 보존: _raw_page 는 None 이라 기존 launch/linkedin 경로가 그대로 작동.
+        with TemporaryDirectory(prefix="asp_") as root:
+            w = self._worker(root)
+            self.assertIsNone(w._raw_page)
+
 
 if __name__ == "__main__":
     unittest.main()

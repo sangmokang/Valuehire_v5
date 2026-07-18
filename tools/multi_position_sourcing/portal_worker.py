@@ -680,6 +680,8 @@ class PortalWorker:
         self._browser: Any | None = None
         self._started = False
         self._blocked_next_mode: PortalLaunchMode | None = None
+        # raw attach 채널(사람인·잡코리아)이 심는 RawPage. None 이면 기존 launch/linkedin 경로.
+        self._raw_page: Any | None = None
 
     @property
     def context(self) -> Any:
@@ -811,10 +813,12 @@ class PortalWorker:
             )
 
     async def _acquire_search_page(self) -> Any:
-        """검색용 페이지 획득. 기본(launch/linkedin)은 context.new_page() 위임.
+        """검색용 페이지 획득. raw attach 채널은 self._raw_page(RawPage) 를 쓰고,
+        그 외(launch/linkedin)는 context.new_page() 위임.
 
-        조각 B2b: 사람인·잡코리아 raw attach 채널은 이 메서드를 override 하지 않고,
-        raw 단일탭에 붙은 RawPage 를 반환하도록 확장한다(현재는 기본 경로만)."""
+        _raw_page 는 조각 B2b-2 의 start() raw 분기가 심는다(기본 None → 기존 동작 보존)."""
+        if self._raw_page is not None:
+            return self._raw_page
         return await self.context.new_page()
 
     async def _run_one_search_body(
