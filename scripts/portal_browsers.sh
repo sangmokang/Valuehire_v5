@@ -264,6 +264,12 @@ cmd_cdp() {
     while IFS= read -r _cmd; do
       case " $_cmd " in
         *" --user-data-dir=$profile "*)
+          # Chrome renderer/GPU/utility 자식도 부모의 profile/CDP 인자를 상속한다.
+          # --type=... 자식은 별도 브라우저가 아니므로 root 중복 판정과 포트
+          # 소유권 증명에서 제외한다. 실제 browser root 에는 --type 인자가 없다.
+          case " $_cmd " in
+            *" --type="*) continue ;;
+          esac
           exact_profile_processes=$((exact_profile_processes + 1))
           local candidate_port
           while IFS= read -r candidate_port; do

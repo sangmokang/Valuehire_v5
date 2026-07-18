@@ -1023,6 +1023,14 @@ class PortalWorker:
                 if not url_matches_channel_surface(self.config.channel, fresh_url):
                     raise RuntimeError("attached target changed before ownership marker")
                 await asyncio.to_thread(self._assert_raw_mutation_allowed)
+                # owner-idle quiet dwell 중에도 사람이 같은 탭을 이동할 수 있다.
+                # 마지막 mutation guard 뒤 live URL 을 다시 결박한 다음에만 배지를 심는다.
+                fresh_url = str(
+                    await asyncio.to_thread(self._raw_tab.eval, "location.href") or ""
+                )
+                self._lock.assert_owned()
+                if not url_matches_channel_surface(self.config.channel, fresh_url):
+                    raise RuntimeError("attached target changed during ownership guard")
                 self._raw_badge_applied = True
                 if self._raw_tab.mark_busy(badge_label) is not True:
                     raise RuntimeError("visible automation marker could not be applied")

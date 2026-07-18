@@ -524,13 +524,14 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 owner_snapshot=self._idle_snapshots(),
                 mutation_sleep=move_during_final_dwell,
             )
+            lease_path = worker.config.lock_path
             with self.assertRaises(RuntimeError):
                 await worker.start()
 
         self.assertEqual(dwell_calls, 2)
         self.assertEqual(tab.badge_calls, 0)
         self.assertEqual(tab.disconnect_calls, 1)
-        self.assertFalse(worker.config.lock_path.exists())
+        self.assertFalse(lease_path.exists())
 
     async def test_cancelled_start_releases_lease_before_attach(self) -> None:
         target = {
