@@ -421,6 +421,14 @@ _URL_KEY = "NEXT_PUBLIC_SUPABASE_URL"
 _SRK_KEY = "SUPABASE_SERVICE_ROLE_KEY"
 
 
+class JobQueueConflictError(RuntimeError):
+    """enqueue 중 HTTP 오류를 raw DB 본문 없이 감싼 예외(조각 B).
+
+    PostgREST 는 유니크 위반 시 409 와 함께 raw DB 메시지(키 값·내부 상세)를 본문에
+    담는다 — 그대로 상위(디스코드 회신 등)로 새면 INV-D5(비밀·raw 예외 미노출) 위반.
+    코드만 남기고 원문·예외 체인은 버린다(raise ... from None)."""
+
+
 def _env_config() -> tuple[str, str]:
     """(supabase_url, service_role_key) 를 *같은 출처*에서 짝으로 해석.
 
@@ -512,8 +520,31 @@ class JobQueueClient:
                 revalidated["position_url"], getaddrinfo=self._getaddrinfo):
             raise ValueError(
                 "position_url 호스트가 공인 주소로 해석되지 않음(사설/loopback/메타데이터 거부)")
-        rows = self._call("POST", "/jobs", revalidated)
+        # 조각 B(goal §5): 원자적 enqueue-or-get. idempotency_key 중복이면 DB 유니크
+        # 인덱스가 409 를 던진다 — 그때 기존 잡을 회수해 반환한다(같은 이벤트 2회 → 잡 1개).
+        # 그 외 HTTP 오류·raw DB 본문은 JobQueueConflictError 로 감싸 원문을 노출하지 않는다.
+        import urllib.error
+        # DB 부분 유니크 인덱스는 params->>'idempotency_key' 의 *문자열* 이 non-empty 일 때만
+        # 적용된다(20260713_fleet_job_idempotency.sql). 회수 조건을 그 의미와 정확히 맞춘다 —
+        # int 0 같은 거짓값도 텍스트로는 "0"(non-empty)이라 인덱스 대상이므로 회수해야 한다(V1).
+        idem_raw = (revalidated.get("params") or {}).get("idempotency_key")
+        idem = "" if idem_raw is None else str(idem_raw)
+        try:
+            rows = self._call("POST", "/jobs", revalidated)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409 and idem:
+                existing = self.job_by_idempotency_key(idem)
+                if existing is not None:
+                    return existing
+            raise JobQueueConflictError(f"enqueue 실패(HTTP {exc.code})") from None
         return rows[0] if isinstance(rows, list) and rows else rows
+
+    def job_by_idempotency_key(self, key: str) -> dict[str, Any] | None:
+        """idempotency_key 로 기존 잡 1건을 조회(없으면 None). 조각 B 회수 경로."""
+        encoded = urllib.parse.quote(str(key), safe="")
+        rows = self._call(
+            "GET", f"/jobs?params->>idempotency_key=eq.{encoded}&limit=1")
+        return rows[0] if isinstance(rows, list) and rows else None
 
     def claim_next(self, machine: str) -> dict[str, Any] | None:
         rows = self._call("POST", "/rpc/claim_next_job", claim_next_job_payload(machine))
