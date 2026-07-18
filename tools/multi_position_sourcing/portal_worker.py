@@ -983,6 +983,37 @@ class PortalWorker:
             raise asyncio.CancelledError
         return tab
 
+    async def _mark_raw_badge_cancellation_safe(
+        self,
+        badge_label: str,
+        expected_url: str,
+    ) -> bool:
+        tab = self._raw_tab
+        if tab is None:
+            raise RuntimeError("raw target disappeared before ownership marker")
+        marker_task = asyncio.create_task(asyncio.to_thread(
+            tab.mark_busy,
+            badge_label,
+            expected_url=expected_url,
+        ))
+        cancelled = False
+        while not marker_task.done():
+            try:
+                await asyncio.shield(marker_task)
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+        marker_applied = False
+        try:
+            marker_applied = await marker_task is True
+            return marker_applied
+        finally:
+            self._raw_badge_applied = marker_applied or bool(
+                getattr(tab, "badge_application_uncertain", False)
+            )
+            if cancelled:
+                raise asyncio.CancelledError
+
     @property
     def context(self) -> Any:
         if self._context is None:
@@ -1049,16 +1080,10 @@ class PortalWorker:
                 self._lock.assert_owned()
                 if not url_matches_channel_surface(self.config.channel, fresh_url):
                     raise RuntimeError("attached target changed during ownership guard")
-                marker_applied = False
-                try:
-                    marker_applied = self._raw_tab.mark_busy(
-                        badge_label,
-                        expected_url=fresh_url,
-                    ) is True
-                finally:
-                    self._raw_badge_applied = marker_applied or bool(
-                        getattr(self._raw_tab, "badge_application_uncertain", False)
-                    )
+                marker_applied = await self._mark_raw_badge_cancellation_safe(
+                    badge_label,
+                    fresh_url,
+                )
                 if not marker_applied:
                     raise RuntimeError("visible automation marker could not be applied")
                 self._raw_page = RawPage(
