@@ -475,6 +475,63 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tab.badge_calls, 0)
         self.assertEqual(tab.disconnect_calls, 1)
 
+    async def test_attach_target_is_revalidated_after_final_owner_dwell(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+
+        class MovingTab(FakeRawTab):
+            def __init__(self) -> None:
+                super().__init__()
+                self.live_url = target["url"]
+
+            def eval(self, expression: str):
+                if "location.href" in expression:
+                    return self.live_url
+                return super().eval(expression)
+
+        tab = MovingTab()
+        dwell_calls = 0
+
+        def move_during_final_dwell(_seconds: float) -> None:
+            nonlocal dwell_calls
+            dwell_calls += 1
+            if dwell_calls == 2:
+                tab.live_url = "https://evil.example/phish"
+
+        with TemporaryDirectory(prefix="raw-final-target-race-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            return_value=tab,
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=move_during_final_dwell,
+            )
+            with self.assertRaises(RuntimeError):
+                await worker.start()
+
+        self.assertEqual(dwell_calls, 2)
+        self.assertEqual(tab.badge_calls, 0)
+        self.assertEqual(tab.disconnect_calls, 1)
+        self.assertFalse(worker.config.lock_path.exists())
+
     async def test_cancelled_start_releases_lease_before_attach(self) -> None:
         target = {
             "id": "exact",
