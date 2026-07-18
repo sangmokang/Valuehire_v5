@@ -487,6 +487,29 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertEqual(guard_calls, [False, True])
         self.assertEqual(tab.portal_mutations, 0)
 
+    def test_required_mutation_has_no_fresh_id_legacy_fallback(self) -> None:
+        class LegacyLookupTab(FakeTab):
+            _badge_label = "Codex"
+
+            def __init__(self):
+                super().__init__()
+                self.portal_mutations = 0
+
+            def eval(self, expr: str):
+                if ".click()" in expr:
+                    self.portal_mutations += 1
+                return True
+
+        tab = LegacyLookupTab()
+        page = RawPage(
+            tab,
+            initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+            require_badge=True,
+        )
+        with self.assertRaisesRegex(RuntimeError, "proven badge object"):
+            _run(page.locator("button").click())
+        self.assertEqual(tab.portal_mutations, 0)
+
     def test_required_navigation_rechecks_owner_guard_after_render_proof(self) -> None:
         owner = {"active": False}
         guard_calls = []
