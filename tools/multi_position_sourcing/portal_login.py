@@ -28,14 +28,11 @@ SARAMIN_SEARCH_URL = "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/
 JOBKOREA_SEARCH_URL = "https://www.jobkorea.co.kr/Corp/Person/Find"
 LINKEDIN_RPS_HOME_URL = "https://www.linkedin.com/talent/home"
 LINKEDIN_RECRUITER_SEARCH_SELECTOR = (
-    'a[href*="/talent/search"], input[role="combobox"]'
+    'a[href*="/talent/search"]'
 )
 LINKEDIN_RECRUITER_ACCOUNT_SELECTOR = (
     '[data-test-recruiter-account-menu], '
-    '[data-test-recruiter-nav-user-menu], '
-    '[data-test-global-nav-profile], '
-    'button[aria-label*="Account"], '
-    'button[aria-label*="계정"]'
+    '[data-test-recruiter-nav-user-menu]'
 )
 ReadyCheck = Callable[[Any], Awaitable[bool]]
 PreflightSnapshotCapture = Callable[..., Awaitable[dict[str, object]]]

@@ -75,7 +75,7 @@ class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
         ready_selectors = {
             "saramin": {"input.search_input", "#career_min", "#career_max"},
             "jobkorea": {"#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"},
-            "linkedin_rps": {'a[href*="/talent/search"], input[role="combobox"]'},
+            "linkedin_rps": {portal_login.LINKEDIN_RECRUITER_SEARCH_SELECTOR},
         }
         ready_selectors["linkedin_rps"].add(portal_login.LINKEDIN_RECRUITER_ACCOUNT_SELECTOR)
 
