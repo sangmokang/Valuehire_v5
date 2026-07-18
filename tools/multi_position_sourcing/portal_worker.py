@@ -643,6 +643,15 @@ class PortalWorker:
         """Record a next-boot policy without mutating this worker's browser mode."""
         self._blocked_next_mode = next_mode
 
+    def _cdp_endpoint(self, *, env: Mapping[str, str] | None = None) -> str:
+        """연결할 CDP endpoint — 채널 인지 해석(TODO-2b 조각 A 배선, 고아 해소).
+
+        명시 config 값(chrome_cdp_endpoint)이 값-우선으로 그대로 이겨 기존 동작을 보존하고,
+        비어 있을 때만 채널 기본 포트(portal_browsers.sh 정합: linkedin=9225 등)로 폴백한다.
+        사람인·잡코리아 start() 의 connect_over_cdp 실이전은 조각 B(라이브 검증 필수)."""
+        return resolve_channel_cdp_endpoint(
+            self.config.channel, value=self.config.chrome_cdp_endpoint, env=env)
+
     async def start(self) -> None:
         if self._started:
             return
@@ -659,12 +668,14 @@ class PortalWorker:
                 # 검문소(fail-closed): 붙으려는 CDP 주소가 규칙(SOT)과 다르면 멈춘다.
                 from .browser_policy import assert_browser_ready
 
+                # 조각 A 배선: endpoint 를 채널 인지 해석기로 통과(값-우선=동작 보존).
+                endpoint = self._cdp_endpoint()
                 assert_browser_ready(
                     "portal_automation",
-                    connected_endpoint=self.config.chrome_cdp_endpoint,
+                    connected_endpoint=endpoint,
                 )
                 self._browser = await self._playwright.chromium.connect_over_cdp(
-                    self.config.chrome_cdp_endpoint
+                    endpoint
                 )
                 contexts = getattr(self._browser, "contexts", ())
                 self._context = contexts[0] if contexts else await self._browser.new_context()
