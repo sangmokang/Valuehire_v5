@@ -15,6 +15,7 @@ import unittest
 from tools.multi_position_sourcing.portal_worker import (
     find_verified_channel_endpoint,
     find_verified_channel_target,
+    resolve_managed_channel_cdp_endpoint,
 )
 
 
@@ -135,6 +136,41 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
         )
         self.assertEqual(endpoint, "http://remote.example:9338")
         self.assertEqual(seen[0], "http://remote.example:9338")
+
+    def test_managed_endpoint_comes_from_exact_profile_runner(self) -> None:
+        calls: list[list[str]] = []
+
+        class Result:
+            returncode = 0
+            stdout = "http://127.0.0.1:9338\n"
+            stderr = ""
+
+        def runner(command, **_kwargs):
+            calls.append(command)
+            return Result()
+
+        endpoint = resolve_managed_channel_cdp_endpoint("linkedin_rps", runner=runner)
+        self.assertEqual(endpoint, "http://127.0.0.1:9338")
+        self.assertEqual(calls[0][-2:], ["cdp", "linkedin"])
+
+    def test_managed_endpoint_fails_closed_on_ambiguous_or_remote_output(self) -> None:
+        class Result:
+            returncode = 0
+            stderr = ""
+
+            def __init__(self, stdout: str) -> None:
+                self.stdout = stdout
+
+        for output in (
+            "http://127.0.0.1:9223\nhttp://127.0.0.1:9224\n",
+            "http://remote.example:9338\n",
+            "not-an-endpoint\n",
+        ):
+            with self.subTest(output=output):
+                with self.assertRaises(LookupError):
+                    resolve_managed_channel_cdp_endpoint(
+                        "saramin", runner=lambda *_args, **_kwargs: Result(output)
+                    )
 
 
 if __name__ == "__main__":

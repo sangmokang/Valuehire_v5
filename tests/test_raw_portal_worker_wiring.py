@@ -67,34 +67,44 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         }
         tab = FakeRawTab()
         attached: list[dict] = []
+        listed_endpoints: list[str] = []
 
         def attach(target: dict):
             attached.append(target)
             return tab
 
+        def list_pages(endpoint: str):
+            listed_endpoints.append(endpoint)
+            return [fake_target, exact_target]
+
         with TemporaryDirectory(prefix="raw-worker-") as root, patch(
             "tools.multi_position_sourcing.raw_cdp.list_pages",
-            return_value=[fake_target, exact_target],
+            side_effect=list_pages,
         ), patch("tools.multi_position_sourcing.raw_cdp.attach", side_effect=attach):
-            worker = PortalWorker(
-                PortalWorkerConfig(
-                    channel="saramin",
-                    profile_root=Path(root),
-                    chrome_cdp_endpoint="http://127.0.0.1:9223",
-                    connection_mode="raw_single_tab",
-                ),
-                playwright=ForbiddenPlaywright(),
-            )
-            await worker.start()
-            result = await worker.run_one_search(
-                "robotics",
-                ready_check=lambda _page: _async_true(),
-            )
-            page = worker._raw_page
-            await worker.stop()
+            with patch(
+                "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+                return_value="http://127.0.0.1:9338",
+            ):
+                worker = PortalWorker(
+                    PortalWorkerConfig(
+                        channel="saramin",
+                        profile_root=Path(root),
+                        chrome_cdp_endpoint="http://127.0.0.1:9223",
+                        connection_mode="raw_single_tab",
+                    ),
+                    playwright=ForbiddenPlaywright(),
+                )
+                await worker.start()
+                result = await worker.run_one_search(
+                    "robotics",
+                    ready_check=lambda _page: _async_true(),
+                )
+                page = worker._raw_page
+                await worker.stop()
 
         self.assertIs(page._tab, tab)
         self.assertEqual(attached, [exact_target])
+        self.assertEqual(listed_endpoints, ["http://127.0.0.1:9338"])
         self.assertEqual(result.status, "searched")
         self.assertEqual(len(result.candidate_cards), 1)
         self.assertIn("idx=42", result.candidate_cards[0].profile_url)
