@@ -83,6 +83,12 @@ class RawPageAdapterTests(unittest.TestCase):
         # 원시 selector 가 JSON 문자열로 안전 삽입 — 날 것의 '; alert 가 코드로 안 들어감.
         self.assertIn(json.dumps(evil), js)
 
+    def test_playwright_has_text_selector_is_translated_before_native_query(self) -> None:
+        tab = FakeTab(results={"querySelectorAll": 1})
+        page = RawPage(tab)
+        self.assertEqual(_run(page.locator('button:has-text("검색")').count()), 1)
+        self.assertNotIn(":has-text", tab.evals[-1])
+
     def test_first_is_index_zero(self) -> None:
         tab = FakeTab(results={"innerText": "첫번째"})
         page = RawPage(tab)
@@ -105,6 +111,27 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertEqual(page.url, "https://www.saramin.co.kr/x")
         self.assertEqual(_run(page.current_url()), "https://www.saramin.co.kr/x")
         self.assertNotEqual(tab.navigation_waits[-1], 45000)
+
+    def test_goto_waits_for_dom_content_readiness(self) -> None:
+        class LoadingTab(FakeTab):
+            def __init__(self):
+                super().__init__()
+                self.states = ["loading", "loading", "interactive"]
+                self.ready_reads = 0
+
+            def eval(self, expr: str):
+                if "document.readyState" in expr:
+                    self.ready_reads += 1
+                    return self.states.pop(0)
+                return super().eval(expr)
+
+        tab = LoadingTab()
+        _run(RawPage(tab).goto(
+            "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            wait_until="domcontentloaded",
+            timeout=1000,
+        ))
+        self.assertEqual(tab.ready_reads, 3)
 
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()

@@ -23,6 +23,8 @@ class ForbiddenPlaywright:
 class FakeRawTab:
     def __init__(self) -> None:
         self.disconnect_calls = 0
+        self.fill_calls = 0
+        self.click_calls = 0
 
     def eval(self, expression: str):
         if "location.href" in expression:
@@ -33,6 +35,10 @@ class FakeRawTab:
             return "https://www.saramin.co.kr/zf_user/member/resume-view?idx=42"
         if "innerText" in expression:
             return "ROS2 robotics engineer"
+        if "e.value=" in expression:
+            self.fill_calls += 1
+        if ".click()" in expression:
+            self.click_calls += 1
         return None
 
     def navigate(self, _url: str, wait_ms: int = 0) -> None:
@@ -124,6 +130,8 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "searched")
         self.assertEqual(len(result.candidate_cards), 1)
         self.assertIn("idx=42", result.candidate_cards[0].profile_url)
+        self.assertEqual(tab.fill_calls, 1)
+        self.assertEqual(tab.click_calls, 1)
         self.assertEqual(tab.disconnect_calls, 1)
         self.assertIsNone(worker.browser)
 
