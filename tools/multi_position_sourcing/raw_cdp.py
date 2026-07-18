@@ -50,6 +50,7 @@ def _http_get(path: str, *, endpoint: str | None = None) -> Any:
 # 사장님이 바로 보고, 봇처럼 몰래 굴지 않는다(SOT 투명성). 배지는 부가기능 —
 # 주입 실패가 실제 서치를 절대 깨지 않게 모든 호출을 best-effort 로 감싼다.
 _BADGE_ID = "vh-automation-badge"
+_BADGE_TAG = "vh-automation-status"
 _BADGE_OFF_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -256,6 +257,20 @@ def _badge_visibility_js(element: str, failure: str) -> str:
     )
 
 
+def _badge_identity_js(element: str, label: str, failure: str) -> str:
+    """Bind the browser-owned tooltip's tag and accessible name to one label."""
+    encoded_label = json.dumps(label, ensure_ascii=False)
+    return (
+        f"if({element}.localName!=={json.dumps(_BADGE_TAG)}||"
+        f"{element}.id!=={json.dumps(_BADGE_ID)}||"
+        f"{element}.textContent!=={encoded_label}||"
+        f"{element}.getAttribute('aria-label')!=={encoded_label}||"
+        f"{element}.getAttribute('title')!=={encoded_label}||"
+        f"{element}.getAttribute('role')!=='status')"
+        "{" + failure + "}"
+    )
+
+
 def _badge_js(label: str, *, expected_url: str | None = None) -> str:
     """상단중앙 고정 배지 주입 JS. pointer-events:none 로 사장님 클릭을 막지 않는다.
     idempotent: 기존 배지를 먼저 제거해 중복이 쌓이지 않는다."""
@@ -272,7 +287,7 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         + f"var id={json.dumps(_BADGE_ID)};"
         "var e=document.getElementById(id);"
         "if(e){e.remove();}"
-        "e=document.createElement('vh-automation-status');"
+        f"e=document.createElement({json.dumps(_BADGE_TAG)});"
         "e.id=id;"
         f"e.textContent={text};"
         f"e.setAttribute('aria-label',{text});"
@@ -293,6 +308,7 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         "['backface-visibility','visible'],['contain','none']].forEach(function(p){"
         "e.style.setProperty(p[0],p[1],'important');});"
         "(document.body||document.documentElement).appendChild(e);"
+        + _badge_identity_js("e", label, "e.remove();return null;")
         + _badge_visibility_js("e", "e.remove();return null;")
         + "return id;})()"
     )
@@ -323,7 +339,8 @@ def _owned_navigation_js(
         "(function(){"
         f"if(location.href!=={json.dumps(expected_url)})return false;"
         f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
-        f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
+        "if(!b)return false;"
+        + _badge_identity_js("b", badge_label, "return false;")
         + _badge_visibility_js("b", "return false;")
         + f"var u={json.dumps(url)};"
         "location.assign(u);return true;})()"
@@ -338,7 +355,8 @@ def _badge_rect_js(expected_url: str | None, badge_label: str) -> str:
         "(function(){"
         + url_guard
         + f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
-        f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
+        "if(!b)return false;"
+        + _badge_identity_js("b", badge_label, "return false;")
         + _badge_visibility_js("b", "return false;")
         + "var x=Math.max(0,r.left),y=Math.max(0,r.top);"
         "var right=Math.min(window.innerWidth,r.right);"
@@ -512,12 +530,18 @@ class CDPTab:
         ):
             return False
         challenge = _overlay_challenge_color()
+        left = max(0, int(math.floor(x)))
+        top = max(0, int(math.floor(y)))
+        right = min(int(math.ceil(viewport_width)), int(math.ceil(x + width)))
+        bottom = min(int(math.ceil(viewport_height)), int(math.ceil(y + height)))
         overlay_rect = {
-            "x": x,
-            "y": y,
-            "width": width,
-            "height": height,
+            "x": left,
+            "y": top,
+            "width": right - left,
+            "height": bottom - top,
         }
+        if overlay_rect["width"] < 8 or overlay_rect["height"] < 8:
+            return False
         challenge_applied = False
         proof_complete = False
         try:

@@ -19,7 +19,7 @@ import json
 import re
 from typing import Any, Callable
 
-from .raw_cdp import _badge_visibility_js
+from .raw_cdp import _badge_identity_js, _badge_visibility_js
 
 
 MutationGuard = Callable[[], Any]
@@ -32,7 +32,8 @@ def _ownership_js(expected_url: str, badge_label: str, action: str = "return tru
         "(function(){"
         f"if(location.href!=={json.dumps(expected_url)})return false;"
         f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
-        f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
+        "if(!b)return false;"
+        + _badge_identity_js("b", badge_label, "return false;")
         + _badge_visibility_js("b", "return false;")
         + action
         + "})()"
