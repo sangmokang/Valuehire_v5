@@ -27,6 +27,16 @@ DEFAULT_CHANNEL_TIMEOUT_SECONDS = 180
 SARAMIN_SEARCH_URL = "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
 JOBKOREA_SEARCH_URL = "https://www.jobkorea.co.kr/Corp/Person/Find"
 LINKEDIN_RPS_HOME_URL = "https://www.linkedin.com/talent/home"
+LINKEDIN_RECRUITER_SEARCH_SELECTOR = (
+    'a[href*="/talent/search"], input[role="combobox"]'
+)
+LINKEDIN_RECRUITER_ACCOUNT_SELECTOR = (
+    '[data-test-recruiter-account-menu], '
+    '[data-test-recruiter-nav-user-menu], '
+    '[data-test-global-nav-profile], '
+    'button[aria-label*="Account"], '
+    'button[aria-label*="계정"]'
+)
 ReadyCheck = Callable[[Any], Awaitable[bool]]
 PreflightSnapshotCapture = Callable[..., Awaitable[dict[str, object]]]
 
@@ -363,10 +373,19 @@ async def _linkedin_rps_ready(page: Any) -> bool:
     url = getattr(page, "url", "")
     if "/talent/" not in url or "login" in url.lower():
         return False
-    # A logged-out LinkedIn redirects /talent/* back to a login wall, so also require a
-    # Recruiter search affordance — a URL check alone is not a reliable login marker.
-    has_recruiter_search = await page.locator('a[href*="/talent/search"], input[role="combobox"]').count()
-    return bool(has_recruiter_search)
+    text = await _body_text(page)
+    folded = text.casefold()
+    if (
+        "sign in to linkedin" in folded
+        or "join linkedin" in folded
+        or ("로그인" in text and "로그아웃" not in text)
+    ):
+        return False
+    if _has_security_challenge(text, url):
+        return False
+    has_recruiter_search = await page.locator(LINKEDIN_RECRUITER_SEARCH_SELECTOR).count()
+    has_recruiter_account = await page.locator(LINKEDIN_RECRUITER_ACCOUNT_SELECTOR).count()
+    return bool(has_recruiter_search and has_recruiter_account)
 
 
 def ready_check_for_channel(channel: Channel) -> ReadyCheck:

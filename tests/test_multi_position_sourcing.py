@@ -42,6 +42,7 @@ from tools.multi_position_sourcing.keywords import keyword_plan_for_channel
 from tools.multi_position_sourcing.models import CandidateResultCard, QueueItem
 from tools.multi_position_sourcing.portal_login import (
     HumanInterventionOptions,
+    LINKEDIN_RECRUITER_ACCOUNT_SELECTOR,
     _has_security_challenge,
     _wait_for_human_intervention,
 )
@@ -420,6 +421,8 @@ class FakeAutoLoginLocator:
         if self.selector == "#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']":
             return 1 if self.page.logged_in else 0
         if self.selector == 'a[href*="/talent/search"], input[role="combobox"]':
+            return 1 if self.page.logged_in else 0
+        if self.selector == LINKEDIN_RECRUITER_ACCOUNT_SELECTOR:
             return 1 if self.page.logged_in else 0
         return 1 if self.selector in self.page.available_selectors else 0
 

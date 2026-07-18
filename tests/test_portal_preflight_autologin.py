@@ -77,6 +77,7 @@ class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
             "jobkorea": {"#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"},
             "linkedin_rps": {'a[href*="/talent/search"], input[role="combobox"]'},
         }
+        ready_selectors["linkedin_rps"].add(portal_login.LINKEDIN_RECRUITER_ACCOUNT_SELECTOR)
 
         class FakeLocator:
             def __init__(self, page: "FakePage", selector: str) -> None:

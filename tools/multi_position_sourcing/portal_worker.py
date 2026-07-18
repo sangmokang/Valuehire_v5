@@ -998,7 +998,7 @@ class PortalWorker:
                 badge_label = raw_cdp._resolve_badge_label(os.environ)
                 if not badge_label:
                     raise RuntimeError("visible automation marker is required for raw mode")
-                self._lock.assert_owned()
+                await asyncio.to_thread(self._assert_raw_mutation_allowed)
                 self._raw_tab = raw_cdp.attach(target, badge=False)
                 await asyncio.to_thread(self._assert_raw_mutation_allowed)
                 if self._raw_tab.mark_busy(badge_label) is not True:
@@ -1060,7 +1060,7 @@ class PortalWorker:
         if tab is None:
             return
         try:
-            self._lock.assert_owned()
+            await asyncio.to_thread(self._assert_raw_mutation_allowed)
             disconnect = getattr(tab, "close", None)
         except ProfileLockError:
             disconnect = getattr(tab, "disconnect", None)
