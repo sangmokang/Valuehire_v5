@@ -1,0 +1,31 @@
+{
+  "claim_id": "portal-channel-cdp-endpoint-01",
+  "mode": "code-change",
+  "risk": "L2",
+  "generator": {
+    "claim": "resolve_channel_cdp_endpoint(channel) 가 portal_browsers.sh 포트(saramin=9223/jobkorea=9224/linkedin_rps=9225)와 정합하는 채널별 CDP endpoint 를 우선순위(value>전역env>채널포트env>채널기본)로 해석한다. public_web은 ValueError. 기존 launch 방식·소비처 미변경.",
+    "changed_files": [
+      "tools/multi_position_sourcing/portal_worker.py",
+      "tests/test_portal_channel_cdp_endpoint.py"
+    ],
+    "red_evidence": "commit(RED): 함수 미존재 import error(collection error)",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "focused 7 passed / 전체 1752 passed, 4 xfailed, 102 subtests exit 0",
+    "mutant_check": "채널 기본포트 saramin 9223→9999 → 2 failed 감지 → 원복 7 passed",
+    "sot_alignment": "포트·env 이름은 scripts/portal_browsers.sh:74-80 과 동일(재발명 아님)",
+    "wiring_status": "ORPHAN-BY-DESIGN: 이 순수 함수는 아직 프로덕션 start() 가 호출하지 않는다. TODO-2b 는 diff 300줄+라이브 실크롬 검증이 필요해 SOT-30 게이트3(분할)에 따라 2조각으로 나눴고, 이 조각 A(기반)를 조각 B(start() connect_over_cdp 이행)가 소비한다. 조각 B PR 에서 엔트리→새코드 배선 grep 으로 고아 해소 예정. goal 비범위 참조.",
+    "test_quality": {
+      "happy_path": true,
+      "edge_cases": "채널 포트 env override·전역 env 우선·value 최우선·비숫자 포트 폴백·비http 전역 env 무시",
+      "failure_paths": "public_web ValueError",
+      "asserts_observable_behavior_only": true,
+      "weakened_or_deleted_assertions": 0
+    }
+  },
+  "failed_attempts": [],
+  "v1": null,
+  "v2": null,
+  "three_way_agree": false,
+  "status": "진행중 — G GREEN(조각 A), V1 대기. 고아는 조각 B 배선으로 해소 예정"
+}
