@@ -524,7 +524,11 @@ class JobQueueClient:
         # 인덱스가 409 를 던진다 — 그때 기존 잡을 회수해 반환한다(같은 이벤트 2회 → 잡 1개).
         # 그 외 HTTP 오류·raw DB 본문은 JobQueueConflictError 로 감싸 원문을 노출하지 않는다.
         import urllib.error
-        idem = (revalidated.get("params") or {}).get("idempotency_key")
+        # DB 부분 유니크 인덱스는 params->>'idempotency_key' 의 *문자열* 이 non-empty 일 때만
+        # 적용된다(20260713_fleet_job_idempotency.sql). 회수 조건을 그 의미와 정확히 맞춘다 —
+        # int 0 같은 거짓값도 텍스트로는 "0"(non-empty)이라 인덱스 대상이므로 회수해야 한다(V1).
+        idem_raw = (revalidated.get("params") or {}).get("idempotency_key")
+        idem = "" if idem_raw is None else str(idem_raw)
         try:
             rows = self._call("POST", "/jobs", revalidated)
         except urllib.error.HTTPError as exc:
