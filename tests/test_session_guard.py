@@ -80,6 +80,44 @@ def test_auth_probe_returns_only_boolean_evidence_not_body_text() -> None:
     assert "bodyText" in tab.script  # evaluated inside the page; never returned
 
 
+def test_linkedin_talent_projects_account_marker_is_authenticated_without_search_link() -> None:
+    class Tab:
+        def eval(self, _script: str):
+            return {
+                "url": "https://www.linkedin.com/talent/projects",
+                "hasChallenge": False,
+                "hasLogout": False,
+                "hasValueConnect": False,
+                "saraminSearch": False,
+                "jobkoreaSearch": False,
+                "linkedinSearch": False,
+                "linkedinAccount": True,
+            }
+
+    observation = read_auth_observation(Tab(), "linkedin_rps")
+
+    assert observation.authenticated is True
+    assert observation.proof_names == ("talent_surface", "recruiter_account")
+
+
+def test_linkedin_authwall_is_an_allowed_existing_challenge_surface() -> None:
+    ref = session_guard.resolve_existing_target(
+        "linkedin_rps",
+        target_id="authwall-target",
+        managed_endpoint_resolver=lambda _site: "http://127.0.0.1:9225",
+        list_pages=lambda _endpoint: [{
+            "id": "authwall-target",
+            "type": "page",
+            "url": "https://www.linkedin.com/authwall?trk=talent",
+            "webSocketDebuggerUrl": (
+                "ws://127.0.0.1:9225/devtools/page/authwall-target"
+            ),
+        }],
+    )
+
+    assert ref.target_id == "authwall-target"
+
+
 def _safe_payload() -> dict[str, object]:
     return {
         "target_id": "target-exact",

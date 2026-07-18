@@ -92,8 +92,8 @@ def test_managed_browser_process_binds_exact_port_profile_and_root_pid() -> None
         returncode = 0
         stdout = """\
   111 /Applications/Chrome --remote-debugging-port=9224 --user-data-dir=/tmp/other
-  222 /Applications/Chrome --remote-debugging-port=9225 '--user-data-dir=/tmp/LinkedIn Profile'
-  223 /Applications/Chrome --type=renderer --remote-debugging-port=9225 '--user-data-dir=/tmp/LinkedIn Profile'
+  222 /Applications/Google Chrome --remote-debugging-port=9225 --user-data-dir=/tmp/LinkedIn Profile --no-first-run
+  223 /Applications/Google Chrome --type=renderer --remote-debugging-port=9225 --user-data-dir=/tmp/LinkedIn Profile --no-first-run
 """
 
     calls: list[list[str]] = []
@@ -225,6 +225,27 @@ def test_human_auth_requires_auth_marker_and_fifteen_seconds_quiet() -> None:
     assert result is not None and result.authenticated
     assert len(sleeps) == 2
     assert all(seconds >= 5 for seconds in sleeps)
+
+
+def test_human_auth_never_accepts_owner_activity_even_with_large_idle_value() -> None:
+    sleeps: list[float] = []
+    result = wait_for_human_auth(
+        auth_probe=lambda: AuthObservation(
+            authenticated=True,
+            challenge=False,
+            url="https://www.linkedin.com/talent/home",
+            proof_names=("talent_surface", "recruiter_account"),
+        ),
+        owner_snapshot=lambda: SimpleNamespace(
+            owner_activity_detected=True,
+            idle_seconds=999.0,
+            detection_status="ok",
+        ),
+        sleep=lambda seconds: sleeps.append(seconds),
+        stop_requested=lambda: bool(sleeps),
+    )
+    assert result is None
+    assert sleeps == [5.0]
 
 
 class _KeepaliveTab:
@@ -425,6 +446,74 @@ def test_click_exception_after_navigation_is_pending_not_clean_failure() -> None
     assert result["restore_pending"] is True or result["status"] == "ok"
 
 
+def test_keepalive_waits_for_async_click_and_async_history_restore() -> None:
+    tab = _KeepaliveTab()
+    pending: list[tuple[str, int]] = []
+
+    def click_later(target: SafeKeepaliveTarget) -> bool:
+        tab.trace.append("click")
+        pending.append((target.destination_url, 2))
+        return True
+
+    original_send = tab.send
+
+    def send(method: str, params: dict | None = None):
+        if method == "Target.getTargetInfo" and pending:
+            url, remaining = pending[0]
+            if remaining <= 0:
+                tab.url = url
+                pending.pop(0)
+            else:
+                pending[0] = (url, remaining - 1)
+        if method == "Page.navigateToHistoryEntry":
+            tab.trace.append(f"back:{params['entryId']}")
+            pending.append(("https://www.linkedin.com/talent/home", 2))
+            return {}
+        return original_send(method, params)
+
+    tab.click_safe_link = click_later
+    tab.send = send
+    result = execute_keepalive_roundtrip(
+        tab,
+        _ref(),
+        _safe(),
+        auth_probe=lambda current: AuthObservation(
+            authenticated=True,
+            challenge=False,
+            url=current.current_url(),
+            proof_names=("recruiter_account",),
+        ),
+        mutation_gate=lambda: None,
+        sleep=lambda _seconds: None,
+        navigation_timeout_seconds=0.5,
+    )
+    assert result["status"] == "ok"
+    assert result["restore_pending"] is False
+
+
+def test_keepalive_never_reports_ok_if_source_auth_probe_redirects_immediately() -> None:
+    tab = _KeepaliveTab()
+
+    def probe(current: _KeepaliveTab) -> AuthObservation:
+        url = current.current_url()
+        observation = AuthObservation(True, False, url, ("recruiter_account",))
+        if url.endswith("/home") and any(item.startswith("back:") for item in tab.trace):
+            tab.url = "https://www.linkedin.com/checkpoint/challenge"
+        return observation
+
+    result = execute_keepalive_roundtrip(
+        tab,
+        _ref(),
+        _safe(),
+        auth_probe=probe,
+        mutation_gate=lambda: None,
+        sleep=lambda _seconds: None,
+        navigation_timeout_seconds=0.1,
+    )
+    assert result["status"] != "ok"
+    assert result["restore_pending"] is True
+
+
 def test_non_integer_history_entry_id_fails_before_mutation() -> None:
     tab = _KeepaliveTab()
     original_send = tab.send
@@ -608,6 +697,32 @@ def test_presentation_is_once_per_episode_but_new_episode_is_allowed() -> None:
     assert tab.mutations.count("focus") == 2
 
 
+def test_inactive_tab_marker_is_resolved_after_page_bring_to_front() -> None:
+    tab = _PresentationTab()
+    marked_resolves = 0
+
+    def resolver(identity):
+        nonlocal marked_resolves
+        if identity.title_marker:
+            marked_resolves += 1
+            if "focus" not in tab.mutations:
+                raise RuntimeError("inactive tab title is not the CGWindow title yet")
+        return SimpleNamespace(cg_window_id=180)
+
+    locator = present_exact_login_window_once(
+        tab,
+        _ref(),
+        agent="Codex",
+        episode_id="inactive-tab",
+        mutation_gate=lambda: None,
+        window_resolver=resolver,
+        window_capture=lambda _window_id: b"png",
+        application_activator=lambda _pid: True,
+    )
+    assert locator.cg_window_id == 180
+    assert marked_resolves >= 1
+
+
 def test_handoff_cleanup_removes_owned_badge_and_restores_private_title_guardedly() -> None:
     tab = _PresentationTab()
     marker = "[LOGIN HERE][Codex][linkedin][target-exact]"
@@ -676,6 +791,8 @@ def test_handoff_cleanup_never_mutates_a_new_document() -> None:
         {"destination_url": "https://www.linkedin.com/talent/logout"},
         {"destination_url": "https://www.linkedin.com/talent/inmail/send"},
         {"destination_url": "https://www.linkedin.com/talent/profile/new-candidate"},
+        {"destination_url": "https://www.linkedin.com/talent/%6c%6f%67%6f%75%74"},
+        {"destination_url": "https://www.linkedin.com/talent/%2573end"},
         {"risk_labels": ("paid",)},
         {"risk_labels": ("save",)},
         {"risk_labels": ("send",)},

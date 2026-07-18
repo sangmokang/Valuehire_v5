@@ -15,6 +15,7 @@ from tools.multi_position_sourcing.session_guard import (
     run_human_auth_episode,
     run_safe_keepalive_episode,
 )
+from tools.multi_position_sourcing.portal_worker import ProfileLockError
 
 
 def _ref() -> BrowserTargetRef:
@@ -220,23 +221,64 @@ def test_human_auth_runner_holds_lease_emits_locator_and_disconnects_only() -> N
         ),
     ],
 )
-def test_human_auth_runner_owner_gate_fails_closed_before_attach(snapshot: object) -> None:
+def test_human_auth_runner_owner_gate_waits_read_only_before_attach(snapshot: object) -> None:
     trace: list[str] = []
     lease = _Lease(trace)
+    stopped = False
 
-    with pytest.raises(Exception, match="owner activity"):
-        run_human_auth_episode(
-            "linkedin_rps",
-            agent="Codex",
-            owner_snapshot=lambda: snapshot,
-            mutation_sleep=lambda _seconds: None,
-            _lease_factory=lambda _site: lease,
-            _target_resolver=lambda _site, **_kwargs: trace.append("resolve") or _ref(),
-            _tab_attacher=lambda *_args, **_kwargs: pytest.fail("attach forbidden"),
-        )
+    def wait_read_only(seconds: float) -> None:
+        nonlocal stopped
+        trace.append(f"wait:{seconds}")
+        stopped = True
 
+    result = run_human_auth_episode(
+        "linkedin_rps",
+        agent="Codex",
+        stop_requested=lambda: stopped,
+        owner_snapshot=lambda: snapshot,
+        mutation_sleep=lambda _seconds: None,
+        wait_sleep=wait_read_only,
+        _lease_factory=lambda _site: lease,
+        _target_resolver=lambda _site, **_kwargs: trace.append("resolve") or _ref(),
+        _tab_attacher=lambda *_args, **_kwargs: pytest.fail("attach forbidden"),
+    )
+
+    assert result["status"] == "human_auth_stopped"
     assert trace[0:2] == ["lease.acquire", "resolve"]
+    assert "wait:5.0" in trace
     assert trace[-1] == "lease.release"
+
+
+def test_human_auth_runner_waits_for_lease_conflict_without_browser_action() -> None:
+    trace: list[str] = []
+
+    class ContendedLease(_Lease):
+        attempts = 0
+
+        def acquire(self) -> None:
+            self.attempts += 1
+            trace.append(f"lease.acquire:{self.attempts}")
+            if self.attempts == 1:
+                raise ProfileLockError("busy")
+            self.owned = True
+
+    lease = ContendedLease(trace)
+    result = run_human_auth_episode(
+        "linkedin_rps",
+        agent="Codex",
+        stop_requested=lambda: False,
+        owner_snapshot=_increasing_owner(trace),
+        mutation_sleep=lambda _seconds: None,
+        wait_sleep=lambda seconds: trace.append(f"wait:{seconds}"),
+        _lease_factory=lambda _site: lease,
+        _target_resolver=lambda _site, **_kwargs: trace.append("resolve") or _ref(),
+        _tab_attacher=lambda *_args, **_kwargs: trace.append("attach") or _Tab(trace),
+        _auth_reader=_authenticated,
+    )
+
+    assert result["status"] == "authenticated"
+    assert trace[:3] == ["lease.acquire:1", "wait:5.0", "lease.acquire:2"]
+    assert trace.index("resolve") > trace.index("lease.acquire:2")
 
 
 def test_human_auth_missing_target_releases_without_launch_or_new_tab() -> None:
@@ -276,9 +318,62 @@ def test_human_auth_keyboard_interrupt_still_disconnects_then_releases() -> None
                 "get-exact", "login", "https://www.linkedin.com/login", 180, "a" * 64, 1,
             ),
             _auth_waiter=lambda **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+            _cleanup=lambda *_args, **_kwargs: trace.append("presentation.cleanup") or {
+                "status": "cleanup_ok"
+            },
         )
 
-    assert trace[-2:] == ["tab.disconnect", "lease.release"]
+    assert trace[-3:] == ["presentation.cleanup", "tab.disconnect", "lease.release"]
+
+
+def test_human_auth_stopped_attempts_guarded_presentation_cleanup() -> None:
+    trace: list[str] = []
+    lease = _Lease(trace)
+
+    result = run_human_auth_episode(
+        "linkedin_rps",
+        agent="Codex",
+        stop_requested=lambda: False,
+        owner_snapshot=_increasing_owner(trace),
+        mutation_sleep=lambda _seconds: None,
+        _lease_factory=lambda _site: lease,
+        _target_resolver=lambda *_args, **_kwargs: _ref(),
+        _tab_attacher=lambda *_args, **_kwargs: _Tab(trace),
+        _auth_reader=_unauthenticated,
+        _presenter=lambda *_args, **_kwargs: LoginWindowLocator(
+            "Codex", "linkedin_rps", 4321, "/tmp/p", "http://127.0.0.1:9225",
+            "get-exact", "login", "https://www.linkedin.com/login", 180, "a" * 64, 1,
+        ),
+        _auth_waiter=lambda **_kwargs: None,
+        _cleanup=lambda *_args, **_kwargs: trace.append("presentation.cleanup") or {
+            "status": "cleanup_ok"
+        },
+    )
+
+    assert result["status"] == "human_auth_stopped"
+    assert result["cleanup"]["status"] == "cleanup_ok"
+    assert trace[-3:] == ["presentation.cleanup", "tab.disconnect", "lease.release"]
+
+
+def test_partial_lease_acquire_interrupt_still_attempts_release() -> None:
+    trace: list[str] = []
+
+    class InterruptedLease(_Lease):
+        def acquire(self) -> None:
+            trace.append("lease.acquire.partial")
+            self.owned = True
+            raise KeyboardInterrupt()
+
+    lease = InterruptedLease(trace)
+    with pytest.raises(KeyboardInterrupt):
+        run_human_auth_episode(
+            "linkedin_rps",
+            agent="Codex",
+            _lease_factory=lambda _site: lease,
+            _target_resolver=lambda *_args, **_kwargs: pytest.fail("resolve forbidden"),
+        )
+
+    assert trace == ["lease.acquire.partial", "lease.release"]
 
 
 def test_keepalive_runner_proves_auth_marks_badge_and_invokes_guarded_roundtrip() -> None:
@@ -318,6 +413,31 @@ def test_keepalive_runner_proves_auth_marks_badge_and_invokes_guarded_roundtrip(
     assert trace[-2:] == ["tab.disconnect", "lease.release"]
 
 
+def test_keepalive_roundtrip_interrupt_attempts_badge_cleanup_before_disconnect() -> None:
+    trace: list[str] = []
+    lease = _Lease(trace)
+    tab = _Tab(trace)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_safe_keepalive_episode(
+            "linkedin_rps",
+            _target(),
+            agent="Codex",
+            owner_snapshot=_increasing_owner(trace),
+            mutation_sleep=lambda _seconds: None,
+            _lease_factory=lambda _site: lease,
+            _target_resolver=lambda *_args, **_kwargs: _ref(),
+            _tab_attacher=lambda *_args, **_kwargs: tab,
+            _auth_reader=_authenticated,
+            _roundtrip=lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+            _cleanup_badge=lambda *_args, **_kwargs: trace.append("badge.cleanup") or {
+                "status": "cleanup_ok"
+            },
+        )
+
+    assert trace[-3:] == ["badge.cleanup", "tab.disconnect", "lease.release"]
+
+
 def test_cli_exposes_and_dispatches_real_human_auth_subcommand(monkeypatch, capsys) -> None:
     calls: list[tuple[str, str, str | None]] = []
 
@@ -347,4 +467,3 @@ def test_cli_help_lists_human_auth_and_keepalive(capsys) -> None:
     output = capsys.readouterr().out
     assert "human-auth" in output
     assert "keepalive" in output
-

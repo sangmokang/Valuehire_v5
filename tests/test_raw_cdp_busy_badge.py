@@ -259,6 +259,27 @@ class BadgeJsTests(unittest.TestCase):
 
 
 class MarkBusyTests(unittest.TestCase):
+    def test_safe_link_browser_guard_repeatedly_decodes_unsafe_url_surface(self):
+        class CaptureTab:
+            _badge_label = "[KEEPALIVE][Codex]"
+            action = ""
+
+            def eval_if_badge_owned(self, action, **_kwargs):
+                self.action = action
+                return False
+
+        tab = CaptureTab()
+        target = SimpleNamespace(
+            source_url="https://www.linkedin.com/talent/home",
+            destination_url="https://www.linkedin.com/talent/%256cogout",
+            selector='a[href="https://www.linkedin.com/talent/%256cogout"]',
+            target_attr="_self",
+        )
+
+        self.assertFalse(raw_cdp.CDPTab.click_safe_link(tab, target))
+        self.assertIn("decodeURIComponent", tab.action)
+        self.assertIn("for(var decodePass=0;decodePass<4;decodePass++)", tab.action)
+
     def test_clear_busy_removes_only_exact_owned_badge(self):
         class OwnedObjectTab(_RecTab):
             def send(self, method, params=None, timeout=30.0):
