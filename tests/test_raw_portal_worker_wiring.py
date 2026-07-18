@@ -540,6 +540,15 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 residual,
                 visible=set(),
             )))
+        generic_linkedin = {
+            'input[role="combobox"]',
+            '[data-test-global-nav-profile]',
+        }
+        self.assertFalse(await linkedin(ProofPage(
+            "https://www.linkedin.com/talent/home",
+            "Welcome to LinkedIn. Upgrade to Recruiter to continue.",
+            generic_linkedin,
+        )))
         self.assertTrue(await linkedin(ProofPage(
             "https://www.linkedin.com/talent/home",
             "Good evening, Sangmo | Recruiter",
