@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
+import secrets
 import struct
 import time
 import urllib.request
@@ -63,10 +65,10 @@ def _paeth_predictor(left: int, up: int, upper_left: int) -> int:
     return upper_left
 
 
-def _png_has_badge_color(data: bytes) -> bool:
-    """Decode Chrome's 8-bit RGB/RGBA PNG and require substantial badge red pixels."""
+def _decode_png_rgb(data: bytes) -> tuple[int, int, bytes, bytes] | None:
+    """Decode Chrome's non-interlaced 8-bit RGB/RGBA PNG without extra deps."""
     if not isinstance(data, bytes) or not data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return False
+        return None
     offset = 8
     header: tuple[int, int, int, int, int, int, int] | None = None
     compressed = bytearray()
@@ -77,11 +79,11 @@ def _png_has_badge_color(data: bytes) -> bool:
             payload_start = offset + 8
             payload_end = payload_start + length
             if payload_end + 4 > len(data):
-                return False
+                return None
             payload = data[payload_start:payload_end]
             if kind == b"IHDR":
                 if length != 13:
-                    return False
+                    return None
                 header = struct.unpack(">IIBBBBB", payload)
             elif kind == b"IDAT":
                 compressed.extend(payload)
@@ -89,22 +91,23 @@ def _png_has_badge_color(data: bytes) -> bool:
                 break
             offset = payload_end + 4
         if header is None:
-            return False
+            return None
         width, height, depth, color_type, compression, filter_method, interlace = header
         if (
             width <= 0 or height <= 0 or width > 4096 or height > 4096
             or depth != 8 or color_type not in {2, 6}
             or compression != 0 or filter_method != 0 or interlace != 0
         ):
-            return False
+            return None
         channels = 3 if color_type == 2 else 4
         stride = width * channels
         raw = zlib.decompress(bytes(compressed))
         if len(raw) != height * (stride + 1):
-            return False
+            return None
         prior = bytearray(stride)
-        red_pixels = 0
-        total_pixels = width * height
+        rgb = bytearray(width * height * 3)
+        alpha = bytearray(width * height)
+        output_position = 0
         position = 0
         for _row in range(height):
             filter_type = raw[position]
@@ -112,7 +115,7 @@ def _png_has_badge_color(data: bytes) -> bool:
             scan = bytearray(raw[position:position + stride])
             position += stride
             if filter_type not in {0, 1, 2, 3, 4}:
-                return False
+                return None
             for index in range(stride):
                 left = scan[index - channels] if index >= channels else 0
                 up = prior[index]
@@ -128,14 +131,72 @@ def _png_has_badge_color(data: bytes) -> bool:
                         scan[index] + _paeth_predictor(left, up, upper_left)
                     ) & 0xFF
             for pixel in range(0, stride, channels):
-                red, green, blue = scan[pixel:pixel + 3]
-                alpha = scan[pixel + 3] if channels == 4 else 255
-                if red >= 160 and green <= 105 and blue <= 105 and alpha >= 180:
-                    red_pixels += 1
+                rgb[output_position * 3:output_position * 3 + 3] = scan[pixel:pixel + 3]
+                alpha[output_position] = scan[pixel + 3] if channels == 4 else 255
+                output_position += 1
             prior = scan
-        return red_pixels >= max(16, total_pixels // 5)
+        return width, height, bytes(rgb), bytes(alpha)
     except (ValueError, TypeError, struct.error, zlib.error):
+        return None
+
+
+def _png_region_matches_color(
+    data: bytes,
+    *,
+    css_rect: dict[str, float],
+    css_viewport: dict[str, float],
+    expected_rgb: tuple[int, int, int],
+) -> bool:
+    """Prove an opaque browser-owned Overlay in a full-viewport screenshot."""
+    decoded = _decode_png_rgb(data)
+    if decoded is None:
         return False
+    width, height, rgb, alpha = decoded
+    try:
+        viewport_width = float(css_viewport["width"])
+        viewport_height = float(css_viewport["height"])
+        x = float(css_rect["x"])
+        y = float(css_rect["y"])
+        rect_width = float(css_rect["width"])
+        rect_height = float(css_rect["height"])
+        expected = tuple(int(value) for value in expected_rgb)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if (
+        viewport_width <= 0 or viewport_height <= 0
+        or x < 0 or y < 0 or rect_width < 8 or rect_height < 8
+        or x + rect_width > viewport_width + 0.5
+        or y + rect_height > viewport_height + 0.5
+        or len(expected) != 3 or any(value < 0 or value > 255 for value in expected)
+    ):
+        return False
+    scale_x = width / viewport_width
+    scale_y = height / viewport_height
+    # Ignore one device pixel at each edge: Overlay outlines are antialiased there.
+    left = max(0, int(math.floor(x * scale_x)) + 1)
+    top = max(0, int(math.floor(y * scale_y)) + 1)
+    right = min(width, int(math.ceil((x + rect_width) * scale_x)) - 1)
+    bottom = min(height, int(math.ceil((y + rect_height) * scale_y)) - 1)
+    if right <= left or bottom <= top:
+        return False
+    matches = 0
+    total = 0
+    for row in range(top, bottom):
+        for column in range(left, right):
+            pixel = row * width + column
+            offset = pixel * 3
+            actual = rgb[offset:offset + 3]
+            total += 1
+            if alpha[pixel] >= 250 and all(
+                abs(actual[index] - expected[index]) <= 2 for index in range(3)
+            ):
+                matches += 1
+    return total >= 16 and matches / total >= 0.95
+
+
+def _overlay_challenge_color() -> tuple[int, int, int]:
+    """Return a per-proof opaque color that page content cannot predict or query."""
+    return tuple(24 + value % 208 for value in secrets.token_bytes(3))
 
 
 def _resolve_badge_label(env: Any) -> str | None:
@@ -173,6 +234,11 @@ def _badge_visibility_js(element: str, failure: str) -> str:
         "var p=m[1].split(',');return p.length>3?parseFloat(p[3]):1;}"
         f"var cs=window.getComputedStyle({element});"
         "if(vhAlpha(cs.backgroundColor)<=0||vhAlpha(cs.color)<=0)"
+        "{" + failure + "}"
+        "function vhPseudoVisible(s){return !!(s&&s.content&&"
+        "s.content!=='none'&&s.content!=='normal');}"
+        f"if(vhPseudoVisible(window.getComputedStyle({element},'::before'))||"
+        f"vhPseudoVisible(window.getComputedStyle({element},'::after')))"
         "{" + failure + "}"
         f"{element}.style.setProperty('pointer-events','auto','important');"
         "var pts=[[r.left+r.width/2,r.top+r.height/2],"
@@ -274,7 +340,8 @@ def _badge_rect_js(expected_url: str | None, badge_label: str) -> str:
         + "var x=Math.max(0,r.left),y=Math.max(0,r.top);"
         "var right=Math.min(window.innerWidth,r.right);"
         "var bottom=Math.min(window.innerHeight,r.bottom);"
-        "return {x:x,y:y,width:right-x,height:bottom-y};})()"
+        "return {x:x,y:y,width:right-x,height:bottom-y,"
+        "viewportWidth:window.innerWidth,viewportHeight:window.innerHeight};})()"
     )
 
 
@@ -316,6 +383,8 @@ class CDPTab:
             self.send("Page.enable")
             self.send("Runtime.enable")
             self.send("Network.enable")
+            self.send("DOM.enable")
+            self.send("Overlay.enable")
             self.send("Page.setLifecycleEventsEnabled", {"enabled": True})
         except BaseException:
             try:
@@ -411,6 +480,10 @@ class CDPTab:
             self.eval(_clear_js())
         except Exception:
             pass
+        try:
+            self.send("Overlay.hideHighlight")
+        except Exception:
+            pass
 
     def prove_badge_rendered(
         self,
@@ -421,26 +494,76 @@ class CDPTab:
         rect = self.eval(_badge_rect_js(expected_url, badge_label))
         if not isinstance(rect, dict):
             return False
-        values = [rect.get(name) for name in ("x", "y", "width", "height")]
+        values = [
+            rect.get(name)
+            for name in ("x", "y", "width", "height", "viewportWidth", "viewportHeight")
+        ]
         if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
             return False
-        x, y, width, height = (float(value) for value in values)
-        if x < 0 or y < 0 or width < 8 or height < 8:
+        x, y, width, height, viewport_width, viewport_height = (
+            float(value) for value in values
+        )
+        if (
+            x < 0 or y < 0 or width < 8 or height < 8
+            or viewport_width <= 0 or viewport_height <= 0
+        ):
             return False
-        result = self.send("Page.captureScreenshot", {
-            "format": "png",
-            "fromSurface": True,
-            "captureBeyondViewport": False,
-            "clip": {"x": x, "y": y, "width": width, "height": height, "scale": 1},
-        })
-        encoded = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(encoded, str) or not encoded:
-            return False
+        challenge = _overlay_challenge_color()
+        overlay_rect = {
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+        }
+        challenge_applied = False
+        proof_complete = False
         try:
+            self.send("Overlay.highlightRect", {
+                **overlay_rect,
+                "color": {
+                    "r": challenge[0],
+                    "g": challenge[1],
+                    "b": challenge[2],
+                    "a": 1,
+                },
+            })
+            challenge_applied = True
+            # Chromium omits compositor overlays from a shifted clip. Capture the
+            # viewport and crop after decoding instead.
+            result = self.send("Page.captureScreenshot", {
+                "format": "png",
+                "fromSurface": True,
+                "captureBeyondViewport": False,
+            })
+            encoded = result.get("data") if isinstance(result, dict) else None
+            if not isinstance(encoded, str) or not encoded:
+                return False
             png = base64.b64decode(encoded, validate=True)
+            if not _png_region_matches_color(
+                png,
+                css_rect=overlay_rect,
+                css_viewport={"width": viewport_width, "height": viewport_height},
+                expected_rgb=challenge,
+            ):
+                return False
+            # Leave a browser-owned translucent frame above page content. The DOM
+            # badge carries the readable label; this frame cannot be occluded by
+            # page z-index, pseudo-elements, or the dialog top layer.
+            self.send("Overlay.highlightRect", {
+                **overlay_rect,
+                "color": {"r": 220, "g": 38, "b": 38, "a": 0.12},
+                "outlineColor": {"r": 255, "g": 255, "b": 255, "a": 1},
+            })
+            proof_complete = True
+            return True
         except (ValueError, TypeError):
             return False
-        return _png_has_badge_color(png)
+        finally:
+            if challenge_applied and not proof_complete:
+                try:
+                    self.send("Overlay.hideHighlight")
+                except Exception:
+                    pass
 
     def navigate_if_owned(
         self,
@@ -546,6 +669,10 @@ class CDPTab:
             except Exception:
                 return False
             if acknowledged is not True:
+                return False
+            try:
+                self.send("Overlay.hideHighlight")
+            except Exception:
                 return False
             self._badge_label = None
             self._badge_bound_url = None

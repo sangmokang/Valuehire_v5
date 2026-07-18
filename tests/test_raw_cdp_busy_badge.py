@@ -233,7 +233,8 @@ class MarkBusyTests(unittest.TestCase):
 
         tab = OverlayTab()
         with patch.object(raw_cdp, "_overlay_challenge_color", return_value=challenge):
-            self.assertTrue(tab.prove_badge_rendered(
+            self.assertTrue(raw_cdp.CDPTab.prove_badge_rendered(
+                tab,
                 expected_url="https://example.test/search",
                 badge_label="Codex",
             ))
