@@ -11,7 +11,7 @@
     "red_evidence": "commit(RED): 함수 미존재 import error(collection error)",
     "command": "./verify.sh",
     "exit_code": 0,
-    "green_evidence": "focused 9 passed(포트범위·LINKEDIN_PORT 추가) / 전체는 V1 샌드박스서 11 failed(환경제한: 소켓bind·SQLite·pkill 금지)—신규함수 무관, 정상환경 1752 passed",
+    "green_evidence": "focused 11 passed(순수 9 + 배선 2). 전체 ./verify.sh(배선 후): 1756 passed, 4 xfailed, 102 subtests passed in 140.71s (exit 0).",
     "mutant_check": "채널 기본포트 saramin 9223→9999 → 2 failed 감지 → 원복 7 passed | 배선 뮤턴트: _cdp_endpoint value=None(값무시) → preserves_explicit 1 failed 감지·원복.",
     "sot_alignment": "포트·env 이름은 scripts/portal_browsers.sh:74-80 과 동일(재발명 아님)",
     "wiring_status": "RESOLVED — start()(portal_worker.py:672)가 self._cdp_endpoint()(:646→resolve_channel_cdp_endpoint) 호출. grep 증명 첨부. 기존 test_browser_policy(7777→규칙위반) 테스트가 배선된 경로를 그대로 통과=동작 보존. 사람인·잡코리아 실이전(connect_over_cdp 전환+마커검증)은 조각 B(라이브 필수) 유지.",
