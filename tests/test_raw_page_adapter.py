@@ -168,6 +168,56 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertEqual(len(tab.lifecycle_calls), 1)
         self.assertEqual(tab.lifecycle_calls[0][:2], ("new-loader", "DOMContentLoaded"))
 
+    def test_required_mode_rejects_indeterminate_badge_refresh(self) -> None:
+        class MissingBadgeTab(FakeTab):
+            _badge_label = "Codex"
+
+            def mark_busy(self, _label: str):
+                return None
+
+        with self.assertRaisesRegex(RuntimeError, "marker refresh"):
+            _run(RawPage(MissingBadgeTab(), require_badge=True)._refresh_busy_badge())
+
+    def test_goto_rejects_navigation_protocol_error(self) -> None:
+        class FailedNavigationTab(FakeTab):
+            def navigate(self, url: str, wait_ms: int = 0):
+                super().navigate(url, wait_ms=wait_ms)
+                return {"errorText": "net::ERR_NAME_NOT_RESOLVED"}
+
+        with self.assertRaisesRegex(RuntimeError, "navigation failed"):
+            _run(RawPage(FailedNavigationTab()).goto("https://invalid.example"))
+
+    def test_goto_rejects_download_navigation(self) -> None:
+        class DownloadNavigationTab(FakeTab):
+            def navigate(self, url: str, wait_ms: int = 0):
+                super().navigate(url, wait_ms=wait_ms)
+                return {"isDownload": True}
+
+        with self.assertRaisesRegex(RuntimeError, "download"):
+            _run(RawPage(DownloadNavigationTab()).goto("https://example.test/file"))
+
+    def test_required_mode_rejects_navigation_without_new_loader(self) -> None:
+        class NoLoaderTab(FakeTab):
+            _badge_label = "Codex"
+
+            def mark_busy(self, _label: str):
+                return True
+
+            def wait_for_lifecycle(self, *_args):
+                raise AssertionError("no loader must not be treated as the old document")
+
+            def eval(self, expr: str):
+                if "document.readyState" in expr:
+                    return "complete"
+                return super().eval(expr)
+
+        with self.assertRaisesRegex(RuntimeError, "loader"):
+            _run(RawPage(NoLoaderTab(), require_badge=True).goto(
+                "https://www.jobkorea.co.kr/Corp/Person/Find",
+                wait_until="domcontentloaded",
+                timeout=1000,
+            ))
+
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
         page = RawPage(tab)

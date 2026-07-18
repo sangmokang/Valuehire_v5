@@ -8,6 +8,8 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from tools.multi_position_sourcing.portal_worker import (
+    ProfileLock,
+    ProfileLockError,
     PortalWorker,
     PortalWorkerConfig,
     SearchLivenessMonitor,
@@ -114,6 +116,9 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             return [fake_target, exact_target]
 
         with TemporaryDirectory(prefix="raw-worker-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
             "tools.multi_position_sourcing.raw_cdp.list_pages",
             side_effect=list_pages,
         ), patch("tools.multi_position_sourcing.raw_cdp.attach", side_effect=attach):
@@ -171,6 +176,26 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "not_ready")
         self.assertEqual(tab.navigation_calls, 0)
 
+    async def test_raw_mode_without_login_proof_never_navigates(self) -> None:
+        with TemporaryDirectory(prefix="raw-precheck-") as root:
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root),
+                    connection_mode="raw_single_tab",
+                )
+            )
+            tab = FakeRawTab()
+            worker._raw_page = RawPage(
+                tab,
+                initial_url="https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            )
+            result = await worker._run_one_search_body("robotics")
+
+        self.assertEqual(result.status, "not_ready")
+        self.assertEqual(result.reauth_cause, "login_proof_required")
+        self.assertEqual(tab.navigation_calls, 0)
+
     async def test_raw_start_fails_when_visible_marker_cannot_be_applied(self) -> None:
         target = {
             "id": "exact",
@@ -185,6 +210,9 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
 
         tab = MarkerFailTab()
         with TemporaryDirectory(prefix="raw-badge-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
             "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
             return_value="http://127.0.0.1:9223",
         ), patch(
@@ -207,6 +235,32 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await worker.stop()
         self.assertEqual(tab.disconnect_calls, 1)
+
+    async def test_raw_mode_uses_shared_atomic_login_lease(self) -> None:
+        with TemporaryDirectory(prefix="raw-shared-lease-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ):
+            config = PortalWorkerConfig(
+                channel="saramin",
+                profile_root=Path(root) / "profile",
+                connection_mode="raw_single_tab",
+            )
+            self.assertEqual(
+                config.lock_path,
+                Path(root) / "browser-locks" / "login-saramin.lock",
+            )
+            first = ProfileLock(config)
+            second = ProfileLock(config)
+            first.acquire()
+            try:
+                self.assertTrue(config.lock_path.is_dir())
+                first.assert_owned()
+                with self.assertRaises(ProfileLockError):
+                    second.acquire()
+            finally:
+                first.release()
+            self.assertFalse(config.lock_path.exists())
 
     async def test_raw_monitor_reads_fresh_login_redirect_url(self) -> None:
         class RedirectTab(FakeRawTab):

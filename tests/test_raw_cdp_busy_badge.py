@@ -27,17 +27,18 @@ from tools.multi_position_sourcing import raw_cdp
 class _RecTab(raw_cdp.CDPTab):
     """ws 없이 eval/send 를 기록하는 CDPTab(생성자 우회)."""
 
-    def __init__(self, *, eval_raises: bool = False):
+    def __init__(self, *, eval_raises: bool = False, eval_result=None):
         self.evals: list[str] = []
         self.sends: list[tuple] = []
         self._badge_label = None
         self._eval_raises = eval_raises
+        self._eval_result = eval_result
 
     def eval(self, expr: str):
         self.evals.append(expr)
         if self._eval_raises:
             raise RuntimeError("boom (렌더러 프리즈 흉내)")
-        return None
+        return self._eval_result
 
     def send(self, method, params=None, timeout=30.0):
         self.sends.append((method, params))
@@ -75,6 +76,23 @@ class BadgeJsTests(unittest.TestCase):
 
 
 class MarkBusyTests(unittest.TestCase):
+    def test_mark_busy_requires_exact_dom_acknowledgement(self):
+        missing = _RecTab(eval_result=None)
+        confirmed = _RecTab(eval_result=raw_cdp._BADGE_ID)
+
+        self.assertFalse(missing.mark_busy("Codex"))
+        self.assertTrue(confirmed.mark_busy("Codex"))
+
+    def test_eval_rejects_runtime_exception_details(self):
+        tab = _RecTab()
+        tab.send = lambda *_args, **_kwargs: {
+            "result": {"type": "undefined"},
+            "exceptionDetails": {"text": "Uncaught"},
+        }
+
+        with self.assertRaises(RuntimeError):
+            raw_cdp.CDPTab.eval(tab, "broken()")
+
     def test_mark_busy_injects_and_remembers(self):
         tab = _RecTab()
         tab.mark_busy("🤖 Claude 자동화 사용중 · /aisearch")
