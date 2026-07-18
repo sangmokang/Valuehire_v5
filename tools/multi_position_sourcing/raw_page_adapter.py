@@ -106,12 +106,30 @@ class RawLocator:
 
 
 class RawPage:
-    def __init__(self, tab: Any, *, initial_url: str = "") -> None:
+    def __init__(
+        self,
+        tab: Any,
+        *,
+        initial_url: str = "",
+        require_badge: bool = False,
+    ) -> None:
         self._tab = tab
         self._url = initial_url
+        self._require_badge = require_badge
 
     def locator(self, selector: str) -> RawLocator:
         return RawLocator(self._tab, selector)
+
+    async def _refresh_busy_badge(self) -> None:
+        label = getattr(self._tab, "_badge_label", None)
+        marker = getattr(self._tab, "mark_busy", None)
+        if not label or not callable(marker):
+            if self._require_badge:
+                raise RuntimeError("visible automation marker is missing")
+            return
+        applied = await _tab_call(self._tab, "mark_busy", label)
+        if self._require_badge and applied is False:
+            raise RuntimeError("visible automation marker refresh failed")
 
     async def goto(self, url: str, *, wait_until: str | None = None, timeout: int | None = None) -> None:
         self._url = url
@@ -119,8 +137,32 @@ class RawPage:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
         action = _tab_call(self._tab, "navigate", url, wait_ms=0)
-        await asyncio.wait_for(action, timeout=timeout_seconds)
+        navigation = await asyncio.wait_for(action, timeout=timeout_seconds)
         if wait_until is None:
+            return
+        loader_id = ""
+        if isinstance(navigation, dict):
+            loader_id = str(navigation.get("loaderId") or "")
+        lifecycle = getattr(self._tab, "wait_for_lifecycle", None)
+        if loader_id and callable(lifecycle):
+            lifecycle_name = {
+                "domcontentloaded": "DOMContentLoaded",
+                "load": "load",
+                "networkidle": "networkIdle",
+                "commit": "init",
+            }.get(wait_until, "DOMContentLoaded")
+            remaining = max(0.001, deadline - loop.time())
+            await asyncio.wait_for(
+                _tab_call(
+                    self._tab,
+                    "wait_for_lifecycle",
+                    loader_id,
+                    lifecycle_name,
+                    remaining,
+                ),
+                timeout=remaining,
+            )
+            await self._refresh_busy_badge()
             return
         ready_states = {"complete"}
         if wait_until in {"domcontentloaded", "commit"}:
@@ -134,6 +176,7 @@ class RawPage:
                 timeout=remaining,
             ) or "")
             if state in ready_states:
+                await self._refresh_busy_badge()
                 return
             await asyncio.sleep(min(0.1, remaining))
 

@@ -34,6 +34,10 @@ DEFAULT_PROFILE_ROOT = Path(
     os.environ.get("VALUEHIRE_PORTAL_PROFILE_ROOT")
     or Path.home() / ".valuehire" / "portal_profiles"
 )
+RAW_SINGLE_TARGET_LOCK_ROOT = Path(
+    os.environ.get("VALUEHIRE_PORTAL_RAW_LOCK_ROOT")
+    or Path.home() / ".valuehire" / "locks" / "portal"
+)
 FORBIDDEN_PROFILE_ARTIFACT_ROOT = Path("artifacts")
 LINKEDIN_SINGLE_WORKER_ID = "default"
 
@@ -82,7 +86,10 @@ def resolve_channel_cdp_endpoint(
 # 채널별 검색 target 규칙. host 부분문자열은 룩얼라이크 도메인을 허용하므로
 # exact host/subdomain 경계와 검색 surface path를 함께 확인한다.
 _CHANNEL_TARGET_RULE = {
-    "saramin": ("saramin.co.kr", ("/zf_user/memcom/talent-pool/",)),
+    "saramin": (
+        "saramin.co.kr",
+        ("/zf_user/memcom/talent-pool/main/search",),
+    ),
     "jobkorea": ("jobkorea.co.kr", ("/corp/person/find",)),
     "linkedin_rps": (
         "linkedin.com",
@@ -197,9 +204,13 @@ def find_verified_channel_target(
             tabs = list_tabs(endpoint)
         except Exception:
             continue
-        for tab in tabs or ():
-            if _target_matches_channel(channel, tab):
-                return endpoint, tab
+        matches = [tab for tab in (tabs or ()) if _target_matches_channel(channel, tab)]
+        if len(matches) == 1:
+            return endpoint, matches[0]
+        if len(matches) > 1:
+            raise LookupError(
+                f"{channel} exact 검색 target이 여러 개라 자동 선택하지 않음"
+            )
     raise LookupError(
         f"{channel} exact 검색 target을 후보 endpoint에서 못 찾음 "
         "— 기존 자동화 브라우저의 로그인/검색 화면 확인 필요(맹목 attach 금지)"
@@ -428,7 +439,7 @@ class PortalWorkerConfig:
     @property
     def lock_path(self) -> Path:
         if self.connection_mode == "raw_single_tab":
-            return Path(self.profile_root) / self.channel / ".raw-single-target.lock"
+            return RAW_SINGLE_TARGET_LOCK_ROOT / f"{self.channel}.lock"
         return self.profile_dir / ".profile.lock"
 
     @property
@@ -514,6 +525,12 @@ def _ensure_real_profile_dir(config: PortalWorkerConfig) -> None:
         if not path.exists():
             path.mkdir(exist_ok=True)
         _reject_unsafe_profile_path(path)
+    if config.connection_mode == "raw_single_tab":
+        lock_dir = config.lock_path.parent
+        _reject_unsafe_profile_path(lock_dir)
+        if not lock_dir.exists():
+            lock_dir.mkdir(parents=True, exist_ok=True)
+        _reject_unsafe_profile_path(lock_dir)
 
 
 def _reject_unsafe_profile_path(path: Path) -> None:
@@ -859,10 +876,16 @@ class PortalWorker:
                     list_tabs=raw_cdp.list_pages,
                     candidate_endpoints=[managed_endpoint],
                 )
-                self._raw_tab = raw_cdp.attach(target)
+                badge_label = raw_cdp._resolve_badge_label(os.environ)
+                if not badge_label:
+                    raise RuntimeError("visible automation marker is required for raw mode")
+                self._raw_tab = raw_cdp.attach(target, badge=False)
+                if self._raw_tab.mark_busy(badge_label) is not True:
+                    raise RuntimeError("visible automation marker could not be applied")
                 self._raw_page = RawPage(
                     self._raw_tab,
                     initial_url=str(target.get("url") or ""),
+                    require_badge=True,
                 )
                 self._started = True
                 return
@@ -1003,6 +1026,27 @@ class PortalWorker:
             page = await self._acquire_search_page()
             monitor = monitor or SearchLivenessMonitor(self.config.channel)
             monitor.attach(page)
+            reauth_cause = await monitor.check_page(page)
+            if reauth_cause:
+                return PortalSearchAttempt(
+                    channel=self.config.channel,
+                    worker_id=self.config.worker_id,
+                    keyword=keyword,
+                    status="not_ready",
+                    reason="reauth required before navigation",
+                    url=safe_artifact_url(getattr(page, "url", "")),
+                    reauth_cause=reauth_cause,
+                )
+            if ready_check is not None and not await ready_check(page):
+                return PortalSearchAttempt(
+                    channel=self.config.channel,
+                    worker_id=self.config.worker_id,
+                    keyword=keyword,
+                    status="not_ready",
+                    reason="login marker missing on attached target",
+                    url=safe_artifact_url(getattr(page, "url", "")),
+                    reauth_cause="login_marker_missing",
+                )
             await _goto_search_surface(page, self.config.channel, keyword)
             reauth_cause = await monitor.check_page(page)
             if reauth_cause:

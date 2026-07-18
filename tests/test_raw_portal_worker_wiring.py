@@ -104,7 +104,8 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         attached: list[dict] = []
         listed_endpoints: list[str] = []
 
-        def attach(target: dict):
+        def attach(target: dict, badge: bool = True):
+            self.assertFalse(badge)
             attached.append(target)
             return tab
 

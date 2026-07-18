@@ -122,9 +122,11 @@ class CDPTab:
         self._id = 0
         self._badge_label: str | None = None
         self._event_handlers: dict[str, list[Any]] = {}
+        self._lifecycle_events: list[tuple[str, str]] = []
         self.send("Page.enable")
         self.send("Runtime.enable")
         self.send("Network.enable")
+        self.send("Page.setLifecycleEventsEnabled", {"enabled": True})
 
     def on(self, event: str, handler: Any) -> None:
         """Register the small Playwright-style event surface used by the worker."""
@@ -146,6 +148,11 @@ class CDPTab:
             frame = params.get("frame") or {}
             event = "framenavigated"
             payload = SimpleNamespace(url=frame.get("url", ""))
+        elif method == "Page.lifecycleEvent":
+            loader_id = str(params.get("loaderId") or "")
+            name = str(params.get("name") or "")
+            if loader_id and name:
+                self._lifecycle_events.append((loader_id, name))
         if not event:
             return
         for handler in tuple(self._event_handlers.get(event, ())):
@@ -173,14 +180,15 @@ class CDPTab:
                 return msg.get("result", {})
         raise TimeoutError(f"{method} timed out")
 
-    def mark_busy(self, label: str) -> None:
+    def mark_busy(self, label: str) -> bool:
         """화면에 '사용중' 배지를 띄운다. 라벨을 기억해 navigate 후 재주입한다.
         배지는 부가기능 — 주입 실패해도 예외를 던지지 않는다(실 서치 보호)."""
         self._badge_label = label
         try:
             self.eval(_badge_js(label))
         except Exception:
-            pass
+            return False
+        return True
 
     def clear_badge(self) -> None:
         self._badge_label = None
@@ -189,8 +197,8 @@ class CDPTab:
         except Exception:
             pass
 
-    def navigate(self, url: str, wait_ms: int = 4000) -> None:
-        self.send("Page.navigate", {"url": url})
+    def navigate(self, url: str, wait_ms: int = 4000) -> dict:
+        result = self.send("Page.navigate", {"url": url})
         time.sleep(wait_ms / 1000)
         # 페이지 로드로 배지가 사라지므로, 점유 중이면 다시 붙인다(best-effort).
         if getattr(self, "_badge_label", None):
@@ -198,6 +206,29 @@ class CDPTab:
                 self.eval(_badge_js(self._badge_label))
             except Exception:
                 pass
+        return result
+
+    def wait_for_lifecycle(
+        self,
+        loader_id: str,
+        event: str,
+        timeout: float = 30.0,
+    ) -> None:
+        """Wait for a lifecycle event belonging to the new navigation loader."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            wanted = (loader_id, event)
+            if wanted in self._lifecycle_events:
+                self._lifecycle_events.remove(wanted)
+                return
+            self.ws.settimeout(max(0.1, deadline - time.time()))
+            try:
+                message = json.loads(self.ws.recv())
+            except Exception:
+                continue
+            if "method" in message:
+                self._dispatch_event(message)
+        raise TimeoutError(f"Page lifecycle event timed out: {event}")
 
     def eval(self, expr: str) -> Any:
         r = self.send("Runtime.evaluate", {

@@ -1444,11 +1444,9 @@ async def run_profile_only_live_search(config: LiveSearchConfig) -> dict[str, ob
         chrome_cdp_endpoint=config.chrome_cdp_endpoint,
         connection_mode="raw_single_tab",
     )
-    profile_deleted = delete_profile_dir_if_confirmed(
-        worker_config.profile_dir,
-        enabled=config.delete_profile_before_start,
-        confirm=config.confirm_delete_profile,
-    )
+    # raw mode attaches a live managed browser profile. Deleting that profile would corrupt
+    # the owner's active session, so legacy restart-smoke deletion flags are ignored here.
+    profile_deleted = False
     ready_check = ready_check_for_channel(config.channel)
     try:
         async with PortalWorker(worker_config) as worker:

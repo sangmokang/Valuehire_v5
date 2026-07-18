@@ -11875,7 +11875,8 @@ class PortalLoginHumanInterventionTests(unittest.IsolatedAsyncioTestCase):
     async def test_search_aborts_when_login_marker_is_lost_during_search(self) -> None:
         context = FakeContext(available_selectors={'input[name="searchword"]', 'button[name="search"]'})
         playwright = FakePlaywright(context)
-        ready_results = [True, False]
+        # attached target precheck, post-navigation check, post-submit loss
+        ready_results = [True, True, False]
 
         async def ready_check(_page: FakePage) -> bool:
             return ready_results.pop(0)
