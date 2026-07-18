@@ -374,6 +374,21 @@ class MarkBusyTests(unittest.TestCase):
         self.assertFalse(any(method == "Overlay.highlightNode" for method, _params in tab.sends))
         self.assertTrue(any(method == "Overlay.hideHighlight" for method, _params in tab.sends))
 
+    def test_reproof_failure_clears_stale_tooltip_and_retains_uncertain_state(self):
+        tab = _RecTab(eval_result=False)
+        tab._badge_object_id = "stale-badge-object"
+        tab._badge_application_uncertain = False
+
+        self.assertFalse(raw_cdp.CDPTab.prove_badge_rendered(
+            tab,
+            expected_url="https://example.test/search",
+            badge_label="Codex",
+        ))
+        self.assertIn(("Overlay.hideHighlight", None), tab.sends)
+        self.assertIn(("Runtime.releaseObject", {"objectId": "stale-badge-object"}), tab.sends)
+        self.assertIsNone(tab._badge_object_id)
+        self.assertTrue(tab.badge_application_uncertain)
+
     def test_clear_badge_hides_browser_owned_overlay(self):
         tab = _RecTab(eval_result=True)
         tab._badge_label = "Codex"
