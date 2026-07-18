@@ -292,6 +292,92 @@ class RawPageAdapterTests(unittest.TestCase):
             _run(page.locator("button").click())
         self.assertEqual(tab.evals, [])
 
+    def test_required_mode_blocks_fill_click_and_press_after_badge_or_url_loss(self) -> None:
+        class LostOwnershipTab(FakeTab):
+            _badge_label = "Codex"
+
+            def __init__(self):
+                super().__init__()
+                self.live_url = "https://evil.example/phish"
+                self.badge_present = False
+                self.mutations = 0
+
+            def eval(self, expr: str):
+                if "vh-automation-badge" in expr:
+                    if not self.badge_present or "jobkorea.co.kr" not in self.live_url:
+                        return False
+                if "e.value=" in expr or ".click()" in expr or "KeyboardEvent" in expr:
+                    self.mutations += 1
+                    return True
+                return super().eval(expr)
+
+        tab = LostOwnershipTab()
+        page = RawPage(
+            tab,
+            initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+            require_badge=True,
+        )
+        for operation in (
+            lambda: page.locator("input").fill("robotics"),
+            lambda: page.locator("button").click(),
+            lambda: page.locator("input").press("Enter"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "ownership"):
+                _run(operation())
+        self.assertEqual(tab.mutations, 0)
+
+    def test_required_mode_rejects_missing_selector_instead_of_silent_success(self) -> None:
+        class MissingSelectorTab(FakeTab):
+            _badge_label = "Codex"
+
+            def eval(self, expr: str):
+                if "vh-automation-badge" in expr:
+                    return False
+                return super().eval(expr)
+
+        page = RawPage(
+            MissingSelectorTab(),
+            initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+            require_badge=True,
+        )
+        with self.assertRaisesRegex(RuntimeError, "ownership"):
+            _run(page.locator("button.missing").click())
+
+    def test_required_mode_proves_badge_before_navigation(self) -> None:
+        class BadgeLostTab(FakeTab):
+            _badge_label = "Codex"
+
+            def __init__(self):
+                super().__init__()
+                self.navigation_calls = 0
+
+            def eval(self, expr: str):
+                if "vh-automation-badge" in expr:
+                    return False
+                return super().eval(expr)
+
+            def navigate(self, url: str, wait_ms: int = 0):
+                self.navigation_calls += 1
+                return {"loaderId": "must-not-run"}
+
+            def wait_for_lifecycle(self, *_args):
+                return None
+
+            def mark_busy(self, _label: str, *, expected_url: str | None = None):
+                return False
+
+        tab = BadgeLostTab()
+        with self.assertRaises(RuntimeError):
+            _run(RawPage(
+                tab,
+                initial_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+                require_badge=True,
+            ).goto(
+                "https://www.jobkorea.co.kr/Corp/Person/Find?keyword=robotics",
+                wait_until="domcontentloaded",
+            ))
+        self.assertEqual(tab.navigation_calls, 0)
+
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
         page = RawPage(tab)
