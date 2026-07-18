@@ -119,6 +119,14 @@ class CdpDiscoveryTests(unittest.TestCase):
         else:
             os.environ["PORTAL_CHROME"] = self._old_portal_chrome
 
+    def _record_child_executable(self, pid: int) -> None:
+        """Use the exact argv[0] that `portal_browsers.sh` will see in `ps`."""
+        process_command = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "command="], text=True
+        ).strip()
+        self.process_executable = shlex.split(process_command)[0]
+        os.environ["PORTAL_CHROME"] = self.process_executable
+
     def _launch_fake(self, profile: Path, port: int) -> None:
         profile.mkdir(parents=True, exist_ok=True)
         p = subprocess.Popen(
@@ -128,6 +136,7 @@ class CdpDiscoveryTests(unittest.TestCase):
         )
         self.procs.append(p)
         self.assertTrue(_wait_port(port), f"fake 크롬 포트 {port} 안 뜸")
+        self._record_child_executable(p.pid)
 
     def _launch_http_only(self, profile: Path, port: int) -> None:
         profile.mkdir(parents=True, exist_ok=True)
@@ -141,6 +150,7 @@ class CdpDiscoveryTests(unittest.TestCase):
         )
         self.procs.append(process)
         self.assertTrue(_wait_port(port), f"fake HTTP port {port} 안 뜸")
+        self._record_child_executable(process.pid)
 
     def _launch_hung(self, profile: Path, port: int) -> None:
         profile.mkdir(parents=True, exist_ok=True)
