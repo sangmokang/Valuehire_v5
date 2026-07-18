@@ -111,6 +111,8 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("pointer-events:none", js.replace(" ", ""))
         self.assertIn("Codex", js)
         self.assertIn("사용중", js)
+        self.assertIn("vh-automation-status", js)
+        self.assertIn("aria-label", js)
         # idempotent: 기존 요소 제거가 들어있어야 중복 배지 안 쌓임
         self.assertIn("remove", js)
         self.assertIn("parentElement", js)
@@ -229,6 +231,10 @@ class MarkBusyTests(unittest.TestCase):
                 if method == "Page.captureScreenshot":
                     import base64
                     return {"data": base64.b64encode(screenshot).decode("ascii")}
+                if method == "DOM.getDocument":
+                    return {"root": {"nodeId": 7}}
+                if method == "DOM.querySelector":
+                    return {"nodeId": 11}
                 return {}
 
         tab = OverlayTab()
@@ -240,8 +246,17 @@ class MarkBusyTests(unittest.TestCase):
             ))
 
         highlight_calls = [params for method, params in tab.sends if method == "Overlay.highlightRect"]
-        self.assertGreaterEqual(len(highlight_calls), 2)
+        self.assertEqual(len(highlight_calls), 1)
         self.assertEqual(highlight_calls[0]["color"], {"r": 17, "g": 203, "b": 91, "a": 1})
+        node_calls = [params for method, params in tab.sends if method == "Overlay.highlightNode"]
+        self.assertEqual(len(node_calls), 1)
+        self.assertEqual(node_calls[0]["nodeId"], 11)
+        self.assertTrue(node_calls[0]["highlightConfig"]["showInfo"])
+        self.assertTrue(node_calls[0]["highlightConfig"]["showAccessibilityInfo"])
+        self.assertIn(("DOM.querySelector", {
+            "nodeId": 7,
+            "selector": "#vh-automation-badge",
+        }), tab.sends)
         screenshot_calls = [params for method, params in tab.sends if method == "Page.captureScreenshot"]
         self.assertEqual(len(screenshot_calls), 1)
         self.assertNotIn("clip", screenshot_calls[0], "shifted clip drops CDP Overlay pixels")
