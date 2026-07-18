@@ -70,6 +70,8 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("사용중", js)
         # idempotent: 기존 요소 제거가 들어있어야 중복 배지 안 쌓임
         self.assertIn("remove", js)
+        self.assertIn("parentElement", js)
+        self.assertIn("getBoundingClientRect", js)
 
     def test_clear_js_removes_by_id(self):
         js = raw_cdp._clear_js()
@@ -97,6 +99,7 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("vh-automation-badge", js)
         self.assertIn("getComputedStyle", js)
         self.assertIn("location.assign", js)
+        self.assertNotIn("setTimeout", js)
 
 
 class MarkBusyTests(unittest.TestCase):
