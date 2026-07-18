@@ -104,6 +104,15 @@ class ResolveLabelTests(unittest.TestCase):
 
 
 class BadgeJsTests(unittest.TestCase):
+    def test_badge_tag_is_immutable_human_locator_for_exact_label(self):
+        label = "🤖 Codex 자동화 사용중 · /humansearch"
+        tag = raw_cdp._badge_tag(label)
+        self.assertRegex(tag, r"^vh-automation-status-[a-z0-9-]+-[0-9a-f]{10}$")
+        self.assertIn("codex", tag)
+        self.assertIn("humansearch", tag)
+        self.assertEqual(tag, raw_cdp._badge_tag(label))
+        self.assertNotEqual(tag, raw_cdp._badge_tag(label + " · linkedin"))
+
     def test_badge_js_contract(self):
         js = raw_cdp._badge_js("🤖 Codex 자동화 사용중 · /url")
         self.assertIn("vh-automation-badge", js)
@@ -320,7 +329,10 @@ class MarkBusyTests(unittest.TestCase):
         self.assertEqual(len(node_calls), 1)
         self.assertEqual(node_calls[0]["nodeId"], 11)
         self.assertTrue(node_calls[0]["highlightConfig"]["showInfo"])
-        self.assertTrue(node_calls[0]["highlightConfig"]["showAccessibilityInfo"])
+        self.assertFalse(
+            node_calls[0]["highlightConfig"]["showAccessibilityInfo"],
+            "mutable aria-label must not become the browser-owned canonical tooltip",
+        )
         self.assertIn(("DOM.querySelector", {
             "nodeId": 7,
             "selector": "#vh-automation-badge",
