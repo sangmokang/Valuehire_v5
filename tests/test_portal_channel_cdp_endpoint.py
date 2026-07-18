@@ -75,6 +75,14 @@ class ResolveChannelCdpEndpointTests(unittest.TestCase):
             "http://127.0.0.1:9223",
         )
 
+    def test_fullwidth_digit_port_falls_back_to_default(self) -> None:
+        # V2 반례 N1: 전각 숫자('９２２３')는 str.isdigit()==True 라 통과하지만 URL 에 그대로
+        # 박혀 깨진 endpoint 를 만든다. ASCII 숫자만 유효 포트로 인정해야 한다(counter-AC 봉인).
+        self.assertEqual(
+            resolve_channel_cdp_endpoint("saramin", env={"SARAMIN_PORT": "９２２３"}),
+            "http://127.0.0.1:9223",
+        )
+
     def test_non_http_global_env_is_ignored(self) -> None:
         # 전역 env 가 http 로 시작 안 하면 무시하고 채널 기본으로.
         self.assertEqual(
