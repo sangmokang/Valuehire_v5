@@ -74,6 +74,13 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("vh-automation-badge", js)
         self.assertIn("remove", js)
 
+    def test_badge_js_binds_url_check_and_injection_in_one_evaluation(self):
+        expected = "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"
+        js = raw_cdp._badge_js("Codex", expected_url=expected)
+        self.assertIn("location.href", js)
+        self.assertIn(expected, js)
+        self.assertIn("return null", js)
+
 
 class MarkBusyTests(unittest.TestCase):
     def test_mark_busy_requires_exact_dom_acknowledgement(self):

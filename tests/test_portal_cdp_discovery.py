@@ -82,6 +82,8 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.fake_chrome = self.tmp / "fake_chrome.py"
         self.fake_chrome.write_text(FAKE_CHROME_SRC, encoding="utf-8")
         self.procs: list[subprocess.Popen] = []
+        self._old_portal_chrome = os.environ.get("PORTAL_CHROME")
+        os.environ["PORTAL_CHROME"] = sys.executable
 
     def tearDown(self) -> None:
         for p in self.procs:
@@ -91,6 +93,10 @@ class CdpDiscoveryTests(unittest.TestCase):
                 p.wait(timeout=5)
             except Exception:
                 p.kill()
+        if self._old_portal_chrome is None:
+            os.environ.pop("PORTAL_CHROME", None)
+        else:
+            os.environ["PORTAL_CHROME"] = self._old_portal_chrome
 
     def _launch_fake(self, profile: Path, port: int) -> None:
         profile.mkdir(parents=True, exist_ok=True)
@@ -222,6 +228,25 @@ class CdpDiscoveryTests(unittest.TestCase):
         )
         self.assertNotEqual(out.returncode, 0, "살아있는 크롬 없을 때 0 종료 금지")
         self.assertEqual(out.stdout.strip(), "", "엔드포인트를 지어내면 안 됨")
+
+    def test_cdp_rejects_non_configured_executable_with_chrome_shaped_args(self) -> None:
+        profile = self.tmp / "impostor_profile"
+        actual = _free_port()
+        self._launch_fake(profile, actual)
+        env = {
+            **os.environ,
+            "PORTAL_CHROME": str(self.tmp / "expected-real-chrome"),
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
 
     def test_cdp_fails_closed_when_two_exact_profile_processes_are_live(self) -> None:
         profile = self.tmp / "ambiguous_profile"

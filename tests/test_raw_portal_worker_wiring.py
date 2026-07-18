@@ -533,6 +533,67 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tab.disconnect_calls, 1)
         self.assertFalse(lease_path.exists())
 
+    async def test_badge_injection_is_atomically_bound_to_the_final_url(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+
+        class LastMomentMoveTab(FakeRawTab):
+            def __init__(self) -> None:
+                super().__init__()
+                self.live_url = target["url"]
+                self.url_reads = 0
+                self.expected_urls: list[str | None] = []
+
+            def eval(self, expression: str):
+                if "location.href" in expression:
+                    self.url_reads += 1
+                    result = self.live_url
+                    if self.url_reads == 2:
+                        self.live_url = "https://evil.example/phish"
+                    return result
+                return super().eval(expression)
+
+            def mark_busy(self, label: str, expected_url: str | None = None) -> bool:
+                self.expected_urls.append(expected_url)
+                if expected_url != self.live_url:
+                    return False
+                return super().mark_busy(label)
+
+        tab = LastMomentMoveTab()
+        with TemporaryDirectory(prefix="raw-atomic-badge-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            return_value=tab,
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
+            )
+            with self.assertRaises(RuntimeError):
+                await worker.start()
+
+        self.assertEqual(tab.url_reads, 2)
+        self.assertEqual(tab.expected_urls, [target["url"]])
+        self.assertEqual(tab.badge_calls, 0)
+        self.assertEqual(tab.disconnect_calls, 1)
+
     async def test_cancelled_start_releases_lease_before_attach(self) -> None:
         target = {
             "id": "exact",
