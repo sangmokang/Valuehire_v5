@@ -67,10 +67,66 @@ def resolve_channel_cdp_endpoint(
         return genv
     port_raw = (env.get(_CHANNEL_CDP_PORT_ENV[channel]) or "").strip()
     # 유효 TCP 포트(1..65535)만 채택 — isdigit() 만으론 0·65536 같은 무효값이 새어
-    # 엉뚱한 주소로 attach 할 수 있다(V1 반례). 무효면 채널 기본 포트로 폴백.
-    port = port_raw if (port_raw.isdigit() and 1 <= int(port_raw) <= 65535) \
+    # 엉뚱한 주소로 attach 할 수 있다(V1 반례). 전각 숫자('９２２３')는 isdigit()==True 지만
+    # URL 에 그대로 박혀 깨진 endpoint 를 만들므로 ASCII 숫자만 인정한다(V2 반례 N1).
+    # 무효면 채널 기본 포트로 폴백.
+    port = port_raw if (port_raw.isascii() and port_raw.isdigit()
+                        and 1 <= int(port_raw) <= 65535) \
         else str(_CHANNEL_CDP_DEFAULT_PORT[channel])
     return f"http://127.0.0.1:{port}"
+
+
+# 채널별 로그인 탭 마커(URL 부분문자열). 실제 그 사이트 탭이 endpoint 에 있는지 검증용.
+_CHANNEL_URL_MARKER = {
+    "saramin": "saramin.co.kr",
+    "jobkorea": "jobkorea.co.kr",
+    "linkedin_rps": "linkedin.com",
+}
+
+
+def find_verified_channel_endpoint(
+    channel: str,
+    *,
+    list_tabs: Callable[[str], list[dict]],
+    env: Mapping[str, str] | None = None,
+    candidate_ports: list[int] | None = None,
+) -> str:
+    """대상 사이트 로그인 탭이 실제로 있는 CDP endpoint 를 찾는다(오접속 방지).
+
+    라이브 실측(2026-07-18)에서 실제 포트가 스크립트 기본과 뒤섞여 있었다
+    (9222=사람인, 9223=잡코리아). 채널→기본포트만 믿고 attach 하면 엉뚱한 크롬에
+    붙는다. 그래서 1차 후보(resolve_channel_cdp_endpoint) 포트부터 후보 포트들을
+    순회하며, 그 endpoint 의 탭 목록에 대상 사이트 마커 URL 이 실제로 있는 첫
+    endpoint 를 채택한다(SOT-26 §2 발견 알고리즘). 죽은 포트는 건너뛴다.
+    어디에도 없으면 LookupError — 맹목 attach 하지 않는다.
+
+    ``list_tabs(endpoint) -> [{"url": ...}, ...]`` 는 라이브 분리를 위해 주입한다
+    (실사용은 raw_cdp 단일탭 HTTP /json, SOT-26 INV5 — 전체 connectOverCDP 아님).
+    """
+    if channel not in _CHANNEL_URL_MARKER:
+        raise ValueError(f"channel {channel!r} 은 마커 검증 대상이 아니다(포털 채널만)")
+    marker = _CHANNEL_URL_MARKER[channel]
+    primary = int(resolve_channel_cdp_endpoint(channel, env=env).rsplit(":", 1)[1])
+    if candidate_ports is None:
+        # 1차 후보 먼저, 그다음 나머지 채널 기본 포트 + 9222(실측상 사람인이 뜬 곳).
+        ordered = [primary] + [
+            p for p in (*_CHANNEL_CDP_DEFAULT_PORT.values(), 9222) if p != primary
+        ]
+    else:
+        ordered = candidate_ports
+    for port in ordered:
+        endpoint = f"http://127.0.0.1:{port}"
+        try:
+            tabs = list_tabs(endpoint)
+        except Exception:
+            continue  # 죽은/무응답 포트 — 다음 후보로
+        for tab in tabs or ():
+            if marker in (tab.get("url") or ""):
+                return endpoint
+    raise LookupError(
+        f"{channel} 로그인 탭(마커 {marker})을 어떤 후보 포트({ordered})에서도 못 찾음 "
+        "— portal_browsers.sh 로 기동/로그인 상태 확인 필요(맹목 attach 금지)"
+    )
 
 
 def resolve_chrome_cdp_endpoint(value: str | None = None) -> str:
