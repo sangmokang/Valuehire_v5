@@ -358,21 +358,20 @@ def _clear_js(*, expected_url: str | None = None) -> str:
     )
 
 
-def _owned_navigation_js(
-    url: str,
+def _owned_badge_action_function(
+    action: str,
     *,
     expected_url: str,
     badge_label: str,
 ) -> str:
     return (
-        "(function(){"
+        "function(){var b=this;"
         f"if(location.href!=={json.dumps(expected_url)})return false;"
-        f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
-        "if(!b)return false;"
+        "if(!b||!b.isConnected)return false;"
         + _badge_identity_js("b", badge_label, "return false;")
         + _badge_visibility_js("b", "return false;")
-        + f"var u={json.dumps(url)};"
-        "location.assign(u);return true;})()"
+        + action
+        + "}"
     )
 
 
@@ -426,6 +425,7 @@ class CDPTab:
         self._id = 0
         self._badge_label: str | None = None
         self._badge_bound_url: str | None = None
+        self._badge_object_id: str | None = None
         self._badge_application_uncertain = False
         self._event_handlers: dict[str, list[Any]] = {}
         self._lifecycle_events: list[tuple[str, str]] = []
@@ -534,6 +534,25 @@ class CDPTab:
             self.send("Overlay.hideHighlight")
         except Exception:
             pass
+        self._release_badge_object()
+
+    def _release_badge_object(self) -> None:
+        object_id = getattr(self, "_badge_object_id", None)
+        self._badge_object_id = None
+        if not isinstance(object_id, str) or not object_id:
+            return
+        try:
+            self.send("Runtime.releaseObject", {"objectId": object_id})
+        except Exception:
+            pass
+
+    def _invalidate_badge_proof(self) -> None:
+        self._badge_application_uncertain = True
+        try:
+            self.send("Overlay.hideHighlight")
+        except Exception:
+            pass
+        self._release_badge_object()
 
     def _resolved_badge_identity(self, object_id: str, label: str) -> bool:
         result = self.send("Runtime.callFunctionOn", {
@@ -547,12 +566,56 @@ class CDPTab:
         remote = result.get("result")
         return isinstance(remote, dict) and remote.get("value") is True
 
+    def eval_if_badge_owned(
+        self,
+        action: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+    ) -> bool:
+        """Run one portal mutation on the exact object proven by the Overlay."""
+        object_id = getattr(self, "_badge_object_id", None)
+        if not isinstance(object_id, str) or not object_id:
+            self._invalidate_badge_proof()
+            return False
+        try:
+            result = self.send("Runtime.callFunctionOn", {
+                "objectId": object_id,
+                "functionDeclaration": _owned_badge_action_function(
+                    action,
+                    expected_url=expected_url,
+                    badge_label=badge_label,
+                ),
+                "returnByValue": True,
+                "awaitPromise": False,
+            })
+        except BaseException:
+            self._invalidate_badge_proof()
+            raise
+        remote = result.get("result") if isinstance(result, dict) else None
+        acknowledged = (
+            not result.get("exceptionDetails")
+            and isinstance(remote, dict)
+            and remote.get("value") is True
+        ) if isinstance(result, dict) else False
+        if not acknowledged:
+            self._invalidate_badge_proof()
+        return acknowledged
+
     def prove_badge_rendered(
         self,
         *,
         expected_url: str | None,
         badge_label: str,
     ) -> bool:
+        # A prior tooltip can live-update from page-mutated aria attributes. Remove
+        # it before any early-return path, then retain a new object only on success.
+        self._badge_application_uncertain = True
+        try:
+            self.send("Overlay.hideHighlight")
+        except Exception:
+            return False
+        self._release_badge_object()
         rect = self.eval(_badge_rect_js(expected_url, badge_label))
         if not isinstance(rect, dict):
             return False
@@ -653,7 +716,10 @@ class CDPTab:
             })
             if not self._resolved_badge_identity(object_id, badge_label):
                 return False
+            self._badge_object_id = object_id
+            object_id = None
             proof_complete = True
+            self._badge_application_uncertain = False
             return True
         except (ValueError, TypeError):
             return False
@@ -677,11 +743,16 @@ class CDPTab:
         badge_label: str,
     ) -> dict[str, Any]:
         cursor = len(self._lifecycle_events)
-        acknowledged = self.eval(_owned_navigation_js(
-            url,
+        acknowledged = self.eval_if_badge_owned(
+            f"var u={json.dumps(url)};location.assign(u);return true;",
             expected_url=expected_url,
             badge_label=badge_label,
-        ))
+        )
+        if acknowledged:
+            # The navigation destroys this execution context. Keep uncertainty/lease
+            # until the destination lifecycle re-injects and re-proves the marker.
+            self._release_badge_object()
+            self._badge_application_uncertain = True
         return {
             "ownershipAcknowledged": acknowledged is True,
             "lifecycleCursor": cursor,
@@ -778,6 +849,7 @@ class CDPTab:
                 self.send("Overlay.hideHighlight")
             except Exception:
                 return False
+            self._release_badge_object()
             self._badge_label = None
             self._badge_bound_url = None
             self._badge_application_uncertain = False
