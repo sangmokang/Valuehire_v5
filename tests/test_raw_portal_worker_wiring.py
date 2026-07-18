@@ -321,6 +321,46 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 worker._lock.release()
         self.assertEqual(tab.click_calls, 0)
 
+    async def test_owner_active_start_never_attaches_to_the_target(self) -> None:
+        active = SimpleNamespace(
+            owner_activity_detected=True,
+            idle_seconds=0.0,
+            detection_status="ok",
+        )
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+        attached: list[dict] = []
+        with TemporaryDirectory(prefix="raw-owner-attach-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            side_effect=lambda selected, **_kwargs: attached.append(selected),
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=lambda: active,
+                mutation_sleep=lambda _seconds: None,
+            )
+            with self.assertRaises(ProfileLockError):
+                await worker.start()
+            await worker.stop()
+        self.assertEqual(attached, [])
+
     async def test_lost_lease_handoff_disconnects_without_erasing_badge(self) -> None:
         class HandoffTab(FakeRawTab):
             def __init__(self) -> None:
@@ -346,6 +386,40 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             worker._raw_tab = tab
             owner_path = worker.config.lock_path / "owner.json"
             owner_path.write_text('{"token":"replacement","pid":999999}\n', encoding="utf-8")
+            await worker.stop()
+        self.assertEqual(tab.close_calls, 0)
+        self.assertEqual(tab.disconnect_calls, 1)
+
+    async def test_owner_active_handoff_disconnects_without_erasing_badge(self) -> None:
+        class HandoffTab(FakeRawTab):
+            def __init__(self) -> None:
+                super().__init__()
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        active = SimpleNamespace(
+            owner_activity_detected=True,
+            idle_seconds=0.0,
+            detection_status="ok",
+        )
+        tab = HandoffTab()
+        with TemporaryDirectory(prefix="raw-handoff-active-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=lambda: active,
+                mutation_sleep=lambda _seconds: None,
+            )
+            worker._lock.acquire()
+            worker._raw_tab = tab
             await worker.stop()
         self.assertEqual(tab.close_calls, 0)
         self.assertEqual(tab.disconnect_calls, 1)
@@ -427,6 +501,19 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             "https://www.jobkorea.co.kr/Corp/Person/Find",
             "밸류커넥트 | 로그아웃",
             keyword,
+        )))
+
+        linkedin = ready_check_for_channel("linkedin_rps")
+        recruiter_search = {'a[href*="/talent/search"]'}
+        self.assertFalse(await linkedin(ProofPage(
+            "https://www.linkedin.com/talent/home",
+            "Sign in to LinkedIn Talent Solutions | 로그인",
+            recruiter_search,
+        )))
+        self.assertTrue(await linkedin(ProofPage(
+            "https://www.linkedin.com/talent/home",
+            "Good evening, Sangmo | Recruiter",
+            recruiter_search | {'[data-test-recruiter-account-menu]'},
         )))
 
     async def test_raw_monitor_reads_fresh_login_redirect_url(self) -> None:
