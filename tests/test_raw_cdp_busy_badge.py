@@ -250,6 +250,62 @@ class BadgeJsTests(unittest.TestCase):
         self.assertEqual(call["objectId"], "proven-badge-object")
         self.assertIn("target.click", call["functionDeclaration"])
 
+    def test_owned_title_action_is_atomic_on_the_proven_badge_document(self):
+        class OwnedObjectTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Runtime.callFunctionOn":
+                    return {
+                        "result": {
+                            "type": "object",
+                            "value": {
+                                "previousTitle": "Private candidate title",
+                                "title": "[LOGIN HERE] LinkedIn RPS login",
+                            },
+                        }
+                    }
+                return {}
+
+        tab = OwnedObjectTab()
+        tab._badge_object_id = "proven-badge-object"
+        previous = tab.set_title_if_badge_owned(
+            "[LOGIN HERE] LinkedIn RPS login",
+            expected_url="https://www.linkedin.com/talent/home",
+            badge_label="Codex",
+        )
+
+        self.assertEqual(previous, "Private candidate title")
+        call = next(params for method, params in tab.sends if method == "Runtime.callFunctionOn")
+        self.assertEqual(call["objectId"], "proven-badge-object")
+        self.assertIn("document.title", call["functionDeclaration"])
+        self.assertIn("previousTitle", call["functionDeclaration"])
+        self.assertIn("location.href", call["functionDeclaration"])
+        self.assertIn("[LOGIN HERE][", call["functionDeclaration"])
+
+    def test_owned_title_restore_stays_bound_to_badge_before_removal(self):
+        class OwnedObjectTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "string", "value": "restored"}}
+                return {}
+
+        tab = OwnedObjectTab()
+        tab._badge_object_id = "proven-badge-object"
+        restored = tab.restore_title_if_badge_owned(
+            "Private title",
+            expected_url="https://www.linkedin.com/talent/home",
+            badge_label="Codex",
+            title_prefix="[LOGIN HERE][Codex]",
+        )
+
+        self.assertEqual(restored, "restored")
+        call = next(params for method, params in tab.sends if method == "Runtime.callFunctionOn")
+        self.assertEqual(call["objectId"], "proven-badge-object")
+        self.assertIn("document.title", call["functionDeclaration"])
+        self.assertIn("Private title", call["functionDeclaration"])
+        self.assertIn("[LOGIN HERE][Codex]", call["functionDeclaration"])
+
     def test_badge_rect_proof_binds_readable_tooltip_identity(self):
         js = raw_cdp._badge_rect_js("https://example.test/search", "Codex")
         self.assertIn("aria-label", js)
@@ -259,6 +315,77 @@ class BadgeJsTests(unittest.TestCase):
 
 
 class MarkBusyTests(unittest.TestCase):
+    def test_safe_link_browser_guard_repeatedly_decodes_unsafe_url_surface(self):
+        class CaptureTab:
+            _badge_label = "[KEEPALIVE][Codex]"
+            action = ""
+
+            def eval_if_badge_owned(self, action, **_kwargs):
+                self.action = action
+                return False
+
+        tab = CaptureTab()
+        target = SimpleNamespace(
+            source_url="https://www.linkedin.com/talent/home",
+            destination_url="https://www.linkedin.com/talent/%256cogout",
+            selector='a[href="https://www.linkedin.com/talent/%256cogout"]',
+            target_attr="_self",
+        )
+
+        self.assertFalse(raw_cdp.CDPTab.click_safe_link(tab, target))
+        self.assertIn("decodeURIComponent", tab.action)
+        self.assertIn("for(var decodePass=0;decodePass<4;decodePass++)", tab.action)
+
+    def test_clear_busy_removes_only_exact_owned_badge(self):
+        class OwnedObjectTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": True}}
+                return {}
+
+        tab = OwnedObjectTab()
+        tab._badge_label = "[LOGIN HERE][Codex]"
+        tab._badge_bound_url = "https://example.test/login"
+        tab._badge_object_id = "proven-badge-object"
+        tab._badge_application_uncertain = False
+
+        self.assertFalse(tab.clear_busy("other", expected_url="https://example.test/login"))
+        self.assertTrue(tab.clear_busy(
+            "[LOGIN HERE][Codex]",
+            expected_url="https://example.test/login",
+        ))
+        self.assertIsNone(tab._badge_label)
+        self.assertIsNone(tab._badge_bound_url)
+        call = next(params for method, params in tab.sends if method == "Runtime.callFunctionOn")
+        self.assertEqual(call["objectId"], "proven-badge-object")
+        self.assertIn("b.remove()", call["functionDeclaration"])
+
+    def test_clear_busy_separates_original_binding_from_same_document_live_url(self):
+        class OwnedObjectTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": True}}
+                return {}
+
+        original_url = "https://example.test/login"
+        live_url = "https://example.test/login?same-document=1"
+        label = "[LOGIN HERE][Codex]"
+        tab = OwnedObjectTab()
+        tab._badge_label = label
+        tab._badge_bound_url = original_url
+        tab._badge_object_id = "proven-badge-object"
+        tab._badge_application_uncertain = False
+
+        self.assertTrue(tab.clear_busy(
+            label,
+            expected_url=live_url,
+            badge_bound_url=original_url,
+        ))
+        call = next(params for method, params in tab.sends if method == "Runtime.callFunctionOn")
+        self.assertIn(live_url, call["functionDeclaration"])
+
     def test_mark_busy_requires_exact_dom_acknowledgement(self):
         missing = _RecTab(eval_result=None)
         confirmed = _RecTab(eval_result=raw_cdp._BADGE_ID)

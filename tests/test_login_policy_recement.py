@@ -1,11 +1,9 @@
 """로그인 정책 재확인 (2026-07-08, /st L3).
 
 계약:
-- AC1: _wait_for_human_intervention 진입 시 page.bring_to_front() 를 호출한다(2FA 순간
-  브라우저를 앞으로 띄워 사장님이 바로 처리). best-effort — bring_to_front 가 실패해도
-  사람-게이트 폴링/자동재개 흐름은 정상 동작한다.
-- AC2: docs/sot/26-portal-login-spec.json 불변식에 (a) 자동로그인 무조건 수행·차단 금지 강화,
-  (b) 사람 개입(2FA 등) 필요 시 브라우저를 앞으로 띄운다 신규 불변식이 존재.
+- AC1: legacy portal_login 사람 게이트는 generic focus/poll을 수행하지 않고 exact-window
+  session_guard에 fail-closed 위임한다.
+- AC2: docs/sot/26은 PID+CGWindowID exact handoff 1회와 HUMAN_AUTH 무조작·무제한 대기를 명시한다.
 - AC3: 기존 가드(자동로그인 차단 부재)는 여전히 유지.
 """
 from __future__ import annotations
@@ -29,6 +27,8 @@ class _FakePage:
         self.bring_to_front_calls = 0
         self._ready_after = ready_after
         self._polls = 0
+        self.navigation_calls = 0
+        self.click_calls = 0
 
     async def bring_to_front(self):
         self.bring_to_front_calls += 1
@@ -54,32 +54,52 @@ def _run_intervention(page, ready_values):
     )
 
 
-def test_human_intervention_brings_browser_to_front():
-    """AC1: 사람-게이트 진입 시 브라우저를 앞으로 띄운다."""
+def test_legacy_human_intervention_delegates_without_generic_focus_or_poll():
+    """AC1: exact identity 없는 legacy 함수는 UI를 건드리지 않고 새 runner로 위임한다."""
     page = _FakePage()
-    result = _run_intervention(page, [True])  # 즉시 ready → 빠르게 종료
-    assert page.bring_to_front_calls >= 1, "2FA 관문에서 page.bring_to_front() 가 호출돼야 함"
-    assert result["ready"] is True
+    result = _run_intervention(page, [True])
+    assert page.bring_to_front_calls == 0
+    assert page._polls == 0
+    assert result["ready"] is False
+    assert result["login"] == "human_auth_runner_required"
 
 
-def test_bring_to_front_failure_does_not_break_flow():
-    """AC1(best-effort): bring_to_front 가 실패해도 사람-게이트 흐름은 계속된다."""
+def test_legacy_human_intervention_never_runs_mutating_ready_check():
     page = _FakePage(bring_raises=True)
-    result = _run_intervention(page, [False, True])  # 한 번 폴링 후 ready
-    assert page.bring_to_front_calls >= 1
-    assert result["ready"] is True  # 예외가 흐름을 깨지 않음
+    calls = 0
 
+    async def forbidden_ready_check(_page):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("legacy ready check may navigate/click")
 
-def test_sot26_recements_auto_login_and_bring_to_front():
-    """AC2: SOT26 불변식 강화 — 자동로그인 무조건 + 2FA 시 브라우저 앞으로."""
-    spec = json.loads(SOT26.read_text(encoding="utf-8"))
-    invariants = " ".join(spec.get("invariants", []))
-    # (a) 자동로그인 무조건 수행 · 차단 금지 강화
-    assert "무조건" in invariants, "자동로그인을 자동화가 무조건 수행한다는 강화 문구 필요"
-    # (b) 2FA 등 사람 개입 시 브라우저를 앞으로 띄운다
-    assert "앞으로" in invariants or "bring_to_front" in json.dumps(spec, ensure_ascii=False), (
-        "사람 개입(2FA) 시 브라우저를 앞으로 띄운다는 불변식 필요"
+    result = asyncio.run(
+        portal_login._wait_for_human_intervention(
+            page,
+            "linkedin_rps",
+            ready_check=forbidden_ready_check,
+            options=portal_login.HumanInterventionOptions(enabled=True),
+            note="2FA test",
+        )
     )
+    assert calls == 0
+    assert page.bring_to_front_calls == 0
+    assert result["login"] == "human_auth_runner_required"
+
+
+def test_sot26_recements_exact_window_and_read_only_human_auth():
+    spec = json.loads(SOT26.read_text(encoding="utf-8"))
+    encoded = json.dumps(spec, ensure_ascii=False)
+    assert "CGWindowID" in encoded
+    assert "CoreGraphics" in encoded
+    assert "screencapture -x -l" in encoded
+    human = spec["human_auth_control"]
+    assert human["max_presentations_per_episode"] == 1
+    assert human["timeout_seconds"] is None
+    assert human["quiet_after_owner_input_seconds"] == 15
+    assert human["allowed_during_wait"] == ["read_auth_marker", "read_owner_idle", "wait"]
+    assert "portal_login._wait_for_human_intervention" not in encoded
+    assert "page.bring_to_front" not in encoded
 
 
 def test_sot26_still_forbids_no_autologin_disable():

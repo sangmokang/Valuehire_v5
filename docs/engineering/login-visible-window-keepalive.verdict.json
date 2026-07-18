@@ -1,0 +1,54 @@
+{
+  "claim_id": "login-visible-window-keepalive-01",
+  "issue": "#150",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "로그인 세션 인계가 exact macOS on-screen frontmost layer-zero window 한 개에 결박되고, 사람 로그인 대기 중에는 읽기만 하며, keepalive는 같은 인증 target의 검증된 안전 링크와 정확한 history entry만 왕복한다. Claude/Codex/Hermes 설치는 세 대상 모두 성공하거나 원본으로 복구된다.",
+    "changed_files": [
+      ".claude/skills/login/scripts/macos_window_locator.swift",
+      "skills/login/scripts/macos_window_locator.swift",
+      "tests/test_login_production_runner.py",
+      "tests/test_login_session_runner.py",
+      "tests/test_login_skill_contract.py",
+      "tests/test_login_window_locator.py",
+      "tests/test_raw_cdp_busy_badge.py",
+      "tools/install_login_skill.py",
+      "tools/multi_position_sourcing/portal_worker.py",
+      "tools/multi_position_sourcing/raw_cdp.py",
+      "tools/multi_position_sourcing/session_guard.py"
+    ],
+    "red_evidence": "초기 focused 검사에서 18 failed, 94 passed. Exact frontmost window, 사람 활동/중단 재확인, loader/target/badge identity, history restore, raw lease interrupt/symlink/FD lifecycle, 3-agent installer rollback과 race 계약을 실패 검사로 먼저 고정했다.",
+    "green_evidence": "Focused 209 passed; expanded 549 passed, 5 subtests; ./verify.sh 2003 passed, 4 xfailed, 105 subtests, exit 0. 두 Swift 사본 byte parity와 xcrun swiftc -typecheck도 통과했다.",
+    "session_preservation": "HUMAN_AUTH는 무기한 read-only poll만 수행하고 사람 활동 또는 stop을 매 단계 재확인한다. keepalive와 handoff는 exact target/loader/lease를 다시 증명하며 browser, profile, context, page target을 닫거나 삭제하지 않는다.",
+    "fail_closed": [
+      "frontmost on-screen layer-zero exact CGWindowID가 하나로 증명되지 않음",
+      "사람 활동 감지, stop 요청, lease/token 손실",
+      "target, loader, URL, badge object 또는 title ownership 변경",
+      "인증/도전 상태나 history source/destination 모양이 불명확함",
+      "raw lock 생성 직후 소유권 기록 여부가 불명확함",
+      "설치 대상/backup/staging의 inode 또는 symlink identity가 변경됨",
+      "rename, fsync, rollback 또는 cleanup 완료 여부가 불명확함"
+    ],
+    "limitations": "실제 채용 포털에서 business mutation은 실행하지 않았다. 라이브 확인은 읽기 전용 창 열거와 컴파일 검사로 제한했다. raw lock mkdir 직후의 모호한 중단은 다른 프로세스의 잠금을 지우지 않도록 ownerless lock을 남겨 수동 확인을 요구한다."
+  },
+  "adversarial_reviews": [
+    {
+      "reviewer": "Codex CLI independent review",
+      "verdict": "FINDINGS REMEDIATED",
+      "evidence": "stop 상태 오분류, cleanup identity race, keepalive ownership-loss 분류를 포함한 반례를 찾았고 모두 회귀 검사와 함께 봉인했다."
+    },
+    {
+      "reviewer": "Independent installer recovery review",
+      "verdict": "PASS",
+      "evidence": "rename 직후 중단 시 세 원본 복구와 residue 0, backup symlink swap 시 외부 sentinel 불변과 원본 격리, 설치 검사 37 passed, 반복 설치 50회 FD delta 0."
+    },
+    {
+      "reviewer": "Independent session and raw lease review",
+      "verdict": "PASS",
+      "evidence": "모호한 mkdir 중단은 ownerless lock을 보존하고 재진입을 차단했다. 자연 title 변경은 보존하면서 ValueHire badge만 제거했다. 관련 검사 157 passed와 diff check가 통과했다."
+    }
+  ],
+  "three_way_agree": true,
+  "status": "GREEN — issue #150 implementation verified; PR and CI pending."
+}

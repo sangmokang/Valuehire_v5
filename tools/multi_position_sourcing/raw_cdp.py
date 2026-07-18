@@ -385,6 +385,48 @@ def _owned_badge_action_function(
     )
 
 
+def _owned_badge_title_function(
+    title: str,
+    *,
+    expected_url: str,
+    badge_label: str,
+) -> str:
+    encoded_title = json.dumps(title, ensure_ascii=False)
+    return (
+        "function(){var b=this;"
+        f"if(location.href!=={json.dumps(expected_url)})return null;"
+        "if(!b||!b.isConnected)return null;"
+        + _badge_identity_js("b", badge_label, "return null;")
+        + _badge_visibility_js("b", "return null;")
+        + "var previousTitle=document.title;"
+        "if(previousTitle.indexOf('[LOGIN HERE][')===0)return null;"
+        f"document.title={encoded_title};"
+        f"if(document.title!=={encoded_title})return null;"
+        "return {previousTitle:previousTitle,title:document.title};}"
+    )
+
+
+def _owned_badge_title_restore_function(
+    original_title: str,
+    *,
+    expected_url: str,
+    badge_label: str,
+    title_prefix: str,
+) -> str:
+    return (
+        "function(){var b=this;"
+        f"if(location.href!=={json.dumps(expected_url)})return null;"
+        "if(!b||!b.isConnected)return null;"
+        + _badge_identity_js("b", badge_label, "return null;")
+        + _badge_visibility_js("b", "return null;")
+        + f"if(document.title.indexOf({json.dumps(title_prefix)})!==0)"
+        "return 'title_changed';"
+        f"document.title={json.dumps(original_title)};"
+        f"return document.title==={json.dumps(original_title)}"
+        "?'restored':null;}"
+    )
+
+
 def _badge_rect_js(expected_url: str | None, badge_label: str) -> str:
     url_guard = ""
     if expected_url is not None:
@@ -424,7 +466,7 @@ def find_page_by_url(substr: str) -> dict | None:
 
 
 class CDPTab:
-    def __init__(self, ws_url: str):
+    def __init__(self, ws_url: str, *, target_id: str = ""):
         # Chrome rejects ws handshakes carrying an Origin header unless launched with
         # --remote-allow-origins. Suppressing the Origin header sidesteps the 403.
         import websocket  # websocket-client (지연 import — 라이브 연결 시점에만 필요)
@@ -433,6 +475,7 @@ class CDPTab:
             ws_url, max_size=None, timeout=60, suppress_origin=True
         )
         self._id = 0
+        self._target_id = str(target_id or "")
         self._badge_label: str | None = None
         self._badge_bound_url: str | None = None
         self._badge_object_id: str | None = None
@@ -546,6 +589,42 @@ class CDPTab:
             pass
         self._release_badge_object()
 
+    def clear_busy(
+        self,
+        label: str,
+        *,
+        expected_url: str,
+        badge_bound_url: str | None = None,
+    ) -> bool:
+        """Remove one owned badge at the current URL of its original document."""
+        bound_url = expected_url if badge_bound_url is None else badge_bound_url
+        if (
+            not isinstance(label, str)
+            or not label
+            or self._badge_label != label
+            or self._badge_bound_url != bound_url
+        ):
+            return False
+        try:
+            acknowledged = self.eval_if_badge_owned(
+                "b.remove();return true;",
+                expected_url=expected_url,
+                badge_label=label,
+            )
+        except Exception:
+            return False
+        if acknowledged is not True:
+            return False
+        try:
+            self.send("Overlay.hideHighlight")
+        except Exception:
+            return False
+        self._release_badge_object()
+        self._badge_label = None
+        self._badge_bound_url = None
+        self._badge_application_uncertain = False
+        return True
+
     def _release_badge_object(self) -> None:
         object_id = getattr(self, "_badge_object_id", None)
         self._badge_object_id = None
@@ -611,6 +690,92 @@ class CDPTab:
         if not acknowledged:
             self._invalidate_badge_proof()
         return acknowledged
+
+    def set_title_if_badge_owned(
+        self,
+        title: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+    ) -> str | None:
+        """Set title only in the document retaining this exact badge object."""
+        object_id = getattr(self, "_badge_object_id", None)
+        if (
+            not isinstance(object_id, str)
+            or not object_id
+            or not isinstance(title, str)
+            or not title
+        ):
+            self._invalidate_badge_proof()
+            return None
+        try:
+            result = self.send("Runtime.callFunctionOn", {
+                "objectId": object_id,
+                "functionDeclaration": _owned_badge_title_function(
+                    title,
+                    expected_url=expected_url,
+                    badge_label=badge_label,
+                ),
+                "returnByValue": True,
+                "awaitPromise": False,
+            })
+        except BaseException:
+            self._invalidate_badge_proof()
+            raise
+        remote = result.get("result") if isinstance(result, dict) else None
+        value = remote.get("value") if isinstance(remote, dict) else None
+        if (
+            not isinstance(result, dict)
+            or result.get("exceptionDetails")
+            or not isinstance(value, dict)
+            or value.get("title") != title
+            or not isinstance(value.get("previousTitle"), str)
+        ):
+            self._invalidate_badge_proof()
+            return None
+        return value["previousTitle"]
+
+    def restore_title_if_badge_owned(
+        self,
+        original_title: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+        title_prefix: str,
+    ) -> str | None:
+        """Restore title only in the document retaining this exact badge."""
+        if not all(isinstance(value, str) for value in (
+            original_title,
+            expected_url,
+            badge_label,
+            title_prefix,
+        )) or not badge_label or not title_prefix:
+            return None
+        object_id = getattr(self, "_badge_object_id", None)
+        if not isinstance(object_id, str) or not object_id:
+            self._invalidate_badge_proof()
+            return None
+        try:
+            result = self.send("Runtime.callFunctionOn", {
+                "objectId": object_id,
+                "functionDeclaration": _owned_badge_title_restore_function(
+                    original_title,
+                    expected_url=expected_url,
+                    badge_label=badge_label,
+                    title_prefix=title_prefix,
+                ),
+                "returnByValue": True,
+                "awaitPromise": False,
+            })
+        except BaseException:
+            self._invalidate_badge_proof()
+            raise
+        remote = result.get("result") if isinstance(result, dict) else None
+        value = remote.get("value") if isinstance(remote, dict) else None
+        if isinstance(value, str) and value in {"restored", "title_changed"}:
+            return value
+        self._invalidate_badge_proof()
+        return None
 
     def prove_badge_rendered(
         self,
@@ -832,6 +997,72 @@ class CDPTab:
             raise RuntimeError("Runtime.evaluate returned an error object")
         return result.get("value")
 
+    def current_url(self) -> str:
+        """Read the URL of this exact target without consulting global tab state."""
+        return str(self.eval("location.href") or "")
+
+    @property
+    def target_id(self) -> str:
+        """The immutable page target id supplied by the exact /json selection."""
+        return self._target_id
+
+    def click_safe_link(self, target: Any) -> bool:
+        """Atomically validate and click one allowlisted same-origin GET anchor.
+
+        The descriptor is policy-checked by ``session_guard`` first.  This final
+        browser-side check closes the selector/DOM race at the mutation boundary
+        and remains bound to the rendered ownership badge and exact source URL.
+        """
+
+        source_url = str(getattr(target, "source_url", "") or "")
+        destination_url = str(getattr(target, "destination_url", "") or "")
+        selector = str(getattr(target, "selector", "") or "")
+        expected_target = str(getattr(target, "target_attr", "") or "").casefold()
+        badge_label = str(getattr(self, "_badge_label", "") or "")
+        if not source_url or not destination_url or not selector or not badge_label:
+            return False
+        unsafe_tokens = (
+            "paid", "purchase", "payment", "save", "send", "inmail", "proposal",
+            "offer", "logout", "log-out", "signout", "sign-out", "message",
+            "compose", "checkout", "charge", "new-candidate", "new_candidate",
+            "delete", "remove", "session/switch", "switch-session",
+            "유료", "결제", "차감", "저장", "발송", "제안", "로그아웃",
+        )
+        action = (
+            f"var xs=document.querySelectorAll({json.dumps(selector)});"
+            "if(xs.length!==1)return false;var e=xs[0];"
+            "if(!e||e.tagName!=='A')return false;"
+            f"if(e.href!=={json.dumps(destination_url)})return false;"
+            "var d=new URL(e.href,location.href);"
+            "if(d.protocol!=='https:'||d.origin!==location.origin)return false;"
+            "var decodedHref=d.href.toLowerCase();"
+            "for(var decodePass=0;decodePass<4;decodePass++){"
+            "try{var nextHref=decodeURIComponent(decodedHref).toLowerCase();"
+            "if(nextHref===decodedHref)break;decodedHref=nextHref;}catch(_decodeError){return false;}}"
+            "if(/%[0-9a-f]{2}/i.test(decodedHref))return false;"
+            f"if({json.dumps(unsafe_tokens)}.some(function(t){{return decodedHref.includes(t);}}))return false;"
+            f"if((e.getAttribute('target')||'').toLowerCase()!=={json.dumps(expected_target)})return false;"
+            "if(e.hasAttribute('download')||e.closest('form'))return false;"
+            "var s=getComputedStyle(e),r=e.getBoundingClientRect();"
+            "if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0'||r.width<=0||r.height<=0)return false;"
+            "var dirty=Array.from(document.querySelectorAll('input,textarea,select')).some(function(x){"
+            "if(x.disabled||x.type==='hidden')return false;"
+            "if(x.tagName==='SELECT')return Array.from(x.options).some(function(o){return o.selected!==o.defaultSelected;});"
+            "if(x.type==='checkbox'||x.type==='radio')return x.checked!==x.defaultChecked;"
+            "return x.value!==x.defaultValue;});if(dirty)return false;"
+            "var modal=Array.from(document.querySelectorAll('[aria-modal=true],dialog[open],[role=dialog],.modal.show')).some(function(x){"
+            "var z=getComputedStyle(x),q=x.getBoundingClientRect();return z.display!=='none'&&z.visibility!=='hidden'&&q.width>0&&q.height>0;});"
+            "if(modal)return false;"
+            "var label=((e.innerText||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.title||'')).toLowerCase();"
+            f"if({json.dumps(unsafe_tokens)}.some(function(t){{return label.includes(t);}}))return false;"
+            "e.click();return true;"
+        )
+        return self.eval_if_badge_owned(
+            action,
+            expected_url=source_url,
+            badge_label=badge_label,
+        ) is True
+
     def screenshot(self, path: str) -> str:
         r = self.send("Page.captureScreenshot", {"format": "png"})
         data = base64.b64decode(r["data"])
@@ -877,7 +1108,10 @@ def _maybe_auto_badge(tab: "CDPTab", env: Any) -> None:
 
 
 def attach(target: dict, badge: bool = True) -> CDPTab:
-    tab = CDPTab(target["webSocketDebuggerUrl"])
+    tab = CDPTab(
+        target["webSocketDebuggerUrl"],
+        target_id=str(target.get("id") or target.get("targetId") or ""),
+    )
     if badge:
         try:
             _maybe_auto_badge(tab, os.environ)

@@ -256,24 +256,6 @@ async def _with_preflight_snapshot_status(
     }
 
 
-async def _bring_browser_to_front(page: Any) -> None:
-    """사람 개입(2FA/캡차/체크포인트)이 필요할 때 브라우저 탭을 앞으로 띄운다(best-effort).
-
-    로그인은 자동화가 무조건 수행하지만, 챌린지가 뜨는 순간에는 사장님이 직접 처리하도록
-    창을 표면화한다. bring_to_front 를 지원하지 않는 page(테스트/폴백)거나 호출이 실패해도
-    조용히 넘어가 사람-게이트 폴링·자동재개 흐름을 깨지 않는다.
-    """
-    fn = getattr(page, "bring_to_front", None)
-    if fn is None:
-        return
-    try:
-        result = fn()
-        if hasattr(result, "__await__"):
-            await result
-    except Exception:
-        pass
-
-
 async def _wait_for_human_intervention(
     page: Any,
     channel: Channel,
@@ -285,37 +267,21 @@ async def _wait_for_human_intervention(
     if not options.enabled:
         return _result(channel, ready=False, login="human_intervention_disabled", note=note, url=getattr(page, "url", ""))
 
-    # 2FA/캡차/체크포인트 등 사람 개입이 필요한 순간 — 브라우저(탭)를 앞으로 띄워 사장님이 바로
-    # 보고 처리할 수 있게 한다(SOT26: 사람 개입 시 브라우저 앞으로). 로그인 자체는 자동화가
-    # 무조건 수행하고, 오직 이 챌린지 순간에만 사람 게이트로 넘긴다(SOT26 INV1/INV2·INV6).
-    # best-effort: 앞으로 띄우기가 실패해도 폴링/자동재개 흐름은 그대로 계속된다.
-    await _bring_browser_to_front(page)
-
-    print(
-        f"[{channel}] human intervention required: {note}. "
-        f"Resolve the visible browser challenge/login, then wait for automatic resume "
-        f"for up to {options.timeout_seconds}s.",
-        flush=True,
-    )
-
-    elapsed = 0
-    while elapsed <= options.timeout_seconds:
-        if await ready_check(page):
-            return _result(
-                channel,
-                ready=True,
-                login="human_intervention_ok",
-                note="human completed portal challenge/login and session was revalidated",
-                url=getattr(page, "url", ""),
-            )
-        await page.wait_for_timeout(max(1, options.poll_interval_seconds) * 1000)
-        elapsed += max(1, options.poll_interval_seconds)
-
+    # Legacy Playwright pages do not carry the exact managed-browser identity needed to
+    # resolve one CDP target to one macOS CGWindowID.  Focusing this generic ``page`` (or
+    # polling the historical ready checks) can therefore steal focus from the owner's
+    # browser, navigate the challenge page, or click popup controls.  HUMAN_AUTH is owned
+    # by the exact-target session guard; fail closed here without invoking *any* supplied
+    # callback or UI method.  Existing callers receive a deterministic handoff signal and
+    # may restart through the login skill runner with endpoint/profile/target identity.
     return _result(
         channel,
         ready=False,
-        login="human_intervention_timeout",
-        note=f"{note}; human intervention did not complete within {options.timeout_seconds}s",
+        login="human_auth_runner_required",
+        note=(
+            f"{note}; exact CDP target and macOS window identity are required; "
+            "use the login session guard for HUMAN_AUTH"
+        ),
         url=getattr(page, "url", ""),
     )
 

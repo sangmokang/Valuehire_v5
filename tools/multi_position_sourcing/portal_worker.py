@@ -7,6 +7,7 @@ import math
 import os
 import re
 import secrets
+import stat
 import time
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping
@@ -484,6 +485,10 @@ class ProfileLock:
         self.config = config
         self._handle: Any | None = None
         self._lease_token: str | None = None
+        self._lease_parent_fd: int | None = None
+        self._lease_dir_fd: int | None = None
+        self._lease_parent_identity: tuple[int, int] | None = None
+        self._lease_dir_identity: tuple[int, int] | None = None
 
     def acquire(self) -> None:
         _ensure_real_profile_dir(self.config)
@@ -516,30 +521,275 @@ class ProfileLock:
     def _raw_owner_path(self) -> Path:
         return self.config.lock_path / "owner.json"
 
+    @staticmethod
+    def _raw_directory_open_flags() -> int:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        return flags
+
+    @staticmethod
+    def _raw_identity(metadata: os.stat_result) -> tuple[int, int]:
+        return (metadata.st_dev, metadata.st_ino)
+
+    @staticmethod
+    def _close_raw_fds(*descriptors: int | None) -> None:
+        closed: set[int] = set()
+        for descriptor in descriptors:
+            if descriptor is None or descriptor in closed:
+                continue
+            closed.add(descriptor)
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+    def _raw_parent_is_live(
+        self,
+        parent_fd: int,
+        expected: tuple[int, int],
+    ) -> bool:
+        try:
+            retained = os.fstat(parent_fd)
+            live = os.stat(self.config.lock_path.parent, follow_symlinks=False)
+        except OSError:
+            return False
+        return (
+            stat.S_ISDIR(retained.st_mode)
+            and stat.S_ISDIR(live.st_mode)
+            and self._raw_identity(retained) == expected
+            and self._raw_identity(live) == expected
+        )
+
+    def _raw_lock_entry_state(
+        self,
+        parent_fd: int,
+        lock_fd: int,
+        expected: tuple[int, int],
+    ) -> Literal["match", "missing", "mismatch"]:
+        try:
+            retained = os.fstat(lock_fd)
+        except OSError:
+            return "mismatch"
+        if not stat.S_ISDIR(retained.st_mode) or self._raw_identity(retained) != expected:
+            return "mismatch"
+        try:
+            live = os.stat(
+                self.config.lock_path.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return "missing"
+        except OSError:
+            return "mismatch"
+        if not stat.S_ISDIR(live.st_mode) or self._raw_identity(live) != expected:
+            return "mismatch"
+        return "match"
+
+    @staticmethod
+    def _read_raw_owner(lock_fd: int) -> dict[str, Any]:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        owner_fd = os.open("owner.json", flags, dir_fd=lock_fd)
+        try:
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(owner_fd, 4096)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 65_536:
+                    raise ValueError("raw lease owner record is too large")
+                chunks.append(chunk)
+            payload = json.loads(b"".join(chunks).decode("utf-8"))
+        finally:
+            os.close(owner_fd)
+        if not isinstance(payload, dict):
+            raise TypeError("raw lease owner record must be an object")
+        return payload
+
+    def _forget_raw_lease(self) -> None:
+        lock_fd = self._lease_dir_fd
+        parent_fd = self._lease_parent_fd
+        self._lease_token = None
+        self._lease_dir_fd = None
+        self._lease_parent_fd = None
+        self._lease_parent_identity = None
+        self._lease_dir_identity = None
+        self._close_raw_fds(lock_fd, parent_fd)
+
     def _acquire_raw_lease(self) -> None:
+        if any(
+            value is not None
+            for value in (
+                self._lease_token,
+                self._lease_parent_fd,
+                self._lease_dir_fd,
+                self._lease_parent_identity,
+                self._lease_dir_identity,
+            )
+        ):
+            raise ProfileLockError("raw browser lease is already acquired by this object")
         token = secrets.token_hex(24)
+        parent_fd: int | None = None
+        lock_fd: int | None = None
+        owner_fd: int | None = None
+        owner_created = False
+        parent_identity: tuple[int, int] | None = None
+        lock_identity: tuple[int, int] | None = None
+        mkdir_may_have_succeeded = False
         try:
-            self.config.lock_path.mkdir(mode=0o700)
-        except (FileExistsError, OSError) as exc:
-            raise ProfileLockError(
-                f"profile already locked for {self.config.channel}/{self.config.worker_id}"
-            ) from exc
-        try:
+            parent_fd = os.open(
+                self.config.lock_path.parent,
+                self._raw_directory_open_flags(),
+            )
+            parent_metadata = os.fstat(parent_fd)
+            parent_identity = self._raw_identity(parent_metadata)
+            if not self._raw_parent_is_live(parent_fd, parent_identity):
+                raise ProfileLockError("raw browser lease parent changed during acquisition")
+            mkdir_may_have_succeeded = True
+            try:
+                os.mkdir(self.config.lock_path.name, mode=0o700, dir_fd=parent_fd)
+            except FileExistsError as exc:
+                mkdir_may_have_succeeded = False
+                raise ProfileLockError(
+                    f"profile already locked for {self.config.channel}/{self.config.worker_id}"
+                ) from exc
+            except OSError as exc:
+                raise ProfileLockError("raw browser lease initialization failed") from exc
+            lock_fd = os.open(
+                self.config.lock_path.name,
+                self._raw_directory_open_flags(),
+                dir_fd=parent_fd,
+            )
+            lock_metadata = os.fstat(lock_fd)
+            lock_identity = self._raw_identity(lock_metadata)
+            if (
+                not self._raw_parent_is_live(parent_fd, parent_identity)
+                or self._raw_lock_entry_state(parent_fd, lock_fd, lock_identity) != "match"
+            ):
+                raise ProfileLockError("raw browser lease path changed during acquisition")
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
-            fd = os.open(self._raw_owner_path, flags, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as owner:
+            if hasattr(os, "O_CLOEXEC"):
+                flags |= os.O_CLOEXEC
+            owner_fd = os.open("owner.json", flags, 0o600, dir_fd=lock_fd)
+            owner_created = True
+            with os.fdopen(owner_fd, "w", encoding="utf-8") as owner:
+                owner_fd = None
                 json.dump({"token": token, "pid": os.getpid()}, owner, sort_keys=True)
                 owner.write("\n")
                 owner.flush()
-        except Exception as exc:
+            if (
+                not self._raw_parent_is_live(parent_fd, parent_identity)
+                or self._raw_lock_entry_state(parent_fd, lock_fd, lock_identity) != "match"
+            ):
+                raise ProfileLockError("raw browser lease path changed during acquisition")
+            self._lease_token = token
+            self._lease_parent_fd = parent_fd
+            self._lease_dir_fd = lock_fd
+            self._lease_parent_identity = parent_identity
+            self._lease_dir_identity = lock_identity
+        except BaseException as exc:
+            self._close_raw_fds(owner_fd)
+            if mkdir_may_have_succeeded and parent_fd is not None and parent_identity is not None:
+                self._cleanup_interrupted_raw_acquire(
+                    token,
+                    parent_fd=parent_fd,
+                    lock_fd=lock_fd,
+                    parent_identity=parent_identity,
+                    lock_identity=lock_identity,
+                    owner_created=owner_created,
+                )
+            self._close_raw_fds(lock_fd, parent_fd)
+            self._lease_token = None
+            self._lease_parent_fd = None
+            self._lease_dir_fd = None
+            self._lease_parent_identity = None
+            self._lease_dir_identity = None
+            if isinstance(exc, ProfileLockError):
+                raise
+            if isinstance(exc, Exception):
+                raise ProfileLockError("raw browser lease initialization failed") from exc
+            raise
+
+    def _cleanup_interrupted_raw_acquire(
+        self,
+        token: str,
+        *,
+        parent_fd: int,
+        lock_fd: int | None,
+        parent_identity: tuple[int, int],
+        lock_identity: tuple[int, int] | None,
+        owner_created: bool,
+    ) -> None:
+        if not self._raw_parent_is_live(parent_fd, parent_identity):
+            return
+        opened_lock_fd: int | None = None
+        if lock_fd is None:
             try:
-                self.config.lock_path.rmdir()
+                opened_lock_fd = os.open(
+                    self.config.lock_path.name,
+                    self._raw_directory_open_flags(),
+                    dir_fd=parent_fd,
+                )
+            except OSError:
+                return
+            lock_fd = opened_lock_fd
+            try:
+                lock_identity = self._raw_identity(os.fstat(lock_fd))
+            except OSError:
+                self._close_raw_fds(opened_lock_fd)
+                return
+        assert lock_identity is not None
+        if self._raw_lock_entry_state(parent_fd, lock_fd, lock_identity) != "match":
+            self._close_raw_fds(opened_lock_fd)
+            return
+        try:
+            payload = self._read_raw_owner(lock_fd)
+        except FileNotFoundError:
+            if not owner_created:
+                self._close_raw_fds(opened_lock_fd)
+                return
+            payload = {"token": token}
+        except (ValueError, TypeError):
+            if not owner_created:
+                self._close_raw_fds(opened_lock_fd)
+                return
+            payload = {"token": token}
+        except OSError:
+            self._close_raw_fds(opened_lock_fd)
+            return
+        if payload is not None:
+            if payload.get("token") != token:
+                self._close_raw_fds(opened_lock_fd)
+                return
+            try:
+                os.unlink("owner.json", dir_fd=lock_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                self._close_raw_fds(opened_lock_fd)
+                return
+        if (
+            self._raw_parent_is_live(parent_fd, parent_identity)
+            and self._raw_lock_entry_state(parent_fd, lock_fd, lock_identity) == "match"
+        ):
+            try:
+                os.rmdir(self.config.lock_path.name, dir_fd=parent_fd)
             except OSError:
                 pass
-            raise ProfileLockError("raw browser lease initialization failed") from exc
-        self._lease_token = token
+        self._close_raw_fds(opened_lock_fd)
 
     def assert_owned(self) -> None:
         if self.config.connection_mode != "raw_single_tab":
@@ -547,12 +797,22 @@ class ProfileLock:
                 raise ProfileLockError("profile lock ownership was lost")
             return
         token = self._lease_token
-        lock_path = self.config.lock_path
-        owner_path = self._raw_owner_path
-        if not token or lock_path.is_symlink() or owner_path.is_symlink():
+        parent_fd = self._lease_parent_fd
+        lock_fd = self._lease_dir_fd
+        parent_identity = self._lease_parent_identity
+        lock_identity = self._lease_dir_identity
+        if (
+            not token
+            or parent_fd is None
+            or lock_fd is None
+            or parent_identity is None
+            or lock_identity is None
+            or not self._raw_parent_is_live(parent_fd, parent_identity)
+            or self._raw_lock_entry_state(parent_fd, lock_fd, lock_identity) != "match"
+        ):
             raise ProfileLockError("raw browser lease ownership was lost")
         try:
-            payload = json.loads(owner_path.read_text(encoding="utf-8"))
+            payload = self._read_raw_owner(lock_fd)
         except (OSError, ValueError, TypeError) as exc:
             raise ProfileLockError("raw browser lease ownership was lost") from exc
         if payload.get("token") != token:
@@ -577,17 +837,65 @@ class ProfileLock:
 
     def _release_raw_lease(self) -> None:
         token = self._lease_token
-        self._lease_token = None
         if not token:
+            self._forget_raw_lease()
+            return
+        parent_fd = self._lease_parent_fd
+        lock_fd = self._lease_dir_fd
+        parent_identity = self._lease_parent_identity
+        lock_identity = self._lease_dir_identity
+        if (
+            parent_fd is None
+            or lock_fd is None
+            or parent_identity is None
+            or lock_identity is None
+        ):
+            self._forget_raw_lease()
+            return
+        if not self._raw_parent_is_live(parent_fd, parent_identity):
+            self._forget_raw_lease()
+            return
+        entry_state = self._raw_lock_entry_state(parent_fd, lock_fd, lock_identity)
+        if entry_state == "missing":
+            self._forget_raw_lease()
+            return
+        if entry_state != "match":
+            self._forget_raw_lease()
             return
         try:
-            payload = json.loads(self._raw_owner_path.read_text(encoding="utf-8"))
-            if payload.get("token") != token:
-                return
-            self._raw_owner_path.unlink()
-            self.config.lock_path.rmdir()
+            payload = self._read_raw_owner(lock_fd)
+        except FileNotFoundError:
+            payload = None
         except (OSError, ValueError, TypeError):
+            self._forget_raw_lease()
             return
+        if payload is not None:
+            if payload.get("token") != token:
+                self._forget_raw_lease()
+                return
+            try:
+                os.unlink("owner.json", dir_fd=lock_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return
+        if not self._raw_parent_is_live(parent_fd, parent_identity):
+            self._forget_raw_lease()
+            return
+        entry_state = self._raw_lock_entry_state(parent_fd, lock_fd, lock_identity)
+        if entry_state == "missing":
+            self._forget_raw_lease()
+            return
+        if entry_state != "match":
+            self._forget_raw_lease()
+            return
+        try:
+            os.rmdir(self.config.lock_path.name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return
+        self._forget_raw_lease()
 
     def __enter__(self) -> ProfileLock:
         self.acquire()
@@ -595,6 +903,48 @@ class ProfileLock:
 
     def __exit__(self, *_exc: object) -> None:
         self.release()
+
+
+def proved_owner_idle_seconds(snapshot: Any) -> float:
+    """Return one trustworthy idle proof or fail closed before mutation."""
+    value = getattr(snapshot, "idle_seconds", None)
+    if (
+        getattr(snapshot, "detection_status", "") != "ok"
+        or getattr(snapshot, "owner_activity_detected", True) is not False
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 180.0
+    ):
+        raise ProfileLockError("owner activity blocks raw browser mutation")
+    return float(value)
+
+
+def assert_raw_browser_mutation_allowed(
+    lock: ProfileLock,
+    *,
+    owner_snapshot: Callable[[], Any],
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Prove lease ownership and increasing OS idle before one raw mutation."""
+    lock.assert_owned()
+    try:
+        first = proved_owner_idle_seconds(owner_snapshot())
+    except ProfileLockError:
+        raise
+    except Exception as exc:
+        raise ProfileLockError("owner activity detection failed closed") from exc
+    sleep(1.0)
+    lock.assert_owned()
+    try:
+        second = proved_owner_idle_seconds(owner_snapshot())
+    except ProfileLockError:
+        raise
+    except Exception as exc:
+        raise ProfileLockError("owner activity detection failed closed") from exc
+    if second <= first:
+        raise ProfileLockError("owner idle proof did not increase during quiet dwell")
+    lock.assert_owned()
 
 
 def _ensure_real_profile_dir(config: PortalWorkerConfig) -> None:
@@ -935,38 +1285,15 @@ class PortalWorker:
 
     @staticmethod
     def _proved_idle_seconds(snapshot: Any) -> float:
-        value = getattr(snapshot, "idle_seconds", None)
-        if (
-            getattr(snapshot, "detection_status", "") != "ok"
-            or getattr(snapshot, "owner_activity_detected", True) is not False
-            or isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(float(value))
-            or float(value) < 180.0
-        ):
-            raise ProfileLockError("owner activity blocks raw browser mutation")
-        return float(value)
+        return proved_owner_idle_seconds(snapshot)
 
     def _assert_raw_mutation_allowed(self) -> None:
         """Lease + two OS-idle proofs + quiet dwell before exactly one mutation."""
-        self._lock.assert_owned()
-        try:
-            first = self._proved_idle_seconds(self._owner_snapshot())
-        except ProfileLockError:
-            raise
-        except Exception as exc:
-            raise ProfileLockError("owner activity detection failed closed") from exc
-        self._mutation_sleep(1.0)
-        self._lock.assert_owned()
-        try:
-            second = self._proved_idle_seconds(self._owner_snapshot())
-        except ProfileLockError:
-            raise
-        except Exception as exc:
-            raise ProfileLockError("owner activity detection failed closed") from exc
-        if second <= first:
-            raise ProfileLockError("owner idle proof did not increase during quiet dwell")
-        self._lock.assert_owned()
+        assert_raw_browser_mutation_allowed(
+            self._lock,
+            owner_snapshot=self._owner_snapshot,
+            sleep=self._mutation_sleep,
+        )
 
     async def _attach_raw_target_cancellation_safe(self, attach: Any, target: dict) -> Any:
         attach_task = asyncio.create_task(asyncio.to_thread(attach, target, badge=False))
