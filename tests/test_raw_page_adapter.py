@@ -141,6 +141,33 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertEqual(tab.badge_refreshes, 1)
         self.assertEqual(tab.asserted_label, "Codex login target")
 
+    def test_goto_binds_readiness_to_new_navigation_loader(self) -> None:
+        class LifecycleTab(FakeTab):
+            def __init__(self):
+                super().__init__()
+                self.lifecycle_calls: list[tuple[str, str, float]] = []
+
+            def navigate(self, url: str, wait_ms: int = 0):
+                super().navigate(url, wait_ms=wait_ms)
+                return {"loaderId": "new-loader"}
+
+            def wait_for_lifecycle(self, loader_id: str, event: str, timeout: float):
+                self.lifecycle_calls.append((loader_id, event, timeout))
+
+            def eval(self, expr: str):
+                if "document.readyState" in expr:
+                    return "complete"  # old document; must not be accepted directly
+                return super().eval(expr)
+
+        tab = LifecycleTab()
+        _run(RawPage(tab).goto(
+            "https://www.jobkorea.co.kr/Corp/Person/Find",
+            wait_until="domcontentloaded",
+            timeout=1000,
+        ))
+        self.assertEqual(len(tab.lifecycle_calls), 1)
+        self.assertEqual(tab.lifecycle_calls[0][:2], ("new-loader", "DOMContentLoaded"))
+
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
         page = RawPage(tab)

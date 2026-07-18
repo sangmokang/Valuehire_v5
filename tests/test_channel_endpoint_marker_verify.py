@@ -158,6 +158,19 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
                 candidate_endpoints=["http://127.0.0.1:9224"],
             )
 
+    def test_saramin_tutorial_alone_is_not_a_search_target(self) -> None:
+        stale = {
+            "id": "stale",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/tutorial",
+        }
+        with self.assertRaises(LookupError):
+            find_verified_channel_target(
+                "saramin",
+                list_tabs=lambda _endpoint: [stale],
+                candidate_endpoints=["http://127.0.0.1:9223"],
+            )
+
     def test_explicit_remote_endpoint_is_not_rewritten_to_loopback(self) -> None:
         seen: list[str] = []
 
