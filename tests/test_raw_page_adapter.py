@@ -41,6 +41,9 @@ class FakeTab:
     def prove_badge_rendered(self, **_kwargs):
         return True
 
+    def eval_if_badge_owned(self, action: str, *, expected_url: str, badge_label: str):
+        return self.eval(_ownership_js(expected_url, badge_label, action))
+
 
 def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
@@ -490,6 +493,7 @@ class RawPageAdapterTests(unittest.TestCase):
     def test_required_mutation_has_no_fresh_id_legacy_fallback(self) -> None:
         class LegacyLookupTab(FakeTab):
             _badge_label = "Codex"
+            eval_if_badge_owned = None
 
             def __init__(self):
                 super().__init__()

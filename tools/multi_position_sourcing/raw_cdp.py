@@ -6,9 +6,11 @@ Page.captureScreenshot 를 친다. humansearch 순회에서 재사용.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import struct
 import time
@@ -50,8 +52,16 @@ def _http_get(path: str, *, endpoint: str | None = None) -> Any:
 # 사장님이 바로 보고, 봇처럼 몰래 굴지 않는다(SOT 투명성). 배지는 부가기능 —
 # 주입 실패가 실제 서치를 절대 깨지 않게 모든 호출을 best-effort 로 감싼다.
 _BADGE_ID = "vh-automation-badge"
-_BADGE_TAG = "vh-automation-status"
+_BADGE_TAG_PREFIX = "vh-automation-status"
 _BADGE_OFF_VALUES = {"1", "true", "yes", "on"}
+
+
+def _badge_tag(label: str) -> str:
+    """Encode a readable, immutable label locator in the custom-element name."""
+    words = re.findall(r"[a-z0-9]+", label.casefold())
+    slug = "-".join(words)[:48].strip("-") or "label"
+    digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:10]
+    return f"{_BADGE_TAG_PREFIX}-{slug}-{digest}"
 
 
 def _paeth_predictor(left: int, up: int, upper_left: int) -> int:
@@ -276,7 +286,7 @@ def _badge_identity_js(element: str, label: str, failure: str) -> str:
     """Bind the browser-owned tooltip's tag and accessible name to one label."""
     encoded_label = json.dumps(label, ensure_ascii=False)
     return (
-        f"if({element}.localName!=={json.dumps(_BADGE_TAG)}||"
+        f"if({element}.localName!=={json.dumps(_badge_tag(label))}||"
         f"{element}.id!=={json.dumps(_BADGE_ID)}||"
         f"{element}.textContent!=={encoded_label}||"
         f"{element}.getAttribute('aria-label')!=={encoded_label}||"
@@ -291,7 +301,7 @@ def _badge_object_identity_function(label: str) -> str:
     encoded_label = json.dumps(label, ensure_ascii=False)
     return (
         "function(){return !!(this&&this.isConnected&&"
-        f"this.localName==={json.dumps(_BADGE_TAG)}&&"
+        f"this.localName==={json.dumps(_badge_tag(label))}&&"
         f"this.id==={json.dumps(_BADGE_ID)}&&"
         f"this.textContent==={encoded_label}&&"
         f"this.getAttribute('aria-label')==={encoded_label}&&"
@@ -316,7 +326,7 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         + f"var id={json.dumps(_BADGE_ID)};"
         "var e=document.getElementById(id);"
         "if(e){e.remove();}"
-        f"e=document.createElement({json.dumps(_BADGE_TAG)});"
+        f"e=document.createElement({json.dumps(_badge_tag(label))});"
         "e.id=id;"
         f"e.textContent={text};"
         f"e.setAttribute('aria-label',{text});"
@@ -707,7 +717,10 @@ class CDPTab:
                 "nodeId": node_id,
                 "highlightConfig": {
                     "showInfo": True,
-                    "showAccessibilityInfo": True,
+                    # The DevTools node-name line is derived from the immutable
+                    # custom-element tag. Accessibility Name live-updates from the
+                    # page-mutable aria-label, so it must not be canonical UI.
+                    "showAccessibilityInfo": False,
                     "contentColor": {"r": 220, "g": 38, "b": 38, "a": 0.12},
                     "paddingColor": {"r": 255, "g": 255, "b": 255, "a": 0.08},
                     "borderColor": {"r": 255, "g": 255, "b": 255, "a": 1},

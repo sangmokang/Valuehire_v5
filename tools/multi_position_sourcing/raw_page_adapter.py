@@ -180,19 +180,15 @@ class RawLocator:
             # canonical lease/owner-idle barrier at the actual mutation boundary.
             await _run_mutation_guard(self._mutation_guard)
             owned_eval = getattr(self._tab, "eval_if_badge_owned", None)
-            if callable(owned_eval):
-                acknowledged = await _tab_call(
-                    self._tab,
-                    "eval_if_badge_owned",
-                    action,
-                    expected_url=expected_url,
-                    badge_label=label,
-                )
-            else:
-                # Test doubles and legacy callers only. Production CDPTab exposes
-                # eval_if_badge_owned and never re-looks-up the badge by id.
-                expr = _ownership_js(expected_url, label, action)
-                acknowledged = await _tab_call(self._tab, "eval", expr)
+            if not callable(owned_eval):
+                raise RuntimeError("raw proven badge object action is unavailable")
+            acknowledged = await _tab_call(
+                self._tab,
+                "eval_if_badge_owned",
+                action,
+                expected_url=expected_url,
+                badge_label=label,
+            )
             if acknowledged is not True:
                 raise RuntimeError("raw DOM ownership or selector proof failed")
             return

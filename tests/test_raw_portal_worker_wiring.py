@@ -85,6 +85,17 @@ class FakeRawTab:
     def prove_badge_rendered(self, **_kwargs) -> bool:
         return True
 
+    def eval_if_badge_owned(
+        self,
+        action: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+    ) -> bool:
+        if self.eval("location.href") != expected_url or not badge_label:
+            return False
+        return self.eval("vh-automation-badge;" + action) is True
+
     def wait_for_lifecycle(self, loader_id: str, event: str, _timeout: float) -> None:
         if (loader_id, event) != ("fake-loader", "DOMContentLoaded"):
             raise AssertionError("navigation must wait for the exact new loader")
