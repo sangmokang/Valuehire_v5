@@ -18,6 +18,7 @@ from .portal_worker import (
     PortalWorkerConfig,
     _close_page_if_possible,
     resolve_chrome_cdp_endpoint,
+    url_matches_channel_surface,
 )
 
 DEFAULT_PROFILE_ROOT_PATH = str(DEFAULT_PROFILE_ROOT)
@@ -78,9 +79,10 @@ async def _close_popups(page: Any) -> None:
             pass
 
 
-async def _body_text(page: Any, limit: int = 3000) -> str:
+async def _body_text(page: Any, limit: int | None = 3000) -> str:
     try:
-        return (await page.locator("body").inner_text(timeout=5000))[:limit]
+        text = await page.locator("body").inner_text(timeout=5000)
+        return text if limit is None else text[:limit]
     except Exception:
         return ""
 
@@ -322,13 +324,15 @@ async def _saramin_search_ready(page: Any) -> bool:
     text = await _body_text(page)
     if _has_security_challenge(text, getattr(page, "url", "")):
         return False
-    if "talent-pool" not in getattr(page, "url", ""):
+    if not url_matches_channel_surface("saramin", str(getattr(page, "url", ""))):
         try:
             await page.goto("https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search", wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(1500)
             await _close_popups(page)
         except Exception:
             return False
+    if not url_matches_channel_surface("saramin", str(getattr(page, "url", ""))):
+        return False
     text = await _body_text(page)
     if "로그인" in text and "로그아웃" not in text:
         return False
@@ -348,13 +352,15 @@ async def _jobkorea_search_ready(page: Any) -> bool:
     text = await _body_text(page)
     if _has_security_challenge(text, getattr(page, "url", "")):
         return False
-    if "/Corp/Person/Find" not in getattr(page, "url", ""):
+    if not url_matches_channel_surface("jobkorea", str(getattr(page, "url", ""))):
         try:
             await page.goto("https://www.jobkorea.co.kr/Corp/Person/Find", wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(1500)
             await _close_popups(page)
         except Exception:
             return False
+    if not url_matches_channel_surface("jobkorea", str(getattr(page, "url", ""))):
+        return False
     text = await _body_text(page)
     if "로그인" in text and "로그아웃" not in text:
         return False
@@ -375,7 +381,9 @@ async def _linkedin_rps_ready(page: Any) -> bool:
     text = await _body_text(page)
     if _has_security_challenge(text, getattr(page, "url", "")):
         return False
-    if "/talent/" not in getattr(page, "url", "") or "login" in getattr(page, "url", "").lower():
+    if not url_matches_channel_surface(
+        "linkedin_rps", str(getattr(page, "url", ""))
+    ):
         try:
             await page.goto("https://www.linkedin.com/talent/home", wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(2000)
@@ -383,9 +391,11 @@ async def _linkedin_rps_ready(page: Any) -> bool:
         except Exception:
             return False
     url = getattr(page, "url", "")
-    if "/talent/" not in url or "login" in url.lower():
+    if not url_matches_channel_surface("linkedin_rps", str(url)):
         return False
-    text = await _body_text(page)
+    text = await _body_text(page, limit=None)
+    if not text.strip():
+        return False
     folded = text.casefold()
     if (
         "sign in" in folded

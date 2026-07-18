@@ -278,7 +278,7 @@ cmd_cdp() {
     done < <(ps ax -o command= 2>/dev/null)
     # 2) exact profile 프로세스에서 찾은 포트만 허용한다. 설정 포트가 살아있다는 이유만으로
     #    폴백하면 같은 포트의 다른 Chrome을 오인할 수 있다(다중 브라우저 환경 안전 위반).
-    if [[ "${#declared_ports[@]}" -gt 1 ]]; then
+    if [[ "$exact_profile_processes" -gt 1 || "${#declared_ports[@]}" -gt 1 ]]; then
       echo "❌ $name exact 프로필 Chrome이 여러 개입니다 — 어느 창에도 붙지 않습니다." >&2
       exit 4
     fi

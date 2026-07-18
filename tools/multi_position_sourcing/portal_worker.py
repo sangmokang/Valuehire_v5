@@ -162,10 +162,24 @@ def resolve_managed_channel_cdp_endpoint(
 def _target_matches_channel(channel: str, target: Mapping[str, Any]) -> bool:
     if target.get("type") != "page":
         return False
-    domain, path_markers = _CHANNEL_TARGET_RULE[channel]
+    return url_matches_channel_surface(channel, str(target.get("url") or ""))
+
+
+def url_matches_channel_surface(channel: str, url: str) -> bool:
+    """Bind a protected surface to HTTPS, official host boundary, and exact path."""
+    rule = _CHANNEL_TARGET_RULE.get(channel)
+    if rule is None:
+        return False
+    domain, path_markers = rule
     try:
-        parsed = urlsplit(str(target.get("url") or ""))
+        parsed = urlsplit(url)
     except ValueError:
+        return False
+    if (
+        parsed.scheme.casefold() != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         return False
     host = (parsed.hostname or "").rstrip(".").casefold()
     host_ok = host == domain or host.endswith("." + domain)
@@ -896,6 +910,7 @@ class PortalWorker:
         playwright: Any | None = None,
         owner_snapshot: Callable[[], Any] | None = None,
         mutation_sleep: Callable[[float], None] | None = None,
+        handoff_sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.config = config
         self._provided_playwright = playwright
@@ -909,12 +924,14 @@ class PortalWorker:
         # raw attach 채널(사람인·잡코리아)이 심는 RawPage. None 이면 기존 launch/linkedin 경로.
         self._raw_page: Any | None = None
         self._raw_tab: Any | None = None
+        self._raw_badge_applied = False
         if owner_snapshot is None:
             from .owner_activity import detect_owner_activity_snapshot
 
             owner_snapshot = detect_owner_activity_snapshot
         self._owner_snapshot = owner_snapshot
         self._mutation_sleep = mutation_sleep or time.sleep
+        self._handoff_sleep = handoff_sleep or asyncio.sleep
 
     @staticmethod
     def _proved_idle_seconds(snapshot: Any) -> float:
@@ -1000,12 +1017,18 @@ class PortalWorker:
                     raise RuntimeError("visible automation marker is required for raw mode")
                 await asyncio.to_thread(self._assert_raw_mutation_allowed)
                 self._raw_tab = raw_cdp.attach(target, badge=False)
+                fresh_url = str(
+                    await asyncio.to_thread(self._raw_tab.eval, "location.href") or ""
+                )
+                if not url_matches_channel_surface(self.config.channel, fresh_url):
+                    raise RuntimeError("attached target changed before ownership marker")
                 await asyncio.to_thread(self._assert_raw_mutation_allowed)
+                self._raw_badge_applied = True
                 if self._raw_tab.mark_busy(badge_label) is not True:
                     raise RuntimeError("visible automation marker could not be applied")
                 self._raw_page = RawPage(
                     self._raw_tab,
-                    initial_url=str(target.get("url") or ""),
+                    initial_url=fresh_url,
                     require_badge=True,
                     mutation_guard=self._assert_raw_mutation_allowed,
                 )
@@ -1048,31 +1071,68 @@ class PortalWorker:
                     },
                 )
             self._started = True
-        except Exception:
-            await self._disconnect_raw_tab_if_possible()
-            self._lock.release()
-            await self._close_playwright_manager_if_possible()
+        except BaseException:
+            try:
+                await self._finish_raw_handoff_despite_cancellation()
+            finally:
+                self._lock.release()
+                await self._close_playwright_manager_if_possible()
             raise
+
+    async def _invoke_raw_tab_method(self, tab: Any, method_name: str) -> bool:
+        method = getattr(tab, method_name, None)
+        if not callable(method):
+            return False
+        try:
+            if inspect.iscoroutinefunction(method):
+                await method()
+            else:
+                await asyncio.to_thread(method)
+            return True
+        except Exception:
+            return False
 
     async def _disconnect_raw_tab_if_possible(self) -> None:
         tab = self._raw_tab
-        self._raw_tab = None
         if tab is None:
             return
         try:
-            await asyncio.to_thread(self._assert_raw_mutation_allowed)
-            disconnect = getattr(tab, "close", None)
-        except ProfileLockError:
-            disconnect = getattr(tab, "disconnect", None)
-        if not callable(disconnect):
+            if not self._raw_badge_applied:
+                await self._invoke_raw_tab_method(tab, "disconnect")
+                return
+            while True:
+                try:
+                    await asyncio.to_thread(self._assert_raw_mutation_allowed)
+                except ProfileLockError:
+                    try:
+                        self._lock.assert_owned()
+                    except ProfileLockError:
+                        await self._invoke_raw_tab_method(tab, "disconnect")
+                        return
+                    await self._handoff_sleep(5.0)
+                    continue
+                if not await self._invoke_raw_tab_method(tab, "close"):
+                    await self._invoke_raw_tab_method(tab, "disconnect")
+                return
+        finally:
+            if self._raw_tab is tab:
+                self._raw_tab = None
+            self._raw_badge_applied = False
+
+    async def _finish_raw_handoff_despite_cancellation(self) -> None:
+        if self._raw_tab is None:
             return
-        try:
-            if inspect.iscoroutinefunction(disconnect):
-                await disconnect()
-            else:
-                await asyncio.to_thread(disconnect)
-        except Exception:
-            return
+        cleanup = asyncio.create_task(self._disconnect_raw_tab_if_possible())
+        cancelled = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+                continue
+        await cleanup
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def stop(self) -> None:
         # SOT-28 §4(세션 상시 유지)·§12 현상6(TODO-2): 어떤 채널도 로그인 세션이
@@ -1081,7 +1141,7 @@ class PortalWorker:
         self._context = None
         self._browser = None
         try:
-            await self._disconnect_raw_tab_if_possible()
+            await self._finish_raw_handoff_despite_cancellation()
             self._raw_page = None
             await self._close_playwright_manager_if_possible()
         finally:

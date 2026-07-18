@@ -93,7 +93,7 @@ class PreflightAutoLoginSessionTests(unittest.IsolatedAsyncioTestCase):
             async def inner_text(self, timeout: int = 0) -> str:
                 if self.page.channel in {"saramin", "jobkorea"}:
                     return "밸류커넥트 로그아웃"
-                return ""
+                return "Good evening, Sangmo | Recruiter"
 
             def nth(self, _index: int) -> "FakeLocator":
                 return self
