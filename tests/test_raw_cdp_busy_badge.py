@@ -139,6 +139,21 @@ class MarkBusyTests(unittest.TestCase):
         # 라벨은 기억해 다음 기회에 재시도 가능해야 함
         self.assertEqual(tab._badge_label, "x")
 
+    def test_close_keeps_socket_open_when_badge_clear_is_not_acknowledged(self):
+        class ClearFailTab(_RecTab):
+            def __init__(self):
+                super().__init__(eval_raises=True)
+                self._badge_label = "Codex"
+                self.disconnect_calls = 0
+
+            def disconnect(self):
+                self.disconnect_calls += 1
+
+        tab = ClearFailTab()
+        self.assertFalse(tab.close())
+        self.assertEqual(tab.disconnect_calls, 0)
+        self.assertEqual(tab._badge_label, "Codex")
+
 
 class RawEventBridgeTests(unittest.TestCase):
     def test_response_and_navigation_events_reach_worker_handlers(self):

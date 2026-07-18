@@ -437,6 +437,45 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tab.close_calls, 1)
         self.assertEqual(tab.disconnect_calls, 0)
 
+    async def test_failed_badge_clear_preserves_socket_and_lease_for_retry(self) -> None:
+        class ClearFailTab(FakeRawTab):
+            def __init__(self) -> None:
+                super().__init__()
+                self.close_calls = 0
+
+            def close(self) -> bool:
+                self.close_calls += 1
+                return False
+
+        tab = ClearFailTab()
+        with TemporaryDirectory(prefix="raw-handoff-clear-fail-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
+            )
+            worker._lock.acquire()
+            lease_path = worker.config.lock_path
+            worker._raw_tab = tab
+            worker._raw_badge_applied = True
+            try:
+                with self.assertRaises(RuntimeError):
+                    await worker.stop()
+                self.assertTrue(lease_path.exists())
+                self.assertIs(worker._raw_tab, tab)
+                self.assertEqual(tab.disconnect_calls, 0)
+            finally:
+                worker._lock.release()
+
+        self.assertEqual(tab.close_calls, 1)
+
     async def test_attach_target_is_revalidated_before_badge_mutation(self) -> None:
         target = {
             "id": "exact",
