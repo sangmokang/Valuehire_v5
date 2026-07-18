@@ -6,15 +6,16 @@
     "claim": "resolve_channel_cdp_endpoint(channel) 가 portal_browsers.sh 포트(saramin=9223/jobkorea=9224/linkedin_rps=9225)와 정합하는 채널별 CDP endpoint 를 우선순위(value>전역env>채널포트env>채널기본)로 해석한다. public_web은 ValueError. 기존 launch 방식·소비처 미변경. [완결] linkedin_rps start() 의 CDP endpoint 해석을 이 함수로 통과(_cdp_endpoint 메서드)해 고아를 해소 — 값-우선이라 기존 config 동작 보존, config 비면 채널 기본 포트로 폴백.",
     "changed_files": [
       "tools/multi_position_sourcing/portal_worker.py",
-      "tests/test_portal_channel_cdp_endpoint.py"
+      "tests/test_portal_channel_cdp_endpoint.py",
+      "tests/test_channel_endpoint_marker_verify.py"
     ],
     "red_evidence": "commit(RED): 함수 미존재 import error(collection error)",
     "command": "./verify.sh",
     "exit_code": 0,
-    "green_evidence": "focused 11 passed(순수 9 + 배선 2). 전체 ./verify.sh(배선 후): 1756 passed, 4 xfailed, 102 subtests passed in 140.71s (exit 0).",
-    "mutant_check": "채널 기본포트 saramin 9223→9999 → 2 failed 감지 → 원복 7 passed | 배선 뮤턴트: _cdp_endpoint value=None(값무시) → preserves_explicit 1 failed 감지·원복.",
+    "green_evidence": "focused 9(해석)+11(배선)+7(마커검증) / 전체 ./verify.sh 1763 passed, 4 xfailed exit 0",
+    "mutant_check": "채널포트 saramin 9223→9999 2f · LINKEDIN_PORT 이름파손 1f · 배선(config값 무시) 1f · 마커검증 무력화 2f — 4종 모두 감지 후 원복",
     "sot_alignment": "포트·env 이름은 scripts/portal_browsers.sh:74-80 과 동일(재발명 아님)",
-    "wiring_status": "RESOLVED — start()(portal_worker.py:672)가 self._cdp_endpoint()(:646→resolve_channel_cdp_endpoint) 호출. grep 증명 첨부. 기존 test_browser_policy(7777→규칙위반) 테스트가 배선된 경로를 그대로 통과=동작 보존. 사람인·잡코리아 실이전(connect_over_cdp 전환+마커검증)은 조각 B(라이브 필수) 유지.",
+    "wiring_status": "WIRED: start():672 가 _cdp_endpoint()→resolve_channel_cdp_endpoint 호출(고아 해소, grep 증명). linkedin 명시값 값-우선 보존(회귀0). find_verified_channel_endpoint(마커검증)는 실 start() 라이브 배선 전이라 아직 미배선 — 사장님 지시('라이브 없이 마커검증부터, 실배선 나중')에 따른 승인된 분할.",
     "test_quality": {
       "happy_path": true,
       "edge_cases": "채널 포트 env override·전역 env 우선·value 최우선·비숫자 포트 폴백·비http 전역 env 무시",
@@ -41,5 +42,9 @@
   },
   "v2": null,
   "three_way_agree": false,
-  "status": "완결 대기 — G GREEN(배선 포함), 고아 해소, V1·V2 재검증 진행"
+  "status": "조각 A(해석)+고아해소 배선 WIRED + 조각 B 마커검증 로직 GREEN. V1 pass-but-must-wire 반례 봉인. V2 대기. 실 라이브 start 배선은 사장님 세션 리스크로 별도.",
+  "slice_b_marker_verify": {
+    "claim": "find_verified_channel_endpoint 가 채널 후보 포트를 순회하며 대상 사이트 마커가 실제 있는 endpoint 만 채택, 없으면 LookupError(맹목 attach 금지). 라이브 실측 오접속(9222사람인/9223잡코리아) 방지.",
+    "live_evidence": "수동 판정 필요 — 실 start() 배선·실크롬 attach 는 사장님 세션 리스크로 다음 라이브 조각(사장님 입회)"
+  }
 }
