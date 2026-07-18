@@ -73,6 +73,7 @@ def _decode_png_rgb(data: bytes) -> tuple[int, int, bytes, bytes] | None:
     offset = 8
     header: tuple[int, int, int, int, int, int, int] | None = None
     compressed = bytearray()
+    saw_iend = False
     try:
         while offset + 12 <= len(data):
             length = struct.unpack(">I", data[offset:offset + 4])[0]
@@ -82,16 +83,24 @@ def _decode_png_rgb(data: bytes) -> tuple[int, int, bytes, bytes] | None:
             if payload_end + 4 > len(data):
                 return None
             payload = data[payload_start:payload_end]
+            expected_crc = struct.unpack(">I", data[payload_end:payload_end + 4])[0]
+            if zlib.crc32(kind + payload) & 0xFFFFFFFF != expected_crc:
+                return None
             if kind == b"IHDR":
-                if length != 13:
+                if length != 13 or header is not None:
                     return None
                 header = struct.unpack(">IIBBBBB", payload)
             elif kind == b"IDAT":
+                if header is None:
+                    return None
                 compressed.extend(payload)
             elif kind == b"IEND":
+                if length != 0:
+                    return None
+                saw_iend = True
                 break
             offset = payload_end + 4
-        if header is None:
+        if header is None or not compressed or not saw_iend:
             return None
         width, height, depth, color_type, compression, filter_method, interlace = header
         if (
@@ -137,7 +146,7 @@ def _decode_png_rgb(data: bytes) -> tuple[int, int, bytes, bytes] | None:
                 output_position += 1
             prior = scan
         return width, height, bytes(rgb), bytes(alpha)
-    except (ValueError, TypeError, struct.error, zlib.error):
+    except (OverflowError, ValueError, TypeError, struct.error, zlib.error):
         return None
 
 
@@ -164,7 +173,10 @@ def _png_region_matches_color(
     except (KeyError, TypeError, ValueError):
         return False
     if (
-        viewport_width <= 0 or viewport_height <= 0
+        not all(math.isfinite(value) for value in (
+            viewport_width, viewport_height, x, y, rect_width, rect_height
+        ))
+        or viewport_width <= 0 or viewport_height <= 0
         or x < 0 or y < 0 or rect_width < 8 or rect_height < 8
         or x + rect_width > viewport_width + 0.5
         or y + rect_height > viewport_height + 0.5
@@ -174,10 +186,13 @@ def _png_region_matches_color(
     scale_x = width / viewport_width
     scale_y = height / viewport_height
     # Ignore one device pixel at each edge: Overlay outlines are antialiased there.
-    left = max(0, int(math.floor(x * scale_x)) + 1)
-    top = max(0, int(math.floor(y * scale_y)) + 1)
-    right = min(width, int(math.ceil((x + rect_width) * scale_x)) - 1)
-    bottom = min(height, int(math.ceil((y + rect_height) * scale_y)) - 1)
+    try:
+        left = max(0, int(math.floor(x * scale_x)) + 1)
+        top = max(0, int(math.floor(y * scale_y)) + 1)
+        right = min(width, int(math.ceil((x + rect_width) * scale_x)) - 1)
+        bottom = min(height, int(math.ceil((y + rect_height) * scale_y)) - 1)
+    except (OverflowError, ValueError):
+        return False
     if right <= left or bottom <= top:
         return False
     matches = 0
@@ -268,6 +283,20 @@ def _badge_identity_js(element: str, label: str, failure: str) -> str:
         f"{element}.getAttribute('title')!=={encoded_label}||"
         f"{element}.getAttribute('role')!=='status')"
         "{" + failure + "}"
+    )
+
+
+def _badge_object_identity_function(label: str) -> str:
+    """Runtime.callFunctionOn predicate for the exact resolved badge node."""
+    encoded_label = json.dumps(label, ensure_ascii=False)
+    return (
+        "function(){return !!(this&&this.isConnected&&"
+        f"this.localName==={json.dumps(_BADGE_TAG)}&&"
+        f"this.id==={json.dumps(_BADGE_ID)}&&"
+        f"this.textContent==={encoded_label}&&"
+        f"this.getAttribute('aria-label')==={encoded_label}&&"
+        f"this.getAttribute('title')==={encoded_label}&&"
+        "this.getAttribute('role')==='status');}"
     )
 
 
@@ -506,6 +535,18 @@ class CDPTab:
         except Exception:
             pass
 
+    def _resolved_badge_identity(self, object_id: str, label: str) -> bool:
+        result = self.send("Runtime.callFunctionOn", {
+            "objectId": object_id,
+            "functionDeclaration": _badge_object_identity_function(label),
+            "returnByValue": True,
+            "awaitPromise": False,
+        })
+        if not isinstance(result, dict) or result.get("exceptionDetails"):
+            return False
+        remote = result.get("result")
+        return isinstance(remote, dict) and remote.get("value") is True
+
     def prove_badge_rendered(
         self,
         *,
@@ -525,7 +566,10 @@ class CDPTab:
             float(value) for value in values
         )
         if (
-            x < 0 or y < 0 or width < 8 or height < 8
+            not all(math.isfinite(value) for value in (
+                x, y, width, height, viewport_width, viewport_height
+            ))
+            or x < 0 or y < 0 or width < 8 or height < 8
             or viewport_width <= 0 or viewport_height <= 0
         ):
             return False
@@ -544,6 +588,7 @@ class CDPTab:
             return False
         challenge_applied = False
         proof_complete = False
+        object_id: str | None = None
         try:
             self.send("Overlay.highlightRect", {
                 **overlay_rect,
@@ -585,6 +630,13 @@ class CDPTab:
             node_id = match.get("nodeId") if isinstance(match, dict) else None
             if isinstance(node_id, bool) or not isinstance(node_id, int) or node_id <= 0:
                 return False
+            resolved = self.send("DOM.resolveNode", {"nodeId": node_id})
+            remote_object = resolved.get("object") if isinstance(resolved, dict) else None
+            object_id = remote_object.get("objectId") if isinstance(remote_object, dict) else None
+            if not isinstance(object_id, str) or not object_id:
+                return False
+            if not self._resolved_badge_identity(object_id, badge_label):
+                return False
             # Keep a browser-owned DevTools tooltip above every page layer.  The
             # custom tag/id and aria-label make the exact agent/task readable even
             # when page CSS tries to cover the DOM badge.
@@ -599,11 +651,18 @@ class CDPTab:
                     "marginColor": {"r": 220, "g": 38, "b": 38, "a": 0.08},
                 },
             })
+            if not self._resolved_badge_identity(object_id, badge_label):
+                return False
             proof_complete = True
             return True
         except (ValueError, TypeError):
             return False
         finally:
+            if object_id:
+                try:
+                    self.send("Runtime.releaseObject", {"objectId": object_id})
+                except Exception:
+                    pass
             if challenge_applied and not proof_complete:
                 try:
                     self.send("Overlay.hideHighlight")

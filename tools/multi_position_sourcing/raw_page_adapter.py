@@ -176,6 +176,9 @@ class RawLocator:
                 badge_label=label,
             ) is not True:
                 raise RuntimeError("raw rendered badge ownership proof failed")
+            # Rendering proof performs multiple CDP round trips. Recheck the
+            # canonical lease/owner-idle barrier at the actual mutation boundary.
+            await _run_mutation_guard(self._mutation_guard)
             expr = _ownership_js(expected_url, label, action)
             acknowledged = await _tab_call(self._tab, "eval", expr)
             if acknowledged is not True:
@@ -273,6 +276,8 @@ class RawPage:
                 badge_label=label,
             ) is not True:
                 raise RuntimeError("raw rendered badge ownership proof failed")
+            # The owner can return while the compositor proof is running.
+            await _run_mutation_guard(self._mutation_guard)
             navigation = await asyncio.wait_for(
                 _tab_call(
                     self._tab,
