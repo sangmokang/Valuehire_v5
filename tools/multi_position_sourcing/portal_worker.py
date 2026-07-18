@@ -82,9 +82,12 @@ def resolve_channel_cdp_endpoint(
 # 채널별 검색 target 규칙. host 부분문자열은 룩얼라이크 도메인을 허용하므로
 # exact host/subdomain 경계와 검색 surface path를 함께 확인한다.
 _CHANNEL_TARGET_RULE = {
-    "saramin": ("saramin.co.kr", "/zf_user/memcom/"),
-    "jobkorea": ("jobkorea.co.kr", "/corp/person/find"),
-    "linkedin_rps": ("linkedin.com", "/talent/"),
+    "saramin": ("saramin.co.kr", ("/zf_user/memcom/talent-pool/",)),
+    "jobkorea": ("jobkorea.co.kr", ("/corp/person/find",)),
+    "linkedin_rps": (
+        "linkedin.com",
+        ("/talent/home", "/talent/search", "/talent/hire/"),
+    ),
 }
 _CHANNEL_BROWSER_NAME = {
     "saramin": "saramin",
@@ -149,14 +152,19 @@ def resolve_managed_channel_cdp_endpoint(
 def _target_matches_channel(channel: str, target: Mapping[str, Any]) -> bool:
     if target.get("type") != "page":
         return False
-    domain, path_marker = _CHANNEL_TARGET_RULE[channel]
+    domain, path_markers = _CHANNEL_TARGET_RULE[channel]
     try:
         parsed = urlsplit(str(target.get("url") or ""))
     except ValueError:
         return False
     host = (parsed.hostname or "").rstrip(".").casefold()
     host_ok = host == domain or host.endswith("." + domain)
-    return bool(host_ok and path_marker in (parsed.path or "").casefold())
+    path = (parsed.path or "").casefold()
+    path_ok = any(
+        path == marker or (marker.endswith("/") and path.startswith(marker))
+        for marker in path_markers
+    )
+    return bool(host_ok and path_ok)
 
 
 def find_verified_channel_target(
@@ -419,6 +427,8 @@ class PortalWorkerConfig:
 
     @property
     def lock_path(self) -> Path:
+        if self.connection_mode == "raw_single_tab":
+            return Path(self.profile_root) / self.channel / ".raw-single-target.lock"
         return self.profile_dir / ".profile.lock"
 
     @property

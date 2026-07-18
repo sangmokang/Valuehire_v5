@@ -267,13 +267,13 @@ cmd_cdp() {
           [[ -n "$live_port" ]] && break ;;
       esac
     done < <(ps ax -o command= 2>/dev/null)
-    # 2) 실제 포트가 있고 CDP 가 응답하면 그걸 쓴다. 없으면 설정 포트로 한 번 더 확인(표준 폴백).
-    local try
-    for try in "$live_port" "$port"; do
-      [[ -n "$try" ]] || continue
-      if cdp_alive "$try"; then echo "http://127.0.0.1:$try"; return 0; fi
-    done
-    # 3) 살아있는 크롬 없음 → 재실행/추정 금지(사람 로그인·캡차 게이트 존중, 봇행동 금지).
+    # 2) exact profile 프로세스에서 찾은 포트만 허용한다. 설정 포트가 살아있다는 이유만으로
+    #    폴백하면 같은 포트의 다른 Chrome을 오인할 수 있다(다중 브라우저 환경 안전 위반).
+    if [[ -n "$live_port" ]] && cdp_alive "$live_port"; then
+      echo "http://127.0.0.1:$live_port"
+      return 0
+    fi
+    # 3) exact profile Chrome 없음 → 재실행/추정 금지(사람 로그인·캡차 게이트 존중).
     echo "❌ $name CDP 없음 — 프로필로 살아있는 크롬이 없습니다. 'start' 후 그 창에서 직접 로그인/캡차 처리." >&2
     exit 3
   done

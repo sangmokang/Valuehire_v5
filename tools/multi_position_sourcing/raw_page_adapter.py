@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 from typing import Any
 
 
@@ -37,9 +38,21 @@ class RawLocator:
         self._index = index
 
     @property
+    def _elements_js(self) -> str:
+        """Translate the small Playwright text pseudo-selector used by our map."""
+        match = re.fullmatch(r"(.+):has-text\((['\"])(.*?)\2\)", self._selector)
+        if match:
+            base, _quote, text = match.groups()
+            return (
+                f"Array.from(document.querySelectorAll({json.dumps(base)}))"
+                ".filter(function(e){return (e.innerText||'').includes("
+                f"{json.dumps(text)});}})"
+            )
+        return f"document.querySelectorAll({json.dumps(self._selector)})"
+
+    @property
     def _sel_js(self) -> str:
-        # querySelectorAll(<json selector>)[index] — 이스케이프로 injection 차단.
-        return f"document.querySelectorAll({json.dumps(self._selector)})[{self._index}]"
+        return f"{self._elements_js}[{self._index}]"
 
     @property
     def first(self) -> "RawLocator":
@@ -49,7 +62,7 @@ class RawLocator:
         return RawLocator(self._tab, self._selector, index=index)
 
     async def count(self) -> int:
-        expr = f"document.querySelectorAll({json.dumps(self._selector)}).length"
+        expr = f"{self._elements_js}.length"
         return int(await _tab_call(self._tab, "eval", expr) or 0)
 
     async def fill(self, value: str, **_kwargs: Any) -> None:
@@ -87,7 +100,7 @@ class RawLocator:
         value = await _tab_call(self._tab, "eval", expr)
         return None if value is None else str(value)
 
-    async def inner_text(self) -> str:
+    async def inner_text(self, **_kwargs: Any) -> str:
         expr = "(function(){var e=" + self._sel_js + ";return e?e.innerText:'';})()"
         return str(await _tab_call(self._tab, "eval", expr) or "")
 
@@ -102,11 +115,27 @@ class RawPage:
 
     async def goto(self, url: str, *, wait_until: str | None = None, timeout: int | None = None) -> None:
         self._url = url
+        timeout_seconds = float(timeout) / 1000.0 if timeout and timeout > 0 else 30.0
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
         action = _tab_call(self._tab, "navigate", url, wait_ms=0)
-        if timeout and timeout > 0:
-            await asyncio.wait_for(action, timeout=float(timeout) / 1000.0)
-        else:
-            await action
+        await asyncio.wait_for(action, timeout=timeout_seconds)
+        if wait_until is None:
+            return
+        ready_states = {"complete"}
+        if wait_until in {"domcontentloaded", "commit"}:
+            ready_states.add("interactive")
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"raw navigation did not reach {wait_until}")
+            state = str(await asyncio.wait_for(
+                _tab_call(self._tab, "eval", "document.readyState"),
+                timeout=remaining,
+            ) or "")
+            if state in ready_states:
+                return
+            await asyncio.sleep(min(0.1, remaining))
 
     async def wait_for_timeout(self, ms: float) -> None:
         await asyncio.sleep(float(ms) / 1000.0)
