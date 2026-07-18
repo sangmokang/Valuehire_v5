@@ -159,7 +159,7 @@ def test_capture_uses_only_exact_id_and_removes_secure_temp_artifact(tmp_path: P
                 destination.stat().st_mode & 0o777,
             )
         )
-        destination.write_bytes(b"exact-window-png")
+        destination.write_bytes(b"\x89PNG\r\n\x1a\nexact-window")
         return _completed(argv)
 
     captured = capture_exact_window_png(
@@ -169,7 +169,7 @@ def test_capture_uses_only_exact_id_and_removes_secure_temp_artifact(tmp_path: P
         system_name="Darwin",
     )
 
-    assert captured == b"exact-window-png"
+    assert captured == b"\x89PNG\r\n\x1a\nexact-window"
     assert calls == [["screencapture", "-x", "-l", "175", calls[0][-1]]]
     assert observed_modes == [(0o700, 0o600)]
     assert list(tmp_path.iterdir()) == []
@@ -182,4 +182,3 @@ def test_bundled_swift_locator_typechecks_on_macos() -> None:
         ["swiftc", "-typecheck", str(repo / "skills/login/scripts/macos_window_locator.swift")],
         check=True,
     )
-

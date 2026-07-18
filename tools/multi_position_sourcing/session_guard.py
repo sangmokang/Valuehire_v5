@@ -435,6 +435,13 @@ def _tab_current_url(tab: Any) -> str:
     raise RuntimeError("raw target has no read-only current URL operation")
 
 
+def _tab_target_id(tab: Any) -> str:
+    value = getattr(tab, "target_id", "")
+    if callable(value):
+        value = value()
+    return str(value or "").strip()
+
+
 def _auth_matches(observation: Any, expected_url: str) -> bool:
     return bool(
         isinstance(observation, AuthObservation)
@@ -504,6 +511,8 @@ def execute_keepalive_roundtrip(
 
     if not _safe_keepalive_descriptor(ref, target):
         return {"status": "skipped_unsafe", "restore_pending": False}
+    if _tab_target_id(tab) != ref.target_id:
+        return {"status": "skipped_target_mismatch", "restore_pending": False}
     try:
         if _tab_current_url(tab) != target.source_url:
             return {"status": "skipped_source_mismatch", "restore_pending": False}
@@ -527,6 +536,9 @@ def execute_keepalive_roundtrip(
     if clicked is not True:
         return {"status": "click_failed", "restore_pending": False}
 
+    if _tab_target_id(tab) != ref.target_id:
+        return {"status": "target_changed", "restore_pending": True}
+
     destination_auth = _wait_for_authenticated_url(
         tab,
         target.destination_url,
@@ -544,6 +556,12 @@ def execute_keepalive_roundtrip(
             "source_entry_id": source_entry_id,
             "destination_verified": destination_auth,
         }
+    if _tab_target_id(tab) != ref.target_id:
+        return {
+            "status": "target_changed",
+            "restore_pending": True,
+            "destination_verified": destination_auth,
+        }
     try:
         tab.send("Page.navigateToHistoryEntry", {"entryId": source_entry_id})
     except Exception:
@@ -551,6 +569,12 @@ def execute_keepalive_roundtrip(
             "status": "restore_failed",
             "restore_pending": True,
             "source_entry_id": source_entry_id,
+        }
+
+    if _tab_target_id(tab) != ref.target_id:
+        return {
+            "status": "target_changed_after_restore",
+            "restore_pending": True,
         }
 
     restored_auth = _wait_for_authenticated_url(
@@ -630,39 +654,17 @@ def present_exact_login_window_once(
 
     if state != "AI_ATTACHED":
         raise RuntimeError("exact login-window presentation is allowed only in AI_ATTACHED")
+    if _tab_target_id(tab) != ref.target_id:
+        raise RuntimeError("exact target identity changed before login-window presentation")
     live_url = _tab_current_url(tab)
     if live_url != ref.initial_url or not _official_site_url(ref.site, live_url):
         raise RuntimeError("exact target URL changed before login-window presentation")
     marker, suffix = _login_title_marker(agent, ref.site, ref.target_id)
     original_title = str(tab.eval("document.title") or "")
-    visible_title = marker + (
-        " " + re.sub(r"[\x00-\x1f\x7f]+", " ", original_title).strip()[:120]
-        if original_title.strip()
-        else ""
-    )
-    presentation_key = (ref.site, ref.endpoint, ref.target_id)
-    if getattr(tab, "_vh_human_auth_presentation_key", None) == presentation_key:
-        raise RuntimeError("exact login window was already presented for this auth episode")
-    # Claim before the first mutation: a partial failure must not cause repeated
-    # title/focus/capture attempts that steal the owner's foreground again.
-    setattr(tab, "_vh_human_auth_presentation_key", presentation_key)
-
-    mutation_gate()
-    title_result = tab.eval(
-        "(function(){document.title=" + json.dumps(visible_title) +
-        ";return document.title;})()"
-    )
-    if title_result != visible_title:
-        raise RuntimeError("exact target title marker could not be installed")
-
-    mutation_gate()
-    marker_fn = getattr(tab, "mark_busy", None)
-    if not callable(marker_fn) or marker_fn(marker, expected_url=live_url) is not True:
-        raise RuntimeError("visible login-window marker could not be installed")
-
-    mutation_gate()
-    tab.send("Page.bringToFront")
-
+    site_label = "LinkedIn RPS" if ref.site == "linkedin_rps" else ref.site
+    # Never echo the previous page title: it can contain a candidate name or a
+    # search query.  Site + sanitized URL are reported separately.
+    visible_title = f"{marker} {site_label} login"
     browser_pid = _unique_browser_pid(tab)
     window_result = tab.send("Browser.getWindowForTarget", {"targetId": ref.target_id})
     raw_bounds = window_result.get("bounds") if isinstance(window_result, Mapping) else None
@@ -683,12 +685,48 @@ def present_exact_login_window_once(
     )
     resolve = window_resolver or resolve_exact_macos_window
     capture = window_capture or capture_exact_window_png
+    # First resolve by exact PID+bounds without reading any title.  If this is
+    # ambiguous, fail before title/badge/focus mutations.  After focus, resolve
+    # again with the unique marker and require the same CGWindowID.
+    preflight_window = resolve(CdpWindowIdentity(
+        browser_pid=browser_pid,
+        target_id=ref.target_id,
+        title_marker="",
+        bounds=bounds,
+    ))
+
+    presentation_key = (ref.site, ref.endpoint, ref.target_id)
+    if getattr(tab, "_vh_human_auth_presentation_key", None) == presentation_key:
+        raise RuntimeError("exact login window was already presented for this auth episode")
+    # Claim before the first mutation: a partial failure must not cause repeated
+    # title/focus/capture attempts that steal the owner's foreground again.
+    setattr(tab, "_vh_human_auth_presentation_key", presentation_key)
+
+    mutation_gate()
+    title_result = tab.eval(
+        "(function(){if(location.href!==" + json.dumps(live_url) +
+        ")return null;document.title=" + json.dumps(visible_title) +
+        ";return document.title;})()"
+    )
+    if title_result != visible_title:
+        raise RuntimeError("exact target title marker could not be installed")
+
+    mutation_gate()
+    marker_fn = getattr(tab, "mark_busy", None)
+    if not callable(marker_fn) or marker_fn(marker, expected_url=live_url) is not True:
+        raise RuntimeError("visible login-window marker could not be installed")
+
+    mutation_gate()
+    tab.send("Page.bringToFront")
+
     window = resolve(CdpWindowIdentity(
         browser_pid=browser_pid,
         target_id=ref.target_id,
         title_marker=marker,
         bounds=bounds,
     ))
+    if window.cg_window_id != preflight_window.cg_window_id:
+        raise RuntimeError("exact login window identity changed after focus")
     png = capture(window.cg_window_id)
     if not isinstance(png, bytes) or not png:
         raise RuntimeError("exact login-window capture is empty")

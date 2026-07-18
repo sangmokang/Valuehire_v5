@@ -424,7 +424,7 @@ def find_page_by_url(substr: str) -> dict | None:
 
 
 class CDPTab:
-    def __init__(self, ws_url: str):
+    def __init__(self, ws_url: str, *, target_id: str = ""):
         # Chrome rejects ws handshakes carrying an Origin header unless launched with
         # --remote-allow-origins. Suppressing the Origin header sidesteps the 403.
         import websocket  # websocket-client (지연 import — 라이브 연결 시점에만 필요)
@@ -433,6 +433,7 @@ class CDPTab:
             ws_url, max_size=None, timeout=60, suppress_origin=True
         )
         self._id = 0
+        self._target_id = str(target_id or "")
         self._badge_label: str | None = None
         self._badge_bound_url: str | None = None
         self._badge_object_id: str | None = None
@@ -836,6 +837,11 @@ class CDPTab:
         """Read the URL of this exact target without consulting global tab state."""
         return str(self.eval("location.href") or "")
 
+    @property
+    def target_id(self) -> str:
+        """The immutable page target id supplied by the exact /json selection."""
+        return self._target_id
+
     def click_safe_link(self, target: Any) -> bool:
         """Atomically validate and click one allowlisted same-origin GET anchor.
 
@@ -929,7 +935,10 @@ def _maybe_auto_badge(tab: "CDPTab", env: Any) -> None:
 
 
 def attach(target: dict, badge: bool = True) -> CDPTab:
-    tab = CDPTab(target["webSocketDebuggerUrl"])
+    tab = CDPTab(
+        target["webSocketDebuggerUrl"],
+        target_id=str(target.get("id") or target.get("targetId") or ""),
+    )
     if badge:
         try:
             _maybe_auto_badge(tab, os.environ)

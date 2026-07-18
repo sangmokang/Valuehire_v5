@@ -67,8 +67,8 @@ class CdpWindowIdentity:
             raise ValueError("browser_pid must be a positive integer")
         if not isinstance(self.target_id, str) or not self.target_id.strip():
             raise ValueError("target_id must be non-empty")
-        if not isinstance(self.title_marker, str) or not self.title_marker.strip():
-            raise ValueError("title_marker must be non-empty")
+        if not isinstance(self.title_marker, str):
+            raise ValueError("title_marker must be a string")
 
 
 @dataclass(frozen=True)
@@ -201,7 +201,7 @@ def resolve_exact_macos_window(
             continue
         if candidate.owner_pid != identity.browser_pid:
             continue
-        if identity.title_marker not in candidate.title:
+        if identity.title_marker and not candidate.title.startswith(identity.title_marker):
             continue
         if not identity.bounds.matches(candidate.bounds, tolerance=bounds_tolerance):
             continue
@@ -247,8 +247,8 @@ def capture_exact_window_png(
         if result.returncode != 0:
             raise WindowResolutionError("exact window capture failed")
         data = destination.read_bytes()
-        if not data:
-            raise WindowResolutionError("exact window capture was empty")
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise WindowResolutionError("exact window capture was not a PNG")
         return data
     except OSError as exc:
         raise WindowResolutionError("secure exact-window capture failed") from exc

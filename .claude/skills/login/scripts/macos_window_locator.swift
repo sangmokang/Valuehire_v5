@@ -40,7 +40,7 @@ private func parseOptions() -> Options {
     let expected = Set(["--pid", "--marker", "--left", "--top", "--width", "--height", "--tolerance"])
     guard Set(values.keys) == expected,
           let pidText = values["--pid"], let pid = Int(pidText), pid > 0,
-          let marker = values["--marker"], !marker.isEmpty,
+          let marker = values["--marker"],
           let leftText = values["--left"], let left = Double(leftText), left.isFinite,
           let topText = values["--top"], let top = Double(topText), top.isFinite,
           let widthText = values["--width"], let width = Double(widthText), width.isFinite, width > 0,
@@ -95,11 +95,20 @@ for window in rawWindows {
           near(top, options.top, tolerance: options.tolerance),
           near(width, options.width, tolerance: options.tolerance),
           near(height, options.height, tolerance: options.tolerance),
-          let title = window[kCGWindowName as String] as? String,
-          title.contains(options.marker),
           let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
           windowID > 0 else {
         continue
+    }
+    // The first, pre-focus pass intentionally uses an empty marker and must not
+    // read or serialize the owner's current tab title.  After the exact bounds
+    // identify one window, the second pass requires the injected marker.
+    var title = ""
+    if !options.marker.isEmpty {
+        guard let candidateTitle = window[kCGWindowName as String] as? String,
+              candidateTitle.hasPrefix(options.marker) else {
+            continue
+        }
+        title = candidateTitle
     }
     matches.append([
         "cg_window_id": Int(windowID),
