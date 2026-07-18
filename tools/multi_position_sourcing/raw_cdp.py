@@ -272,9 +272,12 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         + f"var id={json.dumps(_BADGE_ID)};"
         "var e=document.getElementById(id);"
         "if(e){e.remove();}"
-        "e=document.createElement('div');"
+        "e=document.createElement('vh-automation-status');"
         "e.id=id;"
         f"e.textContent={text};"
+        f"e.setAttribute('aria-label',{text});"
+        f"e.setAttribute('title',{text});"
+        "e.setAttribute('role','status');"
         "e.style.cssText='position:fixed;top:0;left:50%;transform:translateX(-50%);"
         "z-index:2147483647;pointer-events:none;"
         "background:rgba(220,38,38,0.95);color:#fff;"
@@ -546,13 +549,31 @@ class CDPTab:
                 expected_rgb=challenge,
             ):
                 return False
-            # Leave a browser-owned translucent frame above page content. The DOM
-            # badge carries the readable label; this frame cannot be occluded by
-            # page z-index, pseudo-elements, or the dialog top layer.
-            self.send("Overlay.highlightRect", {
-                **overlay_rect,
-                "color": {"r": 220, "g": 38, "b": 38, "a": 0.12},
-                "outlineColor": {"r": 255, "g": 255, "b": 255, "a": 1},
+            document = self.send("DOM.getDocument", {"depth": 0})
+            root = document.get("root") if isinstance(document, dict) else None
+            root_node_id = root.get("nodeId") if isinstance(root, dict) else None
+            if isinstance(root_node_id, bool) or not isinstance(root_node_id, int):
+                return False
+            match = self.send("DOM.querySelector", {
+                "nodeId": root_node_id,
+                "selector": f"#{_BADGE_ID}",
+            })
+            node_id = match.get("nodeId") if isinstance(match, dict) else None
+            if isinstance(node_id, bool) or not isinstance(node_id, int) or node_id <= 0:
+                return False
+            # Keep a browser-owned DevTools tooltip above every page layer.  The
+            # custom tag/id and aria-label make the exact agent/task readable even
+            # when page CSS tries to cover the DOM badge.
+            self.send("Overlay.highlightNode", {
+                "nodeId": node_id,
+                "highlightConfig": {
+                    "showInfo": True,
+                    "showAccessibilityInfo": True,
+                    "contentColor": {"r": 220, "g": 38, "b": 38, "a": 0.12},
+                    "paddingColor": {"r": 255, "g": 255, "b": 255, "a": 0.08},
+                    "borderColor": {"r": 255, "g": 255, "b": 255, "a": 1},
+                    "marginColor": {"r": 220, "g": 38, "b": 38, "a": 0.08},
+                },
             })
             proof_complete = True
             return True
