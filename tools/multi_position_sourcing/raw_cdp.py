@@ -86,6 +86,13 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         "padding:4px 14px;border-radius:0 0 8px 8px;box-shadow:0 2px 8px rgba(0,0,0,.3);"
         "letter-spacing:.2px;white-space:nowrap;';"
         "(document.body||document.documentElement).appendChild(e);"
+        "for(var n=e;n&&n.nodeType===1;n=n.parentElement){"
+        "var ns=window.getComputedStyle(n);"
+        "if(ns.display==='none'||ns.visibility==='hidden'||ns.visibility==='collapse'||"
+        "ns.opacity==='0'){e.remove();return null;}}"
+        "var r=e.getBoundingClientRect();"
+        "if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||"
+        "r.top>=window.innerHeight||r.left>=window.innerWidth){e.remove();return null;}"
         "return id;})()"
     )
 
@@ -116,12 +123,15 @@ def _owned_navigation_js(
         f"if(location.href!=={json.dumps(expected_url)})return false;"
         f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
         f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
-        "var s=window.getComputedStyle(b),r=b.getBoundingClientRect();"
-        "if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0'||"
-        "r.width<=0||r.height<=0)return false;"
+        "for(var n=b;n&&n.nodeType===1;n=n.parentElement){"
+        "var s=window.getComputedStyle(n);"
+        "if(s.display==='none'||s.visibility==='hidden'||s.visibility==='collapse'||"
+        "s.opacity==='0')return false;}"
+        "var r=b.getBoundingClientRect();"
+        "if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||"
+        "r.top>=window.innerHeight||r.left>=window.innerWidth)return false;"
         f"var u={json.dumps(url)};"
-        "setTimeout(function(){location.assign(u);},0);"
-        "return true;})()"
+        "location.assign(u);return true;})()"
     )
 
 

@@ -31,9 +31,13 @@ def _ownership_js(expected_url: str, badge_label: str, action: str = "return tru
         f"if(location.href!=={json.dumps(expected_url)})return false;"
         f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
         f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
-        "var s=window.getComputedStyle(b),r=b.getBoundingClientRect();"
-        "if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0'||"
-        "r.width<=0||r.height<=0)return false;"
+        "for(var n=b;n&&n.nodeType===1;n=n.parentElement){"
+        "var s=window.getComputedStyle(n);"
+        "if(s.display==='none'||s.visibility==='hidden'||s.visibility==='collapse'||"
+        "s.opacity==='0')return false;}"
+        "var r=b.getBoundingClientRect();"
+        "if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||"
+        "r.top>=window.innerHeight||r.left>=window.innerWidth)return false;"
         + action
         + "})()"
     )
