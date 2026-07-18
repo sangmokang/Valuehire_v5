@@ -158,6 +158,15 @@ class _KeepaliveTab:
     def send(self, method: str, params: dict | None = None):
         if method == "Page.getNavigationHistory":
             self.trace.append("history")
+            if self.url.endswith("/projects"):
+                return {
+                    "currentIndex": 2,
+                    "entries": [
+                        {"id": 41, "url": "https://www.linkedin.com/talent/previous"},
+                        {"id": 42, "url": "https://www.linkedin.com/talent/home"},
+                        {"id": 43, "url": "https://www.linkedin.com/talent/projects"},
+                    ],
+                }
             return {
                 "currentIndex": 1,
                 "entries": [
@@ -169,6 +178,14 @@ class _KeepaliveTab:
             self.trace.append(f"back:{params['entryId']}")
             self.url = "https://www.linkedin.com/talent/home"
             return {}
+        if method == "Target.getTargetInfo":
+            return {
+                "targetInfo": {
+                    "targetId": self.target_id,
+                    "type": "page",
+                    "url": self.url,
+                }
+            }
         if method in {"Page.navigate", "Target.createTarget", "Target.closeTarget", "Browser.close"}:
             self.forbidden_calls.append(method)
             raise AssertionError(method)
@@ -215,6 +232,7 @@ def test_keepalive_success_clicks_then_history_back_with_two_fresh_gates() -> No
         "gate1",
         "click",
         "url:projects",
+        "history",
         "gate2",
         "back:42",
         "url:home",
@@ -282,6 +300,75 @@ def test_target_identity_change_after_click_never_sends_back() -> None:
     assert not any(item.startswith("back:") for item in tab.trace)
 
 
+def test_destination_auth_failure_never_sends_back() -> None:
+    tab = _KeepaliveTab()
+    gates: list[str] = []
+    result = execute_keepalive_roundtrip(
+        tab,
+        _ref(),
+        _safe(),
+        auth_probe=lambda current: AuthObservation(
+            authenticated=False,
+            challenge=True,
+            url=current.current_url(),
+            proof_names=(),
+        ),
+        mutation_gate=lambda: gates.append("gate"),
+        navigation_timeout_seconds=0,
+    )
+    assert result["status"] == "destination_unverified"
+    assert result["restore_pending"] is True
+    assert gates == ["gate"]
+    assert not any(item.startswith("back:") for item in tab.trace)
+
+
+def test_click_exception_after_navigation_is_pending_not_clean_failure() -> None:
+    tab = _KeepaliveTab()
+
+    def navigate_then_raise(target: SafeKeepaliveTarget) -> bool:
+        tab.url = target.destination_url
+        raise RuntimeError("execution context destroyed")
+
+    tab.click_safe_link = navigate_then_raise
+    result = execute_keepalive_roundtrip(
+        tab,
+        _ref(),
+        _safe(),
+        auth_probe=lambda current: AuthObservation(
+            authenticated=True,
+            challenge=False,
+            url=current.current_url(),
+            proof_names=("recruiter_nav",),
+        ),
+        mutation_gate=lambda: None,
+    )
+    assert result["status"] != "click_failed"
+    assert result["restore_pending"] is True or result["status"] == "ok"
+
+
+def test_non_integer_history_entry_id_fails_before_mutation() -> None:
+    tab = _KeepaliveTab()
+    original_send = tab.send
+
+    def send(method: str, params: dict | None = None):
+        result = original_send(method, params)
+        if method == "Page.getNavigationHistory":
+            result["entries"][result["currentIndex"]]["id"] = "42"
+        return result
+
+    tab.send = send
+    gates: list[str] = []
+    result = execute_keepalive_roundtrip(
+        tab,
+        _ref(),
+        _safe(),
+        auth_probe=lambda _tab: pytest.fail("history must fail before auth"),
+        mutation_gate=lambda: gates.append("gate"),
+    )
+    assert result["status"] == "skipped_history_mismatch"
+    assert gates == []
+
+
 def test_window_ambiguity_fails_before_title_badge_or_focus_mutation() -> None:
     class Tab:
         target_id = "target-exact"
@@ -343,6 +430,9 @@ def test_window_ambiguity_fails_before_title_badge_or_focus_mutation() -> None:
         {"target_attr": "_blank"},
         {"download": True},
         {"destination_url": "https://evil.example/steal"},
+        {"destination_url": "https://www.linkedin.com/talent/logout"},
+        {"destination_url": "https://www.linkedin.com/talent/inmail/send"},
+        {"destination_url": "https://www.linkedin.com/talent/profile/new-candidate"},
         {"risk_labels": ("paid",)},
         {"risk_labels": ("save",)},
         {"risk_labels": ("send",)},
