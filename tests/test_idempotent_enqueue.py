@@ -130,6 +130,78 @@ def test_job_by_idempotency_key_missing_returns_none(monkeypatch):
     assert c.job_by_idempotency_key("discord:none") is None
 
 
+def test_two_real_enqueue_calls_yield_exactly_one_insert(monkeypatch):
+    # V1 반례: '중복' 은 enqueue 를 실제 2회 불렀을 때 잡 1개여야 한다. 상태 있는 fake DB 로
+    # 1회차는 삽입 성공, 2회차 같은 키는 409 → 회수 → 두 반환이 같은 잡·POST 삽입 정확히 1회.
+    c = _client()
+    store: dict = {}
+    inserts: list = []
+
+    def fake_call(method, path, payload=None, prefer="return=representation"):
+        if method == "POST" and path == "/jobs":
+            key = (payload.get("params") or {}).get("idempotency_key")
+            if key in store:
+                raise _http_409()
+            row = {"id": len(store) + 1, "status": "queued", "params": payload["params"]}
+            store[key] = row
+            inserts.append(key)
+            return [row]
+        if method == "GET":
+            key = path.split("eq.")[1].split("&")[0]
+            import urllib.parse as up
+            row = store.get(up.unquote(key))
+            return [row] if row else []
+        raise AssertionError(method)
+
+    monkeypatch.setattr(c, "_call", fake_call)
+    j1 = c.enqueue(_payload())
+    j2 = c.enqueue(_payload())          # 같은 idempotency_key 2회차
+    assert j1 == j2, "중복 이벤트는 같은 잡을 돌려줘야 한다"
+    assert len(inserts) == 1, f"삽입은 정확히 1회여야 한다(실제로 {len(inserts)}회)"
+
+
+def test_int_zero_idempotency_key_recovers_matching_db_index(monkeypatch):
+    # V1 반례: idempotency_key=0(정수)도 DB 인덱스(params->>key='0', non-empty)가 적용돼
+    # 409 가 날 수 있다 — 거짓값이라고 회수를 건너뛰면 안 된다(DB 의미와 일치).
+    c = _client()
+    existing = {"id": 5, "params": {"idempotency_key": 0}}
+
+    def fake_call(method, path, payload=None, prefer="return=representation"):
+        if method == "POST":
+            raise _http_409()
+        if method == "GET":
+            return [existing]
+        raise AssertionError
+
+    monkeypatch.setattr(c, "_call", fake_call)
+    payload = new_job_payload(
+        machine="macmini", skill="aisearch", position_url="https://app.clickup.com/t/x",
+        requested_by="814353841088757800:owner", role="owner",
+        params={"idempotency_key": 0})
+    assert c.enqueue(payload) == existing
+
+
+def test_empty_idempotency_key_does_not_trigger_recovery(monkeypatch):
+    # 빈 문자열 키는 DB 부분인덱스에서 제외 → idempotency 409 대상 아님 → 회수 시도 없이 redact.
+    c = _client()
+    gets: list = []
+
+    def fake_call(method, path, payload=None, prefer="return=representation"):
+        if method == "POST":
+            raise _http_409()
+        gets.append(path)
+        return []
+
+    monkeypatch.setattr(c, "_call", fake_call)
+    payload = new_job_payload(
+        machine="macmini", skill="aisearch", position_url="https://app.clickup.com/t/x",
+        requested_by="814353841088757800:owner", role="owner",
+        params={"idempotency_key": ""})
+    with pytest.raises(JobQueueConflictError):
+        c.enqueue(payload)
+    assert gets == [], "빈 키는 회수 조회(GET)를 하지 않는다"
+
+
 def test_non_conflict_http_error_still_propagates_redacted(monkeypatch):
     # 500 등 다른 HTTP 오류도 raw 미노출로 감싼다(회수는 409 에만).
     c = _client()
