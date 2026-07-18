@@ -60,6 +60,45 @@ def _resolve_badge_label(env: Any) -> str | None:
     return f"{base} · {task}" if task else base
 
 
+def _badge_visibility_js(element: str, failure: str) -> str:
+    """Return fail-closed rendered visibility proof for one badge element variable."""
+    return (
+        f"if(typeof {element}.checkVisibility==='function'&&!{element}.checkVisibility("
+        "{checkOpacity:true,checkVisibilityCSS:true,contentVisibilityAuto:true}))"
+        "{" + failure + "}"
+        f"for(var n={element};n&&n.nodeType===1;n=n.parentElement){{"
+        "var s=window.getComputedStyle(n);"
+        "var cp=s.clipPath||s.webkitClipPath||'none';"
+        "var mi=s.maskImage||s.webkitMaskImage||'none';"
+        "if(s.display==='none'||s.visibility==='hidden'||s.visibility==='collapse'||"
+        "s.opacity==='0'||s.contentVisibility==='hidden'||"
+        "(s.filter&&s.filter!=='none')||(cp&&cp!=='none')||(mi&&mi!=='none')||"
+        "(s.clip&&s.clip!=='auto')||(s.mixBlendMode&&s.mixBlendMode!=='normal'))"
+        "{" + failure + "}}"
+        f"var r={element}.getBoundingClientRect();"
+        "if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||"
+        "r.top>=window.innerHeight||r.left>=window.innerWidth)"
+        "{" + failure + "}"
+        "function vhAlpha(c){if(!c||c==='transparent')return 0;"
+        "var m=c.match(/rgba?\\(([^)]+)\\)/);if(!m)return 0;"
+        "var p=m[1].split(',');return p.length>3?parseFloat(p[3]):1;}"
+        f"var cs=window.getComputedStyle({element});"
+        "if(vhAlpha(cs.backgroundColor)<=0||vhAlpha(cs.color)<=0)"
+        "{" + failure + "}"
+        f"{element}.style.setProperty('pointer-events','auto','important');"
+        "var pts=[[r.left+r.width/2,r.top+r.height/2],"
+        "[r.left+2,r.top+2],[r.right-2,r.top+2],"
+        "[r.left+2,r.bottom-2],[r.right-2,r.bottom-2]];"
+        "var hit=true;for(var i=0;i<pts.length;i++){"
+        "var x=Math.max(0,Math.min(window.innerWidth-1,pts[i][0]));"
+        "var y=Math.max(0,Math.min(window.innerHeight-1,pts[i][1]));"
+        "var h=document.elementFromPoint(x,y);"
+        f"if(h!=={element}&&!{element}.contains(h)){{hit=false;break;}}}}"
+        f"{element}.style.setProperty('pointer-events','none','important');"
+        "if(!hit){" + failure + "}"
+    )
+
+
 def _badge_js(label: str, *, expected_url: str | None = None) -> str:
     """상단중앙 고정 배지 주입 JS. pointer-events:none 로 사장님 클릭을 막지 않는다.
     idempotent: 기존 배지를 먼저 제거해 중복이 쌓이지 않는다."""
@@ -85,20 +124,17 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         "font:600 13px/1.6 -apple-system,BlinkMacSystemFont,sans-serif;"
         "padding:4px 14px;border-radius:0 0 8px 8px;box-shadow:0 2px 8px rgba(0,0,0,.3);"
         "letter-spacing:.2px;white-space:nowrap;';"
+        "[['position','fixed'],['top','0px'],['left','50%'],"
+        "['transform','translateX(-50%)'],['z-index','2147483647'],"
+        "['display','block'],['visibility','visible'],['opacity','1'],"
+        "['pointer-events','none'],['background-color','rgba(220,38,38,0.95)'],"
+        "['color','#fff'],['filter','none'],['clip-path','none'],"
+        "['mask-image','none'],['mix-blend-mode','normal'],"
+        "['backface-visibility','visible'],['contain','none']].forEach(function(p){"
+        "e.style.setProperty(p[0],p[1],'important');});"
         "(document.body||document.documentElement).appendChild(e);"
-        "for(var n=e;n&&n.nodeType===1;n=n.parentElement){"
-        "var ns=window.getComputedStyle(n);"
-        "var cp=ns.clipPath||ns.webkitClipPath||'none';"
-        "var mi=ns.maskImage||ns.webkitMaskImage||'none';"
-        "if(ns.display==='none'||ns.visibility==='hidden'||ns.visibility==='collapse'||"
-        "ns.opacity==='0'||ns.contentVisibility==='hidden'||"
-        "(ns.filter&&ns.filter!=='none')||(cp&&cp!=='none')||(mi&&mi!=='none')||"
-        "(ns.clip&&ns.clip!=='auto')||(ns.mixBlendMode&&ns.mixBlendMode!=='normal'))"
-        "{e.remove();return null;}}"
-        "var r=e.getBoundingClientRect();"
-        "if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||"
-        "r.top>=window.innerHeight||r.left>=window.innerWidth){e.remove();return null;}"
-        "return id;})()"
+        + _badge_visibility_js("e", "e.remove();return null;")
+        + "return id;})()"
     )
 
 
@@ -128,19 +164,8 @@ def _owned_navigation_js(
         f"if(location.href!=={json.dumps(expected_url)})return false;"
         f"var b=document.getElementById({json.dumps(_BADGE_ID)});"
         f"if(!b||b.textContent!=={json.dumps(badge_label, ensure_ascii=False)})return false;"
-        "for(var n=b;n&&n.nodeType===1;n=n.parentElement){"
-        "var s=window.getComputedStyle(n);"
-        "var cp=s.clipPath||s.webkitClipPath||'none';"
-        "var mi=s.maskImage||s.webkitMaskImage||'none';"
-        "if(s.display==='none'||s.visibility==='hidden'||s.visibility==='collapse'||"
-        "s.opacity==='0'||s.contentVisibility==='hidden'||"
-        "(s.filter&&s.filter!=='none')||(cp&&cp!=='none')||(mi&&mi!=='none')||"
-        "(s.clip&&s.clip!=='auto')||(s.mixBlendMode&&s.mixBlendMode!=='normal'))"
-        "return false;}"
-        "var r=b.getBoundingClientRect();"
-        "if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||"
-        "r.top>=window.innerHeight||r.left>=window.innerWidth)return false;"
-        f"var u={json.dumps(url)};"
+        + _badge_visibility_js("b", "return false;")
+        + f"var u={json.dumps(url)};"
         "location.assign(u);return true;})()"
     )
 
