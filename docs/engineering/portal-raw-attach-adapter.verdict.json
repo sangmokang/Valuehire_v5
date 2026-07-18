@@ -1,0 +1,30 @@
+{
+  "claim_id": "portal-raw-attach-adapter-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "claim": "raw_page_adapter.RawPage/RawLocator 가 검색부 playwright 표면(locator/count/fill/click/first/inner_text/goto/wait_for_timeout/url)을 raw_cdp.CDPTab 위에 재현. selector·value json.dumps 이스케이프(injection 방지). page.on 은 조각 B2.",
+    "changed_files": [
+      "tools/multi_position_sourcing/raw_page_adapter.py",
+      "tests/test_raw_page_adapter.py"
+    ],
+    "red_evidence": "RED: 어댑터 모듈 미존재 collection error",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "focused 8 passed / 전체 1772 passed, 4 xfailed exit 0",
+    "mutant_check": "count 이스케이프 제거(json.dumps→raw f-string) → injection 테스트 1 failed 감지 후 원복",
+    "wiring_status": "ORPHAN-BY-DESIGN: RawPage 는 아직 start() 가 안 씀. 조각 B2(start() saramin/jobkorea 를 find_verified+raw attach+RawPage 로 이행)가 소비 → 고아 해소. 조각 A·마커검증·어댑터·B2 를 한 브랜치(PR#149)로 묶어 배송(V1·V2 지시).",
+    "test_quality": {
+      "happy_path": true,
+      "edge_cases": "따옴표·백슬래시 selector 이스케이프(injection)·first=index0·매칭 없음 no-op",
+      "failure_paths": "요소 없으면 fill/click no-op(예외 안 던짐), count=0",
+      "asserts_observable_behavior_only": true,
+      "weakened_or_deleted_assertions": 0
+    }
+  },
+  "failed_attempts": [],
+  "v1": null,
+  "v2": null,
+  "three_way_agree": false,
+  "status": "조각 B1(어댑터) GREEN. 고아=조각 B2 배선으로 해소 예정. 대공사 진행중: A(해석)+마커검증+B1(어댑터) 완료 → B2(start 배선)+B3(라이브) 남음"
+}
