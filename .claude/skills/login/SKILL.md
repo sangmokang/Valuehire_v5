@@ -13,7 +13,7 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 - 사람용 실행 프롬프트: 이 `SKILL.md`
 - 로그인 판정과 차단 신호: `docs/sot/26-portal-login-spec.json`
 - 참고만 하는 과거 기록: `docs/ai-search/portal-login-live-search-runbook-2026-06-17.md`
-- 브라우저 실행·중복 방지: `scripts/portal_browsers.sh`
+- 관리 브라우저 프로세스·endpoint 조회: `scripts/portal_browsers.sh status|cdp`
 - 기존 탭 단일 연결·표시: `tools/multi_position_sourcing/raw_cdp.py`
 - 사람 활동 감지: `tools/multi_position_sourcing/owner_activity.py`
 
@@ -23,7 +23,7 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 
 아래 규칙은 권고가 아니라 중단 조건이다.
 
-1. 먼저 찾고, 나중에 연다. 실행 중인 브라우저, CDP endpoint, 영속 프로필, 대상 사이트 탭을 모두 조사하기 전에는 브라우저나 탭을 만들지 않는다.
+1. 먼저 찾고, 로그인 흐름에서는 새로 열지 않는다. 실행 중인 브라우저, CDP endpoint, 영속 프로필, 대상 사이트 탭을 조사해 정확한 기존 target만 사용한다.
 2. 기존 브라우저와 로그인된 탭을 최우선으로 재사용한다. 정확한 대상 탭 하나에 raw CDP로 연결한다.
 3. 사람이 키 입력, 마우스 조작, 로그인, captcha/2FA/checkpoint 해결을 하는 동안 AI의 click/type/navigate/close는 0회다. 읽기 전용 상태 확인만 허용한다.
 4. 사람이 만든 로그인 세션을 소유권과 무관하게 보존한다. 로그인 성공 후 창을 닫지 않는다. 탭을 닫지 않는다. 프로필을 삭제하지 않는다.
@@ -47,7 +47,7 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 | `AUTHENTICATED` | 사이트별 로그인 증명 완료 | 증거 기록, 원래 작업 시작 | 사람인·잡코리아 15분/링크드인 30분 경과→`KEEPALIVE`, 로그아웃 신호→`AUTH_LOST` |
 | `KEEPALIVE` | 세션 수명 연장을 위한 안전 확인 | 검증된 읽기 전용 링크 1회 클릭 후 동일 탭의 이전 history entry로 Browser Back | 원래 URL·로그인 마커 재확인→`AUTHENTICATED`, 실패→`AUTH_LOST` |
 | `AUTH_LOST` | 로그인 마커 소실/로그인 화면 전환 | 자동 로그인 1회 또는 사람 인계 | 성공→`AUTHENTICATED`, 챌린지→`HUMAN_AUTH` |
-| `HANDOFF` | 사람에게 안전하게 넘김 | 배지 제거, CDP 연결만 해제 | 종료. 브라우저·창·탭·프로필은 유지 |
+| `HANDOFF` | 사람에게 안전하게 넘김 | guard 허용 시 title/배지 복원, 아니면 cleanup pending; CDP 연결만 해제 | 종료. 브라우저·창·탭·프로필은 유지 |
 
 ### 사람 점유 판정
 
@@ -62,9 +62,9 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 
 사람에게 인증을 넘기기 전에 정확한 CDP target과 macOS 창을 다음 순서로 1:1 결합한다.
 
-1. 관리된 site endpoint에서 정확한 profile path, Chrome PID, target id, `Browser.getWindowForTarget` bounds를 읽는다.
-2. `skills/login/scripts/macos_window_locator.swift`를 실행해 Swift CoreGraphics 목록을 읽고, **같은 PID + CDP bounds + 정확한 title marker**로 CGWindowID 하나를 결정한다. 0개이거나 여러 개면 임의 창을 고르지 않고 fail-closed 한다.
-3. 인계 직전 해당 target에만 `[LOGIN HERE][<agent>][<site>][<target-id-suffix>]` title prefix와 `vh-automation-badge`를 붙이고, 해당 창을 단 1회 앞으로 보여준다.
+1. 관리된 site endpoint를 가진 **정확한 기존 Chrome 프로세스**의 명령행에서 `--remote-debugging-port`, `--user-data-dir`, browser PID를 결합한다. page target WebSocket의 `SystemInfo.getProcessInfo`에 PID를 묻거나 포트를 추측하지 않는다. 같은 endpoint/profile을 주장하는 루트 프로세스가 0개 또는 여러 개면 중단한다.
+2. 그 endpoint의 정확한 기존 target id와 `Browser.getWindowForTarget` bounds를 읽고, 스킬 폴더 기준 상대 경로 `scripts/macos_window_locator.swift`를 실행한다. 먼저 title marker 없이 **같은 PID + CDP bounds**로 유일한 CGWindowID를 preflight한다. 0개이거나 여러 개면 어떤 title·배지·focus도 보내지 않고 fail-closed 한다.
+3. 인계 직전 해당 target에만 `[LOGIN HERE][<agent>][<site>][<target-id-suffix>]` **title prefix**와 `vh-automation-badge`를 붙인다. 그 다음 **같은 PID + 같은 bounds + prefix marker**로 다시 해석한 CGWindowID가 preflight와 같을 때만, 정확한 PID의 앱과 해당 창을 단 1회 앞으로 보여준다. title `contains`나 첫 창 fallback은 금지다.
 4. 사용자에게 agent, site, 브라우저 PID, profile path, CDP endpoint, target id 끝자리, 정제한 title, query/fragment를 제거한 URL, CGWindowID를 반드시 표시한다.
 5. 스크린샷이 필요하면 전체 화면이 아니라 `screencapture -x -l <CGWindowID>`로 그 창만 캡처한다. 다른 PID의 창 제목은 출력하거나 캡처하지 않는다.
 6. `HUMAN_AUTH` 진입 후에는 5초 이상 간격으로 fresh 로그인 마커와 OS idle만 읽는다. 시간제한은 없으며, 성공 마커와 마지막 사람 입력 후 15초 조용함이 모두 성립해야 재개한다.
@@ -78,7 +78,7 @@ Claude, Codex, Hermes가 동시에 같은 사이트를 다루지 못하게 `DISC
 - 점유권을 얻지 못하면 브라우저·탭 생성과 CDP 조작을 0회로 유지하고 기다린다. 기존 lock을 자동 삭제하거나 빼앗지 않는다.
 - lock이 낡아 보여도 자동 제거하지 않는다. 기록된 프로세스와 실제 브라우저 작업이 모두 끝났음을 사람이 확인한 경우에만 정리한다.
 - 소유자는 `HANDOFF`까지 lock을 유지하고, 종료 시 자기 토큰이 일치할 때만 제거한다.
-- 탭 생성 직전에도 자기 토큰을 다시 확인한다. 이 절차 없이 “탭이 없으니 1개 생성”으로 진행하지 않는다.
+- target attach 직전에도 자기 토큰을 다시 확인한다. 탭이 없으면 생성하지 않고 `HANDOFF`한다.
 
 ### 모든 변경 조작 직전 장벽
 
@@ -101,8 +101,7 @@ Claude, Codex, Hermes가 동시에 같은 사이트를 다루지 못하게 `DISC
 3. 로그인된 정확한 탭이 있으면 그 탭 하나에 raw CDP attach한다. 전체 브라우저를 enumerate하는 `connectOverCDP`는 사용하지 않는다.
 4. 같은 영속 프로필의 Chrome 프로세스가 살아 있는데 CDP만 잠깐 무응답이면 새 브라우저를 열지 않는다. 기다린 뒤 재확인하며 재실행하지 않는다.
 5. 대상 탭이 없으면 새 탭이나 새 창을 만들지 않는다. 정확한 사이트·profile·endpoint가 어떤 것이었는지 보고하고 `HANDOFF`한다.
-6. 호환되는 브라우저 프로세스 자체가 없을 때만 `./scripts/portal_browsers.sh start <saramin|jobkorea|linkedin>`을 대상 채널별로 한 번 실행한다. 인자 없는 `start`는 3사 전체가 명시적으로 필요할 때만 허용한다. 이 스크립트의 프로세스/프로필 중복 가드를 우회하지 않는다.
-7. 시작 후 CDP가 바로 응답하지 않아도 start를 반복 호출하지 않는다. 프로세스가 있으면 기다리고, 없고 명확히 실패했을 때만 원인을 보고한다.
+6. 호환되는 관리 브라우저 프로세스가 없더라도 로그인 흐름이 `start`, 새 브라우저, 새 창, 새 탭을 자동 실행하지 않는다. 기대한 site/profile/endpoint와 `managed_browser_missing`을 보고하고 `HANDOFF`한다. 브라우저 시작은 사업 오너가 별도로 명시한 실행 요청에서만 별도 정식 러너가 수행한다.
 
 포트는 9222/9223/9224/9225로 추측하지 않는다. 다음 명령으로 실제 살아있는 endpoint를 구한다.
 
@@ -115,6 +114,7 @@ Claude, Codex, Hermes가 동시에 같은 사이트를 다루지 못하게 `DISC
 
 금지:
 - 매 시도마다 Chrome 실행
+- 로그인 흐름에서 `scripts/portal_browsers.sh start` 자동 실행
 - 매 재시도마다 새 탭 생성
 - 대상 탭이 없다고 `new_page`/새 탭으로 로그인 페이지 생성
 - 같은 프로필로 두 Chrome 실행
@@ -134,7 +134,7 @@ export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 
 - 배지가 이미 있으면 새 배지를 쌓지 말고 내용만 갱신한다.
 - 사람이 조작을 시작하면 AI는 즉시 무조작으로 전환한다. 배지는 `사람 로그인 대기 · AI 무조작`처럼 상태를 바꾼다.
-- `HANDOFF`에서는 배지를 제거하고 CDP WebSocket만 닫는다.
+- `HANDOFF`에서는 fresh lease/idle mutation guard가 허용할 때만 원래 title과 배지를 복원하고 CDP WebSocket만 닫는다. 사람이 다시 활동해 cleanup guard가 막히면 UI를 건드리지 않고 `cleanup_pending=true`를 보고한 뒤 WebSocket만 닫는다.
 - 로그인된 탭, 창, 브라우저 프로세스는 제거하지 않는다.
 
 ## 4. 로그인 실행 순서
@@ -162,6 +162,30 @@ export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 - 모든 사람 안내를 쉬운 한국어로 표시
 
 이 조건을 충족하는 자동 로그인 어댑터가 현재 실행환경에서 확인되지 않으면 위험한 과거 실행기로 대체하지 않는다. 기존 세션을 보존하고 동일 탭을 정식 login session guard의 `HUMAN_AUTH`로 넘긴다. 레거시 사람 대기 함수가 `human_auth_runner_required`를 반환하면 이는 중단 신호가 아니라 정확한 target/window 식별을 갖춘 정식 러너로 전환하라는 fail-closed 신호다. “자동 로그인을 했다”고 거짓 보고하지 않는다.
+
+### 정식 session guard 실행기
+
+사람 인증 인계는 legacy login 함수나 즉석 CDP 스크립트가 아니라 다음 정식 진입점으로 실행한다. 실행기는 site lease를 먼저 획득하고, 위 절차로 찾은 기존 target 하나에만 attach한다. 정확한 target이 여러 개면 `--target-id`로 하나를 명시하고, 없으면 만들지 않는다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \
+  --site linkedin_rps \
+  --agent Codex \
+  --target-id '<existing-target-id>'
+```
+
+이 명령은 정확한 창을 1회 표시한 뒤 locator JSON을 출력하고, `HUMAN_AUTH` 동안 timeout 없이 읽기 전용으로 기다린다. Ctrl-C 같은 명시적 외부 중단에서도 창·탭·프로필은 유지하고 CDP 연결만 해제한다.
+
+세션 유지는 아래 정식 진입점만 쓴다. `--safe-target-json`은 사람이 사전 감사한 정확한 기존 target의 동일 origin·GET·`_self`·무료 읽기 전용 링크 레코드여야 한다. 최소한 `target_id`, `source_url`, `selector`, `destination_url`, `method`, `target_attr`, `download`, `dedicated_tab`, `clean_form`, `previously_opened_free`, `risk_labels`를 담는다. 레코드가 있어도 실행기가 위험 URL/selector denylist, 동일 origin, fresh DOM link 속성, target id, navigation history 추가·복원을 다시 증명한다. 파일이 없거나 값/증명이 하나라도 틀리면 fail-closed SKIP한다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard keepalive \
+  --site linkedin_rps \
+  --agent Codex \
+  --safe-target-json '<pre-audited-safe-target.json>'
+```
+
+keepalive는 동일 target의 allowlist 링크 1회 click과 `Page.navigateToHistoryEntry(previous_entry)` Browser Back 왕복만 허용한다. 새 탭·새 창·`goto(source_url)` fallback·재시도는 없다.
 
 ## 5. 사이트별 결정적 증명
 
@@ -280,7 +304,7 @@ python3 -m tools.install_login_skill
 - [ ] `login` 스킬을 읽었다.
 - [ ] 사람 활동 판정에 성공했고 최근 입력이면 양보했다.
 - [ ] 모든 실행 중 브라우저·실제 CDP endpoint·영속 프로필을 조사했다.
-- [ ] 정확한 기존 탭을 찾기 전에 새 브라우저/탭을 만들지 않았다.
+- [ ] 로그인 흐름 전체에서 새 브라우저·새 창·새 탭을 만들지 않았다.
 - [ ] AI 배지의 실행 주체와 작업명이 맞다.
 
 실행 후:
@@ -289,4 +313,4 @@ python3 -m tools.install_login_skill
 - [ ] 사람 개입 중 AI 조작은 0회였다.
 - [ ] 새 창은 0개이며 새 탭도 0개였다.
 - [ ] 브라우저·창·탭·프로필 종료는 0건이다.
-- [ ] 배지를 제거하고 CDP 연결만 해제했다.
+- [ ] fresh guard가 허용하면 title/배지를 복원했고, 막히면 `cleanup_pending`을 보고했으며 CDP 연결만 해제했다.

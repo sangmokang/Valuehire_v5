@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "skill": "login",
   "supported_agents": ["claude", "codex", "hermes"],
   "platform": "macos",
@@ -44,7 +44,9 @@
       "next": ["AUTHENTICATED", "HUMAN_AUTH", "HANDOFF"]
     },
     "HANDOFF": {
-      "allowed_actions": ["remove_badge", "close_cdp_websocket", "report_non_secret_state"],
+      "allowed_actions": ["guarded_restore_original_title", "guarded_remove_badge", "close_cdp_websocket", "report_non_secret_state"],
+      "cleanup_guard": "fresh_lease_and_owner_idle_mutation_guard",
+      "cleanup_guard_failure": "set_cleanup_pending_and_close_cdp_websocket_without_ui_mutation",
       "terminal": true
     }
   },
@@ -70,6 +72,14 @@
     "max_new_tabs_per_site": 0,
     "max_attached_targets_per_site": 1
   },
+  "managed_process": {
+    "identity_source": "unique_existing_root_browser_process_command_line",
+    "required_flags": ["--remote-debugging-port", "--user-data-dir"],
+    "pid_source": "root_browser_process_not_page_target_SystemInfo.getProcessInfo",
+    "endpoint_recheck_after_process_resolution": true,
+    "missing_or_ambiguous_action": "HANDOFF_without_starting_browser_window_or_tab",
+    "automatic_start_allowed": false
+  },
   "forbidden_calls": [
     "connectOverCDP",
     "new_page",
@@ -78,7 +88,8 @@
     "browser.close",
     "kill_browser",
     "portal_browsers stop",
-    "portal_browsers restart"
+    "portal_browsers restart",
+    "portal_browsers start during login flow"
   ],
   "badge": {
     "dom_id": "vh-automation-badge",
@@ -93,8 +104,11 @@
   },
   "exact_window": {
     "resolver": "Swift CoreGraphics",
-    "script": "skills/login/scripts/macos_window_locator.swift",
-    "join_keys": ["browser_pid", "cdp_window_bounds", "sanitized_title_marker"],
+    "script": "scripts/macos_window_locator.swift",
+    "preflight_join_keys": ["browser_pid", "cdp_window_bounds"],
+    "marked_join_keys": ["browser_pid", "cdp_window_bounds", "title_prefix_marker"],
+    "require_same_cg_window_id_before_and_after_marker": true,
+    "title_match": "prefix_only",
     "ambiguity": "fail_closed",
     "capture": "screencapture -x -l <CGWindowID>",
     "capture_scope": "exact_window_only",
@@ -109,7 +123,8 @@
       "sanitized_url",
       "cg_window_id"
     ],
-    "forbid_first_window_or_title_substring_fallback": true
+    "forbid_first_window_or_title_substring_fallback": true,
+    "preflight_failure_mutations": 0
   },
   "human_auth": {
     "presentation_state": "AI_ATTACHED",
@@ -121,7 +136,16 @@
     "timeout_seconds": null,
     "success_condition": "fresh_site_auth_marker_and_owner_quiet",
     "outer_timeout_may_cancel": false,
-    "restore_original_title_on_handoff": true
+    "restore_original_title_on_handoff": true,
+    "handoff_cleanup_requires_mutation_guard": true,
+    "cleanup_guard_failure": "cleanup_pending_without_ui_mutation"
+  },
+  "production_entrypoints": {
+    "human_auth": "python3 -m tools.multi_position_sourcing.session_guard human-auth --site <site> --agent <Claude|Codex|Hermes> [--target-id <existing-target-id>]",
+    "keepalive": "python3 -m tools.multi_position_sourcing.session_guard keepalive --site <site> --agent <agent> --safe-target-json <pre-audited-record>",
+    "safe_target_record": "exact_target_same_origin_GET_self_free_readonly_link_pre_audited_by_human",
+    "missing_or_invalid_safe_target_record": "fail_closed_skip",
+    "legacy_cookie_classifier_is_not_a_login_or_keepalive_runner": true
   },
   "keepalive": {
     "interval_seconds": {

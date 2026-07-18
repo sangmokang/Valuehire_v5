@@ -1,7 +1,7 @@
 {
   "$schema_note": "포털 로그인 빠른 진입 스펙 (spec-driven SOT). 사장님 지시(2026-06-25, /st): 'AI Search 로직이 무너지고 무시하고 진행한 원인 + 로그인이 너무 길었던 원인 모두 적대적으로 찾아 스킬에 반영하고, 스펙을 JSON으로 명확하게 조여 박아라.' 이 파일이 3사(사람인·잡코리아·링크드인) 로그인 진입의 단일 기계 명세다. 기존 스킬이 가리키던 docs/sot/10-auto-login.md(부재)·tools/.../auto-login.mjs(부재)의 죽은 참조를 대체한다.",
   "id": "26-portal-login-spec",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "updated_at": "2026-07-18",
   "title": "포털 로그인 빠른 진입 스펙 (raw CDP 단일탭 · exact macOS 창 인계 · HUMAN_AUTH 무조작 · 안전 keepalive)",
   "verified_live": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차 0), 2026-06-09/07-07 링크드인도 시크릿 저장소 자동로그인 대상임을 재확정. 2026-07-18 macOS에서 Python Quartz는 미설치였지만 Swift CoreGraphics CGWindowID 열거와 `screencapture -x -l <CGWindowID>` 단일 창 캡처 기본 동작을 실기기로 확인. HUMAN_AUTH 전체 러너의 실사이트 통합 검증은 별도 증거 전에 과장하지 않는다.",
@@ -16,16 +16,17 @@
     ".env.local (SARAMIN_*/JOBKOREA_*)"
   ],
   "invariants": [
-    "INV1: 3사(사람인·잡코리아·링크드인) 로그인은 자동화(에이전트)가 **무조건 수행**한다. 어떤 코드·스키마·테스트도 자동 로그인을 막지 않는다 — 막는 코드/제약이 발견되면 SOT 위반이므로 즉시 삭제한다(과거 재유입 사례: qa-linkedin-autologin-sot). 세션 만료 시 저장된 자격증명(.env.local)으로 자동 재로그인 (CLAUDE.md 불변식 1). 자동 로그인을 사람 게이트로 떨어뜨리는 것은 오직 INV2의 챌린지 감지 시뿐이다.",
+    "INV1: 3사(사람인·잡코리아·링크드인) 로그인은 정확한 기존 관리 브라우저와 기존 target이 있을 때 자동화(에이전트)가 수행한다. 새 브라우저·새 창·새 탭을 자동 생성하지 않는다. 기존 target에서 세션 만료가 확인되면 저장된 자격증명(.env.local)으로 자동 재로그인하고, INV2 챌린지는 사람에게 넘긴다. 관리 프로세스나 정확한 target이 없거나 모호하면 기대한 site/profile/endpoint를 표시하고 HANDOFF한다.",
     "INV2: 3사 모두 시크릿 저장소/기존 세션으로 자동 로그인한다. **오직** 캡차·2FA·봇차단·멀티세션 락 감지 시에만 그 채널 즉시 STOP하고 사람에게 넘긴다(그 외에는 사람에게 넘기지 않는다). 자동 우회·연속 재시도 금지.",
-    "INV3: 로그인된 관리 크롬을 kill/close 하지 않는다. 포트를 9222로 추측하지 않고 site의 정확한 endpoint·profile·target에 attach한다. 로그인 흐름에서 새 탭은 0개다.",
+    "INV3: 로그인된 관리 크롬을 kill/close/start/restart 하지 않는다. 고정 포트를 추측하지 않고 site의 정확한 endpoint·profile·target에 attach한다. 로그인 흐름에서 새 브라우저·새 창·새 탭은 모두 0개다.",
     "INV4: 자율(무인) 발송('보내기'/Send/제안발송)은 로그인 흐름과 무관하게 절대 자동 금지 — SOT3/SOT28 자동발송 게이트를 통과한 건만 자동. **단, 사장님이 특정 메일/발송을 '보내라·발송하라'고 명시 지시하면 초안에서 멈추지 않고 Send까지 실행한다(자율 발송이 아니라 사장님 명시 지시 이행).** 발송 실행 도구가 초안(draft)만 지원하면 그 한계를 사장님께 알린다.",
     "INV5: connectOverCDP 전체 attach 금지(탭 과다 시 hang). raw CDP 단일탭만 사용.",
-    "INV6: 사람 개입(2FA·캡차·체크포인트·멀티세션 락)이 필요하면 정확한 CDP target과 Chrome PID를 Swift CoreGraphics의 유일한 CGWindowID에 1:1로 결합한다. 결과가 0개/여러 개면 fail-closed한다. 해당 창에만 로그인 title·배지를 표시하고 1회 표면화한 후 HUMAN_AUTH에서는 읽기·대기 외 브라우저 조작을 0회로 유지한다."
+    "INV6: 사람 개입(2FA·캡차·체크포인트·멀티세션 락)이 필요하면 정확한 CDP target과 해당 endpoint/profile을 가진 기존 Chrome 루트 프로세스 PID를 Swift CoreGraphics의 유일한 CGWindowID에 1:1로 결합한다. title 변경 전 PID+bounds preflight와 title prefix 변경 후 PID+bounds+prefix 해석이 같은 CGWindowID여야 한다. 결과가 0개/여러 개면 fail-closed한다. 해당 창에만 로그인 title·배지를 표시하고 1회 표면화한 후 HUMAN_AUTH에서는 읽기·대기 외 브라우저 조작을 0회로 유지한다."
   ],
   "human_auth_control": {
-    "window_resolution": "managed site endpoint -> exact profile/browser PID/target id -> Browser.getWindowForTarget bounds -> Swift CoreGraphics same PID+bounds+exact title marker -> unique CGWindowID",
-    "window_locator_script": "skills/login/scripts/macos_window_locator.swift",
+    "window_resolution": "managed site endpoint -> exact existing root browser process command line(--remote-debugging-port + --user-data-dir) -> browser PID/profile -> exact target id -> Browser.getWindowForTarget bounds -> CoreGraphics PID+bounds preflight -> target-only title prefix+badge -> CoreGraphics same PID+bounds+prefix -> same unique CGWindowID",
+    "browser_pid_source": "exact managed root Chrome process command line; page-target SystemInfo.getProcessInfo is not used",
+    "window_locator_script": "scripts/macos_window_locator.swift",
     "required_locator_fields": [
       "agent",
       "site",
@@ -40,7 +41,7 @@
     "title_prefix": "[LOGIN HERE][<agent>][<site>][<target-id-suffix>]",
     "capture_command": "screencapture -x -l <CGWindowID>",
     "capture_policy": "정확한 창만 캡처. 다른 PID의 창 제목·화면·전체 desktop 출력 금지. 캡처는 0700 임시 디렉터리/0600 파일에 두고 표시 후 삭제.",
-    "ambiguity_policy": "same PID+bounds+exact marker 결과가 0개 또는 여러 개면 focus/capture 0회, HUMAN_ACTIVE/HANDOFF로 fail-closed. first window·title substring fallback 금지.",
+    "ambiguity_policy": "preflight PID+bounds 또는 post-marker PID+bounds+title-prefix 결과가 0개/여러 개이거나 CGWindowID가 바뀌면 focus/capture 0회, HUMAN_ACTIVE/HANDOFF로 fail-closed. first window·title contains fallback 금지.",
     "max_presentations_per_episode": 1,
     "presentation_timing": "AI_ATTACHED에서 title prefix+badge+exact window 1회 표면화 후 HUMAN_AUTH 진입",
     "allowed_during_wait": ["read_auth_marker", "read_owner_idle", "wait"],
@@ -50,7 +51,8 @@
     "quiet_after_owner_input_seconds": 15,
     "success_condition": "fresh site auth marker AND macOS owner idle >= 15 seconds",
     "outer_timeout_policy": "HUMAN_AUTH는 채널/프리플라이트 시간제한으로 취소하지 않음. 명시적 외부 중단 시에도 CDP WebSocket만 해제.",
-    "legacy_policy": "generic Playwright page는 exact endpoint/profile/target/CGWindowID 식별이 없으므로 focus·poll·ready callback을 실행하지 않고 human_auth_runner_required로 fail-closed"
+    "legacy_policy": "generic Playwright page는 exact endpoint/profile/target/CGWindowID 식별이 없으므로 focus·poll·ready callback을 실행하지 않고 human_auth_runner_required로 fail-closed",
+    "handoff_cleanup": "fresh lease/idle mutation guard가 허용할 때만 original title과 badge를 복원. guard 실패면 UI mutation 0회, cleanup_pending=true 보고 후 CDP WebSocket만 해제"
   },
   "session_keepalive": {
     "interval_seconds": {
@@ -72,9 +74,16 @@
     "new_tab_or_window": false,
     "retry": false
   },
+  "production_entrypoints": {
+    "human_auth": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth --site <site> --agent <Claude|Codex|Hermes> [--target-id <existing-target-id>]",
+    "keepalive": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard keepalive --site <site> --agent <agent> --safe-target-json <pre-audited-record>",
+    "safe_target_record": "사전 감사한 exact target의 same-origin GET _self 무료 읽기 전용 링크 레코드. 누락/invalid면 fail-closed SKIP; 존재해도 runner가 denylist·same-origin·fresh DOM·target id·history 왕복을 다시 증명",
+    "missing_process_or_target": "HANDOFF without browser/window/tab creation",
+    "legacy_portal_login": "fail-closed delegation only; not the human-auth or keepalive runner"
+  },
   "connection": {
     "method": "raw_cdp_single_tab",
-    "why": "사장님 9222에 탭 수십~수백개(2026-06-25 실측 161개)면 playwright connectOverCDP 전체 attach가 모든 탭(무거운 페이지 포함) enumerate/attach로 hang. ws는 붙는데 이후 ctx.pages()/evaluate에서 멈춤. → 목표 탭 1개에만 raw CDP WebSocket으로 직접 attach.",
+    "why": "관리 브라우저에 탭 수십~수백개(2026-06-25 실측 161개)면 playwright connectOverCDP 전체 attach가 모든 탭(무거운 페이지 포함) enumerate/attach로 hang. ws는 붙는데 이후 ctx.pages()/evaluate에서 멈춤. → 목표 탭 1개에만 raw CDP WebSocket으로 직접 attach.",
     "runtime": "node22 global WebSocket + fetch (외부 의존 0)",
     "attach_steps": [
       "list = await (await fetch('http://localhost:9222/json/list')).json()",
@@ -91,7 +100,7 @@
     ]
   },
   "tab_selection": {
-    "rule": "/json/list 에서 type==page + 채널별 talent-pool/holding URL을 정확 매칭한 탭만 사용. 절대 새 탭 안 만든다.",
+    "rule": "/json/list 에서 type==page + 채널별 공식 login/talent-pool/holding surface 경로를 정확 매칭한 기존 탭만 사용. 단순 공식 domain 일치만으로는 부족하며 절대 새 탭을 만들지 않는다.",
     "ignore_stale_tabs": "tutorial·/auth·/uas/login-cap·enterprise-authentication 같은 옛 리다이렉트 탭은 무시. 살아있는 talent-pool/feed 탭 우선.",
     "multi_tab_note": "사람인 search·tutorial 여러개, 잡코리아 find 여러개, 링크드인 login-cap 잔여탭 공존 가능 — 정확 URL 매칭으로 1개만 작업"
   },
@@ -185,7 +194,7 @@
     "RC1_dead_autologin_ref": {
       "evidence": "position-register/SKILL.md:15,31,32,126 → tools/saramin-bulk-register-from-jobkorea/auto-login.mjs·tools/jobkorea-bulk-register/auto-login.mjs (둘 다 부재)",
       "impact": "로그인 도구를 찾다 헤맴 → portal_autologin.py에서 셀렉터 직접 추출해 즉석 구현",
-      "fix": "이 스펙(26)으로 대체. 스킬 참조를 26 + portal_autologin.py로 교정."
+      "fix": "이 스펙(26)과 정식 session guard 진입점으로 대체. 과거 실행기는 규범 경로로 참조하지 않는다."
     },
     "RC2_missing_login_sot": {
       "evidence": "docs/sot/10-auto-login.md 부재(position·position-register가 참조)",
