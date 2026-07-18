@@ -82,6 +82,31 @@ def test_resolver_uses_one_managed_endpoint_and_exact_target_never_first_fallbac
         )
 
 
+@pytest.mark.parametrize(
+    ("site", "url"),
+    [
+        ("linkedin_rps", "https://www.linkedin.com/feed/"),
+        ("saramin", "https://www.saramin.co.kr/zf_user/jobs/list/domestic"),
+        ("jobkorea", "https://www.jobkorea.co.kr/Recruit/Home"),
+    ],
+)
+def test_resolver_rejects_wrong_official_domain_surface(site: str, url: str) -> None:
+    with pytest.raises(LookupError):
+        resolve_existing_target(
+            site,
+            target_id="wrong-surface",
+            managed_endpoint_resolver=lambda _site: "http://127.0.0.1:9225",
+            list_pages=lambda _endpoint: [
+                {
+                    "id": "wrong-surface",
+                    "type": "page",
+                    "url": url,
+                    "webSocketDebuggerUrl": "ws://127.0.0.1:9225/devtools/page/wrong-surface",
+                }
+            ],
+        )
+
+
 def test_human_auth_wait_survives_past_900_seconds_without_mutation_or_refocus() -> None:
     assert "timeout" not in inspect.signature(wait_for_human_auth).parameters
     elapsed = 0.0
