@@ -27,7 +27,7 @@ import stat
 import subprocess
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -100,6 +100,11 @@ class LoginWindowLocator:
     application_activated: bool = True
     _original_title: str = field(default="", repr=False, compare=False)
     _marker: str = field(default="", repr=False, compare=False)
+    _document_loader_id: str = field(default="", repr=False, compare=False)
+    _badge_bound_url: str = field(default="", repr=False, compare=False)
+    _title_marker_applied: bool = field(default=False, repr=False, compare=False)
+    _title_marker_pending: bool = field(default=False, repr=False, compare=False)
+    _badge_marker_pending: bool = field(default=False, repr=False, compare=False)
 
 # SOT-28 §4: 사람인·잡코리아 서버세션(JSESSIONID·ASP.NET_SessionId)은 20~30분 유휴
 # 만료 → 주기는 15분 이하. LinkedIn li_at 는 장수명 → 30분 읽기 전용이면 충분.
@@ -221,6 +226,45 @@ def _managed_profile_path(site: Site, env: Mapping[str, str] | None = None) -> s
     return configured or str(_SITE_DEFAULT_PROFILES[site])
 
 
+_MANAGED_CHROME_EXECUTABLE_NAMES = frozenset({
+    "chrome",
+    "chromium",
+    "chromium browser",
+    "google chrome",
+    "google chrome for testing",
+})
+_MANAGED_CHROME_LEGACY_APPLICATION_PATHS = frozenset({
+    "/applications/chrome",
+    "/applications/chromium",
+    "/applications/google chrome",
+    "/applications/google chrome for testing",
+})
+_POSITIONAL_NAVIGATION_TOKEN = re.compile(
+    r"(?:^|\s)(?:[A-Za-z][A-Za-z0-9+.-]*://\S+|"
+    r"(?:about|data|file|javascript):\S*|www\.\S+)(?=\s|$)",
+    re.IGNORECASE,
+)
+
+
+def _is_managed_chrome_executable(command_prefix: str) -> bool:
+    """Accept one actual Chrome executable token, never an interpreter tail."""
+
+    value = command_prefix.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1].strip()
+    folded = value.casefold()
+    if folded in _MANAGED_CHROME_EXECUTABLE_NAMES:
+        return True
+    if folded in _MANAGED_CHROME_LEGACY_APPLICATION_PATHS:
+        return True
+    app_match = re.fullmatch(
+        r"/.+/(?:google chrome(?: for testing)?|chromium|chrome)\.app/"
+        r"contents/macos/(?P<name>google chrome(?: for testing)?|chromium|chrome)",
+        folded,
+    )
+    return bool(app_match and app_match.group("name") in _MANAGED_CHROME_EXECUTABLE_NAMES)
+
+
 def resolve_managed_browser_process(
     site: Site,
     endpoint: str,
@@ -259,6 +303,10 @@ def resolve_managed_browser_process(
         pid_text, separator, command = line.partition(" ")
         if not separator or not pid_text.isascii() or not pid_text.isdigit():
             continue
+        option_start = re.search(r"(?:^|\s)--[A-Za-z0-9]", command)
+        executable = command[:option_start.start()].strip() if option_start else ""
+        if not _is_managed_chrome_executable(executable):
+            continue
         # ``ps -o command=`` does not preserve argv quoting on macOS.  Parse
         # Chrome's long options by their next `` --flag`` boundary so an
         # unquoted profile such as ``--user-data-dir=/tmp/LinkedIn Profile``
@@ -285,6 +333,7 @@ def resolve_managed_browser_process(
         if (
             not profile
             or not os.path.isabs(profile)
+            or _POSITIONAL_NAVIGATION_TOKEN.search(profile) is not None
             or any(ord(character) < 32 or ord(character) == 127 for character in profile)
         ):
             continue
@@ -382,6 +431,10 @@ def resolve_existing_target(
         raise LookupError(f"{site} {detail} match count was {len(matches)}")
 
     selected = matches[0]
+    if browser_process_resolver is not None:
+        confirmed_process = browser_process_resolver(site, endpoint)
+        if confirmed_process != process:
+            raise LookupError("managed browser process changed after exact page selection")
     return BrowserTargetRef(
         site=site,
         endpoint=endpoint,
@@ -422,6 +475,8 @@ def wait_for_human_auth(
             snapshot = owner_snapshot()
         except Exception:
             snapshot = None
+        if stop_requested():
+            return None
 
         idle = getattr(snapshot, "idle_seconds", None)
         valid_idle = (
@@ -634,6 +689,22 @@ def _tab_target_id(tab: Any) -> str:
     return str(value or "").strip()
 
 
+def _main_document_loader_id(tab: Any) -> str:
+    """Read the current main-frame loader identity without touching the page."""
+
+    try:
+        result = tab.send("Page.getFrameTree")
+    except Exception:
+        return ""
+    tree = result.get("frameTree") if isinstance(result, Mapping) else None
+    frame = tree.get("frame") if isinstance(tree, Mapping) else None
+    if not isinstance(frame, Mapping):
+        return ""
+    loader_id = str(frame.get("loaderId") or "").strip()
+    frame_id = str(frame.get("id") or "").strip()
+    return loader_id if loader_id and frame_id else ""
+
+
 def _fresh_target_matches(tab: Any, ref: BrowserTargetRef, expected_url: str) -> bool:
     """Revalidate the immutable attach binding with fresh CDP target info."""
     if _tab_target_id(tab) != ref.target_id:
@@ -724,6 +795,7 @@ def _wait_for_stable_authenticated_target(
     sleep: Callable[[float], None],
     timeout_seconds: float,
     history_probe: Callable[[], bool] | None = None,
+    sample_spacing_seconds: float = 0.1,
 ) -> str:
     """Require two fresh, redirect-safe observations of one exact target.
 
@@ -760,7 +832,7 @@ def _wait_for_stable_authenticated_target(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return "unverified"
-        sleep(min(0.1, remaining))
+        sleep(min(max(0.1, float(sample_spacing_seconds)), remaining))
 
 
 def execute_keepalive_roundtrip(
@@ -795,8 +867,15 @@ def execute_keepalive_roundtrip(
 
     try:
         mutation_gate()
-    except Exception:
-        return {"status": "skipped_owner_active", "restore_pending": False}
+    except Exception as exc:
+        from .portal_worker import ProfileLockError
+
+        if (
+            isinstance(exc, ProfileLockError)
+            and _profile_lock_is_retryable_mutation_wait(exc)
+        ):
+            return {"status": "skipped_owner_active", "restore_pending": False}
+        raise
     click = getattr(tab, "click_safe_link", None)
     if not callable(click):
         return {"status": "skipped_atomic_click_unavailable", "restore_pending": False}
@@ -843,13 +922,20 @@ def execute_keepalive_roundtrip(
 
     try:
         mutation_gate()
-    except Exception:
-        return {
-            "status": "restore_pending",
-            "restore_pending": True,
-            "source_entry_id": source_entry_id,
-            "destination_verified": destination_auth,
-        }
+    except Exception as exc:
+        from .portal_worker import ProfileLockError
+
+        if (
+            isinstance(exc, ProfileLockError)
+            and _profile_lock_is_retryable_mutation_wait(exc)
+        ):
+            return {
+                "status": "restore_pending",
+                "restore_pending": True,
+                "source_entry_id": source_entry_id,
+                "destination_verified": destination_auth,
+            }
+        raise
     if not _fresh_target_matches(tab, ref, target.destination_url):
         return {
             "status": "target_changed",
@@ -873,6 +959,9 @@ def execute_keepalive_roundtrip(
         sleep=sleep,
         timeout_seconds=navigation_timeout_seconds,
         history_probe=lambda: _history_source_entry(tab, target.source_url) == source_entry_id,
+        # Keep two full observations, but leave enough real dwell between them
+        # to catch a delayed challenge redirect after history restoration.
+        sample_spacing_seconds=0.2,
     )
     if restored_state == "target_changed":
         return {
@@ -924,6 +1013,7 @@ def present_exact_login_window_once(
     window_resolver: Callable[..., Any] | None = None,
     window_capture: Callable[..., bytes] | None = None,
     application_activator: Callable[[int], bool] | None = None,
+    window_sleep: Callable[[float], None] = time.sleep,
 ) -> LoginWindowLocator:
     """Mark, focus, resolve and capture one exact login window in AI_ATTACHED.
 
@@ -941,7 +1031,8 @@ def present_exact_login_window_once(
     if live_url != ref.initial_url or not _official_site_url(ref.site, live_url):
         raise RuntimeError("exact target URL changed before login-window presentation")
     marker, suffix = _login_title_marker(agent, ref.site, ref.target_id)
-    original_title = str(tab.eval("document.title") or "")
+    original_title = ""
+    document_loader_id = _main_document_loader_id(tab)
     site_label = "LinkedIn RPS" if ref.site == "linkedin_rps" else ref.site
     # Never echo the previous page title: it can contain a candidate name or a
     # search query.  Site + sanitized URL are reported separately.
@@ -984,6 +1075,10 @@ def present_exact_login_window_once(
         if window_resolver is None
         else resolve(preflight_identity)
     )
+    if not document_loader_id:
+        raise RuntimeError(
+            "exact target document identity is unavailable before presentation"
+        )
 
     clean_episode = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(episode_id)).strip("-.")[:64]
     if not clean_episode:
@@ -992,10 +1087,39 @@ def present_exact_login_window_once(
     if getattr(tab, "_vh_human_auth_presentation_key", None) == presentation_key:
         raise RuntimeError("exact login window was already presented for this auth episode")
 
+    def require_same_target(phase: str) -> None:
+        if (
+            not _fresh_target_matches(tab, ref, live_url)
+            or _tab_current_url(tab) != live_url
+            or _main_document_loader_id(tab) != document_loader_id
+        ):
+            raise RuntimeError(f"exact target document changed before {phase}")
+
+    def resolve_marked_window(*, frontmost: bool) -> Any:
+        last_error: Exception | None = None
+        for attempt in range(20):
+            require_same_target("window resolution")
+            try:
+                if window_resolver is None:
+                    return resolve(
+                        marked_identity,
+                        require_on_screen=frontmost,
+                        require_frontmost=frontmost,
+                    )
+                return resolve(marked_identity)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 19:
+                    raise
+                window_sleep(0.1)
+        assert last_error is not None
+        raise last_error
+
     # A gate rejection happens before the episode is claimed, so a later owner-idle
     # retry can still present once.  Once a mutation may have been dispatched, the
     # episode is claimed and repeated focus/capture is forbidden.
     mutation_gate()
+    require_same_target("visible badge")
     setattr(tab, "_vh_human_auth_presentation_key", presentation_key)
     provisional_locator = LoginWindowLocator(
         agent=re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-."),
@@ -1012,22 +1136,60 @@ def present_exact_login_window_once(
         application_activated=False,
         _original_title=original_title,
         _marker=marker,
+        _document_loader_id=document_loader_id,
+        _badge_bound_url=live_url,
     )
     # The runner can guardedly clean a partially presented episode even when a
     # marker/title/focus/capture operation raises before this function returns.
     setattr(tab, "_vh_human_auth_cleanup_locator", provisional_locator)
     marker_fn = getattr(tab, "mark_busy", None)
+    provisional_locator = replace(
+        provisional_locator,
+        _badge_marker_pending=True,
+    )
+    setattr(tab, "_vh_human_auth_cleanup_locator", provisional_locator)
     if not callable(marker_fn) or marker_fn(marker, expected_url=live_url) is not True:
         raise RuntimeError("visible login-window marker could not be installed")
+    # Bind cleanup to the document that actually received the badge. A reload
+    # can land after the pre-dispatch loader proof but before Runtime.evaluate;
+    # the next check must abort, while finally still removes our exact badge
+    # from the replacement document instead of treating it as unrelated.
+    badge_loader_id = _main_document_loader_id(tab)
+    provisional_locator = replace(
+        provisional_locator,
+        _document_loader_id=badge_loader_id,
+        _badge_marker_pending=False,
+    )
+    setattr(tab, "_vh_human_auth_cleanup_locator", provisional_locator)
+    if badge_loader_id != document_loader_id:
+        raise RuntimeError("exact target document changed while installing visible badge")
 
     mutation_gate()
-    title_result = tab.eval(
-        "(function(){if(location.href!==" + json.dumps(live_url) +
-        ")return null;document.title=" + json.dumps(visible_title) +
-        ";return document.title;})()"
+    require_same_target("title marker")
+    title_marker = getattr(tab, "set_title_if_badge_owned", None)
+    if not callable(title_marker):
+        raise RuntimeError("badge-bound title marker surface is unavailable")
+    provisional_locator = replace(
+        provisional_locator,
+        _title_marker_pending=True,
     )
-    if title_result != visible_title:
+    setattr(tab, "_vh_human_auth_cleanup_locator", provisional_locator)
+    original_title = title_marker(
+        visible_title,
+        expected_url=live_url,
+        badge_label=marker,
+    )
+    if not isinstance(original_title, str):
         raise RuntimeError("exact target title marker could not be installed")
+    provisional_locator = replace(
+        provisional_locator,
+        _original_title=original_title,
+        _title_marker_applied=True,
+        _title_marker_pending=False,
+        _badge_marker_pending=False,
+    )
+    setattr(tab, "_vh_human_auth_cleanup_locator", provisional_locator)
+    require_same_target("installed title marker")
 
     marked_identity = CdpWindowIdentity(
         browser_pid=browser_pid,
@@ -1038,27 +1200,22 @@ def present_exact_login_window_once(
     # An inactive tab's document.title is not the OS CGWindowName until Chrome
     # makes that exact page the active tab in its existing window.
     mutation_gate()
+    require_same_target("focus")
     tab.send("Page.bringToFront")
 
-    marked_window = (
-        resolve(marked_identity, require_on_screen=False)
-        if window_resolver is None
-        else resolve(marked_identity)
-    )
+    marked_window = resolve_marked_window(frontmost=False)
     if marked_window.cg_window_id != preflight_window.cg_window_id:
         raise RuntimeError("exact login window identity changed after title marker")
 
     mutation_gate()
+    require_same_target("application activation")
     if activate(browser_pid) is not True:
         raise RuntimeError("exact managed browser application could not be activated")
 
-    window = (
-        resolve(marked_identity, require_on_screen=True, require_frontmost=True)
-        if window_resolver is None
-        else resolve(marked_identity)
-    )
+    window = resolve_marked_window(frontmost=True)
     if window.cg_window_id != preflight_window.cg_window_id:
         raise RuntimeError("exact login window identity changed after focus")
+    require_same_target("window capture")
     png = capture(window.cg_window_id)
     if not isinstance(png, bytes) or not png:
         raise RuntimeError("exact login-window capture is empty")
@@ -1077,6 +1234,10 @@ def present_exact_login_window_once(
         application_activated=True,
         _original_title=original_title,
         _marker=marker,
+        _document_loader_id=document_loader_id,
+        _badge_bound_url=live_url,
+        _title_marker_applied=True,
+        _title_marker_pending=False,
     )
     setattr(tab, "_vh_human_auth_cleanup_locator", locator)
     return locator
@@ -1103,15 +1264,62 @@ def cleanup_exact_login_presentation(
         live_url = _tab_current_url(tab)
     except Exception:
         return {"status": "cleanup_unreadable", "cleanup_pending": True}
-    if live_url != ref.initial_url:
+    loader_id = locator._document_loader_id
+    if not loader_id and live_url != ref.initial_url:
         return {"status": "cleanup_not_applicable_navigation_changed", "cleanup_pending": False}
-    if not _fresh_target_matches(tab, ref, ref.initial_url):
+    if not _fresh_target_matches(tab, ref, live_url):
         return {"status": "cleanup_target_changed", "cleanup_pending": True}
+    if (
+        loader_id
+        and _main_document_loader_id(tab) != loader_id
+        and not locator._badge_marker_pending
+    ):
+        return {"status": "cleanup_not_applicable_document_changed", "cleanup_pending": False}
 
     marker = locator._marker
     if not marker or not locator.sanitized_title:
         return {"status": "cleanup_identity_missing", "cleanup_pending": True}
     mutations = 0
+    title_original_unknown = False
+    if locator._title_marker_pending:
+        try:
+            current_title = str(tab.eval("document.title") or "")
+        except Exception:
+            title_original_unknown = True
+        else:
+            title_original_unknown = (
+                current_title == locator.sanitized_title
+                or current_title.startswith(marker)
+            )
+
+    if locator._title_marker_applied:
+        restore_title = getattr(tab, "restore_title_if_badge_owned", None)
+        if not callable(restore_title):
+            return {"status": "cleanup_title_surface_missing", "cleanup_pending": True}
+        try:
+            mutation_gate()
+        except Exception:
+            return {"status": "cleanup_title_pending", "cleanup_pending": True}
+        if (
+            not _fresh_target_matches(tab, ref, live_url)
+            or _tab_current_url(tab) != live_url
+            or (loader_id and _main_document_loader_id(tab) != loader_id)
+        ):
+            return {
+                "status": "cleanup_title_document_changed",
+                "cleanup_pending": True,
+            }
+        title_cleanup = restore_title(
+            locator._original_title,
+            expected_url=live_url,
+            badge_label=marker,
+            title_prefix=marker,
+        )
+        if title_cleanup not in {"restored", "title_changed"}:
+            return {"status": "cleanup_title_unverified", "cleanup_pending": True}
+        if title_cleanup == "restored":
+            mutations += 1
+
     clear_busy = getattr(tab, "clear_busy", None)
     if not callable(clear_busy):
         return {"status": "cleanup_surface_missing", "cleanup_pending": True}
@@ -1119,40 +1327,30 @@ def cleanup_exact_login_presentation(
         mutation_gate()
     except Exception:
         return {"status": "cleanup_owner_active", "cleanup_pending": True}
-    if clear_busy(marker, expected_url=ref.initial_url) is not True:
+    if (
+        not _fresh_target_matches(tab, ref, live_url)
+        or _tab_current_url(tab) != live_url
+        or (
+            loader_id
+            and _main_document_loader_id(tab) != loader_id
+            and not locator._badge_marker_pending
+        )
+    ):
+        return {"status": "cleanup_document_changed", "cleanup_pending": True}
+    badge_bound_url = locator._badge_bound_url or ref.initial_url
+    if clear_busy(
+        marker,
+        expected_url=live_url,
+        badge_bound_url=badge_bound_url,
+    ) is not True:
         return {"status": "cleanup_badge_unverified", "cleanup_pending": True}
     mutations += 1
-
-    try:
-        current_title = str(tab.eval("document.title") or "")
-    except Exception:
+    if title_original_unknown:
         return {
-            "status": "cleanup_title_unreadable",
+            "status": "cleanup_title_original_unknown",
             "cleanup_pending": True,
             "mutations": mutations,
         }
-    if current_title == locator.sanitized_title:
-        try:
-            mutation_gate()
-        except Exception:
-            return {
-                "status": "cleanup_title_pending",
-                "cleanup_pending": True,
-                "mutations": mutations,
-            }
-        restored = tab.eval(
-            "(function(){if(location.href!==" + json.dumps(ref.initial_url) +
-            "||document.title!==" + json.dumps(locator.sanitized_title) +
-            ")return false;document.title=" + json.dumps(locator._original_title) +
-            ";return document.title===" + json.dumps(locator._original_title) + ";})()"
-        )
-        if restored is not True:
-            return {
-                "status": "cleanup_title_unverified",
-                "cleanup_pending": True,
-                "mutations": mutations,
-            }
-        mutations += 1
     return {"status": "cleanup_ok", "cleanup_pending": False, "mutations": mutations}
 
 
@@ -1205,6 +1403,20 @@ def _disconnect_websocket_only(tab: Any | None) -> bool:
         return False
 
 
+def _profile_lock_is_contention(exc: BaseException) -> bool:
+    message = str(exc).strip().casefold()
+    return message == "busy" or "already locked" in message
+
+
+def _profile_lock_is_retryable_mutation_wait(exc: BaseException) -> bool:
+    message = str(exc).strip().casefold()
+    return _profile_lock_is_contention(exc) or message in {
+        "owner activity blocks raw browser mutation",
+        "owner activity detection failed closed",
+        "owner idle proof did not increase during quiet dwell",
+    }
+
+
 def _acquire_login_lease_read_only(
     lease: Any,
     *,
@@ -1221,7 +1433,9 @@ def _acquire_login_lease_read_only(
         try:
             lease.acquire()
             return True
-        except ProfileLockError:
+        except ProfileLockError as exc:
+            if not _profile_lock_is_contention(exc):
+                raise
             if stop_requested():
                 return False
             sleep(5.0)
@@ -1242,11 +1456,19 @@ def _wait_for_initial_mutation_gate(
             return False
         try:
             mutation_gate()
+            if stop_requested():
+                return False
             return True
-        except ProfileLockError:
+        except ProfileLockError as exc:
+            if not _profile_lock_is_retryable_mutation_wait(exc):
+                raise
             if stop_requested():
                 return False
             sleep(5.0)
+
+
+class _HumanAuthStopRequested(RuntimeError):
+    """Internal control flow: a read-only presentation wait was stopped."""
 
 
 def run_human_auth_episode(
@@ -1276,7 +1498,13 @@ def run_human_auth_episode(
     if owner_snapshot is None:
         from .owner_activity import detect_owner_activity_snapshot
 
-        owner_snapshot = detect_owner_activity_snapshot
+        mutation_owner_snapshot = detect_owner_activity_snapshot
+        auth_owner_snapshot = lambda: detect_owner_activity_snapshot(
+            idle_threshold_seconds=15.0,
+        )
+    else:
+        mutation_owner_snapshot = owner_snapshot
+        auth_owner_snapshot = owner_snapshot
     from .portal_worker import assert_raw_browser_mutation_allowed
 
     lease_factory = _lease_factory or _default_login_lease
@@ -1304,7 +1532,7 @@ def run_human_auth_episode(
         ref = resolver(site, target_id=target_id)
         mutation_gate = lambda: assert_raw_browser_mutation_allowed(
             lease,
-            owner_snapshot=owner_snapshot,
+            owner_snapshot=mutation_owner_snapshot,
             sleep=mutation_sleep,
         )
         # Attach itself is read-only, but the gate here ensures a user who is
@@ -1334,23 +1562,37 @@ def run_human_auth_episode(
                 "proof_names": list(initial_auth.proof_names),
             }
 
+        if stop():
+            return {"status": "human_auth_stopped", "site": site}
+
+        def presentation_mutation_gate() -> None:
+            if not _wait_for_initial_mutation_gate(
+                mutation_gate,
+                stop_requested=stop,
+                sleep=wait_sleep,
+            ):
+                raise _HumanAuthStopRequested()
+
         episode_id = secrets.token_hex(16)
-        locator = presenter(
-            tab,
-            ref,
-            agent=clean_agent,
-            mutation_gate=mutation_gate,
-            episode_id=episode_id,
-        )
+        try:
+            locator = presenter(
+                tab,
+                ref,
+                agent=clean_agent,
+                mutation_gate=presentation_mutation_gate,
+                episode_id=episode_id,
+            )
+        except _HumanAuthStopRequested:
+            return {"status": "human_auth_stopped", "site": site}
         public_locator = _public_locator_payload(locator)
         sink(public_locator)
         observation = waiter(
             auth_probe=lambda: auth_reader(tab, site),
-            owner_snapshot=owner_snapshot,
+            owner_snapshot=auth_owner_snapshot,
             sleep=wait_sleep,
             stop_requested=stop,
         )
-        if observation is None:
+        if observation is None or stop():
             cleanup_attempted = True
             cleanup_result = cleanup(
                 tab,
@@ -1416,15 +1658,20 @@ def _cleanup_keepalive_badge(
     label: str,
     *,
     mutation_gate: Callable[[], None],
+    document_loader_id: str = "",
+    badge_bound_url: str = "",
 ) -> dict[str, Any]:
     try:
         live_url = _tab_current_url(tab)
     except Exception:
         return {"status": "cleanup_unreadable", "cleanup_pending": True}
-    if live_url != ref.initial_url:
+    bound_url = badge_bound_url or ref.initial_url
+    if not document_loader_id and live_url != bound_url:
         return {"status": "cleanup_not_applicable_navigation_changed", "cleanup_pending": False}
-    if not _fresh_target_matches(tab, ref, ref.initial_url):
+    if not _fresh_target_matches(tab, ref, live_url):
         return {"status": "cleanup_target_changed", "cleanup_pending": True}
+    if document_loader_id and _main_document_loader_id(tab) != document_loader_id:
+        return {"status": "cleanup_not_applicable_document_changed", "cleanup_pending": False}
     clear_busy = getattr(tab, "clear_busy", None)
     if not callable(clear_busy):
         return {"status": "cleanup_surface_missing", "cleanup_pending": True}
@@ -1432,7 +1679,21 @@ def _cleanup_keepalive_badge(
         mutation_gate()
     except Exception:
         return {"status": "cleanup_owner_active", "cleanup_pending": True}
-    if clear_busy(label, expected_url=ref.initial_url) is not True:
+    try:
+        live_url = _tab_current_url(tab)
+    except Exception:
+        return {"status": "cleanup_unreadable", "cleanup_pending": True}
+    if not _fresh_target_matches(tab, ref, live_url):
+        return {"status": "cleanup_target_changed", "cleanup_pending": True}
+    if document_loader_id and _main_document_loader_id(tab) != document_loader_id:
+        return {"status": "cleanup_not_applicable_document_changed", "cleanup_pending": False}
+    if not document_loader_id and live_url != bound_url:
+        return {"status": "cleanup_not_applicable_navigation_changed", "cleanup_pending": False}
+    if clear_busy(
+        label,
+        expected_url=live_url,
+        badge_bound_url=bound_url,
+    ) is not True:
         return {"status": "cleanup_badge_unverified", "cleanup_pending": True}
     return {"status": "cleanup_ok", "cleanup_pending": False}
 
@@ -1475,6 +1736,8 @@ def run_safe_keepalive_episode(
     ref: BrowserTargetRef | None = None
     mutation_gate: Callable[[], None] | None = None
     label = ""
+    badge_bound_url = ""
+    badge_document_loader_id = ""
     badge_attempted = False
     cleanup_attempted = False
     try:
@@ -1495,11 +1758,13 @@ def run_safe_keepalive_episode(
             from .portal_worker import ProfileLockError
 
             if isinstance(exc, ProfileLockError):
-                return {
-                    "status": "skipped_owner_active",
-                    "site": site,
-                    "restore_pending": False,
-                }
+                if _profile_lock_is_retryable_mutation_wait(exc):
+                    return {
+                        "status": "skipped_owner_active",
+                        "site": site,
+                        "restore_pending": False,
+                    }
+                raise
             raise
         tab = attacher({
             "id": ref.target_id,
@@ -1524,7 +1789,21 @@ def run_safe_keepalive_episode(
             }
         marker, _suffix = _login_title_marker(clean_agent, site, ref.target_id)
         label = marker.replace("LOGIN HERE", "KEEPALIVE")
-        mutation_gate()
+        badge_bound_url = ref.initial_url
+        try:
+            mutation_gate()
+        except Exception as exc:
+            from .portal_worker import ProfileLockError
+
+            if isinstance(exc, ProfileLockError):
+                if _profile_lock_is_retryable_mutation_wait(exc):
+                    return {
+                        "status": "skipped_owner_active",
+                        "site": site,
+                        "restore_pending": False,
+                    }
+                raise
+            raise
         mark_busy = getattr(tab, "mark_busy", None)
         badge_attempted = True
         if not callable(mark_busy) or mark_busy(label, expected_url=ref.initial_url) is not True:
@@ -1533,6 +1812,7 @@ def run_safe_keepalive_episode(
                 "site": site,
                 "restore_pending": False,
             }
+        badge_document_loader_id = _main_document_loader_id(tab)
         result = roundtrip(
             tab,
             ref,
@@ -1547,6 +1827,8 @@ def run_safe_keepalive_episode(
             ref,
             label,
             mutation_gate=mutation_gate,
+            document_loader_id=badge_document_loader_id,
+            badge_bound_url=badge_bound_url,
         )
         return {**result, "site": site, "cleanup": cleanup_result}
     finally:
@@ -1565,6 +1847,8 @@ def run_safe_keepalive_episode(
                     ref,
                     label,
                     mutation_gate=mutation_gate,
+                    document_loader_id=badge_document_loader_id,
+                    badge_bound_url=badge_bound_url,
                 )
             except BaseException:
                 pass

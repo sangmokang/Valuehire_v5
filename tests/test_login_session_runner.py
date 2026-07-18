@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from tools.multi_position_sourcing.portal_worker import ProfileLockError
 from tools.multi_position_sourcing.session_guard import (
+    _cleanup_keepalive_badge,
     AuthObservation,
     BrowserTargetRef,
     LoginWindowLocator,
@@ -118,6 +120,69 @@ def test_managed_browser_process_binds_exact_port_profile_and_root_pid() -> None
     assert calls == [["ps", "ax", "-o", "pid=,command="]]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python worker.py --remote-debugging-port=9225 --user-data-dir=/tmp/profile",
+        (
+            "python /tmp/Google Chrome --remote-debugging-port=9225 "
+            "--user-data-dir=/tmp/LinkedIn Profile"
+        ),
+        (
+            "/Applications/Google Chrome --remote-debugging-port=9225 "
+            "--user-data-dir=/tmp/LinkedIn Profile https://example.com"
+        ),
+        (
+            "/Applications/Google Chrome --remote-debugging-port=9225 "
+            "--user-data-dir=/tmp/LinkedIn Profile about:blank"
+        ),
+        (
+            "/Applications/Google Chrome --remote-debugging-port=9225 "
+            "--user-data-dir=/tmp/LinkedIn Profile data:text/plain,hello"
+        ),
+        (
+            "/Applications/Google Chrome --remote-debugging-port=9225 "
+            "--user-data-dir=/tmp/LinkedIn Profile www.example.com"
+        ),
+    ],
+)
+def test_managed_browser_process_rejects_non_chrome_or_trailing_positional_url(
+    command: str,
+) -> None:
+    class Result:
+        returncode = 0
+        stdout = f"222 {command}\n"
+
+    with pytest.raises(LookupError):
+        resolve_managed_browser_process(
+            "linkedin_rps",
+            "http://127.0.0.1:9225",
+            runner=lambda *_args, **_kwargs: Result(),
+        )
+
+
+def test_managed_browser_process_accepts_repo_launcher_trailing_start_url() -> None:
+    class Result:
+        returncode = 0
+        stdout = (
+            "222 /Applications/Google Chrome "
+            "--remote-debugging-port=9225 "
+            "--remote-debugging-address=127.0.0.1 "
+            "--user-data-dir=/tmp/LinkedIn Profile "
+            "--no-first-run --no-default-browser-check "
+            "--disable-session-crashed-bubble --restore-last-session=false "
+            "https://www.linkedin.com/talent/home\n"
+        )
+
+    process = resolve_managed_browser_process(
+        "linkedin_rps",
+        "http://127.0.0.1:9225",
+        runner=lambda *_args, **_kwargs: Result(),
+    )
+
+    assert process == ManagedBrowserProcess(222, "/tmp/LinkedIn Profile")
+
+
 def test_resolver_binds_process_before_page_and_rejects_endpoint_swap() -> None:
     endpoints = iter(("http://127.0.0.1:9225", "http://127.0.0.1:9338"))
     page_calls: list[str] = []
@@ -134,6 +199,28 @@ def test_resolver_binds_process_before_page_and_rejects_endpoint_swap() -> None:
         )
 
     assert page_calls == []
+
+
+def test_resolver_rechecks_browser_process_after_exact_page_selection() -> None:
+    processes = iter((
+        ManagedBrowserProcess(222, "/tmp/linkedin"),
+        ManagedBrowserProcess(333, "/tmp/restarted-linkedin"),
+    ))
+    page = {
+        "id": "target-exact",
+        "type": "page",
+        "url": "https://www.linkedin.com/talent/home",
+        "webSocketDebuggerUrl": "ws://127.0.0.1:9225/devtools/page/target-exact",
+    }
+
+    with pytest.raises(LookupError, match="process changed"):
+        resolve_existing_target(
+            "linkedin_rps",
+            target_id="target-exact",
+            managed_endpoint_resolver=lambda _site: "http://127.0.0.1:9225",
+            browser_process_resolver=lambda _site, _endpoint: next(processes),
+            list_pages=lambda _endpoint: [page],
+        )
 
 
 @pytest.mark.parametrize(
@@ -248,6 +335,35 @@ def test_human_auth_never_accepts_owner_activity_even_with_large_idle_value() ->
     assert sleeps == [5.0]
 
 
+def test_human_auth_stop_after_probes_wins_over_authenticated_result() -> None:
+    stop_checks = 0
+    probes: list[str] = []
+
+    def stop() -> bool:
+        nonlocal stop_checks
+        stop_checks += 1
+        return stop_checks >= 2
+
+    result = wait_for_human_auth(
+        auth_probe=lambda: probes.append("auth") or AuthObservation(
+            authenticated=True,
+            challenge=False,
+            url="https://www.linkedin.com/talent/home",
+            proof_names=("talent_surface", "recruiter_account"),
+        ),
+        owner_snapshot=lambda: probes.append("owner") or SimpleNamespace(
+            owner_activity_detected=False,
+            idle_seconds=15.0,
+            detection_status="ok",
+        ),
+        sleep=lambda _seconds: pytest.fail("stop after probes must not sleep"),
+        stop_requested=stop,
+    )
+
+    assert result is None
+    assert probes == ["auth", "owner"]
+
+
 class _KeepaliveTab:
     def __init__(self) -> None:
         self.target_id = "target-exact"
@@ -358,7 +474,7 @@ def test_owner_returns_after_click_sets_restore_pending_and_never_backs() -> Non
         gates += 1
         tab.trace.append(f"gate{gates}")
         if gates == 2:
-            raise RuntimeError("owner active")
+            raise ProfileLockError("owner activity blocks raw browser mutation")
 
     result = execute_keepalive_roundtrip(
         tab,
@@ -377,6 +493,37 @@ def test_owner_returns_after_click_sets_restore_pending_and_never_backs() -> Non
     assert result["restore_pending"] is True
     assert not any(item.startswith("back:") for item in tab.trace)
     assert tab.forbidden_calls == []
+
+
+@pytest.mark.parametrize("loss_gate", [1, 2])
+def test_keepalive_roundtrip_never_mislabels_lease_ownership_loss(
+    loss_gate: int,
+) -> None:
+    tab = _KeepaliveTab()
+    gates = 0
+
+    def gate() -> None:
+        nonlocal gates
+        gates += 1
+        if gates == loss_gate:
+            raise ProfileLockError("raw browser lease ownership was lost")
+
+    with pytest.raises(ProfileLockError, match="ownership was lost"):
+        execute_keepalive_roundtrip(
+            tab,
+            _ref(),
+            _safe(),
+            auth_probe=lambda current: AuthObservation(
+                authenticated=True,
+                challenge=False,
+                url=current.current_url(),
+                proof_names=("recruiter_nav",),
+            ),
+            mutation_gate=gate,
+        )
+
+    assert not any(item.startswith("back:") for item in tab.trace)
+    assert ("click" in tab.trace) is (loss_gate == 2)
 
 
 def test_target_identity_change_after_click_never_sends_back() -> None:
@@ -523,6 +670,36 @@ def test_keepalive_never_reports_ok_if_source_auth_probe_redirects_immediately()
     assert result["restore_pending"] is True
 
 
+def test_keepalive_requires_a_stability_dwell_after_history_restore() -> None:
+    tab = _KeepaliveTab()
+    source_dwell = 0.0
+
+    def sleep(seconds: float) -> None:
+        nonlocal source_dwell
+        if any(item.startswith("back:") for item in tab.trace) and tab.url.endswith("/home"):
+            source_dwell += seconds
+            if source_dwell >= 0.15:
+                tab.url = "https://www.linkedin.com/checkpoint/challenge"
+
+    result = execute_keepalive_roundtrip(
+        tab,
+        _ref(),
+        _safe(),
+        auth_probe=lambda current: AuthObservation(
+            authenticated=True,
+            challenge=False,
+            url=current.current_url(),
+            proof_names=("recruiter_account",),
+        ),
+        mutation_gate=lambda: None,
+        sleep=sleep,
+        navigation_timeout_seconds=1.0,
+    )
+
+    assert result["status"] != "ok"
+    assert result["restore_pending"] is True
+
+
 def test_non_integer_history_entry_id_fails_before_mutation() -> None:
     tab = _KeepaliveTab()
     original_send = tab.send
@@ -602,6 +779,9 @@ class _PresentationTab:
         self.title = "LinkedIn Talent Solutions"
         self.mutations: list[str] = []
         self.busy_label = ""
+        self.busy_bound_url = self.url
+        self.clear_busy_calls: list[tuple[str, str]] = []
+        self.loader_id = "loader-1"
 
     def current_url(self) -> str:
         return self.url
@@ -622,15 +802,73 @@ class _PresentationTab:
     def mark_busy(self, label: str, *, expected_url: str) -> bool:
         assert expected_url == self.url
         self.busy_label = label
+        self.busy_bound_url = expected_url
         self.mutations.append("badge")
         return True
 
-    def clear_busy(self, label: str, *, expected_url: str) -> bool:
-        if label != self.busy_label or expected_url != self.url:
+    def set_title_if_badge_owned(
+        self,
+        title: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+    ) -> str | None:
+        if (
+            expected_url != self.url
+            or badge_label != self.busy_label
+            or not self.busy_label
+            or self.title.startswith("[LOGIN HERE][")
+        ):
+            return None
+        previous_title = self.title
+        self.title = title
+        self.mutations.append("title")
+        return previous_title
+
+    def clear_busy(
+        self,
+        label: str,
+        *,
+        expected_url: str,
+        badge_bound_url: str | None = None,
+    ) -> bool:
+        bound_url = expected_url if badge_bound_url is None else badge_bound_url
+        self.clear_busy_calls.append((expected_url, bound_url))
+        if (
+            label != self.busy_label
+            or bound_url != self.busy_bound_url
+            or expected_url != self.url
+        ):
             return False
         self.busy_label = ""
         self.mutations.append("clear_badge")
         return True
+
+    def restore_title_if_badge_owned(
+        self,
+        original_title: str,
+        *,
+        expected_url: str,
+        badge_label: str,
+        title_prefix: str,
+    ) -> str | None:
+        if (
+            expected_url != self.url
+            or badge_label != self.busy_label
+            or not self.busy_label
+            or not self.title.startswith(title_prefix)
+        ):
+            if (
+                expected_url == self.url
+                and badge_label == self.busy_label
+                and self.busy_label
+                and not self.title.startswith(title_prefix)
+            ):
+                return "title_changed"
+            return None
+        self.title = original_title
+        self.mutations.append("title_restore")
+        return "restored"
 
     def send(self, method: str, params: dict | None = None):
         if method == "Browser.getWindowForTarget":
@@ -644,6 +882,16 @@ class _PresentationTab:
                     "targetId": self.target_id,
                     "type": "page",
                     "url": self.url,
+                }
+            }
+        if method == "Page.getFrameTree":
+            return {
+                "frameTree": {
+                    "frame": {
+                        "id": "main-frame",
+                        "loaderId": self.loader_id,
+                        "url": self.url,
+                    }
                 }
             }
         raise AssertionError((method, params))
@@ -699,9 +947,16 @@ def test_presentation_is_once_per_episode_but_new_episode_is_allowed() -> None:
         "window_capture": lambda _window_id: b"png",
         "application_activator": lambda pid: tab.mutations.append(f"activate:{pid}") or True,
     }
-    present_exact_login_window_once(tab, _ref(), episode_id="episode-a", **kwargs)
+    first = present_exact_login_window_once(tab, _ref(), episode_id="episode-a", **kwargs)
     with pytest.raises(RuntimeError, match="already presented"):
         present_exact_login_window_once(tab, _ref(), episode_id="episode-a", **kwargs)
+    cleanup = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        first,
+        mutation_gate=lambda: None,
+    )
+    assert cleanup["status"] == "cleanup_ok"
     present_exact_login_window_once(tab, _ref(), episode_id="episode-b", **kwargs)
     assert tab.mutations.count("focus") == 2
 
@@ -732,6 +987,288 @@ def test_inactive_tab_marker_is_resolved_after_page_bring_to_front() -> None:
     assert marked_resolves >= 1
 
 
+def test_presentation_rejects_spa_target_drift_before_focus_or_capture() -> None:
+    tab = _PresentationTab()
+    gates = 0
+    captures: list[int] = []
+
+    def gate() -> None:
+        nonlocal gates
+        gates += 1
+        if gates == 3:
+            tab.url = "https://www.linkedin.com/talent/projects"
+
+    with pytest.raises(RuntimeError, match="target.*changed"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="spa-drift",
+            mutation_gate=gate,
+            window_resolver=_window,
+            window_capture=lambda window_id: captures.append(window_id) or b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    assert "focus" not in tab.mutations
+    assert captures == []
+
+
+def test_presentation_rejects_same_url_reload_during_first_mutation_gate() -> None:
+    tab = _PresentationTab()
+    gates = 0
+
+    def reload_during_gate() -> None:
+        nonlocal gates
+        gates += 1
+        if gates == 1:
+            tab.loader_id = "loader-2"
+
+    with pytest.raises(RuntimeError, match="document changed"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="same-url-reload",
+            mutation_gate=reload_during_gate,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    assert tab.mutations == []
+
+
+def test_presentation_requires_readable_document_identity_before_mutation() -> None:
+    class LoaderUnreadableTab(_PresentationTab):
+        def send(self, method: str, params: dict | None = None):
+            if method == "Page.getFrameTree":
+                raise RuntimeError("frame tree unavailable")
+            return super().send(method, params)
+
+    tab = LoaderUnreadableTab()
+    gates: list[str] = []
+
+    with pytest.raises(RuntimeError, match="document identity is unavailable"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="missing-loader",
+            mutation_gate=lambda: gates.append("gate"),
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    assert gates == []
+    assert tab.mutations == []
+
+
+def test_badge_reload_race_rebinds_guarded_cleanup_to_actual_document() -> None:
+    class ReloadingBadgeTab(_PresentationTab):
+        def mark_busy(self, label: str, *, expected_url: str) -> bool:
+            self.loader_id = "loader-2"
+            return super().mark_busy(label, expected_url=expected_url)
+
+    tab = ReloadingBadgeTab()
+    with pytest.raises(RuntimeError, match="changed while installing visible badge"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="badge-reload",
+            mutation_gate=lambda: None,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    locator = getattr(tab, "_vh_human_auth_cleanup_locator")
+    assert locator._document_loader_id == "loader-2"
+    result = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: None,
+    )
+    assert result["status"] == "cleanup_ok"
+    assert tab.busy_label == ""
+    assert tab.mutations == ["badge", "clear_badge"]
+
+
+def test_badge_dispatch_interrupt_still_cleans_exact_replacement_badge() -> None:
+    class InterruptedBadgeTab(_PresentationTab):
+        def mark_busy(self, label: str, *, expected_url: str) -> bool:
+            applied = super().mark_busy(label, expected_url=expected_url)
+            self.loader_id = "loader-2"
+            assert applied is True
+            raise KeyboardInterrupt("after badge dispatch")
+
+    tab = InterruptedBadgeTab()
+    with pytest.raises(KeyboardInterrupt, match="after badge dispatch"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="badge-interrupt",
+            mutation_gate=lambda: None,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    locator = getattr(tab, "_vh_human_auth_cleanup_locator")
+    assert locator._badge_marker_pending is True
+    assert locator._document_loader_id == "loader-1"
+    cleanup = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: None,
+    )
+    assert cleanup["status"] == "cleanup_ok"
+    assert cleanup["cleanup_pending"] is False
+    assert tab.busy_label == ""
+    assert tab.mutations == ["badge", "clear_badge"]
+
+
+def test_title_dispatch_is_bound_to_original_badge_document() -> None:
+    class ReloadingTitleTab(_PresentationTab):
+        def set_title_if_badge_owned(
+            self,
+            title: str,
+            *,
+            expected_url: str,
+            badge_label: str,
+        ) -> str | None:
+            self.loader_id = "loader-2"
+            self.busy_label = ""
+            return None
+
+    tab = ReloadingTitleTab()
+    with pytest.raises(RuntimeError, match="title marker could not be installed"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="title-reload",
+            mutation_gate=lambda: None,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    assert "title" not in tab.mutations
+    assert "focus" not in tab.mutations
+
+
+def test_presentation_refuses_to_adopt_stale_login_title_as_original() -> None:
+    tab = _PresentationTab()
+    marker = "[LOGIN HERE][Codex][linkedin][target-exact]"
+    tab.title = marker + " LinkedIn RPS login"
+
+    with pytest.raises(RuntimeError, match="title marker could not be installed"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="stale-title",
+            mutation_gate=lambda: None,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    locator = getattr(tab, "_vh_human_auth_cleanup_locator")
+    assert locator._title_marker_applied is False
+    cleanup = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: None,
+    )
+    assert cleanup["status"] == "cleanup_title_original_unknown"
+    assert cleanup["cleanup_pending"] is True
+    assert tab.title == marker + " LinkedIn RPS login"
+    assert "title_restore" not in tab.mutations
+
+
+def test_title_dispatch_interrupt_reports_pending_instead_of_false_cleanup() -> None:
+    class InterruptedTitleTab(_PresentationTab):
+        def set_title_if_badge_owned(
+            self,
+            title: str,
+            *,
+            expected_url: str,
+            badge_label: str,
+        ) -> str | None:
+            previous = super().set_title_if_badge_owned(
+                title,
+                expected_url=expected_url,
+                badge_label=badge_label,
+            )
+            assert isinstance(previous, str)
+            raise KeyboardInterrupt("after title dispatch")
+
+    tab = InterruptedTitleTab()
+    with pytest.raises(KeyboardInterrupt, match="after title dispatch"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            episode_id="title-interrupt",
+            mutation_gate=lambda: None,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+
+    locator = getattr(tab, "_vh_human_auth_cleanup_locator")
+    assert locator._title_marker_pending is True
+    assert locator._title_marker_applied is False
+    cleanup = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: None,
+    )
+    assert cleanup == {
+        "status": "cleanup_title_original_unknown",
+        "cleanup_pending": True,
+        "mutations": 1,
+    }
+    assert tab.title.startswith("[LOGIN HERE][")
+
+
+def test_presentation_polls_read_only_for_async_window_marker_propagation() -> None:
+    tab = _PresentationTab()
+    marked_attempts = 0
+
+    def resolver(identity):
+        nonlocal marked_attempts
+        if identity.title_marker:
+            marked_attempts += 1
+            if marked_attempts == 1:
+                raise RuntimeError("marker not propagated yet")
+        return SimpleNamespace(cg_window_id=180)
+
+    locator = present_exact_login_window_once(
+        tab,
+        _ref(),
+        agent="Codex",
+        episode_id="async-marker",
+        mutation_gate=lambda: None,
+        window_resolver=resolver,
+        window_capture=lambda _window_id: b"png",
+        application_activator=lambda _pid: True,
+        window_sleep=lambda _seconds: None,
+    )
+
+    assert locator.cg_window_id == 180
+    assert marked_attempts >= 2
+
+
 def test_handoff_cleanup_removes_owned_badge_and_restores_private_title_guardedly() -> None:
     tab = _PresentationTab()
     marker = "[LOGIN HERE][Codex][linkedin][target-exact]"
@@ -752,6 +1289,7 @@ def test_handoff_cleanup_removes_owned_badge_and_restores_private_title_guardedl
         screenshot_size_bytes=3,
         _original_title="LinkedIn Talent Solutions",
         _marker=marker,
+        _title_marker_applied=True,
     )
 
     result = cleanup_exact_login_presentation(
@@ -765,6 +1303,139 @@ def test_handoff_cleanup_removes_owned_badge_and_restores_private_title_guardedl
     assert gates == ["gate", "gate"]
     assert tab.busy_label == ""
     assert tab.title == "LinkedIn Talent Solutions"
+
+
+def test_handoff_cleanup_restores_dynamic_title_that_keeps_owned_marker_prefix() -> None:
+    tab = _PresentationTab()
+    marker = "[LOGIN HERE][Codex][linkedin][target-exact]"
+    tab.busy_label = marker
+    tab.title = marker + " LinkedIn RPS login (1)"
+    locator = LoginWindowLocator(
+        "Codex", "linkedin_rps", 4321, "/tmp/profile", "http://127.0.0.1:9225",
+        "target-exact", marker + " LinkedIn RPS login", tab.url, 180, "a" * 64, 3,
+        _original_title="LinkedIn Talent Solutions",
+        _marker=marker,
+        _document_loader_id=tab.loader_id,
+        _title_marker_applied=True,
+    )
+
+    result = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: None,
+    )
+
+    assert result["status"] == "cleanup_ok"
+    assert tab.title == "LinkedIn Talent Solutions"
+    assert marker not in tab.title
+
+
+def test_handoff_cleanup_preserves_natural_title_change_but_clears_badge() -> None:
+    tab = _PresentationTab()
+    locator = present_exact_login_window_once(
+        tab,
+        _ref(),
+        agent="Codex",
+        episode_id="natural-title-change",
+        mutation_gate=lambda: None,
+        window_resolver=_window,
+        window_capture=lambda _window_id: b"png",
+        application_activator=lambda _pid: True,
+    )
+    tab.title = "LinkedIn Talent Solutions — updated by site"
+
+    result = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: None,
+    )
+
+    assert result == {"status": "cleanup_ok", "cleanup_pending": False, "mutations": 1}
+    assert tab.title == "LinkedIn Talent Solutions — updated by site"
+    assert tab.busy_label == ""
+
+
+def test_handoff_cleanup_uses_loader_identity_for_same_document_pushstate() -> None:
+    tab = _PresentationTab()
+    marker = "[LOGIN HERE][Codex][linkedin][target-exact]"
+    original_url = tab.url
+    tab.busy_label = marker
+    tab.title = marker + " LinkedIn RPS login"
+    tab.url = original_url + "?same-document=1"
+    locator = LoginWindowLocator(
+        "Codex", "linkedin_rps", 4321, "/tmp/profile", "http://127.0.0.1:9225",
+        "target-exact", tab.title, original_url, 180, "a" * 64, 3,
+        _original_title="LinkedIn Talent Solutions",
+        _marker=marker,
+        _document_loader_id=tab.loader_id,
+        _badge_bound_url=original_url,
+        _title_marker_applied=True,
+    )
+
+    result = cleanup_exact_login_presentation(
+        tab,
+        _ref(),
+        locator,
+        mutation_gate=lambda: None,
+    )
+
+    assert result["status"] == "cleanup_ok"
+    assert tab.busy_label == ""
+    assert tab.title == "LinkedIn Talent Solutions"
+    assert tab.clear_busy_calls == [(tab.url, original_url)]
+
+
+def test_keepalive_badge_cleanup_clears_same_document_pushstate_guardedly() -> None:
+    tab = _PresentationTab()
+    label = "[KEEPALIVE][Codex][linkedin][target-exact]"
+    original_url = tab.url
+    assert tab.mark_busy(label, expected_url=original_url) is True
+    document_loader_id = tab.loader_id
+    tab.url = "https://www.linkedin.com/talent/projects"
+    gates: list[str] = []
+
+    result = _cleanup_keepalive_badge(
+        tab,
+        _ref(),
+        label,
+        mutation_gate=lambda: gates.append("gate"),
+        document_loader_id=document_loader_id,
+        badge_bound_url=original_url,
+    )
+
+    assert result == {"status": "cleanup_ok", "cleanup_pending": False}
+    assert gates == ["gate"]
+    assert tab.busy_label == ""
+    assert tab.clear_busy_calls == [(tab.url, original_url)]
+
+
+def test_keepalive_badge_cleanup_skips_replaced_document_without_mutation() -> None:
+    tab = _PresentationTab()
+    label = "[KEEPALIVE][Codex][linkedin][target-exact]"
+    original_url = tab.url
+    assert tab.mark_busy(label, expected_url=original_url) is True
+    document_loader_id = tab.loader_id
+    tab.url = "https://www.linkedin.com/talent/projects"
+    tab.loader_id = "loader-2"
+    gates: list[str] = []
+
+    result = _cleanup_keepalive_badge(
+        tab,
+        _ref(),
+        label,
+        mutation_gate=lambda: gates.append("gate"),
+        document_loader_id=document_loader_id,
+        badge_bound_url=original_url,
+    )
+
+    assert result == {
+        "status": "cleanup_not_applicable_document_changed",
+        "cleanup_pending": False,
+    }
+    assert gates == []
+    assert tab.clear_busy_calls == []
 
 
 def test_handoff_cleanup_never_mutates_a_new_document() -> None:

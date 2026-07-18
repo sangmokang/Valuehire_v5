@@ -95,15 +95,20 @@ guard let rawWindows = CGWindowListCopyWindowInfo(
 ) as? [[String: Any]] else {
     fail("CoreGraphics window enumeration unavailable", code: 1)
 }
+guard let onScreenWindows = CGWindowListCopyWindowInfo(
+    [.optionOnScreenOnly, .excludeDesktopElements],
+    kCGNullWindowID
+) as? [[String: Any]] else {
+    fail("CoreGraphics on-screen window enumeration unavailable", code: 1)
+}
 
 // CoreGraphics returns this list in front-to-back order.  Record the first
 // visible layer-zero window globally so the caller can prove that its exact
 // CGWindowID, rather than merely the browser application, is frontmost.
 var frontmostLayerZeroWindowID: UInt32?
-for window in rawWindows {
+for window in onScreenWindows {
     guard let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue,
           layer == 0,
-          (window[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
           let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
           windowID > 0 else {
         continue

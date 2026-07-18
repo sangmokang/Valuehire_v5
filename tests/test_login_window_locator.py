@@ -352,6 +352,14 @@ def test_bundled_swift_locator_emits_frontmost_layer_zero_proof() -> None:
     assert "frontmostLayerZeroWindowID" in source
 
 
+def test_bundled_swift_uses_on_screen_front_to_back_query_for_frontmost_proof() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    source = (repo / "skills/login/scripts/macos_window_locator.swift").read_text()
+    assert ".optionAll" in source
+    assert ".optionOnScreenOnly" in source
+    assert source.count("CGWindowListCopyWindowInfo(") >= 2
+
+
 @pytest.mark.skipif(os.uname().sysname != "Darwin", reason="CoreGraphics is macOS-only")
 def test_bundled_swift_locator_typechecks_on_macos() -> None:
     repo = Path(__file__).resolve().parents[1]

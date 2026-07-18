@@ -337,14 +337,18 @@ def test_installer_rolls_back_all_agents_on_base_exception(
     fake_repo = _copy_canonical_source(tmp_path)
     home = tmp_path / "home"
     expected = _seed_agent_installs(home)
-    original_replace = Path.replace
+    original_replace = installer_module._replace_path
 
-    def interrupted_replace(self: Path, target: Path) -> Path:
+    def interrupted_replace(
+        self: Path,
+        target: Path,
+        **kwargs: object,
+    ) -> Path:
         if ".login-skill-stage-" in str(self) and self.name == "codex":
             raise interruption
-        return original_replace(self, target)
+        return original_replace(self, target, **kwargs)
 
-    monkeypatch.setattr(Path, "replace", interrupted_replace)
+    monkeypatch.setattr(installer_module, "_replace_path", interrupted_replace)
     with pytest.raises(type(interruption)):
         install_login_skill(repo_root=fake_repo, home=home)
 
@@ -359,20 +363,57 @@ def test_installer_preserves_untouched_targets_when_backup_phase_is_interrupted(
     fake_repo = _copy_canonical_source(tmp_path)
     home = tmp_path / "home"
     expected = _seed_agent_installs(home)
-    original_replace = Path.replace
+    original_replace = installer_module._replace_path
     codex_target = home / ".codex" / "skills" / "login"
 
-    def interrupted_backup(self: Path, target: Path) -> Path:
+    def interrupted_backup(
+        self: Path,
+        target: Path,
+        **kwargs: object,
+    ) -> Path:
         if self == codex_target and Path(target).name.startswith(".login-backup-"):
             raise KeyboardInterrupt("backup interrupted")
-        return original_replace(self, target)
+        return original_replace(self, target, **kwargs)
 
-    monkeypatch.setattr(Path, "replace", interrupted_backup)
+    monkeypatch.setattr(installer_module, "_replace_path", interrupted_backup)
     with pytest.raises(KeyboardInterrupt, match="backup interrupted"):
         install_login_skill(repo_root=fake_repo, home=home)
 
     for agent, tree in expected.items():
         assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+
+
+def test_installer_restores_when_interrupted_immediately_after_backup_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    original_replace = installer_module._replace_path
+    codex_target = home / ".codex" / "skills" / "login"
+
+    def interrupt_after_backup_rename(
+        source: Path,
+        destination: Path,
+        **kwargs: object,
+    ) -> Path:
+        result = original_replace(source, destination, **kwargs)
+        if source == codex_target and destination.name.startswith(".login-backup-"):
+            raise KeyboardInterrupt("interrupted after backup rename")
+        return result
+
+    monkeypatch.setattr(
+        installer_module,
+        "_replace_path",
+        interrupt_after_backup_rename,
+    )
+    with pytest.raises(KeyboardInterrupt, match="after backup rename"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    for agent, tree in expected.items():
+        assert _tree_bytes(home / f".{agent}" / "skills" / "login") == tree
+    assert _installer_residues(home) == []
 
 
 def test_installer_verifies_installed_bytes_before_deleting_backups(
@@ -382,15 +423,19 @@ def test_installer_verifies_installed_bytes_before_deleting_backups(
     fake_repo = _copy_canonical_source(tmp_path)
     home = tmp_path / "home"
     expected = _seed_agent_installs(home)
-    original_replace = Path.replace
+    original_replace = installer_module._replace_path
 
-    def corrupting_replace(self: Path, target: Path) -> Path:
-        result = original_replace(self, target)
+    def corrupting_replace(
+        self: Path,
+        target: Path,
+        **kwargs: object,
+    ) -> Path:
+        result = original_replace(self, target, **kwargs)
         if ".login-skill-stage-" in str(self) and self.name == "codex":
             (Path(target) / "SKILL.md").write_text("corrupted after replace", encoding="utf-8")
         return result
 
-    monkeypatch.setattr(Path, "replace", corrupting_replace)
+    monkeypatch.setattr(installer_module, "_replace_path", corrupting_replace)
     with pytest.raises(RuntimeError, match="verification"):
         install_login_skill(repo_root=fake_repo, home=home)
 
@@ -406,12 +451,16 @@ def test_installer_rechecks_canonical_source_after_all_target_swaps(
     source_skill = fake_repo / "skills" / "login" / "SKILL.md"
     home = tmp_path / "home"
     expected = _seed_agent_installs(home)
-    original_replace = Path.replace
+    original_replace = installer_module._replace_path
     changed_source = False
 
-    def source_drift_after_first_swap(self: Path, target: Path) -> Path:
+    def source_drift_after_first_swap(
+        self: Path,
+        target: Path,
+        **kwargs: object,
+    ) -> Path:
         nonlocal changed_source
-        result = original_replace(self, target)
+        result = original_replace(self, target, **kwargs)
         if (
             not changed_source
             and ".login-skill-stage-" in str(self)
@@ -425,7 +474,7 @@ def test_installer_rechecks_canonical_source_after_all_target_swaps(
             changed_source = True
         return result
 
-    monkeypatch.setattr(Path, "replace", source_drift_after_first_swap)
+    monkeypatch.setattr(installer_module, "_replace_path", source_drift_after_first_swap)
     with pytest.raises(RuntimeError, match="source changed"):
         install_login_skill(repo_root=fake_repo, home=home)
 
@@ -444,12 +493,12 @@ def test_installer_backup_cleanup_failure_never_returns_success(
     original_remove_path = installer_module._remove_path
     cleanup_failed = False
 
-    def fail_first_backup_cleanup(path: Path) -> None:
+    def fail_first_backup_cleanup(path: Path, **kwargs: object) -> None:
         nonlocal cleanup_failed
         if path.name.startswith(".login-backup-") and not cleanup_failed:
             cleanup_failed = True
             raise OSError("injected backup cleanup failure")
-        original_remove_path(path)
+        original_remove_path(path, **kwargs)
 
     monkeypatch.setattr(installer_module, "_remove_path", fail_first_backup_cleanup)
     with pytest.raises(RuntimeError, match="cleanup incomplete"):
@@ -491,9 +540,9 @@ def test_installer_reverifies_final_target_bytes_after_backup_cleanup(
     corrupted = False
     codex_skill = home / ".codex" / "skills" / "login" / "SKILL.md"
 
-    def corrupt_after_backup_cleanup(path: Path) -> None:
+    def corrupt_after_backup_cleanup(path: Path, **kwargs: object) -> None:
         nonlocal corrupted
-        original_remove_path(path)
+        original_remove_path(path, **kwargs)
         if path.name.startswith(".login-backup-") and not corrupted:
             codex_skill.write_text("corrupted during commit cleanup", encoding="utf-8")
             corrupted = True
@@ -505,6 +554,389 @@ def test_installer_reverifies_final_target_bytes_after_backup_cleanup(
     assert corrupted is True
 
 
+def test_installer_detects_backup_renamed_during_commit_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    _seed_agent_installs(home)
+    original_remove_path = installer_module._remove_path
+    renamed_backup: Path | None = None
+
+    def rename_instead_of_deleting(path: Path, **kwargs: object) -> None:
+        nonlocal renamed_backup
+        if path.name.startswith(".login-backup-") and renamed_backup is None:
+            renamed_backup = path.parent / "old-login-tree-hidden-by-rename"
+            path.replace(renamed_backup)
+            return
+        original_remove_path(path, **kwargs)
+
+    monkeypatch.setattr(installer_module, "_remove_path", rename_instead_of_deleting)
+    with pytest.raises(RuntimeError, match="backup|commit|cleanup"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert renamed_backup is not None and renamed_backup.is_dir()
+
+
+def test_installer_rejects_final_parent_symlink_swap_even_when_bytes_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    _seed_agent_installs(home)
+    original_remove_path = installer_module._remove_path
+    swapped = False
+
+    def swap_parent_after_staging_cleanup(path: Path, **kwargs: object) -> None:
+        nonlocal swapped
+        original_remove_path(path, **kwargs)
+        if path.name.startswith(".login-skill-stage-") and not swapped:
+            skills_parent = home / ".codex" / "skills"
+            replacement = home / "codex-skills-replacement"
+            skills_parent.replace(replacement)
+            skills_parent.symlink_to(replacement, target_is_directory=True)
+            swapped = True
+
+    monkeypatch.setattr(installer_module, "_remove_path", swap_parent_after_staging_cleanup)
+    with pytest.raises(RuntimeError, match="parent|symlink|final|commit"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert swapped is True
+
+
+def test_installer_never_mutates_external_tree_after_parent_symlink_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    codex_target = home / ".codex" / "skills" / "login"
+    skills_parent = codex_target.parent
+    detached_parent = home / "codex-skills-detached"
+    external_parent = tmp_path / "external-codex-skills"
+    external_login = external_parent / "login"
+    external_login.mkdir(parents=True)
+    sentinel = external_login / "sentinel.txt"
+    sentinel.write_text("outside installer scope", encoding="utf-8")
+    original_replace = installer_module._replace_path
+    swapped = False
+
+    def swap_before_backup(
+        source: Path,
+        destination: Path,
+        **kwargs: object,
+    ) -> Path:
+        nonlocal swapped
+        if (
+            not swapped
+            and source == codex_target
+            and destination.name.startswith(".login-backup-")
+        ):
+            skills_parent.replace(detached_parent)
+            skills_parent.symlink_to(external_parent, target_is_directory=True)
+            swapped = True
+        return original_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(installer_module, "_replace_path", swap_before_backup)
+    with pytest.raises(RuntimeError, match="directory|rollback|install"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert swapped is True
+    assert sentinel.read_text(encoding="utf-8") == "outside installer scope"
+    assert sorted(path.name for path in external_login.iterdir()) == ["sentinel.txt"]
+    assert _tree_bytes(detached_parent / "login") == expected["codex"]
+
+
+def test_installer_staging_writes_stay_in_anchored_directory_after_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    external_stage = tmp_path / "external-stage"
+    external_stage.mkdir()
+    detached_stage = home / "detached-original-stage"
+    original_staged_tree = installer_module._staged_tree
+    swapped = False
+
+    def swap_live_stage(
+        staging_anchor: object,
+        agent: str,
+        expected_files: dict[str, bytes],
+    ) -> Path:
+        nonlocal swapped
+        if not swapped:
+            stage_path = staging_anchor.path
+            stage_path.replace(detached_stage)
+            stage_path.symlink_to(external_stage, target_is_directory=True)
+            swapped = True
+        return original_staged_tree(staging_anchor, agent, expected_files)
+
+    monkeypatch.setattr(installer_module, "_staged_tree", swap_live_stage)
+    with pytest.raises(RuntimeError, match="staging|preparation|directory"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert swapped is True
+    assert list(external_stage.iterdir()) == []
+    assert (detached_stage / "claude" / "SKILL.md").is_file()
+
+
+def test_installer_rejects_stage_renamed_instead_of_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    _seed_agent_installs(home)
+    original_remove_path = installer_module._remove_path
+    renamed_stage = home / "renamed-staging-tree"
+    renamed = False
+
+    def rename_stage(path: Path, **kwargs: object) -> None:
+        nonlocal renamed
+        if path.name.startswith(".login-skill-stage-") and not renamed:
+            path.replace(renamed_stage)
+            renamed = True
+            return
+        original_remove_path(path, **kwargs)
+
+    monkeypatch.setattr(installer_module, "_remove_path", rename_stage)
+    with pytest.raises(RuntimeError, match="staging|cleanup|commit"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert renamed is True
+    assert renamed_stage.is_dir()
+
+
+def test_installer_never_restores_replaced_backup_symlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    codex_target = home / ".codex" / "skills" / "login"
+    hidden_original = home / ".codex" / "skills" / "hidden-original-login"
+    external_login = tmp_path / "external-login"
+    external_login.mkdir()
+    sentinel = external_login / "sentinel.txt"
+    sentinel.write_text("outside installer scope", encoding="utf-8")
+    original_replace = installer_module._replace_path
+    tampered = False
+
+    def replace_backup_then_fail_install(
+        source: Path,
+        destination: Path,
+        **kwargs: object,
+    ) -> Path:
+        nonlocal tampered
+        if (
+            not tampered
+            and ".login-skill-stage-" in str(source)
+            and source.name == "codex"
+        ):
+            backups = sorted(codex_target.parent.glob(".login-backup-*"))
+            assert len(backups) == 1
+            backups[0].replace(hidden_original)
+            backups[0].symlink_to(external_login, target_is_directory=True)
+            tampered = True
+            raise RuntimeError("forced install failure after backup replacement")
+        return original_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(
+        installer_module,
+        "_replace_path",
+        replace_backup_then_fail_install,
+    )
+    with pytest.raises(RuntimeError, match="rollback incomplete"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert tampered is True
+    assert sentinel.read_text(encoding="utf-8") == "outside installer scope"
+    assert not codex_target.exists() and not codex_target.is_symlink()
+    assert _tree_bytes(hidden_original) == expected["codex"]
+
+
+def test_installer_quarantines_backup_swapped_after_rollback_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    expected = _seed_agent_installs(home)
+    codex_target = home / ".codex" / "skills" / "login"
+    hidden_original = home / ".codex" / "skills" / "hidden-original-login"
+    external_login = tmp_path / "external-login"
+    external_login.mkdir()
+    sentinel = external_login / "sentinel.txt"
+    sentinel.write_text("outside installer scope", encoding="utf-8")
+    original_replace = installer_module._replace_path
+    installation_failed = False
+    tampered = False
+
+    def swap_after_verification(
+        source: Path,
+        destination: Path,
+        **kwargs: object,
+    ) -> Path:
+        nonlocal installation_failed, tampered
+        if ".login-skill-stage-" in str(source) and source.name == "codex":
+            installation_failed = True
+            raise RuntimeError("forced install failure")
+        if (
+            installation_failed
+            and not tampered
+            and source.name.startswith(".login-backup-")
+            and destination == codex_target
+        ):
+            source.replace(hidden_original)
+            source.symlink_to(external_login, target_is_directory=True)
+            tampered = True
+        return original_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(installer_module, "_replace_path", swap_after_verification)
+    with pytest.raises(RuntimeError, match="rollback incomplete"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert tampered is True
+    assert sentinel.read_text(encoding="utf-8") == "outside installer scope"
+    assert not codex_target.exists() and not codex_target.is_symlink()
+    assert _tree_bytes(hidden_original) == expected["codex"]
+    quarantines = list(codex_target.parent.glob(".login-failed-*"))
+    assert len(quarantines) == 1
+    assert quarantines[0].is_symlink()
+    assert quarantines[0].resolve() == external_login
+
+
+def test_installer_second_commit_snapshot_catches_source_drift_after_first_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    source_skill = fake_repo / "skills" / "login" / "SKILL.md"
+    home = tmp_path / "home"
+    _seed_agent_installs(home)
+    original_verify_source = installer_module._verify_source_unchanged
+    verification_count = 0
+
+    def drift_after_first_final_source_pass(
+        source: Path,
+        expected_files: dict[str, bytes],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        nonlocal verification_count
+        original_verify_source(source, expected_files, *args, **kwargs)
+        verification_count += 1
+        if verification_count == 3:
+            source_skill.write_text(
+                source_skill.read_text(encoding="utf-8")
+                + "\n첫 최종 검사 뒤의 변경도 성공으로 처리하면 안 된다.\n",
+                encoding="utf-8",
+            )
+
+    monkeypatch.setattr(
+        installer_module,
+        "_verify_source_unchanged",
+        drift_after_first_final_source_pass,
+    )
+    with pytest.raises(RuntimeError, match="source changed|stable|commit|final"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+
+def test_installer_second_commit_snapshot_catches_target_drift_after_first_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    _seed_agent_installs(home)
+    original_verify_tree = installer_module._verify_tree_matches
+    hermes_verification_count = 0
+    drifted = False
+
+    def drift_after_first_final_target_pass(
+        root: Path,
+        expected_files: dict[str, bytes],
+        *,
+        label: str,
+    ) -> None:
+        nonlocal hermes_verification_count, drifted
+        original_verify_tree(root, expected_files, label=label)
+        if label.startswith("hermes "):
+            hermes_verification_count += 1
+            if hermes_verification_count == 3:
+                (home / ".codex" / "skills" / "login" / "SKILL.md").write_text(
+                    "drift after the first final target pass",
+                    encoding="utf-8",
+                )
+                drifted = True
+
+    monkeypatch.setattr(
+        installer_module,
+        "_verify_tree_matches",
+        drift_after_first_final_target_pass,
+    )
+    with pytest.raises(RuntimeError, match="tree bytes differ|stable|commit|final"):
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert drifted is True
+
+
+def test_installer_rollback_verification_baseexception_never_skips_stage_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_repo = _copy_canonical_source(tmp_path)
+    home = tmp_path / "home"
+    _seed_agent_installs(home)
+    original_replace = installer_module._replace_path
+    original_optional_snapshot = installer_module._optional_tree_snapshot
+    installation_failed = False
+    interrupted_rollback_verification = False
+
+    def fail_install(
+        self: Path,
+        target: Path,
+        **kwargs: object,
+    ) -> Path:
+        nonlocal installation_failed
+        if ".login-skill-stage-" in str(self) and self.name == "codex":
+            installation_failed = True
+            raise RuntimeError("original install failure")
+        return original_replace(self, target, **kwargs)
+
+    def interrupt_rollback_verification(
+        target: Path,
+    ) -> tuple[dict[str, bytes], frozenset[str]] | None:
+        nonlocal interrupted_rollback_verification
+        if installation_failed and not interrupted_rollback_verification:
+            interrupted_rollback_verification = True
+            raise KeyboardInterrupt("rollback verification interrupted")
+        return original_optional_snapshot(target)
+
+    monkeypatch.setattr(installer_module, "_replace_path", fail_install)
+    monkeypatch.setattr(
+        installer_module,
+        "_optional_tree_snapshot",
+        interrupt_rollback_verification,
+    )
+    with pytest.raises(RuntimeError, match="rollback incomplete") as caught:
+        install_login_skill(repo_root=fake_repo, home=home)
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert "original install failure" in str(caught.value.__cause__)
+    assert interrupted_rollback_verification is True
+    assert not any(
+        path.name.startswith(".login-skill-stage-")
+        for path in home.iterdir()
+    )
+
+
 def test_installer_reports_incomplete_rollback_when_remove_and_quarantine_fail(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -512,23 +944,27 @@ def test_installer_reports_incomplete_rollback_when_remove_and_quarantine_fail(
     fake_repo = _copy_canonical_source(tmp_path)
     home = tmp_path / "home"
     expected = _seed_agent_installs(home)
-    original_replace = Path.replace
+    original_replace = installer_module._replace_path
     original_remove_path = installer_module._remove_path
     claude_target = home / ".claude" / "skills" / "login"
 
-    def fail_install_and_quarantine(self: Path, target: Path) -> Path:
+    def fail_install_and_quarantine(
+        self: Path,
+        target: Path,
+        **kwargs: object,
+    ) -> Path:
         if ".login-skill-stage-" in str(self) and self.name == "codex":
             raise RuntimeError("injected install failure")
         if self == claude_target and Path(target).name.startswith(".login-failed-"):
             raise OSError("injected quarantine failure")
-        return original_replace(self, target)
+        return original_replace(self, target, **kwargs)
 
-    def fail_installed_target_removal(path: Path) -> None:
+    def fail_installed_target_removal(path: Path, **kwargs: object) -> None:
         if path == claude_target:
             raise OSError("injected target removal failure")
-        original_remove_path(path)
+        original_remove_path(path, **kwargs)
 
-    monkeypatch.setattr(Path, "replace", fail_install_and_quarantine)
+    monkeypatch.setattr(installer_module, "_replace_path", fail_install_and_quarantine)
     monkeypatch.setattr(installer_module, "_remove_path", fail_installed_target_removal)
     with pytest.raises(RuntimeError, match="rollback incomplete") as caught:
         install_login_skill(repo_root=fake_repo, home=home)
@@ -548,23 +984,27 @@ def test_installer_rollback_continues_after_one_cleanup_failure(
     fake_repo = _copy_canonical_source(tmp_path)
     home = tmp_path / "home"
     expected = _seed_agent_installs(home)
-    original_replace = Path.replace
+    original_replace = installer_module._replace_path
     original_rmtree = installer_module.shutil.rmtree
     failed_once = False
 
-    def interrupted_replace(self: Path, target: Path) -> Path:
+    def interrupted_replace(
+        self: Path,
+        target: Path,
+        **kwargs: object,
+    ) -> Path:
         if ".login-skill-stage-" in str(self) and self.name == "codex":
             raise RuntimeError("injected install failure")
-        return original_replace(self, target)
+        return original_replace(self, target, **kwargs)
 
     def flaky_rmtree(path: object, *args: object, **kwargs: object) -> None:
         nonlocal failed_once
-        if Path(path) == home / ".claude" / "skills" / "login" and not failed_once:
+        if Path(path).name == "login" and kwargs.get("dir_fd") is not None and not failed_once:
             failed_once = True
             raise OSError("injected cleanup failure")
         original_rmtree(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "replace", interrupted_replace)
+    monkeypatch.setattr(installer_module, "_replace_path", interrupted_replace)
     monkeypatch.setattr(installer_module.shutil, "rmtree", flaky_rmtree)
     with pytest.raises(RuntimeError, match="injected install failure"):
         install_login_skill(repo_root=fake_repo, home=home)
