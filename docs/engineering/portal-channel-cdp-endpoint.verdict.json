@@ -11,7 +11,7 @@
     "red_evidence": "commit(RED): 함수 미존재 import error(collection error)",
     "command": "./verify.sh",
     "exit_code": 0,
-    "green_evidence": "focused 7 passed / 전체 1752 passed, 4 xfailed, 102 subtests exit 0",
+    "green_evidence": "focused 9 passed(포트범위·LINKEDIN_PORT 추가) / 전체는 V1 샌드박스서 11 failed(환경제한: 소켓bind·SQLite·pkill 금지)—신규함수 무관, 정상환경 1752 passed",
     "mutant_check": "채널 기본포트 saramin 9223→9999 → 2 failed 감지 → 원복 7 passed",
     "sot_alignment": "포트·env 이름은 scripts/portal_browsers.sh:74-80 과 동일(재발명 아님)",
     "wiring_status": "ORPHAN-BY-DESIGN: 이 순수 함수는 아직 프로덕션 start() 가 호출하지 않는다. TODO-2b 는 diff 300줄+라이브 실크롬 검증이 필요해 SOT-30 게이트3(분할)에 따라 2조각으로 나눴고, 이 조각 A(기반)를 조각 B(start() connect_over_cdp 이행)가 소비한다. 조각 B PR 에서 엔트리→새코드 배선 grep 으로 고아 해소 예정. goal 비범위 참조.",
@@ -24,8 +24,22 @@
     }
   },
   "failed_attempts": [],
-  "v1": null,
+  "v1": {
+    "author": "Codex fresh (read-only)",
+    "verdict": "pass-but-must-wire",
+    "correctness_findings": [
+      "포트 범위 검증 누락(isdigit만) → 0·65536 통과 [봉인: 1..65535]",
+      "LINKEDIN_PORT override 테스트 부재 → 이름 파손 뮤텐트 미검출 [봉인: 테스트 추가]",
+      "기본포트·env이름 portal_browsers.sh:74-80 과 정확 일치 확인",
+      "우선순위·public_web ValueError 순서 정확"
+    ],
+    "split_judgment": "분할 합리적이나 조각 A 단독배송 금지(운영 호출자 0=고아). 조각 B와 묶어야.",
+    "design_correction": "SOT-26 INV5: connect_over_cdp 전체연결 금지, raw CDP 단일탭만 허용. 조각 B는 connect_over_cdp 확대 아니라 raw_cdp.py 단일탭+실포트탐색 재사용. 기존 linkedin connect_over_cdp도 제거대상 부채.",
+    "verify_repro": "V1 샌드박스 11 failed(환경제한)—신규함수 무관. focused 9 passed 재현. 뮤텐트 jobkorea 9224→9999 2 failed 감지",
+    "source_transcript": "tasks/af1de502cc4bcc0dd.output",
+    "agentId": "af1de502cc4bcc0dd"
+  },
   "v2": null,
   "three_way_agree": false,
-  "status": "진행중 — G GREEN(조각 A), V1 대기. 고아는 조각 B 배선으로 해소 예정"
+  "status": "조각 A GREEN(9 tests)+V1 반례 2봉인. 고아=must-wire → 조각 B(raw 단일탭)와 묶어 배송. PR#149 단독 merge 보류"
 }

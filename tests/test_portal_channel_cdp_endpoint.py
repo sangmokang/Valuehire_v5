@@ -39,6 +39,27 @@ class ResolveChannelCdpEndpointTests(unittest.TestCase):
             "http://y:2",
         )
 
+    def test_linkedin_port_env_override(self) -> None:
+        # V1 반례: LINKEDIN_PORT 매핑 미검증 — 이름을 틀리게 바꿔도 통과하던 구멍 봉인.
+        self.assertEqual(
+            resolve_channel_cdp_endpoint("linkedin_rps", env={"LINKEDIN_PORT": "19225"}),
+            "http://127.0.0.1:19225",
+        )
+
+    def test_out_of_range_port_falls_back_to_default(self) -> None:
+        # V1 반례: isdigit() 만으론 0·65536 같은 무효 포트가 통과 → 1..65535 검증.
+        for bad in ("0", "65536", "99999"):
+            self.assertEqual(
+                resolve_channel_cdp_endpoint("saramin", env={"SARAMIN_PORT": bad}),
+                "http://127.0.0.1:9223",
+                f"무효 포트 {bad} 는 채널 기본으로 폴백해야",
+            )
+        # 경계: 1·65535 는 유효
+        self.assertEqual(
+            resolve_channel_cdp_endpoint("saramin", env={"SARAMIN_PORT": "65535"}),
+            "http://127.0.0.1:65535",
+        )
+
     def test_public_web_is_not_a_cdp_channel(self) -> None:
         with self.assertRaises(ValueError):
             resolve_channel_cdp_endpoint("public_web", env={})

@@ -57,3 +57,11 @@
   그 endpoint 의 탭에 대상 사이트 로그인 마커가 실제로 있는지 검증(SOT-26 §2). 없으면
   다른 살아있는 포트를 마커로 재탐색. v4 tools/position-batch/lib/cdp-endpoints.mjs 의
   계층 match 와 동형. 조각 A(순수 포트 해석)는 이 검증의 1차 후보 생성기 역할.
+
+## V1 적대검증 반영 (2026-07-18)
+- 봉인: 포트 범위 검증(1..65535, 0·65536 폴백) + LINKEDIN_PORT override 테스트(뮤텐트 구멍).
+- **조각 B 설계 교정(SOT-26 INV5)**: Playwright 전체 `connect_over_cdp` 확대 금지 —
+  저장소는 **raw CDP 단일 탭**(`raw_cdp.py`, browser_policy attach_mode: raw_single_tab)만
+  허용. 기존 linkedin `connect_over_cdp` 는 이미 제거 대상 부채. 조각 B 는 connect_over_cdp
+  가 아니라 raw_cdp 단일 탭 + 실포트 탐색(portal_browsers.sh cdp) 경로를 재사용한다.
+- 고아 확정: 조각 A 단독 merge 금지(운영 호출자 0). 조각 B(raw 단일탭 배선)와 묶어 배송.

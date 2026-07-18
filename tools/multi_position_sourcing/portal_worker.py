@@ -66,7 +66,10 @@ def resolve_channel_cdp_endpoint(
     if genv.startswith("http"):
         return genv
     port_raw = (env.get(_CHANNEL_CDP_PORT_ENV[channel]) or "").strip()
-    port = port_raw if port_raw.isdigit() else str(_CHANNEL_CDP_DEFAULT_PORT[channel])
+    # 유효 TCP 포트(1..65535)만 채택 — isdigit() 만으론 0·65536 같은 무효값이 새어
+    # 엉뚱한 주소로 attach 할 수 있다(V1 반례). 무효면 채널 기본 포트로 폴백.
+    port = port_raw if (port_raw.isdigit() and 1 <= int(port_raw) <= 65535) \
+        else str(_CHANNEL_CDP_DEFAULT_PORT[channel])
     return f"http://127.0.0.1:{port}"
 
 
