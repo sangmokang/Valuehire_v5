@@ -218,6 +218,18 @@ class RawPageAdapterTests(unittest.TestCase):
                 timeout=1000,
             ))
 
+    def test_required_mode_cannot_skip_loader_and_marker_by_omitting_wait(self) -> None:
+        class NoLoaderTab(FakeTab):
+            _badge_label = "Codex"
+
+            def mark_busy(self, _label: str):
+                return True
+
+        with self.assertRaisesRegex(RuntimeError, "loader"):
+            _run(RawPage(NoLoaderTab(), require_badge=True).goto(
+                "https://www.jobkorea.co.kr/Corp/Person/Find",
+            ))
+
     def test_every_raw_mutation_rechecks_the_shared_lease(self) -> None:
         tab = FakeTab()
         checks: list[str] = []

@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools.multi_position_sourcing.portal_worker import (
@@ -15,6 +16,7 @@ from tools.multi_position_sourcing.portal_worker import (
     SearchLivenessMonitor,
 )
 from tools.multi_position_sourcing.raw_page_adapter import RawPage
+from tools.multi_position_sourcing.portal_login import ready_check_for_channel
 
 
 class ForbiddenPlaywright:
@@ -76,6 +78,21 @@ class FakeRawTab:
 
 
 class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _idle_snapshots():
+        idle = 200.0
+
+        def snapshot():
+            nonlocal idle
+            idle += 1.0
+            return SimpleNamespace(
+                owner_activity_detected=False,
+                idle_seconds=idle,
+                detection_status="ok",
+            )
+
+        return snapshot
+
     async def test_raw_workers_share_one_channel_lock_regardless_of_worker_id(self) -> None:
         with TemporaryDirectory(prefix="raw-lock-a-") as root_a, TemporaryDirectory(
             prefix="raw-lock-b-"
@@ -139,6 +156,8 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                         connection_mode="raw_single_tab",
                     ),
                     playwright=ForbiddenPlaywright(),
+                    owner_snapshot=self._idle_snapshots(),
+                    mutation_sleep=lambda _seconds: None,
                 )
                 await worker.start()
                 result = await worker.run_one_search(
@@ -167,7 +186,9 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                     channel="saramin",
                     profile_root=Path(root),
                     connection_mode="raw_single_tab",
-                )
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
             )
             tab = FakeRawTab()
             worker._raw_page = RawPage(
@@ -241,6 +262,90 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 await worker.stop()
         self.assertEqual(tab.disconnect_calls, 1)
 
+    async def test_owner_activity_barrier_reads_twice_and_dwells_before_mutation(self) -> None:
+        snapshots = iter((
+            SimpleNamespace(owner_activity_detected=False, idle_seconds=200.0, detection_status="ok"),
+            SimpleNamespace(owner_activity_detected=False, idle_seconds=201.0, detection_status="ok"),
+        ))
+        waits: list[float] = []
+        with TemporaryDirectory(prefix="raw-owner-guard-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=lambda: next(snapshots),
+                mutation_sleep=waits.append,
+            )
+            worker._lock.acquire()
+            try:
+                worker._assert_raw_mutation_allowed()
+            finally:
+                worker._lock.release()
+        self.assertEqual(waits, [1.0])
+
+    async def test_owner_activity_barrier_fails_closed_before_mutation(self) -> None:
+        active = SimpleNamespace(
+            owner_activity_detected=True,
+            idle_seconds=0.0,
+            detection_status="ok",
+        )
+        tab = FakeRawTab()
+        with TemporaryDirectory(prefix="raw-owner-active-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=lambda: active,
+                mutation_sleep=lambda _seconds: None,
+            )
+            worker._lock.acquire()
+            page = RawPage(tab, mutation_guard=worker._assert_raw_mutation_allowed)
+            try:
+                with self.assertRaises(ProfileLockError):
+                    await page.locator("button").click()
+            finally:
+                worker._lock.release()
+        self.assertEqual(tab.click_calls, 0)
+
+    async def test_lost_lease_handoff_disconnects_without_erasing_badge(self) -> None:
+        class HandoffTab(FakeRawTab):
+            def __init__(self) -> None:
+                super().__init__()
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        tab = HandoffTab()
+        with TemporaryDirectory(prefix="raw-handoff-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                )
+            )
+            worker._lock.acquire()
+            worker._raw_tab = tab
+            owner_path = worker.config.lock_path / "owner.json"
+            owner_path.write_text('{"token":"replacement","pid":999999}\n', encoding="utf-8")
+            await worker.stop()
+        self.assertEqual(tab.close_calls, 0)
+        self.assertEqual(tab.disconnect_calls, 1)
+
     async def test_raw_mode_uses_shared_atomic_login_lease(self) -> None:
         with TemporaryDirectory(prefix="raw-shared-lease-") as root, patch(
             "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
@@ -266,6 +371,59 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 first.release()
             self.assertFalse(config.lock_path.exists())
+
+    async def test_login_proof_requires_account_and_all_search_markers(self) -> None:
+        class Locator:
+            def __init__(self, page, selector: str) -> None:
+                self.page = page
+                self.selector = selector
+
+            async def count(self) -> int:
+                selectors = {part.strip() for part in self.selector.split(",")}
+                return int(bool(selectors & self.page.present))
+
+            async def inner_text(self, **_kwargs) -> str:
+                return self.page.text
+
+        class ProofPage:
+            def __init__(self, url: str, text: str, present: set[str]) -> None:
+                self.url = url
+                self.text = text
+                self.present = present
+
+            def locator(self, selector: str):
+                return Locator(self, selector)
+
+        saramin = ready_check_for_channel("saramin")
+        saramin_fields = {"input.search_input", "#career_min", "#career_max"}
+        self.assertFalse(await saramin(ProofPage(
+            "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "로그인 | 회원가입",
+            saramin_fields,
+        )))
+        self.assertFalse(await saramin(ProofPage(
+            "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "밸류커넥트 | 로그아웃",
+            {"input.search_input", "#career_min"},
+        )))
+        self.assertTrue(await saramin(ProofPage(
+            "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "밸류커넥트 | 로그아웃",
+            saramin_fields,
+        )))
+
+        jobkorea = ready_check_for_channel("jobkorea")
+        keyword = {"#txtKeyword"}
+        self.assertFalse(await jobkorea(ProofPage(
+            "https://www.jobkorea.co.kr/Corp/Person/Find",
+            "밸류커넥트 | 로그인 | 회원가입",
+            keyword,
+        )))
+        self.assertTrue(await jobkorea(ProofPage(
+            "https://www.jobkorea.co.kr/Corp/Person/Find",
+            "밸류커넥트 | 로그아웃",
+            keyword,
+        )))
 
     async def test_raw_monitor_reads_fresh_login_redirect_url(self) -> None:
         class RedirectTab(FakeRawTab):

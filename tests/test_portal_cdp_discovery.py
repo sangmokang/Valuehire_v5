@@ -165,6 +165,27 @@ class CdpDiscoveryTests(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0, "살아있는 크롬 없을 때 0 종료 금지")
         self.assertEqual(out.stdout.strip(), "", "엔드포인트를 지어내면 안 됨")
 
+    def test_cdp_fails_closed_when_two_exact_profile_processes_are_live(self) -> None:
+        profile = self.tmp / "ambiguous_profile"
+        first = _free_port()
+        second = _free_port()
+        self._launch_fake(profile, first)
+        self._launch_fake(profile, second)
+        env = {
+            **os.environ,
+            "LINKEDIN_PROFILE": str(profile),
+            "LINKEDIN_PORT": str(_free_port()),
+        }
+
+        out = subprocess.run(
+            [str(LAUNCHER), "cdp", "linkedin"],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertNotEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertIn("여러", out.stderr)
+
     def test_cdp_rejects_unrelated_profile_on_configured_port(self) -> None:
         configured = _free_port()
         wanted = self.tmp / "wanted_profile"

@@ -99,13 +99,13 @@ class MarkBusyTests(unittest.TestCase):
         self.assertEqual(tab._badge_label, "🤖 Claude 자동화 사용중 · /aisearch")
         self.assertTrue(any("vh-automation-badge" in e for e in tab.evals), "배지 JS 주입 안 됨")
 
-    def test_navigate_reinjects_badge(self):
+    def test_navigate_does_not_reinject_badge_without_a_lease_guard(self):
         tab = _RecTab()
         tab.mark_busy("🤖 Claude 자동화 사용중")
         before = sum("vh-automation-badge" in e for e in tab.evals)
         tab.navigate("https://example.com", wait_ms=0)
         after = sum("vh-automation-badge" in e for e in tab.evals)
-        self.assertGreater(after, before, "navigate 후 배지 재주입 안 됨(페이지 로드로 사라짐)")
+        self.assertEqual(after, before, "navigate 내부의 무가드 DOM 쓰기는 금지")
         self.assertIn(("Page.navigate", {"url": "https://example.com"}), tab.sends)
 
     def test_clear_badge(self):
