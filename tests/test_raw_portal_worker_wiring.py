@@ -48,10 +48,15 @@ class FakeRawTab:
             self.click_calls += 1
         return None
 
-    def navigate(self, _url: str, wait_ms: int = 0) -> None:
+    def navigate(self, _url: str, wait_ms: int = 0) -> dict[str, str]:
         self.navigation_calls += 1
         if wait_ms == 45000:
             raise AssertionError("Playwright timeout was misused as a fixed raw sleep")
+        return {"loaderId": "fake-loader"}
+
+    def wait_for_lifecycle(self, loader_id: str, event: str, _timeout: float) -> None:
+        if (loader_id, event) != ("fake-loader", "DOMContentLoaded"):
+            raise AssertionError("navigation must wait for the exact new loader")
 
     def on(self, _event: str, _handler: object) -> None:
         return None

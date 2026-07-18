@@ -185,10 +185,10 @@ class CDPTab:
         배지는 부가기능 — 주입 실패해도 예외를 던지지 않는다(실 서치 보호)."""
         self._badge_label = label
         try:
-            self.eval(_badge_js(label))
+            acknowledged = self.eval(_badge_js(label))
         except Exception:
             return False
-        return True
+        return acknowledged == _BADGE_ID
 
     def clear_badge(self) -> None:
         self._badge_label = None
@@ -236,7 +236,12 @@ class CDPTab:
             "returnByValue": True,
             "awaitPromise": True,
         })
-        return r.get("result", {}).get("value")
+        if r.get("exceptionDetails"):
+            raise RuntimeError("Runtime.evaluate failed")
+        result = r.get("result", {})
+        if result.get("subtype") == "error":
+            raise RuntimeError("Runtime.evaluate returned an error object")
+        return result.get("value")
 
     def screenshot(self, path: str) -> str:
         r = self.send("Page.captureScreenshot", {"format": "png"})

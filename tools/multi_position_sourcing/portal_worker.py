@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import re
+import secrets
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -35,8 +37,7 @@ DEFAULT_PROFILE_ROOT = Path(
     or Path.home() / ".valuehire" / "portal_profiles"
 )
 RAW_SINGLE_TARGET_LOCK_ROOT = Path(
-    os.environ.get("VALUEHIRE_PORTAL_RAW_LOCK_ROOT")
-    or Path.home() / ".valuehire" / "locks" / "portal"
+    Path.home() / ".valuehire" / "browser_locks"
 )
 FORBIDDEN_PROFILE_ARTIFACT_ROOT = Path("artifacts")
 LINKEDIN_SINGLE_WORKER_ID = "default"
@@ -439,7 +440,8 @@ class PortalWorkerConfig:
     @property
     def lock_path(self) -> Path:
         if self.connection_mode == "raw_single_tab":
-            return RAW_SINGLE_TARGET_LOCK_ROOT / f"{self.channel}.lock"
+            site = _CHANNEL_BROWSER_NAME[self.channel]
+            return RAW_SINGLE_TARGET_LOCK_ROOT / f"login-{site}.lock"
         return self.profile_dir / ".profile.lock"
 
     @property
@@ -465,9 +467,13 @@ class ProfileLock:
     def __init__(self, config: PortalWorkerConfig) -> None:
         self.config = config
         self._handle: Any | None = None
+        self._lease_token: str | None = None
 
     def acquire(self) -> None:
         _ensure_real_profile_dir(self.config)
+        if self.config.connection_mode == "raw_single_tab":
+            self._acquire_raw_lease()
+            return
         handle = _open_real_profile_lock(self.config.lock_path)
         try:
             _lock_handle(handle)
@@ -490,7 +496,56 @@ class ProfileLock:
             raise
         self._handle = handle
 
+    @property
+    def _raw_owner_path(self) -> Path:
+        return self.config.lock_path / "owner.json"
+
+    def _acquire_raw_lease(self) -> None:
+        token = secrets.token_hex(24)
+        try:
+            self.config.lock_path.mkdir(mode=0o700)
+        except (FileExistsError, OSError) as exc:
+            raise ProfileLockError(
+                f"profile already locked for {self.config.channel}/{self.config.worker_id}"
+            ) from exc
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(self._raw_owner_path, flags, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as owner:
+                json.dump({"token": token, "pid": os.getpid()}, owner, sort_keys=True)
+                owner.write("\n")
+                owner.flush()
+        except Exception as exc:
+            try:
+                self.config.lock_path.rmdir()
+            except OSError:
+                pass
+            raise ProfileLockError("raw browser lease initialization failed") from exc
+        self._lease_token = token
+
+    def assert_owned(self) -> None:
+        if self.config.connection_mode != "raw_single_tab":
+            if self._handle is None:
+                raise ProfileLockError("profile lock ownership was lost")
+            return
+        token = self._lease_token
+        lock_path = self.config.lock_path
+        owner_path = self._raw_owner_path
+        if not token or lock_path.is_symlink() or owner_path.is_symlink():
+            raise ProfileLockError("raw browser lease ownership was lost")
+        try:
+            payload = json.loads(owner_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise ProfileLockError("raw browser lease ownership was lost") from exc
+        if payload.get("token") != token:
+            raise ProfileLockError("raw browser lease ownership was lost")
+
     def release(self) -> None:
+        if self.config.connection_mode == "raw_single_tab":
+            self._release_raw_lease()
+            return
         if self._handle is None:
             return
         handle = self._handle
@@ -503,6 +558,20 @@ class ProfileLock:
             handle.close()
         except Exception:
             pass
+
+    def _release_raw_lease(self) -> None:
+        token = self._lease_token
+        self._lease_token = None
+        if not token:
+            return
+        try:
+            payload = json.loads(self._raw_owner_path.read_text(encoding="utf-8"))
+            if payload.get("token") != token:
+                return
+            self._raw_owner_path.unlink()
+            self.config.lock_path.rmdir()
+        except (OSError, ValueError, TypeError):
+            return
 
     def __enter__(self) -> ProfileLock:
         self.acquire()
@@ -880,12 +949,14 @@ class PortalWorker:
                 if not badge_label:
                     raise RuntimeError("visible automation marker is required for raw mode")
                 self._raw_tab = raw_cdp.attach(target, badge=False)
+                self._lock.assert_owned()
                 if self._raw_tab.mark_busy(badge_label) is not True:
                     raise RuntimeError("visible automation marker could not be applied")
                 self._raw_page = RawPage(
                     self._raw_tab,
                     initial_url=str(target.get("url") or ""),
                     require_badge=True,
+                    mutation_guard=self._lock.assert_owned,
                 )
                 self._started = True
                 return
@@ -1024,6 +1095,16 @@ class PortalWorker:
         page: Any | None = None
         try:
             page = await self._acquire_search_page()
+            if self._raw_page is not None and ready_check is None:
+                return PortalSearchAttempt(
+                    channel=self.config.channel,
+                    worker_id=self.config.worker_id,
+                    keyword=keyword,
+                    status="not_ready",
+                    reason="login proof is required before raw navigation",
+                    url=safe_artifact_url(getattr(page, "url", "")),
+                    reauth_cause="login_proof_required",
+                )
             monitor = monitor or SearchLivenessMonitor(self.config.channel)
             monitor.attach(page)
             reauth_cause = await monitor.check_page(page)

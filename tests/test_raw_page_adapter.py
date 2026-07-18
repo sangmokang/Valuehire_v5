@@ -218,6 +218,32 @@ class RawPageAdapterTests(unittest.TestCase):
                 timeout=1000,
             ))
 
+    def test_every_raw_mutation_rechecks_the_shared_lease(self) -> None:
+        tab = FakeTab()
+        checks: list[str] = []
+
+        def guard() -> None:
+            checks.append("owned")
+
+        page = RawPage(tab, mutation_guard=guard)
+        _run(page.locator("input").fill("robotics"))
+        _run(page.locator("button").click())
+        _run(page.locator("input").press("Enter"))
+        _run(page.goto("https://example.test/search"))
+
+        self.assertEqual(checks, ["owned"] * 4)
+
+    def test_lost_lease_blocks_mutation_before_raw_command(self) -> None:
+        tab = FakeTab()
+
+        def lost() -> None:
+            raise RuntimeError("lease lost")
+
+        page = RawPage(tab, mutation_guard=lost)
+        with self.assertRaisesRegex(RuntimeError, "lease lost"):
+            _run(page.locator("button").click())
+        self.assertEqual(tab.evals, [])
+
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
         page = RawPage(tab)

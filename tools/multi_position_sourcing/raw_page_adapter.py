@@ -17,7 +17,21 @@ import asyncio
 import inspect
 import json
 import re
-from typing import Any
+from typing import Any, Callable
+
+
+MutationGuard = Callable[[], Any]
+
+
+async def _run_mutation_guard(guard: MutationGuard | None) -> None:
+    if guard is None:
+        return
+    if inspect.iscoroutinefunction(guard):
+        await guard()
+        return
+    result = await asyncio.to_thread(guard)
+    if asyncio.iscoroutine(result):
+        await result
 
 
 async def _tab_call(tab: Any, method: str, *args: Any, **kwargs: Any) -> Any:
@@ -32,10 +46,17 @@ async def _tab_call(tab: Any, method: str, *args: Any, **kwargs: Any) -> Any:
 
 
 class RawLocator:
-    def __init__(self, tab: Any, selector: str, index: int = 0) -> None:
+    def __init__(
+        self,
+        tab: Any,
+        selector: str,
+        index: int = 0,
+        mutation_guard: MutationGuard | None = None,
+    ) -> None:
         self._tab = tab
         self._selector = selector
         self._index = index
+        self._mutation_guard = mutation_guard
 
     @property
     def _elements_js(self) -> str:
@@ -56,16 +77,27 @@ class RawLocator:
 
     @property
     def first(self) -> "RawLocator":
-        return RawLocator(self._tab, self._selector, index=0)
+        return RawLocator(
+            self._tab,
+            self._selector,
+            index=0,
+            mutation_guard=self._mutation_guard,
+        )
 
     def nth(self, index: int) -> "RawLocator":
-        return RawLocator(self._tab, self._selector, index=index)
+        return RawLocator(
+            self._tab,
+            self._selector,
+            index=index,
+            mutation_guard=self._mutation_guard,
+        )
 
     async def count(self) -> int:
         expr = f"{self._elements_js}.length"
         return int(await _tab_call(self._tab, "eval", expr) or 0)
 
     async def fill(self, value: str, **_kwargs: Any) -> None:
+        await _run_mutation_guard(self._mutation_guard)
         el = self._sel_js
         expr = (
             "(function(){var e=" + el + ";if(!e)return false;"
@@ -77,10 +109,12 @@ class RawLocator:
         await _tab_call(self._tab, "eval", expr)
 
     async def click(self, **_kwargs: Any) -> None:
+        await _run_mutation_guard(self._mutation_guard)
         expr = "(function(){var e=" + self._sel_js + ";if(e)e.click();return !!e;})()"
         await _tab_call(self._tab, "eval", expr)
 
     async def press(self, key: str, **_kwargs: Any) -> None:
+        await _run_mutation_guard(self._mutation_guard)
         key_js = json.dumps(key)
         expr = (
             "(function(){var e=" + self._sel_js + ";if(!e)return false;"
@@ -112,13 +146,19 @@ class RawPage:
         *,
         initial_url: str = "",
         require_badge: bool = False,
+        mutation_guard: MutationGuard | None = None,
     ) -> None:
         self._tab = tab
         self._url = initial_url
         self._require_badge = require_badge
+        self._mutation_guard = mutation_guard
 
     def locator(self, selector: str) -> RawLocator:
-        return RawLocator(self._tab, selector)
+        return RawLocator(
+            self._tab,
+            selector,
+            mutation_guard=self._mutation_guard,
+        )
 
     async def _refresh_busy_badge(self) -> None:
         label = getattr(self._tab, "_badge_label", None)
@@ -127,8 +167,9 @@ class RawPage:
             if self._require_badge:
                 raise RuntimeError("visible automation marker is missing")
             return
+        await _run_mutation_guard(self._mutation_guard)
         applied = await _tab_call(self._tab, "mark_busy", label)
-        if self._require_badge and applied is False:
+        if self._require_badge and applied is not True:
             raise RuntimeError("visible automation marker refresh failed")
 
     async def goto(self, url: str, *, wait_until: str | None = None, timeout: int | None = None) -> None:
@@ -136,13 +177,21 @@ class RawPage:
         timeout_seconds = float(timeout) / 1000.0 if timeout and timeout > 0 else 30.0
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
+        await _run_mutation_guard(self._mutation_guard)
         action = _tab_call(self._tab, "navigate", url, wait_ms=0)
         navigation = await asyncio.wait_for(action, timeout=timeout_seconds)
+        if isinstance(navigation, dict):
+            if navigation.get("errorText"):
+                raise RuntimeError("raw navigation failed")
+            if navigation.get("isDownload") is True:
+                raise RuntimeError("raw navigation download was rejected")
         if wait_until is None:
             return
         loader_id = ""
         if isinstance(navigation, dict):
             loader_id = str(navigation.get("loaderId") or "")
+        if self._require_badge and not loader_id:
+            raise RuntimeError("raw navigation loader proof is missing")
         lifecycle = getattr(self._tab, "wait_for_lifecycle", None)
         if loader_id and callable(lifecycle):
             lifecycle_name = {
