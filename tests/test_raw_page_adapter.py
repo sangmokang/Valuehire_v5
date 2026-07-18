@@ -60,6 +60,10 @@ class RawPageAdapterTests(unittest.TestCase):
         self.assertIn("elementFromPoint", js)
         self.assertIn("checkVisibility", js)
         self.assertIn("backgroundColor", js)
+        self.assertIn("aria-label", js)
+        self.assertIn("title", js)
+        self.assertIn("role", js)
+        self.assertIn("vh-automation-status", js)
 
     def test_count_evaluates_query_selector_all_length(self) -> None:
         tab = FakeTab(results={"querySelectorAll": 3})

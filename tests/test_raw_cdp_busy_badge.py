@@ -191,6 +191,15 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("getComputedStyle", js)
         self.assertIn("location.assign", js)
         self.assertNotIn("setTimeout", js)
+        self.assertIn("aria-label", js)
+        self.assertIn("vh-automation-status", js)
+
+    def test_badge_rect_proof_binds_readable_tooltip_identity(self):
+        js = raw_cdp._badge_rect_js("https://example.test/search", "Codex")
+        self.assertIn("aria-label", js)
+        self.assertIn("title", js)
+        self.assertIn("role", js)
+        self.assertIn("vh-automation-status", js)
 
 
 class MarkBusyTests(unittest.TestCase):
