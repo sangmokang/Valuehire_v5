@@ -278,6 +278,58 @@ class RawPortalWorkerWiringTests(unittest.IsolatedAsyncioTestCase):
                 await worker.stop()
         self.assertEqual(tab.disconnect_calls, 1)
 
+    async def test_uncertain_badge_application_is_cleared_before_unlock(self) -> None:
+        target = {
+            "id": "exact",
+            "type": "page",
+            "url": "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search",
+            "webSocketDebuggerUrl": "ws://exact",
+        }
+
+        class UncertainBadgeTab(FakeRawTab):
+            badge_application_uncertain = True
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.close_calls = 0
+
+            def mark_busy(self, _label: str, *, expected_url: str | None = None) -> bool:
+                return False
+
+            def close(self) -> bool:
+                self.close_calls += 1
+                return True
+
+        tab = UncertainBadgeTab()
+        with TemporaryDirectory(prefix="raw-uncertain-badge-") as root, patch(
+            "tools.multi_position_sourcing.portal_worker.RAW_SINGLE_TARGET_LOCK_ROOT",
+            Path(root) / "browser-locks",
+        ), patch(
+            "tools.multi_position_sourcing.portal_worker.resolve_managed_channel_cdp_endpoint",
+            return_value="http://127.0.0.1:9223",
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.list_pages",
+            return_value=[target],
+        ), patch(
+            "tools.multi_position_sourcing.raw_cdp.attach",
+            return_value=tab,
+        ):
+            worker = PortalWorker(
+                PortalWorkerConfig(
+                    channel="saramin",
+                    profile_root=Path(root) / "profile",
+                    connection_mode="raw_single_tab",
+                ),
+                owner_snapshot=self._idle_snapshots(),
+                mutation_sleep=lambda _seconds: None,
+            )
+            with self.assertRaises(RuntimeError):
+                await worker.start()
+            lease_path = worker.config.lock_path
+        self.assertEqual(tab.close_calls, 1)
+        self.assertEqual(tab.disconnect_calls, 0)
+        self.assertFalse(lease_path.exists())
+
     async def test_owner_activity_barrier_reads_twice_and_dwells_before_mutation(self) -> None:
         snapshots = iter((
             SimpleNamespace(owner_activity_detected=False, idle_seconds=200.0, detection_status="ok"),

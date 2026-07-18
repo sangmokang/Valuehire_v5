@@ -17,6 +17,8 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
@@ -80,6 +82,21 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("location.href", js)
         self.assertIn(expected, js)
         self.assertIn("return null", js)
+
+    def test_owned_navigation_is_one_guarded_runtime_evaluation(self):
+        tab = _RecTab(eval_result=True)
+        tab._lifecycle_events = []
+        result = tab.navigate_if_owned(
+            "https://www.jobkorea.co.kr/Corp/Person/Find?keyword=robotics",
+            expected_url="https://www.jobkorea.co.kr/Corp/Person/Find",
+            badge_label="Codex",
+        )
+        self.assertTrue(result["ownershipAcknowledged"])
+        js = tab.evals[-1]
+        self.assertIn("location.href", js)
+        self.assertIn("vh-automation-badge", js)
+        self.assertIn("getComputedStyle", js)
+        self.assertIn("location.assign", js)
 
 
 class MarkBusyTests(unittest.TestCase):
@@ -153,6 +170,53 @@ class MarkBusyTests(unittest.TestCase):
         self.assertFalse(tab.close())
         self.assertEqual(tab.disconnect_calls, 0)
         self.assertEqual(tab._badge_label, "Codex")
+
+    def test_close_keeps_lease_eligible_state_when_socket_close_fails(self):
+        class FailingSocket:
+            connected = True
+
+            def close(self):
+                raise OSError("socket stayed open")
+
+        tab = object.__new__(raw_cdp.CDPTab)
+        tab.ws = FailingSocket()
+        tab._badge_label = None
+        self.assertIs(tab.disconnect(), False)
+        self.assertIs(tab.close(), False)
+
+    def test_mark_busy_exposes_unknown_state_when_ack_is_lost(self):
+        class SideEffectThenTimeout(_RecTab):
+            def eval(self, expr: str):
+                self.evals.append(expr)
+                raise TimeoutError("ack lost after renderer evaluation")
+
+        tab = SideEffectThenTimeout()
+        self.assertFalse(tab.mark_busy("Codex", expected_url="https://example.test/search"))
+        self.assertTrue(tab.badge_application_uncertain)
+
+    def test_constructor_closes_socket_when_domain_enable_fails(self):
+        class Socket:
+            connected = True
+
+            def __init__(self):
+                self.close_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+                self.connected = False
+
+        socket = Socket()
+        websocket_module = SimpleNamespace(
+            create_connection=lambda *_args, **_kwargs: socket,
+        )
+        with patch.dict(sys.modules, {"websocket": websocket_module}), patch.object(
+            raw_cdp.CDPTab,
+            "send",
+            side_effect=RuntimeError("Runtime.enable failed"),
+        ):
+            with self.assertRaises(RuntimeError):
+                raw_cdp.CDPTab("ws://fake")
+        self.assertEqual(socket.close_calls, 1)
 
 
 class RawEventBridgeTests(unittest.TestCase):

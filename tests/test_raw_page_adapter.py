@@ -11,7 +11,7 @@ import asyncio
 import json
 import unittest
 
-from tools.multi_position_sourcing.raw_page_adapter import RawPage
+from tools.multi_position_sourcing.raw_page_adapter import RawPage, _ownership_js
 
 
 class FakeTab:
@@ -44,6 +44,13 @@ def _run(coro):
 
 
 class RawPageAdapterTests(unittest.TestCase):
+    def test_ownership_proof_requires_a_rendered_visible_badge(self) -> None:
+        js = _ownership_js("https://example.test/search", "Codex")
+        self.assertIn("getComputedStyle", js)
+        self.assertIn("getBoundingClientRect", js)
+        self.assertIn("visibility", js)
+        self.assertIn("opacity", js)
+
     def test_count_evaluates_query_selector_all_length(self) -> None:
         tab = FakeTab(results={"querySelectorAll": 3})
         page = RawPage(tab)
@@ -392,6 +399,42 @@ class RawPageAdapterTests(unittest.TestCase):
                 wait_until="domcontentloaded",
             ))
         self.assertEqual(tab.navigation_calls, 0)
+
+    def test_required_navigation_uses_atomic_owned_navigation_command(self) -> None:
+        class AtomicNavigationTab(FakeTab):
+            _badge_label = "Codex"
+
+            def __init__(self):
+                super().__init__()
+                self.atomic_calls = []
+                self.refresh_calls = []
+
+            def navigate(self, *_args, **_kwargs):
+                raise AssertionError("separate Page.navigate is forbidden in required mode")
+
+            def navigate_if_owned(self, url: str, *, expected_url: str, badge_label: str):
+                self.atomic_calls.append((url, expected_url, badge_label))
+                return {"ownershipAcknowledged": True, "lifecycleCursor": 0}
+
+            def wait_for_next_lifecycle(self, cursor: int, event: str, timeout: float):
+                self.asserted_lifecycle = (cursor, event, timeout)
+                return "new-loader"
+
+            def mark_busy(self, label: str, *, expected_url: str | None = None):
+                self.refresh_calls.append((label, expected_url))
+                return True
+
+        origin = "https://www.jobkorea.co.kr/Corp/Person/Find"
+        destination = origin + "?keyword=robotics"
+        tab = AtomicNavigationTab()
+        _run(RawPage(tab, initial_url=origin, require_badge=True).goto(
+            destination,
+            wait_until="domcontentloaded",
+            timeout=1000,
+        ))
+        self.assertEqual(tab.atomic_calls, [(destination, origin, "Codex")])
+        self.assertEqual(tab.asserted_lifecycle[:2], (0, "DOMContentLoaded"))
+        self.assertEqual(tab.refresh_calls, [("Codex", destination)])
 
     def test_on_delegates_to_raw_tab_event_bridge(self) -> None:
         tab = FakeTab()
