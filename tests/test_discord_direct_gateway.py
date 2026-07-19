@@ -255,6 +255,65 @@ class InteractionEnvelopeTests(unittest.TestCase):
         self.assertIn("job:7", tokens)
 
 
+class IdempotencyKeyInjectionTests(unittest.TestCase):
+    """INV-D2("같은 이벤트 2회 → 잡 1개") 를 게이트웨이 레벨에서 실제로 보증.
+
+    Codex 5차 재검증 CRITICAL 실측 재현: 같은 Discord 이벤트를 2번 처리하면 실제로
+    잡이 2개 생겼다(direct_receiver.handle_envelope 가 idempotency_key 를 자동으로
+    채우지 않기 때문 — 그건 envelope 을 만드는 쪽의 책임). 이 테스트는 같은
+    interaction_id/message_id 로 envelope 을 두 번 만들면 완전히 같은
+    idempotency_key 가 들어가는지(=DB 유니크 인덱스가 실제로 중복을 잡을 수 있는
+    조건) 확인한다."""
+
+    def test_fleet_run_interaction_gets_deterministic_idempotency_key(self) -> None:
+        def _make() -> str:
+            interaction = FakeInteraction(
+                interaction_id="343434343434343434", user_id=OWNER_ID,
+                command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            )
+            return interaction_to_envelope(interaction).raw_args
+
+        first, second = _make(), _make()
+        self.assertEqual(first, second)
+        self.assertIn("idempotency:discord:343434343434343434", first)
+
+    def test_different_events_get_different_idempotency_keys(self) -> None:
+        interaction1 = FakeInteraction(
+            interaction_id="353535353535353535", user_id=OWNER_ID,
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+        )
+        interaction2 = FakeInteraction(
+            interaction_id="363636363636363636", user_id=OWNER_ID,
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+        )
+        raw1 = interaction_to_envelope(interaction1).raw_args
+        raw2 = interaction_to_envelope(interaction2).raw_args
+        self.assertNotEqual(raw1, raw2)
+
+    def test_non_fleet_run_command_not_touched(self) -> None:
+        interaction = FakeInteraction(
+            interaction_id="373737373737373737", user_id=OWNER_ID, command="fleet-status",
+        )
+        envelope = interaction_to_envelope(interaction)
+        self.assertNotIn("idempotency", envelope.raw_args)
+
+    def test_explicit_idempotency_not_overwritten(self) -> None:
+        result = gw._with_discord_idempotency_key(
+            "fleet-run", "url:https://x.example.com idempotency:manual-key-123",
+            "999999999999999999",
+        )
+        self.assertIn("idempotency:manual-key-123", result)
+        self.assertNotIn("discord:999999999999999999", result)
+
+    def test_text_message_fleet_run_gets_idempotency_key(self) -> None:
+        message = FakeMessage(
+            message_id="383838383838383838", author_id=OWNER_ID,
+            content=f"/fleet-run url:{CLICKUP_URL}",
+        )
+        envelope = message_to_envelope(message, bot_user_id="999999999999999999")
+        self.assertIn("idempotency:discord:383838383838383838", envelope.raw_args)
+
+
 class ThreeSecondDeferTests(_NotifySilencedCase):
     async def test_defer_called_before_queue_touched(self) -> None:
         interaction = FakeInteraction(
@@ -666,17 +725,24 @@ class MinimalPrivilegeQueueClientRpcOnlyTests(unittest.TestCase):
         self.assertIn("/rest/v1/rpc/discord_gateway_recent_jobs", urls[0])
         self.assertNotIn("/rest/v1/jobs", urls[0])
 
-    def test_resume_only_calls_rpc_endpoint(self) -> None:
+    def test_resume_not_supported_no_network(self) -> None:
+        """v2 보안 경계(Codex 5차 재검증 CRITICAL) — resume/cancel 을 anon RPC 로 노출하면
+        신원 검증 없이 임의 잡 재개/취소가 가능해져(anon 키 보유자가 recent_jobs 로 id 를
+        알아낸 뒤 호출) owner 전용 명령의 앱 레벨 인가를 완전히 우회한다. 그래서 이
+        최소권한 클라이언트는 resume/cancel 을 아예 지원하지 않는다 — 네트워크조차
+        안 나가야 한다."""
         client, urls, fake_urlopen = self._client_with_recorder()
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            client.resume(1)
-        self.assertIn("/rest/v1/rpc/resume_job", urls[0])
+            with self.assertRaises(NotImplementedError):
+                client.resume(1)
+        self.assertEqual(urls, [])
 
-    def test_cancel_only_calls_rpc_endpoint(self) -> None:
+    def test_cancel_not_supported_no_network(self) -> None:
         client, urls, fake_urlopen = self._client_with_recorder()
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            client.cancel(1, "test")
-        self.assertIn("/rest/v1/rpc/cancel_job", urls[0])
+            with self.assertRaises(NotImplementedError):
+                client.cancel(1, "test")
+        self.assertEqual(urls, [])
 
     def test_enqueue_only_calls_rpc_endpoint_not_table(self) -> None:
         client, urls, fake_urlopen = self._client_with_recorder()
@@ -712,12 +778,80 @@ class MinimalPrivilegeQueueClientRpcOnlyTests(unittest.TestCase):
         self.assertIn("/rest/v1/rpc/discord_gateway_enqueue", urls[0])
         self.assertNotIn("/rest/v1/jobs", urls[0])
 
+    def test_enqueue_rejects_agent_skill_before_network(self) -> None:
+        """v2 보안 경계 — skill='agent' 는 owner 전용(fragment E, 이 조각 범위 밖)이라
+        이 최소권한 경로에서 절대 등록되면 안 된다. 파이썬 레벨에서 먼저 거부해
+        네트워크조차 안 나가야 한다(RPC 쪽 화이트리스트와 이중 방어)."""
+        client, urls, fake_urlopen = self._client_with_recorder()
+        # new_job_payload 자체가 skill='agent' 를 받으려면 owner-agent 전용 params
+        # 스키마(request_text/agent/execution_mode/approval_id/...) 를 통과해야 해서
+        # 이 테스트 목적(내 PermissionError 방어선만 격리 검증)엔 과하다 — 재검증 함수를
+        # "이미 통과한 것처럼" 패치해 MinimalPrivilegeQueueClient.enqueue 자체의 방어를
+        # 고립시켜 확인한다.
+        fake_revalidated = {
+            "machine": "macmini", "skill": "agent", "position_url": CLICKUP_URL,
+            "requested_by": "owner:owner", "role": "owner", "params": {}, "account_key": "",
+            "status": "queued",
+        }
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen), \
+             patch(
+                 "tools.multi_position_sourcing.job_queue.url_host_resolves_public",
+                 return_value=True), \
+             patch(
+                 "tools.multi_position_sourcing.job_queue.new_job_payload",
+                 return_value=fake_revalidated):
+            with self.assertRaises(PermissionError):
+                client.enqueue({
+                    "machine": "macmini", "skill": "agent",
+                    "position_url": CLICKUP_URL, "requested_by": "owner:owner",
+                    "role": "owner", "params": {}, "status": "queued",
+                })
+        self.assertEqual(urls, [])
+
+    def test_enqueue_never_sends_p_role_field(self) -> None:
+        """RPC 페이로드에 p_role 키 자체가 없어야 한다(SQL 함수 시그니처에도 p_role
+        파라미터가 없다 — 완전히 제거됐는지 확인, 부분 수정으로 남아있으면 안 된다)."""
+        client, urls, fake_urlopen = self._client_with_recorder()
+        captured_bodies: list[bytes] = []
+
+        class FakeHTTPResponse:
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+
+            def read(self) -> bytes:
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen_capture(req, timeout=30):
+            captured_bodies.append(req.data)
+            import json as _json
+            return FakeHTTPResponse(_json.dumps([{"id": 1}]).encode())
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen_capture), \
+             patch(
+                 "tools.multi_position_sourcing.job_queue.url_host_resolves_public",
+                 return_value=True):
+            client.enqueue({
+                "machine": "macmini", "skill": "aisearch",
+                "position_url": "https://app.clickup.com/t/x", "requested_by": "owner:owner",
+                "role": "owner", "params": {}, "status": "queued",
+            })
+        self.assertEqual(len(captured_bodies), 1)
+        self.assertNotIn(b'"p_role"', captured_bodies[0])
+
 
 class MinimalPrivilegeMigrationStaticTests(unittest.TestCase):
     """마이그레이션 SQL 자체를 정적으로 검사 — 라이브 DB 가 없는 이 worktree 에서는
     이게 "실제 제한이 걸릴 것"이라는 유일한 기계 증거다(적용 자체는 별도 배포 단계,
-    goal §7 조각 J). 4개 RPC 가 anon 에 grant 되고, jobs/account_locks 테이블 자체는
-    anon 에게 여전히 막혀 있는지 확인한다."""
+    goal §7 조각 J). v2(Codex 5차 재검증 CRITICAL 반영) — 3개 RPC 만 anon 에 grant
+    되고, resume_job/cancel_job 은 **이 파일에서 anon 에 grant 되지 않아야** 한다
+    (최초판은 grant 했었고, 그게 신원 검증 없는 임의 잡 취소/재개 우회였다). jobs/
+    account_locks 테이블 자체는 anon 에게 여전히 막혀 있는지도 확인한다."""
 
     def _sql(self) -> str:
         import pathlib
@@ -728,15 +862,43 @@ class MinimalPrivilegeMigrationStaticTests(unittest.TestCase):
         self.assertTrue(path.exists(), f"마이그레이션 파일 없음: {path}")
         return path.read_text(encoding="utf-8")
 
-    def test_grants_execute_on_four_rpcs_to_anon(self) -> None:
+    def test_grants_execute_on_three_rpcs_to_anon_specifically(self) -> None:
+        """Codex 5차 재검증 MINOR 지적: 이전 테스트는 "grant execute ... public.{fn}"
+        접두어만 확인하고 문장이 실제로 "to anon" 으로 끝나는지(다른 role 로 잘못
+        바뀌어도 통과) 검사하지 않았다 — 이번엔 전체 grant 문장을 정확히 매칭한다."""
         sql = self._sql().lower()
-        for fn in (
-            "discord_gateway_enqueue", "discord_gateway_recent_jobs",
-            "discord_gateway_job_by_idempotency_key",
-        ):
-            self.assertIn(f"grant execute on function public.{fn}", sql)
-        self.assertIn("grant execute on function public.resume_job(bigint) to anon", sql)
-        self.assertIn("grant execute on function public.cancel_job(bigint, text) to anon", sql)
+        self.assertIn(
+            "grant execute on function public.discord_gateway_enqueue"
+            "(text, text, text, text, jsonb, text) to anon;", sql)
+        self.assertIn(
+            "grant execute on function public.discord_gateway_recent_jobs(int) to anon;", sql)
+        self.assertIn(
+            "grant execute on function public.discord_gateway_job_by_idempotency_key(text) "
+            "to anon;", sql)
+
+    def test_does_not_grant_resume_or_cancel_to_anon(self) -> None:
+        """v2 핵심 봉인 — resume_job/cancel_job 을 anon 에 grant 하는 문장이 이 파일에
+        있으면 안 된다(있었던 v1 결함의 회귀 방지). 함수 자체는 언급될 수 있지만
+        (설계 노트 주석 안에서), "grant execute ... resume_job... to anon" 조합이
+        코드로는 존재하면 안 된다."""
+        sql = self._sql().lower()
+        self.assertNotIn("grant execute on function public.resume_job(bigint) to anon", sql)
+        self.assertNotIn(
+            "grant execute on function public.cancel_job(bigint, text) to anon", sql)
+
+    def test_enqueue_function_signature_has_no_role_parameter(self) -> None:
+        """v2 핵심 봉인 — discord_gateway_enqueue 함수 시그니처에 p_role 파라미터가
+        없어야 한다(호출자가 role 을 골라 owner 잡을 위조하지 못하게, SQL 안에서
+        항상 'member' 로 하드코딩). 설명 주석에는 "p_role" 문자열이 역사적 맥락으로
+        등장하므로(v1 결함 설명), 실제 파라미터 선언 패턴("p_role text")만 검사한다."""
+        sql = self._sql()
+        self.assertNotIn("p_role text", sql)
+        self.assertIn("'member'", sql)
+
+    def test_enqueue_function_rejects_agent_skill_in_sql(self) -> None:
+        sql = self._sql()
+        self.assertIn("humansearch", sql)
+        self.assertIn("이 최소권한 경로는 humansearch/aisearch/url 스킬만 허용합니다", sql)
 
     def test_revokes_direct_table_access_from_anon(self) -> None:
         sql = self._sql().lower()

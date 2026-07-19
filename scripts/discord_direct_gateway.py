@@ -177,6 +177,28 @@ def _options_to_raw_args(options: Sequence[Mapping[str, Any]] | None) -> str:
     return " ".join(tokens)
 
 
+def _with_discord_idempotency_key(command: str, raw_args: str, event_id: str) -> str:
+    """조각 B(INV-D2, "같은 이벤트 2회 → 잡 1개") 를 게이트웨이 레벨에서 실제로 보증.
+
+    goal §5B 는 ``idempotency_key=discord:<event_id>`` 를 설계 의도로 명시했지만,
+    ``direct_receiver.handle_envelope`` 는 이걸 자동으로 채우지 않는다(호출자가
+    ``idempotency:...`` 를 raw_args 에 직접 안 넣으면 그냥 없는 채로 지나간다) — 그
+    자동화가 원래 "envelope 을 만드는 쪽"의 책임이라는 게 goal §3 아키텍처 그림의
+    의미다. 여기서 채우지 않으면 같은 Discord 인터랙션 재시도(디스코드 자체 재전송,
+    네트워크 재시도 등)가 같은 명령을 두 번 큐에 꽂는다(Codex 5차 재검증 CRITICAL
+    실측 재현: 같은 이벤트 2회 → 잡 2개). fleet-run 만 idempotency 필드를 지원하므로
+    (hermes_fleet_bridge._ALLOWED_FIELDS) 그 명령에만 적용한다. 호출자가 이미
+    ``idempotency:`` 를 명시했으면(현재 슬래시 옵션엔 없지만 텍스트 명령은 자유
+    입력이라 가능) 덮어쓰지 않는다 — 명시값 우선.
+    """
+    if command != "fleet-run" or not event_id:
+        return raw_args
+    if re.search(r"(?:^|\s)idempotency:", raw_args):
+        return raw_args
+    token = f"idempotency:{shlex.quote(f'discord:{event_id}')}"
+    return f"{raw_args} {token}".strip() if raw_args else token
+
+
 def interaction_to_envelope(interaction: Any) -> Optional[DiscordEnvelope]:
     """슬래시 인터랙션 → DiscordEnvelope. 명령명이 비어 있으면 None(무시)."""
     data = getattr(interaction, "data", None) or {}
@@ -189,9 +211,11 @@ def interaction_to_envelope(interaction: Any) -> Optional[DiscordEnvelope]:
     user = getattr(interaction, "user", None)
     user_id = str(getattr(user, "id", "")) if user is not None else ""
     role_ids = () if is_dm else _member_role_ids(user)
-    raw_args = _options_to_raw_args(data.get("options"))
+    event_id = str(getattr(interaction, "id", ""))
+    raw_args = _with_discord_idempotency_key(
+        command, _options_to_raw_args(data.get("options")), event_id)
     return DiscordEnvelope(
-        event_id=str(getattr(interaction, "id", "")),
+        event_id=event_id,
         user_id=user_id,
         channel_id=str(channel_id or ""),
         command=command,
@@ -221,11 +245,13 @@ def message_to_envelope(message: Any, *, bot_user_id: str = "") -> Optional[Disc
     role_ids = () if is_dm else _member_role_ids(author)
     channel = getattr(message, "channel", None)
     channel_id = getattr(channel, "id", None)
+    event_id = str(getattr(message, "id", ""))
     raw_args = " ".join(
         f"{key}:{shlex.quote(str(value))}" for key, value in (parsed.options or {}).items()
     )
+    raw_args = _with_discord_idempotency_key(parsed.command_name, raw_args, event_id)
     return DiscordEnvelope(
-        event_id=str(getattr(message, "id", "")),
+        event_id=event_id,
         user_id=user_id,
         channel_id=str(channel_id or ""),
         command=parsed.command_name,
@@ -441,12 +467,30 @@ class MinimalPrivilegeQueueClient:
 
     ``job_queue.JobQueueClient``(관리자급, 테이블 직접 SELECT/INSERT)와 달리 이
     클라이언트는 ``supabase/migrations/20260719_discord_gateway_minimal_privilege_rpc.sql``
-    이 만드는 4개 RPC 함수(``discord_gateway_enqueue``/``discord_gateway_recent_jobs``/
-    ``discord_gateway_job_by_idempotency_key``/``resume_job``/``cancel_job``)만 호출한다.
-    그 마이그레이션이 anon 키에게 이 함수들 밖의 모든 직접 테이블 권한을 revoke 해두므로,
-    이 키가 유출돼도 블라스트 반경은 "이 RPC 호출"로 좁혀진다(전체 DB 관리자 권한이
-    아님) — Codex Rescue 4차 재검증이 지적한 "문자열 비교만으로는 실제 제한을 증명 못
-    한다"는 결함을 DB grant 로 실제로 해소한다.
+    (v2)이 만드는 3개 RPC 함수(``discord_gateway_enqueue``/``discord_gateway_recent_jobs``/
+    ``discord_gateway_job_by_idempotency_key``)만 호출한다. 그 마이그레이션이 anon 키에게
+    이 함수들 밖의 모든 직접 테이블 권한을 revoke 해두므로, 이 키가 유출돼도 블라스트
+    반경은 "이 RPC 호출"로 좁혀진다(전체 DB 관리자 권한이 아님) — Codex Rescue 4차
+    재검증이 지적한 "문자열 비교만으로는 실제 제한을 증명 못 한다"는 결함을 DB grant 로
+    실제로 해소한다.
+
+    v2 보안 경계(Codex Rescue 5차 재검증 CRITICAL 반영): anon 은 Supabase 기준 "공개
+    가능한 키"라 신원 검증 없이 누구나 이 함수를 호출할 수 있다는 전제로 설계해야 한다.
+    그래서:
+    - ``enqueue()`` 는 owner 잡·agent 스킬을 이 경로로 절대 등록하지 않는다(role 은 DB
+      쪽에서 항상 'member' 로 강제되고, skill='agent' 는 파이썬 레벨에서 먼저 거부해
+      네트워크조차 안 나간다) — anon 키만으로 owner/agent 잡을 위조하는 경로를 원천
+      차단한다. 진짜 owner 잡(fleet-run, role='owner')은 등록되긴 하지만 DB 는 이를
+      'member' 로 기록한다(감사 표기상 사소한 정확도 손실 — 잡 자체는 정상 실행되며,
+      owner 전용 명령의 실제 인가는 Discord 신원 기반 앱 레벨(fleet_dispatch.is_owner)
+      이 계속 담당한다).
+    - ``resume()``/``cancel()`` 은 아예 지원하지 않는다(NotImplementedError) — 최초판은
+      anon 에 resume_job/cancel_job 실행권을 줬는데, 이러면 anon 키 보유자가
+      discord_gateway_recent_jobs 로 잡 번호를 알아낸 뒤 임의로 취소/재개할 수 있어
+      owner 전용 명령의 앱 레벨 인가를 완전히 우회했다. 이 마이그레이션은 그 grant 를
+      아예 하지 않는다 — fleet-resume/fleet-cancel 은 이 최소권한 경로로 동작하지
+      않는다(알려진 기능 제한, 완전한 owner 전용 원격 인가 메커니즘은 이 조각 범위 밖
+      후속 과제).
 
     ``handle_envelope`` → ``dispatch_fleet_command`` 가 기대하는 큐 인터페이스
     (enqueue/recent/resume/cancel)만 구현한다 — claim_next/release/heartbeats_epoch 등
@@ -494,6 +538,9 @@ class MinimalPrivilegeQueueClient:
         호출단에서 했지만, ``JobQueueClient.enqueue`` 와 동일하게 여기서도 다시
         재검증한다(신뢰 경계마다 재확인, V1 결함 6 패턴 재사용) — 최종 강제는 RPC 안
         SQL 검증이다. SSRF 방지(``url_host_resolves_public``)도 그대로 재사용.
+
+        skill='agent' 는 네트워크 호출 전 파이썬 레벨에서 거부한다(위 클래스 docstring
+        v2 보안 경계 참고) — RPC 쪽 화이트리스트와 이중 방어.
         """
         import urllib.error
 
@@ -513,6 +560,11 @@ class MinimalPrivilegeQueueClient:
         )
         if revalidated is None or payload.get("status") != "queued":
             raise ValueError("무효 페이로드 — new_job_payload 검증 실패")
+        if revalidated["skill"] not in ("humansearch", "aisearch", "url"):
+            raise PermissionError(
+                f"최소권한 게이트웨이 경로는 skill={revalidated['skill']!r} 을 지원하지 "
+                "않습니다(owner/agent 잡 위조 방지 — INV-D5 v2 경계)."
+            )
         if not url_host_resolves_public(revalidated["position_url"]):
             raise ValueError(
                 "position_url 호스트가 공인 주소로 해석되지 않음(사설/loopback/메타데이터 거부)")
@@ -520,10 +572,12 @@ class MinimalPrivilegeQueueClient:
         idem_raw = (revalidated.get("params") or {}).get("idempotency_key")
         idem = "" if idem_raw is None else str(idem_raw)
         try:
+            # p_role 은 보내지 않는다 — RPC 가 항상 'member' 로 강제한다(anon 이 role 을
+            # 자유롭게 골라 owner 잡을 위조하지 못하게, v2 보안 경계).
             rows = self._rpc("discord_gateway_enqueue", {
-                "p_machine": revalidated["machine"], "p_skill": revalidated["skill"],
+                "p_machine": revalidated["machine"],
                 "p_position_url": revalidated["position_url"],
-                "p_requested_by": revalidated["requested_by"], "p_role": revalidated["role"],
+                "p_requested_by": revalidated["requested_by"], "p_skill": revalidated["skill"],
                 "p_params": revalidated.get("params") or {},
                 "p_account_key": revalidated.get("account_key", ""),
             })
@@ -544,14 +598,21 @@ class MinimalPrivilegeQueueClient:
         return rows if isinstance(rows, list) else []
 
     def resume(self, job_id: int) -> Any:
-        if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
-            raise ValueError(f"invalid job_id: {job_id!r}")
-        rows = self._rpc("resume_job", {"p_job_id": job_id})
-        return rows[0] if isinstance(rows, list) and rows else rows
+        """v2 보안 경계: 이 최소권한 경로는 resume 을 지원하지 않는다(클래스 docstring
+        참고 — anon 에 resume_job 실행권을 주면 신원 검증 없이 임의 잡 재개가 가능해짐)."""
+        raise NotImplementedError(
+            "MinimalPrivilegeQueueClient 는 fleet-resume 을 지원하지 않습니다 — "
+            "owner 전용 명령의 원격 인가 메커니즘이 아직 없어 anon RPC 로 노출하지 "
+            "않습니다(INV-D5 v2 보안 경계, 알려진 기능 제한)."
+        )
 
     def cancel(self, job_id: int, reason: str = "") -> Any:
-        rows = self._rpc("cancel_job", {"p_job_id": job_id, "p_reason": reason})
-        return rows[0] if isinstance(rows, list) and rows else rows
+        """v2 보안 경계: 이 최소권한 경로는 cancel 을 지원하지 않는다(resume 과 동일 이유)."""
+        raise NotImplementedError(
+            "MinimalPrivilegeQueueClient 는 fleet-cancel 을 지원하지 않습니다 — "
+            "owner 전용 명령의 원격 인가 메커니즘이 아직 없어 anon RPC 로 노출하지 "
+            "않습니다(INV-D5 v2 보안 경계, 알려진 기능 제한)."
+        )
 
 
 def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover — 실 기동 조립부
@@ -561,8 +622,10 @@ def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover
     — 운영에서는 프로젝트의 표준 anon 키를 넣는다, 커스텀 JWT 발급 불필요)만 읽는다.
     미설정이면 ``JobQueueClient()`` 기본 생성자(관리자급 키 자동 폴백)로 조용히
     넘어가지 않고 기동 자체를 거부한다. 반환 클라이언트는 ``JobQueueClient`` 가 아니라
-    ``MinimalPrivilegeQueueClient`` — DB 레벨에서 실제로 4개 RPC 함수만 호출 가능하도록
-    제한된다(문자열 비교 방어만으로는 부족하다는 Codex 4차 재검증 지적 반영).
+    ``MinimalPrivilegeQueueClient`` — DB 레벨에서 실제로 3개 RPC 함수(enqueue/조회/
+    idempotency 조회, owner 잡·agent 스킬·resume·cancel 은 이 경로에서 미지원)만
+    호출 가능하도록 제한된다(문자열 비교 방어만으로는 부족하다는 Codex 4차 재검증
+    지적 + resume/cancel anon grant 가 인가 우회였다는 5차 재검증 지적 반영).
     """
     url = os.environ.get(QUEUE_URL_ENV, "").strip()
     key = os.environ.get(QUEUE_KEY_ENV, "").strip()
