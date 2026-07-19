@@ -6,41 +6,53 @@ Discord 실 게이트웨이(websocket)에 discord.py(버전 고정, requirements
 전송까지만 한다. 이 스크립트는 스스로 서치·스킬·셸을 실행하지 않는다(INV-D1,
 enqueue-only — 실행 능력은 handle_envelope 안 주입된 큐에만 있다).
 
-지킬 것(goal §2·§3·§6·§9 그대로):
-1. **슬래시 3초 규칙**: ``handle_envelope()``(내부에서 큐 등록 net I/O) 호출 전에 반드시
-   3초 내 ``interaction.response.defer(ephemeral=True)`` 를 먼저 보낸다.
-2. **명령 소유권 일치**: 등록하는 슬래시 명령 = ``fleet_dispatch.FLEET_COMMANDS`` 처리
-   로직이 실제로 있는 것만. ``discord_routing.discord_slash_command_payloads()`` 는
-   search-status/run-search/register-position/session-status/relogin-needed 도
-   정의하지만, ``fleet_dispatch.dispatch_fleet_command`` 는
-   ``if invocation.command_name not in FLEET_COMMANDS: return None`` 으로 이 5개를
-   처리하지 않는다(fleet_dispatch.py 확인) — 등록하면 눌러도 항상 미지원으로 끝나는
-   죽은 UI가 되므로 ``slash_commands_to_register()`` 로 교집합만 등록한다.
-3. **envelope 필드 보존**: 길드 인터랙션이면 guild_id/channel_id/role_ids 를 실제로
-   채운다(기존 hermes_fleet_bridge 어댑터처럼 DM 고정 금지).
-4. **텍스트 명령**: 기본은 owner DM + 봇 멘션만(추가 인텐트 불필요) —
-   ``discord_routing.parse_discord_command_text`` 재사용, 자유텍스트 길드 전체 파싱은
-   하지 않는다(Message Content 인텐트가 필요하며 기본 off).
-5. **비밀 미노출(INV-D5)**: 봇 토큰·예외 원문을 디스코드로 보내지 않는다. 이 스크립트
-   자체는 DISCORD_BOT_TOKEN 만 필요하며 Supabase service-role 키를 직접 다루지 않는다
-   (큐 클라이언트가 주입되어 그쪽 책임).
-6. **fail-closed 침묵의 discord.py 요구사항 절충**: 슬래시 인터랙션은 defer 로 1차
-   응답을 이미 보냈으므로, discord API 는 그 인터랙션에 최종 응답(followup)을 요구한다
-   (안 보내면 그 사용자에게만 "상호작용 실패"가 표시됨 — 다른 사람에겐 안 보임).
-   ``handle_envelope`` 의 response=None(=침묵 대상, 비인가/신원미상/미지원 전부 포함)
-   케이스에서, 침묵 "사유"별로 회신 내용을 다르게 만들면 그 차이 자체가 "이 명령이
-   나에게 적용된다/안 된다"는 신호가 되어 INV-D6(명령 존재를 비인가자에게 알리지
-   않음)를 깬다. 그래서 response=None 인 모든 경로는 **항상 완전히 동일한 무정보
-   ack**(``_GENERIC_SILENT_ACK``)만 보낸다 — 침묵 사유는 감사 로그에만 남는다.
-   (이 판단이 애매하면 codex-rescue 2차 검증에서 재검토 요망 — goal §2 INV-D6 요구사항)
-7. **네트워크 0 in 단위테스트**: tests/test_discord_direct_gateway.py 는 discord.Interaction/
-   discord.Client 를 fake 로 만들어 검증한다. discord.py 라이브러리 import 자체는 하되
-   (타입 힌트), 실제 client.run()/websocket 연결은 ``__main__`` 가드 밖에서 절대 호출하지
+지킬 것(goal §2·§3·§6·§9 그대로), Codex Rescue 2차 적대검증(NEEDS-FIX 5건) 반영 후:
+
+1. **슬래시 3초 규칙**: ``interaction.response.defer(ephemeral=True)`` 를 항상 함수의
+   첫 줄에서 호출한다. 큐 생성(``queue_factory()``)이 실패해도 defer 는 이미 끝난 뒤라
+   discord 쪽 3초 마감을 어기지 않는다 — 운영 배선(``DirectGatewayClient.on_interaction``)
+   도 큐를 미리 만들지 않고 ``queue_factory`` 콜러블만 넘겨 defer 이후에 지연 평가한다
+   (V1 지적: 예전엔 인터랙션 호출 인자 평가 시점에 큐가 먼저 만들어져 defer 도달 전에
+   예외가 날 수 있었다).
+2. **이벤트 루프 비차단**: ``handle_envelope()`` 는 동기 함수이고 내부 큐 net I/O 가
+   최대 30초 걸릴 수 있어(``job_queue.py`` 참고), 그대로 부르면 같은 프로세스의 다른
+   인터랙션 응답이 그동안 막힌다. ``asyncio.to_thread()`` 로 스레드에 위임한다.
+3. **최소권한(INV-D5)**: 게이트웨이 프로세스는 ``job_queue.JobQueueClient()`` 기본
+   생성자(=SUPABASE_SERVICE_ROLE_KEY, 관리자급)를 절대 쓰지 않는다.
+   ``DISCORD_GATEWAY_SUPABASE_URL``/``DISCORD_GATEWAY_SUPABASE_KEY`` 전용 최소권한
+   자격만 읽고, 없으면 기동을 거부한다(fail-closed) — 관리자급 키로 조용히 폴백하지
    않는다.
+4. **감사 기록 기본 배선**: 운영 조립부(``_build_client``)는 ``_default_audit`` 를
+   기본으로 주입한다 — 침묵(response=None) 이벤트도 로그에는 남는다(사용자에게만 숨김).
+5. **명령 소유권 일치**: 등록하는 슬래시 명령 = ``fleet_dispatch.FLEET_COMMANDS`` 처리
+   로직이 실제로 있는 것만. ``slash_commands_to_register()`` 는 ``FLEET_COMMANDS`` 를
+   직접 참조해 동적으로 따라간다(하드코딩 목록 아님). 기동 시(``setup_hook``)
+   ``register_discord_commands.bulk_register_discord_commands`` 를 이 필터된 목록으로
+   호출해 실제로 배선한다(예전엔 함수만 있고 아무도 안 부르는 죽은 코드였음).
+6. **envelope 필드 보존**: 길드 인터랙션이면 guild_id/channel_id/role_ids 를 실제로
+   채운다(기존 hermes_fleet_bridge 어댑터처럼 DM 고정 금지).
+7. **텍스트 명령 범위(goal §3)**: 기본은 owner DM + 봇 멘션만 — 인가된 일반 멤버의
+   자유 DM 은 처리하지 않는다(``handle_text_message`` 가 owner_user_ids 로 명시 필터).
+8. **fail-closed 침묵의 discord.py 요구사항 절충**: defer 로 1차 응답을 이미 보냈으므로
+   discord API 는 그 인터랙션에 최종 응답을 요구한다. response=None(=침묵 대상,
+   비인가/신원미상/미지원 전부 포함) 케이스는 사유와 무관하게 항상 동일한 무정보
+   ack(``_GENERIC_SILENT_ACK``)만 보낸다 — 사유별 회신 차이가 "명령이 적용된다/안
+   된다"는 신호가 되는 것을 막는다. 첫 회신은 discord 공식 문서가 권고하는
+   ``interaction.edit_original_response()`` 로 보낸다(defer 후 첫 followup 을 원응답
+   수정으로 취급하는 하위호환 동작에 기대지 않음).
+9. **비밀 미노출(INV-D5)**: 봇 토큰·예외 원문을 디스코드로 보내지 않는다.
+10. **네트워크 0 in 단위테스트**: tests/test_discord_direct_gateway.py 는 discord.py 실
+    websocket/HTTP 를 켜지 않는다. 단, 인가된 fleet-run 성공 경로는 기존
+    ``fleet_dispatch.dispatch_fleet_command`` → ``fleet_worker.discord_notify`` 를
+    그대로 통과하므로(조각 A/B 기존 코드, 알림 주입 분리는 조각 F 범위), 로컬에
+    ``DISCORD_BOT_TOKEN``/``DISCORD_WEBHOOK_URL_OPS_HEALTH`` 가 실재하면 진짜 HTTP 가
+    나갈 수 있다 — 테스트는 ``fleet_worker.discord_notify`` 를 패치해 무조건 무력화한다
+    (``tests/test_direct_receiver.py`` 의 ``_NotifySilencedCase`` 와 동일 패턴 재사용).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -60,20 +72,33 @@ from tools.multi_position_sourcing.discord_routing import (
     load_discord_access_config,
     parse_discord_command_text,
 )
-from tools.multi_position_sourcing.fleet_dispatch import FLEET_COMMANDS
+from tools.multi_position_sourcing.fleet_dispatch import (
+    FLEET_COMMANDS,
+    OWNER_USER_IDS,
+    owner_user_ids_from_env,
+)
 
 logger = logging.getLogger("discord_direct_gateway")
 
 _SNOWFLAKE_RE = re.compile(r"^[0-9]{15,22}$")
 
-# response=None(침묵) 인 모든 사유에 공통으로 쓰는 무정보 ack — §6 참고. 내용을 절대
+# response=None(침묵) 인 모든 사유에 공통으로 쓰는 무정보 ack — §8 참고. 내용을 절대
 # 사유별로 분기하지 않는다(그 차이 자체가 신호가 됨).
 _GENERIC_SILENT_ACK = "🔕"
 _RESPONSE_CHAR_LIMIT = 1900  # goal §4 — 1,900자 분할 회신 계약과 동일 상한(단발 회신도 안전측 절단).
 
+# INV-D5 — 게이트웨이 자신의 큐 자격증명은 job_queue.JobQueueClient() 기본값
+# (SUPABASE_SERVICE_ROLE_KEY, 관리자급)을 절대 쓰지 않는다. 전용 최소권한 env 만.
+QUEUE_URL_ENV = "DISCORD_GATEWAY_SUPABASE_URL"
+QUEUE_KEY_ENV = "DISCORD_GATEWAY_SUPABASE_KEY"
+
 
 def slash_commands_to_register() -> list[dict[str, Any]]:
-    """명령 소유권 일치(goal §3) — FLEET_COMMANDS 처리 로직이 실제 있는 명령만 등록."""
+    """명령 소유권 일치(goal §3) — FLEET_COMMANDS 처리 로직이 실제 있는 명령만 등록.
+
+    ``FLEET_COMMANDS`` 를 하드코딩 복제하지 않고 직접 참조한다 — 그 값이 바뀌면
+    등록 대상도 같이 따라간다(정적 목록 고정 아님, Codex 2차검증 반박 반영).
+    """
     return [p for p in discord_slash_command_payloads() if p.get("name") in FLEET_COMMANDS]
 
 
@@ -133,7 +158,8 @@ def message_to_envelope(message: Any, *, bot_user_id: str = "") -> Optional[Disc
     """봇 멘션/DM 텍스트 명령 → DiscordEnvelope. 기존 parse_discord_command_text 재사용.
 
     슬래시가 아니고 봇 멘션도 아닌 일반 텍스트는 항상 None(무시) — 길드 자유텍스트
-    파싱은 Message Content 인텐트가 필요해 기본 범위 밖(goal §3).
+    파싱은 Message Content 인텐트가 필요해 기본 범위 밖(goal §3). owner DM 전용 제한은
+    이 함수가 아니라 호출부(``handle_text_message``)의 정책이다 — 이 함수는 순수 변환만.
     """
     content = getattr(message, "content", "") or ""
     parsed = parse_discord_command_text(content, bot_user_id=bot_user_id)
@@ -162,10 +188,27 @@ def message_to_envelope(message: Any, *, bot_user_id: str = "") -> Optional[Disc
     )
 
 
+async def _safe_first_reply(interaction: Any, content: str, *, event_id: str) -> None:
+    """defer 이후 첫(그리고 유일한) 회신 — discord 권고대로 원응답 수정을 우선 시도.
+
+    ``edit_original_response`` 가 없는(구버전/기타) 대상이면 followup.send 로 대체.
+    전송 실패가 게이트웨이를 죽이면 안 되므로 예외는 로그로만 남긴다.
+    """
+    try:
+        editor = getattr(interaction, "edit_original_response", None)
+        if callable(editor):
+            await editor(content=content)
+        else:
+            await interaction.followup.send(content, ephemeral=True)
+    except Exception:  # noqa: BLE001 — 전송 실패를 게이트웨이 크래시로 번지게 하지 않는다.
+        logger.warning("discord_direct_gateway: 회신 전송 실패 event_id=%s", event_id)
+
+
 async def handle_slash_interaction(
     interaction: Any,
     *,
-    queue: Any,
+    queue: Any = None,
+    queue_factory: Optional[Callable[[], Any]] = None,
     authorized_users: Sequence[DiscordAuthorizedUser],
     config: DiscordAccessConfig,
     audit: Optional[Callable[[dict[str, Any]], Any]] = None,
@@ -173,58 +216,77 @@ async def handle_slash_interaction(
 ) -> dict[str, Any]:
     """슬래시 인터랙션 1건 처리 — 3초 규칙(goal §3) 준수: defer 가 항상 첫 호출.
 
-    envelope 변환 실패(미지원 인터랙션 타입 등)도 discord API 요구사항상 무언가는
-    응답해야 하므로 동일한 무정보 ack 를 보낸다(§6).
+    ``queue`` 를 직접 주면(테스트) 그걸 쓰고, 없으면 ``queue_factory()`` 를 defer *뒤*에
+    지연 호출한다 — 큐 생성 실패가 3초 데드라인 안쪽에서 나든 밖에서 나든 defer 는 이미
+    끝난 뒤라 무관하다(V1 지적 반영: 예전엔 호출부가 인자 평가 시점에 큐를 미리 만들어
+    defer 도달 전에 예외가 날 수 있었다).
     """
     await interaction.response.defer(ephemeral=True)  # net I/O(handle_envelope) 전에 반드시 먼저.
 
     envelope = interaction_to_envelope(interaction)
     if envelope is None:
-        await _safe_followup(interaction, _GENERIC_SILENT_ACK, event_id="?")
+        await _safe_first_reply(interaction, _GENERIC_SILENT_ACK, event_id="?")
         return {"handled": False, "action": "unsupported_interaction", "response": None}
+
+    try:
+        resolved_queue = queue if queue is not None else queue_factory()  # type: ignore[misc]
+    except Exception:  # noqa: BLE001 — 큐 생성 실패도 fail-closed 보고, 크래시 금지.
+        logger.warning(
+            "discord_direct_gateway: queue_factory 실패 event_id=%s", envelope.event_id)
+        await _safe_first_reply(interaction, _GENERIC_SILENT_ACK, event_id=envelope.event_id)
+        return {"handled": False, "action": "internal_error", "response": None}
 
     kwargs: dict[str, Any] = {}
     if clock is not None:
         kwargs["clock"] = clock
-    result = handle_envelope(
-        envelope, queue=queue, authorized_users=authorized_users,
+    # handle_envelope 는 동기(최대 30초 큐 net I/O) — 이벤트 루프를 막지 않도록 스레드 위임.
+    result = await asyncio.to_thread(
+        handle_envelope, envelope, queue=resolved_queue, authorized_users=authorized_users,
         config=config, audit=audit, **kwargs,
     )
 
     response = result.get("response")
     outgoing = _GENERIC_SILENT_ACK if response is None else response[:_RESPONSE_CHAR_LIMIT]
-    await _safe_followup(interaction, outgoing, event_id=envelope.event_id)
+    await _safe_first_reply(interaction, outgoing, event_id=envelope.event_id)
     return result
-
-
-async def _safe_followup(interaction: Any, content: str, *, event_id: str) -> None:
-    """followup.send 실패가 게이트웨이를 죽이면 안 됨 — 회신 유실은 로그로만 남긴다."""
-    try:
-        await interaction.followup.send(content, ephemeral=True)
-    except Exception:  # noqa: BLE001 — 전송 실패를 게이트웨이 크래시로 번지게 하지 않는다.
-        logger.warning("discord_direct_gateway: followup.send 실패 event_id=%s", event_id)
 
 
 async def handle_text_message(
     message: Any,
     *,
     bot_user_id: str,
-    queue: Any,
+    queue: Any = None,
+    queue_factory: Optional[Callable[[], Any]] = None,
     authorized_users: Sequence[DiscordAuthorizedUser],
     config: DiscordAccessConfig,
     audit: Optional[Callable[[dict[str, Any]], Any]] = None,
     clock: Optional[Callable[[], float]] = None,
+    owner_user_ids: Sequence[str] = OWNER_USER_IDS,
 ) -> Optional[dict[str, Any]]:
-    """봇 멘션/DM 텍스트 명령 1건 처리. 지원 명령이 아니면 None(네트워크 접촉 0)."""
+    """봇 멘션/DM 텍스트 명령 1건 처리. 지원 명령이 아니면 None(네트워크 접촉 0).
+
+    goal §3 — 텍스트 명령 기본 범위는 owner DM + 봇 멘션만. 인가된 일반 멤버의 DM
+    자유텍스트는 여기서 걸러 큐에 닿지 않게 한다(길드 멘션은 route_discord_invocation
+    의 채널/역할 allowlist 가 이미 걸러주므로 이 함수에서 추가 제한하지 않는다).
+    """
     envelope = message_to_envelope(message, bot_user_id=bot_user_id)
     if envelope is None:
         return None
+    if envelope.is_dm and str(envelope.user_id) not in set(str(u) for u in owner_user_ids):
+        return None
+
+    try:
+        resolved_queue = queue if queue is not None else queue_factory()  # type: ignore[misc]
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "discord_direct_gateway: queue_factory 실패(text) event_id=%s", envelope.event_id)
+        return {"handled": False, "action": "internal_error", "response": None}
 
     kwargs: dict[str, Any] = {}
     if clock is not None:
         kwargs["clock"] = clock
-    result = handle_envelope(
-        envelope, queue=queue, authorized_users=authorized_users,
+    result = await asyncio.to_thread(
+        handle_envelope, envelope, queue=resolved_queue, authorized_users=authorized_users,
         config=config, audit=audit, **kwargs,
     )
 
@@ -240,6 +302,11 @@ async def handle_text_message(
     return result
 
 
+def _default_audit(event: Mapping[str, Any]) -> None:
+    """운영 기본 감사 배선(§4) — 사용자에게는 숨겨도(§8) 로그에는 남긴다."""
+    logger.info("discord_direct_gateway audit: %s", dict(event))
+
+
 class DirectGatewayClient(discord.Client):
     """운영 진입점 — 실 게이트웨이 접속 전용(단위테스트는 이 클래스를 기동하지 않는다).
 
@@ -253,40 +320,90 @@ class DirectGatewayClient(discord.Client):
         config: DiscordAccessConfig,
         queue_factory: Callable[[], Any],
         audit: Optional[Callable[[dict[str, Any]], Any]] = None,
+        owner_user_ids: Sequence[str] = OWNER_USER_IDS,
     ) -> None:
         super().__init__(intents=discord.Intents.default())
         self._authorized_users = authorized_users
         self._config = config
         self._queue_factory = queue_factory
-        self._audit = audit
+        self._audit = audit if audit is not None else _default_audit
+        self._owner_user_ids = owner_user_ids
 
-    async def on_interaction(self, interaction: discord.Interaction) -> None:  # pragma: no cover — 실 네트워크 진입점
+    async def setup_hook(self) -> None:  # pragma: no cover — 실 기동 전용
+        await self._sync_commands()
+
+    async def _sync_commands(self) -> None:  # pragma: no cover — 실 네트워크 진입점
+        """명령 소유권 일치(goal §3) — FLEET_COMMANDS 교집합만 실제로 등록한다.
+
+        register_discord_commands.py 를 새로 만들지 않고 그 함수를 그대로 재사용(단일
+        출처) — payloads 만 slash_commands_to_register() 로 필터해서 넘긴다.
+        """
+        application_id = os.environ.get("DISCORD_CLIENT_ID", "").strip()
+        if not application_id:
+            logger.warning("discord_direct_gateway: DISCORD_CLIENT_ID 미설정 — 명령 등록 생략")
+            return
+        from tools.multi_position_sourcing.register_discord_commands import (
+            bulk_register_discord_commands,
+        )
+        token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
+        guild_id = os.environ.get("DISCORD_GUILD_ID", "").strip()
+        result = bulk_register_discord_commands(
+            application_id=application_id, bot_token=token, guild_id=guild_id,
+            payloads=slash_commands_to_register(),
+        )
+        if not result.get("ok"):
+            logger.warning("discord_direct_gateway: 명령 등록 실패 %s", result)
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:  # pragma: no cover
         if getattr(interaction, "type", None) != discord.InteractionType.application_command:
             return
+        # queue 를 여기서 미리 만들지 않는다 — handle_slash_interaction 이 defer 뒤에
+        # queue_factory() 를 호출해야 3초 규칙이 큐 생성 실패와 무관하게 지켜진다.
         await handle_slash_interaction(
-            interaction, queue=self._queue_factory(),
+            interaction, queue_factory=self._queue_factory,
             authorized_users=self._authorized_users, config=self._config, audit=self._audit,
         )
 
-    async def on_message(self, message: discord.Message) -> None:  # pragma: no cover — 실 네트워크 진입점
+    async def on_message(self, message: discord.Message) -> None:  # pragma: no cover
         if message.author.bot:
             return
         bot_user = self.user
         bot_user_id = str(bot_user.id) if bot_user is not None else ""
         await handle_text_message(
-            message, bot_user_id=bot_user_id, queue=self._queue_factory(),
+            message, bot_user_id=bot_user_id, queue_factory=self._queue_factory,
             authorized_users=self._authorized_users, config=self._config, audit=self._audit,
+            owner_user_ids=self._owner_user_ids,
         )
 
 
-def _build_client() -> DirectGatewayClient:  # pragma: no cover — 실 기동 조립부
+def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover — 실 기동 조립부
+    """INV-D5 — SUPABASE_SERVICE_ROLE_KEY(관리자급)를 이 프로세스에 절대 주지 않는다.
+
+    전용 최소권한 자격(``DISCORD_GATEWAY_SUPABASE_URL``/``DISCORD_GATEWAY_SUPABASE_KEY``,
+    운영에서는 RLS 로 enqueue/조회만 허용하는 제한 키를 발급해 주입)만 읽는다. 미설정이면
+    ``JobQueueClient()`` 기본 생성자(관리자급 키 자동 폴백)로 조용히 넘어가지 않고 기동
+    자체를 거부한다.
+    """
+    url = os.environ.get(QUEUE_URL_ENV, "").strip()
+    key = os.environ.get(QUEUE_KEY_ENV, "").strip()
+    if not url or not key:
+        raise SystemExit(
+            f"{QUEUE_URL_ENV}/{QUEUE_KEY_ENV} 환경변수가 필요합니다 — 게이트웨이는 "
+            "SUPABASE_SERVICE_ROLE_KEY(관리자급)를 직접 쓰지 않는다(INV-D5 최소권한)."
+        )
     from tools.multi_position_sourcing.job_queue import JobQueueClient
 
+    return lambda: JobQueueClient(url=url, key=key)
+
+
+def _build_client() -> DirectGatewayClient:  # pragma: no cover — 실 기동 조립부
     config = load_discord_access_config()
     authorized_users = load_authorized_discord_users()
     return DirectGatewayClient(
         authorized_users=authorized_users, config=config,
-        queue_factory=JobQueueClient,
+        queue_factory=_minimal_privilege_queue_factory(),
+        audit=_default_audit,
+        owner_user_ids=owner_user_ids_from_env(),
     )
 
 
