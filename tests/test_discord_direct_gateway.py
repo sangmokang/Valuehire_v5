@@ -39,6 +39,7 @@ STRANGER_ID = "999999999999999999"
 CLICKUP_URL = "https://app.clickup.com/t/86eznizpq"
 
 AUTHORIZED = (
+    DiscordAuthorizedUser(name="Owner", alias="o", email="o@valueconnect.kr", discord_id=OWNER_ID),
     DiscordAuthorizedUser(name="Member", alias="m", email="m@x.com", discord_id=MEMBER_ID),
 )
 
@@ -284,22 +285,18 @@ class HandleSlashInteractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(interaction.sent), 1)  # discord 요구사항상 뭔가는 응답해야 함
         first_ack = interaction.sent[0]["content"]
 
-        # 다른 침묵 사유(신원 미상 event_id)도 완전히 같은 ack 문구여야 한다 — 사유별
-        # 회신 차이가 "명령 존재/적용" 신호가 되지 않도록.
+        # 다른 침묵 사유(비인가자 목록 자체가 빈 경우)도 완전히 같은 ack 문구여야 한다 —
+        # 사유별 회신 차이가 "명령 존재/적용" 신호가 되지 않도록.
         interaction2 = FakeInteraction(
-            interaction_id="not-a-snowflake", user_id=STRANGER_ID,
+            interaction_id="898989898989898989", user_id=STRANGER_ID,
             command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
         )
-        interaction2.data = {"name": "fleet-run", "options": [{"name": "url", "value": CLICKUP_URL}]}
-        interaction2.id = 0  # id 는 int 뿐이라 진짜 비정형은 아래 event_id override 로 검증
-
-        # 정체성 검증은 envelope 레벨에서 별도로 확인(문자열 타입 위조는 게이트웨이가
-        # 항상 str(id) 로 변환하므로, 실제 비스노우플레이크 사례는 event_id 길이로 재현).
         result2 = await handle_slash_interaction(
-            interaction, queue=FakeQueue(), authorized_users=(),
+            interaction2, queue=FakeQueue(), authorized_users=(),
             config=DiscordAccessConfig(allowed_channel_ids=(), allow_dm=True),
         )
         self.assertIsNone(result2["response"])
+        self.assertEqual(interaction2.sent[0]["content"], first_ack)
 
     async def test_unsupported_interaction_command_silent(self) -> None:
         interaction = FakeInteraction(
