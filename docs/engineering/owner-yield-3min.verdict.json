@@ -14,7 +14,7 @@
       "tools/multi_position_sourcing/fleet_dispatch.py",
       ".claude/skills/url/SKILL.md",
       "docs/sot/29-fleet-control.json", "docs/sot/29-fleet-control.md",
-      "docs/sot/30-fleet-run-reliability.md", "CLAUDE.md",
+      "docs/sot/31-fleet-run-reliability.md", "CLAUDE.md",
       "tests/test_owner_yield_3min.py", "tests/test_session_batch.py",
       "tests/test_fleet_reliability.py", "tests/test_owner_activity.py",
       "tests/test_autoresume_decision.py"

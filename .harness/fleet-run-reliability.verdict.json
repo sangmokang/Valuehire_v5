@@ -1,7 +1,7 @@
 {
   "task": "fleet-run-reliability",
   "date": "2026-07-13",
-  "spec": "docs/sot/30-fleet-run-reliability.md",
+  "spec": "docs/sot/31-fleet-run-reliability.md",
   "gate4b": {
     "pass_ultracode_review": {
       "agents": 16,

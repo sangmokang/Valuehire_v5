@@ -123,7 +123,7 @@ def test_unpaused_accounts_still_use_the_existing_global_lock_and_skip_locked():
 def test_sot_documents_cross_machine_linkedin_and_manual_unblock_only():
     control_json = (REPO / "docs/sot/29-fleet-control.json").read_text()
     control_md = (REPO / "docs/sot/29-fleet-control.md").read_text()
-    reliability = (REPO / "docs/sot/30-fleet-run-reliability.md").read_text()
+    reliability = (REPO / "docs/sot/31-fleet-run-reliability.md").read_text()
     joined = "\n".join((control_json, control_md, reliability))
     assert "계정 단위 pause 장벽" in joined
     assert "portal:linkedin_rps" in joined
