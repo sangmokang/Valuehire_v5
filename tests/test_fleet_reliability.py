@@ -1,4 +1,4 @@
-"""SOT30(docs/sot/30-fleet-run-reliability.md) S2·S3 계약 테스트 — RED 먼저.
+"""SOT30(docs/sot/31-fleet-run-reliability.md) S2·S3 계약 테스트 — RED 먼저.
 
 S2: queued 고착 감지(stalled_queued_jobs) + Watchdog 경보 + fleet-status heartbeat 나이.
 S3: 자격증명 프로브(classify_auth_probe/probe_auth) + 워커 기동 인증 게이트(fail-loud).
