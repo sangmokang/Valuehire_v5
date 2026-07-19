@@ -436,13 +436,133 @@ class DirectGatewayClient(discord.Client):
         )
 
 
+class MinimalPrivilegeQueueClient:
+    """INV-D5 최소권한 큐 클라이언트 — ``public.jobs`` 테이블에 직접 닿지 않는다.
+
+    ``job_queue.JobQueueClient``(관리자급, 테이블 직접 SELECT/INSERT)와 달리 이
+    클라이언트는 ``supabase/migrations/20260719_discord_gateway_minimal_privilege_rpc.sql``
+    이 만드는 4개 RPC 함수(``discord_gateway_enqueue``/``discord_gateway_recent_jobs``/
+    ``discord_gateway_job_by_idempotency_key``/``resume_job``/``cancel_job``)만 호출한다.
+    그 마이그레이션이 anon 키에게 이 함수들 밖의 모든 직접 테이블 권한을 revoke 해두므로,
+    이 키가 유출돼도 블라스트 반경은 "이 RPC 호출"로 좁혀진다(전체 DB 관리자 권한이
+    아님) — Codex Rescue 4차 재검증이 지적한 "문자열 비교만으로는 실제 제한을 증명 못
+    한다"는 결함을 DB grant 로 실제로 해소한다.
+
+    ``handle_envelope`` → ``dispatch_fleet_command`` 가 기대하는 큐 인터페이스
+    (enqueue/recent/resume/cancel)만 구현한다 — claim_next/release/heartbeats_epoch 등
+    워커 전용 메서드는 이 클라이언트가 아예 갖지 않는다(게이트웨이가 워커 역할을 할
+    이유가 없음, INV-D1).
+
+    정직한 한계(verdict 에도 명시): 이 마이그레이션은 코드로만 존재하며, 이 worktree
+    에서 라이브 Supabase 에 자동 적용되지 않는다(``supabase db push`` 는 별도 배포
+    단계, goal §7 조각 J 라이브 검증 게이트). 적용 전에는 이 클라이언트의 모든 호출이
+    "함수를 찾을 수 없음" 으로 실패한다 — 안전측 실패(관리자 키로 자동 폴백 없음)이지
+    기능 동작을 보장하지 않는다.
+    """
+
+    def __init__(self, url: str, key: str) -> None:
+        self.url = url.rstrip("/")
+        self.key = key
+
+    def _rpc(self, name: str, payload: dict[str, Any]) -> Any:
+        import json as _json
+        import urllib.error as _urllib_error
+        import urllib.request as _urllib_request
+
+        req = _urllib_request.Request(
+            f"{self.url}/rest/v1/rpc/{name}",
+            data=_json.dumps(payload).encode(),
+            method="POST",
+            headers={
+                "apikey": self.key,
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            },
+        )
+        try:
+            with _urllib_request.urlopen(req, timeout=30) as response:
+                body = response.read().decode() or "null"
+            return _json.loads(body)
+        except _urllib_error.HTTPError:
+            raise  # 호출부(enqueue)가 409(idempotency 충돌)를 구분해서 처리한다.
+
+    def enqueue(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """조각 B(원자적 enqueue-or-get, INV-D2) 를 RPC 경로에서도 유지한다.
+
+        ``new_job_payload`` 재검증은 이미 ``fleet_dispatch.build_fleet_job_payload`` 가
+        호출단에서 했지만, ``JobQueueClient.enqueue`` 와 동일하게 여기서도 다시
+        재검증한다(신뢰 경계마다 재확인, V1 결함 6 패턴 재사용) — 최종 강제는 RPC 안
+        SQL 검증이다. SSRF 방지(``url_host_resolves_public``)도 그대로 재사용.
+        """
+        import urllib.error
+
+        from tools.multi_position_sourcing.job_queue import (
+            JobQueueConflictError,
+            new_job_payload,
+            url_host_resolves_public,
+        )
+
+        if not isinstance(payload, dict):
+            raise ValueError("new_job_payload 로 만든 페이로드만 enqueue 가능")
+        revalidated = new_job_payload(
+            machine=payload.get("machine"), skill=payload.get("skill"),
+            position_url=payload.get("position_url"), requested_by=payload.get("requested_by"),
+            role=payload.get("role"), params=payload.get("params"),
+            account_key=payload.get("account_key", ""),
+        )
+        if revalidated is None or payload.get("status") != "queued":
+            raise ValueError("무효 페이로드 — new_job_payload 검증 실패")
+        if not url_host_resolves_public(revalidated["position_url"]):
+            raise ValueError(
+                "position_url 호스트가 공인 주소로 해석되지 않음(사설/loopback/메타데이터 거부)")
+
+        idem_raw = (revalidated.get("params") or {}).get("idempotency_key")
+        idem = "" if idem_raw is None else str(idem_raw)
+        try:
+            rows = self._rpc("discord_gateway_enqueue", {
+                "p_machine": revalidated["machine"], "p_skill": revalidated["skill"],
+                "p_position_url": revalidated["position_url"],
+                "p_requested_by": revalidated["requested_by"], "p_role": revalidated["role"],
+                "p_params": revalidated.get("params") or {},
+                "p_account_key": revalidated.get("account_key", ""),
+            })
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409 and idem:
+                existing = self.job_by_idempotency_key(idem)
+                if existing is not None:
+                    return existing
+            raise JobQueueConflictError(f"enqueue 실패(HTTP {exc.code})") from None
+        return rows[0] if isinstance(rows, list) and rows else rows
+
+    def job_by_idempotency_key(self, key: str) -> Optional[dict[str, Any]]:
+        rows = self._rpc("discord_gateway_job_by_idempotency_key", {"p_key": str(key)})
+        return rows[0] if isinstance(rows, list) and rows else None
+
+    def recent(self, limit: int = 10) -> list[dict[str, Any]]:
+        rows = self._rpc("discord_gateway_recent_jobs", {"p_limit": max(1, min(int(limit), 50))})
+        return rows if isinstance(rows, list) else []
+
+    def resume(self, job_id: int) -> Any:
+        if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+            raise ValueError(f"invalid job_id: {job_id!r}")
+        rows = self._rpc("resume_job", {"p_job_id": job_id})
+        return rows[0] if isinstance(rows, list) and rows else rows
+
+    def cancel(self, job_id: int, reason: str = "") -> Any:
+        rows = self._rpc("cancel_job", {"p_job_id": job_id, "p_reason": reason})
+        return rows[0] if isinstance(rows, list) and rows else rows
+
+
 def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover — 실 기동 조립부
     """INV-D5 — SUPABASE_SERVICE_ROLE_KEY(관리자급)를 이 프로세스에 절대 주지 않는다.
 
-    전용 최소권한 자격(``DISCORD_GATEWAY_SUPABASE_URL``/``DISCORD_GATEWAY_SUPABASE_KEY``,
-    운영에서는 RLS 로 enqueue/조회만 허용하는 제한 키를 발급해 주입)만 읽는다. 미설정이면
-    ``JobQueueClient()`` 기본 생성자(관리자급 키 자동 폴백)로 조용히 넘어가지 않고 기동
-    자체를 거부한다.
+    전용 최소권한 자격(``DISCORD_GATEWAY_SUPABASE_URL``/``DISCORD_GATEWAY_SUPABASE_KEY``
+    — 운영에서는 프로젝트의 표준 anon 키를 넣는다, 커스텀 JWT 발급 불필요)만 읽는다.
+    미설정이면 ``JobQueueClient()`` 기본 생성자(관리자급 키 자동 폴백)로 조용히
+    넘어가지 않고 기동 자체를 거부한다. 반환 클라이언트는 ``JobQueueClient`` 가 아니라
+    ``MinimalPrivilegeQueueClient`` — DB 레벨에서 실제로 4개 RPC 함수만 호출 가능하도록
+    제한된다(문자열 비교 방어만으로는 부족하다는 Codex 4차 재검증 지적 반영).
     """
     url = os.environ.get(QUEUE_URL_ENV, "").strip()
     key = os.environ.get(QUEUE_KEY_ENV, "").strip()
@@ -453,8 +573,8 @@ def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover
         )
     # 방어적 2중 검사(Codex 2차검증 재재현 지적: "관리자급 키를 전용 env 에 넣어도 그대로
     # 수용") — 이름만 다른 변수에 관리자 키를 그대로 복붙하는 흔한 설정 실수를 최소한
-    # 문자열 비교로 걸러낸다. DB 쪽에 실제 제한 역할/RLS 정책이 아직 없다는 근본 한계는
-    # 이 코드로 못 없앤다 — verdict 에 인프라 과제로 명시(이 스크립트 범위 밖).
+    # 문자열 비교로 걸러낸다. 이건 방어의 1층일 뿐이고, 진짜 강제는
+    # MinimalPrivilegeQueueClient 가 RPC 밖 테이블에 절대 안 닿는다는 것(2층, DB grant).
     service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
     if service_role_key and key == service_role_key:
         raise SystemExit(
@@ -462,9 +582,7 @@ def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover
             "전용 최소권한 키를 발급해 주입하라(INV-D5). 이 방어는 문자열 일치만 잡으며, "
             "실제 DB 쪽 제한 역할/RLS 를 대체하지 않는다."
         )
-    from tools.multi_position_sourcing.job_queue import JobQueueClient
-
-    return lambda: JobQueueClient(url=url, key=key)
+    return lambda: MinimalPrivilegeQueueClient(url=url, key=key)
 
 
 def _build_client() -> DirectGatewayClient:  # pragma: no cover — 실 기동 조립부

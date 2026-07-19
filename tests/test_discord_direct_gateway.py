@@ -20,10 +20,12 @@
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import shlex
 import time
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 from scripts import discord_direct_gateway as gw
@@ -605,6 +607,7 @@ class MinimalPrivilegeQueueTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             factory = gw._minimal_privilege_queue_factory()
         client = factory()
+        self.assertIsInstance(client, gw.MinimalPrivilegeQueueClient)
         self.assertEqual(client.key, "scoped-minimal-key")
         self.assertNotEqual(client.key, "admin-key-should-not-be-used")
 
@@ -620,6 +623,125 @@ class MinimalPrivilegeQueueTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaises(SystemExit):
                 gw._minimal_privilege_queue_factory()
+
+
+class MinimalPrivilegeQueueClientRpcOnlyTests(unittest.TestCase):
+    """Codex 4차 재검증 CRITICAL — "문자열 비교만으로는 실제 제한을 증명 못 한다".
+
+    MinimalPrivilegeQueueClient 는 어떤 메서드를 호출해도 ``/rest/v1/rpc/<name>`` 경로만
+    쳐야 한다 — ``/rest/v1/jobs``(테이블 직접 접근) 경로를 절대 안 쳐야, DB 마이그레이션
+    (20260719_discord_gateway_minimal_privilege_rpc.sql)이 그은 경계와 코드가 실제로
+    맞물린다. urlopen 을 가로채 실제 요청 URL 을 검사한다(네트워크 0).
+    """
+
+    def _client_with_recorder(self) -> tuple[Any, list[str]]:
+        requested_urls: list[str] = []
+
+        class FakeHTTPResponse:
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+
+            def read(self) -> bytes:
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen(req, timeout=30):
+            requested_urls.append(req.full_url)
+            return FakeHTTPResponse(b"[]")
+
+        client = gw.MinimalPrivilegeQueueClient(
+            url="https://scoped.example.supabase.co", key="scoped-minimal-key")
+        return client, requested_urls, fake_urlopen
+
+    def test_recent_only_calls_rpc_endpoint(self) -> None:
+        client, urls, fake_urlopen = self._client_with_recorder()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            client.recent(5)
+        self.assertEqual(len(urls), 1)
+        self.assertIn("/rest/v1/rpc/discord_gateway_recent_jobs", urls[0])
+        self.assertNotIn("/rest/v1/jobs", urls[0])
+
+    def test_resume_only_calls_rpc_endpoint(self) -> None:
+        client, urls, fake_urlopen = self._client_with_recorder()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            client.resume(1)
+        self.assertIn("/rest/v1/rpc/resume_job", urls[0])
+
+    def test_cancel_only_calls_rpc_endpoint(self) -> None:
+        client, urls, fake_urlopen = self._client_with_recorder()
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            client.cancel(1, "test")
+        self.assertIn("/rest/v1/rpc/cancel_job", urls[0])
+
+    def test_enqueue_only_calls_rpc_endpoint_not_table(self) -> None:
+        client, urls, fake_urlopen = self._client_with_recorder()
+
+        class FakeHTTPResponse:
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+
+            def read(self) -> bytes:
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen_with_row(req, timeout=30):
+            urls.append(req.full_url)
+            import json as _json
+            return FakeHTTPResponse(_json.dumps([{"id": 1, "status": "queued"}]).encode())
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen_with_row), \
+             patch(
+                 "tools.multi_position_sourcing.job_queue.url_host_resolves_public",
+                 return_value=True):
+            client.enqueue({
+                "machine": "macmini", "skill": "aisearch",
+                "position_url": "https://app.clickup.com/t/x", "requested_by": "owner:owner",
+                "role": "owner", "params": {}, "status": "queued",
+            })
+        self.assertEqual(len(urls), 1)
+        self.assertIn("/rest/v1/rpc/discord_gateway_enqueue", urls[0])
+        self.assertNotIn("/rest/v1/jobs", urls[0])
+
+
+class MinimalPrivilegeMigrationStaticTests(unittest.TestCase):
+    """마이그레이션 SQL 자체를 정적으로 검사 — 라이브 DB 가 없는 이 worktree 에서는
+    이게 "실제 제한이 걸릴 것"이라는 유일한 기계 증거다(적용 자체는 별도 배포 단계,
+    goal §7 조각 J). 4개 RPC 가 anon 에 grant 되고, jobs/account_locks 테이블 자체는
+    anon 에게 여전히 막혀 있는지 확인한다."""
+
+    def _sql(self) -> str:
+        import pathlib
+
+        path = (pathlib.Path(gw.__file__).resolve().parents[1]
+                / "supabase" / "migrations"
+                / "20260719_discord_gateway_minimal_privilege_rpc.sql")
+        self.assertTrue(path.exists(), f"마이그레이션 파일 없음: {path}")
+        return path.read_text(encoding="utf-8")
+
+    def test_grants_execute_on_four_rpcs_to_anon(self) -> None:
+        sql = self._sql().lower()
+        for fn in (
+            "discord_gateway_enqueue", "discord_gateway_recent_jobs",
+            "discord_gateway_job_by_idempotency_key",
+        ):
+            self.assertIn(f"grant execute on function public.{fn}", sql)
+        self.assertIn("grant execute on function public.resume_job(bigint) to anon", sql)
+        self.assertIn("grant execute on function public.cancel_job(bigint, text) to anon", sql)
+
+    def test_revokes_direct_table_access_from_anon(self) -> None:
+        sql = self._sql().lower()
+        self.assertIn("revoke all on public.jobs from anon", sql)
+        self.assertIn("revoke all on public.account_locks from anon", sql)
 
 
 class DefaultAuditTests(unittest.TestCase):
@@ -643,6 +765,18 @@ class DefaultAuditTests(unittest.TestCase):
             any("unit-test-marker-xyz" in line for line in captured.output),
             captured.output,
         )
+
+    def test_module_handler_actually_attached_independent_of_assertLogs(self) -> None:
+        """Codex 4차 재검증 지적: assertLogs 는 그 자체가 임시 핸들러를 붙이므로,
+        모듈이 스스로 핸들러를 붙였는지 여부와 무관하게 항상 통과한다(위 테스트의
+        맹점). 이 테스트는 assertLogs 없이 ``gw.logger.handlers`` 를 직접 검사해
+        모듈 자신의 핸들러가 실제로 붙어 있는지 확인한다 — 이걸 지우는 뮤턴트라면
+        이 테스트가 잡는다."""
+        self.assertTrue(
+            any(isinstance(h, logging.StreamHandler) for h in gw.logger.handlers),
+            "discord_direct_gateway 로거에 자체 StreamHandler 가 없음",
+        )
+        self.assertFalse(gw.logger.propagate)
 
 
 class CommandBackupTests(unittest.TestCase):
@@ -748,10 +882,7 @@ class ExecutionPrimitiveTests(unittest.TestCase):
         "__builtins__", "__globals__", "__subclasses__", "__bases__", "__mro__",
     })
 
-    def _violations(self) -> list[str]:
-        import scripts.discord_direct_gateway as module
-
-        source = open(module.__file__, encoding="utf-8").read()
+    def _violations_in_source(self, source: str) -> list[str]:
         tree = ast.parse(source)
         violations: list[str] = []
         for node in ast.walk(tree):
@@ -769,6 +900,13 @@ class ExecutionPrimitiveTests(unittest.TestCase):
                         and top not in self._ALLOWED_ABSOLUTE_IMPORTS
                         and not any(module_name.startswith(p) for p in self._ALLOWED_IMPORT_PREFIXES)):
                     violations.append(f"from {module_name} import ...")
+                # Codex 4차검증 지적: `from os import execv as harmless` 처럼 별칭을 쓰면
+                # 이후 코드에서 "harmless(...)" 로만 나타나 ast.Name 검사(원래 이름
+                # "execv")를 피해간다 — import 시점의 원래 이름(alias.name, asname 아님)
+                # 자체를 여기서 검사해 별칭 우회를 막는다.
+                for alias in node.names:
+                    if alias.name in self._BANNED_NAMES:
+                        violations.append(f"import-name:{alias.name}")
             elif isinstance(node, ast.Name) and node.id in self._BANNED_NAMES:
                 violations.append(f"name:{node.id}")
             elif isinstance(node, ast.Attribute) and node.attr in self._BANNED_ATTRS:
@@ -776,29 +914,22 @@ class ExecutionPrimitiveTests(unittest.TestCase):
         return violations
 
     def test_no_execution_primitives_in_source(self) -> None:
-        self.assertEqual(self._violations(), [])
+        import scripts.discord_direct_gateway as module
+
+        source = open(module.__file__, encoding="utf-8").read()
+        self.assertEqual(self._violations_in_source(source), [])
 
     def test_trip_wire_catches_subprocess_run(self) -> None:
-        """자기검증 — 트립와이어 자체가 codex 가 놓쳤던 3종을 실제로 잡는지 확인."""
+        """자기검증 — 트립와이어 자체가 codex 가 놓쳤던 4종(별칭 우회 포함)을 실제로
+        잡는지, 실제 검사 로직(``_violations_in_source``)을 그대로 재사용해 확인한다
+        (로직이 두 곳에서 따로 유지되면 드리프트가 생기므로 하나만 둔다)."""
         for mutant_source in (
             "import subprocess\nsubprocess.run(['ls'])\n",
             "from subprocess import Popen\nPopen(['ls'])\n",
             "import os\nos.execv('/bin/ls', [])\n",
+            "from os import execv as harmless\nharmless('/bin/ls', [])\n",
         ):
-            tree = ast.parse(mutant_source)
-            found = []
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name.split(".")[0] not in self._ALLOWED_ABSOLUTE_IMPORTS:
-                            found.append(f"import {alias.name}")
-                elif isinstance(node, ast.ImportFrom):
-                    if (node.module or "").split(".")[0] not in self._ALLOWED_ABSOLUTE_IMPORTS:
-                        found.append(f"from {node.module}")
-                elif isinstance(node, ast.Name) and node.id in self._BANNED_NAMES:
-                    found.append(f"name:{node.id}")
-                elif isinstance(node, ast.Attribute) and node.attr in self._BANNED_ATTRS:
-                    found.append(f"attr:{node.attr}")
+            found = self._violations_in_source(mutant_source)
             self.assertTrue(found, f"트립와이어가 놓침: {mutant_source!r}")
 
 
