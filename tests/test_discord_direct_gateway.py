@@ -564,6 +564,26 @@ class TextMessageTests(_NotifySilencedCase):
         self.assertEqual(message.calls, [])
 
 
+class BuildClientOwnerConsistencyTests(unittest.TestCase):
+    """Codex 2차검증 재재현 CRITICAL — _build_client() 가 FLEET_OWNER_DISCORD_IDS(env)
+    로 owner_user_ids 를 바꿔 넘기면, 그 값은 게이트웨이 텍스트 DM 범위 필터에만
+    반영되고 direct_receiver.handle_envelope → dispatch_fleet_command 내부의 owner
+    전용 명령(resume/cancel) 판정은 fleet_dispatch.OWNER_USER_IDS 고정값만 본다(그
+    경로는 조각 C 범위 밖이라 못 고침) — 두 지점이 다른 owner 를 가리키면 "새 owner
+    는 DM 통과, resume/cancel 은 거부"라는 불일치가 재현된다. _build_client() 는
+    항상 고정 OWNER_USER_IDS 를 써서 최소한 자기 안에서는 일관되게 유지해야 한다."""
+
+    def test_build_client_uses_fixed_owner_ids_not_env_override(self) -> None:
+        with patch.object(gw, "load_discord_access_config",
+                           return_value=DiscordAccessConfig(allow_dm=True)), \
+             patch.object(gw, "load_authorized_discord_users", return_value=AUTHORIZED), \
+             patch.object(gw, "_minimal_privilege_queue_factory", return_value=lambda: FakeQueue()), \
+             patch.dict(os.environ, {"FLEET_OWNER_DISCORD_IDS": "111111111111111111"}, clear=False):
+            client = gw._build_client()
+        self.assertEqual(tuple(client._owner_user_ids), gw.OWNER_USER_IDS)
+        self.assertNotIn("111111111111111111", client._owner_user_ids)
+
+
 class MinimalPrivilegeQueueTests(unittest.TestCase):
     """INV-D5 — 게이트웨이는 SUPABASE_SERVICE_ROLE_KEY(관리자급)를 절대 읽지 않는다."""
 
@@ -588,6 +608,19 @@ class MinimalPrivilegeQueueTests(unittest.TestCase):
         self.assertEqual(client.key, "scoped-minimal-key")
         self.assertNotEqual(client.key, "admin-key-should-not-be-used")
 
+    def test_rejects_dedicated_key_identical_to_service_role(self) -> None:
+        """Codex 2차검증 재재현: 관리자급 키를 이름만 바꾼 전용 env 에 그대로 넣는
+        설정 실수를 방어적으로 거부한다(문자열 일치 검사 — DB 쪽 실제 제한 역할이
+        없다는 근본 한계까지 없애지는 못함, verdict 에 별도 명시)."""
+        env = {
+            gw.QUEUE_URL_ENV: "https://scoped.example.supabase.co",
+            gw.QUEUE_KEY_ENV: "same-admin-key",
+            "SUPABASE_SERVICE_ROLE_KEY": "same-admin-key",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(SystemExit):
+                gw._minimal_privilege_queue_factory()
+
 
 class DefaultAuditTests(unittest.TestCase):
     def test_default_audit_does_not_raise_and_is_wired_into_client(self) -> None:
@@ -598,17 +631,120 @@ class DefaultAuditTests(unittest.TestCase):
         )
         self.assertIsNotNone(client._audit)
 
+    def test_default_audit_actually_emits_observable_log_record(self) -> None:
+        """Codex 2차검증 재재현: logger.info() 만으로는 루트 로거에 핸들러가 없으면
+        (기본 파이썬 상태) 아무 것도 안 보여 '감사 배선'이 이름뿐이었다. 이 모듈은
+        자체 핸들러를 붙이므로 외부 logging 설정과 무관하게 실제 로그 레코드가
+        나가야 한다 — assertLogs 로 실제 방출을 확인(존재 여부만 확인하고 끝나지
+        않는다)."""
+        with self.assertLogs("discord_direct_gateway", level="INFO") as captured:
+            gw._default_audit({"action": "denied", "reason": "unit-test-marker-xyz"})
+        self.assertTrue(
+            any("unit-test-marker-xyz" in line for line in captured.output),
+            captured.output,
+        )
+
+
+class CommandBackupTests(unittest.TestCase):
+    """goal §3 '등록 롤백' — 전체 PUT 교체 전에 기존 명령 payload 를 파일로 백업한다."""
+
+    def test_backup_writes_current_commands_to_file(self) -> None:
+        import json
+        import tempfile
+        from unittest.mock import MagicMock
+
+        existing_commands = [{"name": "old-command", "id": "1"}]
+        fake_response = MagicMock()
+        fake_response.read.return_value = json.dumps(existing_commands).encode("utf-8")
+        fake_response.__enter__.return_value = fake_response
+        fake_response.__exit__.return_value = False
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("urllib.request.urlopen", return_value=fake_response):
+                path = gw.backup_current_discord_commands(
+                    application_id="app123", bot_token="fake-token",
+                    backup_dir=tmp_dir,
+                )
+            self.assertIsNotNone(path)
+            saved = json.loads(open(path, encoding="utf-8").read())
+            self.assertEqual(saved, existing_commands)
+
+    def test_backup_returns_none_on_network_failure_fail_closed(self) -> None:
+        import tempfile
+        import urllib.error
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("boom")):
+                path = gw.backup_current_discord_commands(
+                    application_id="app123", bot_token="fake-token",
+                    backup_dir=tmp_dir,
+                )
+            self.assertIsNone(path)
+
+
+class SyncCommandsBackupOrderingTests(unittest.IsolatedAsyncioTestCase):
+    """_sync_commands() 운영 배선 레벨 — 백업 없이는 PUT(재등록)이 절대 안 나가야 한다."""
+
+    async def test_register_skipped_when_backup_fails(self) -> None:
+        client = gw.DirectGatewayClient(
+            authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
+            queue_factory=lambda: FakeQueue(),
+        )
+        register_calls = []
+        with patch.object(gw, "backup_current_discord_commands", return_value=None), \
+             patch(
+                 "tools.multi_position_sourcing.register_discord_commands"
+                 ".bulk_register_discord_commands",
+                 side_effect=lambda **kw: register_calls.append(kw) or {"ok": True}), \
+             patch.dict(os.environ, {"DISCORD_CLIENT_ID": "app123", "DISCORD_BOT_TOKEN": "tok"}):
+            await client._sync_commands()
+        self.assertEqual(register_calls, [])  # 백업 실패 → 등록(PUT) 자체를 안 부름.
+
+    async def test_register_called_after_successful_backup(self) -> None:
+        client = gw.DirectGatewayClient(
+            authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
+            queue_factory=lambda: FakeQueue(),
+        )
+        order: list[str] = []
+        with patch.object(
+                gw, "backup_current_discord_commands",
+                side_effect=lambda **kw: order.append("backup") or "/tmp/fake-backup.json"), \
+             patch(
+                 "tools.multi_position_sourcing.register_discord_commands"
+                 ".bulk_register_discord_commands",
+                 side_effect=lambda **kw: order.append("register") or {"ok": True}), \
+             patch.dict(os.environ, {"DISCORD_CLIENT_ID": "app123", "DISCORD_BOT_TOKEN": "tok"}):
+            await client._sync_commands()
+        self.assertEqual(order, ["backup", "register"])
+
 
 class ExecutionPrimitiveTests(unittest.TestCase):
     """INV-D1 회귀 트립와이어 — subprocess/os.system/eval/exec 등이 새로 들어오면 잡는다.
+
+    Codex 2차검증 재재현 지적: 이전 버전은 ``subprocess.run``(속성이 아니라 모듈 자체를
+    안 막음), ``from subprocess import Popen`` 뒤 맨 이름 ``Popen(...)`` 호출, ``os.execv``
+    를 놓쳤다. 이번엔 (a) import 자체를 허용목록으로 제한 + (b) 실행류 이름을 맨
+    이름(Name)·속성(Attribute) 양쪽 다 넓게 배너해 우회를 줄인다.
 
     discord.Client.run()/setup_hook 등 discord.py 정상 사용까지 막지 않도록 gateway 전용
     허용목록으로 조정한다(direct_receiver.py 의 것과는 다른 화이트리스트 — 그쪽은 discord.py
     자체를 안 쓰므로 더 엄격했다)."""
 
-    _BANNED_NAMES = frozenset({"eval", "exec", "compile", "__import__"})
+    _ALLOWED_ABSOLUTE_IMPORTS = frozenset({
+        "__future__", "asyncio", "logging", "os", "re", "shlex", "json", "time",
+        "typing", "discord",
+    })
+    _ALLOWED_IMPORT_PREFIXES = ("urllib", "pathlib", "tools.multi_position_sourcing")
+
+    _BANNED_NAMES = frozenset({
+        "eval", "exec", "compile", "__import__", "subprocess", "Popen", "popen2",
+        "system", "popen", "execv", "execve", "execl", "execle", "execlp", "execvp",
+        "spawnl", "spawnv", "spawnve", "fork", "getoutput", "check_output",
+    })
     _BANNED_ATTRS = frozenset({
-        "system", "popen", "Popen", "spawn", "check_output", "call", "getoutput",
+        "system", "popen", "Popen", "spawn", "spawnl", "spawnv", "spawnve",
+        "check_output", "call", "getoutput", "execv", "execve", "execl", "execle",
+        "execlp", "execvp", "fork", "run_module", "run_path",
         "__builtins__", "__globals__", "__subclasses__", "__bases__", "__mro__",
     })
 
@@ -619,7 +755,21 @@ class ExecutionPrimitiveTests(unittest.TestCase):
         tree = ast.parse(source)
         violations: list[str] = []
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and node.id in self._BANNED_NAMES:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    top = alias.name.split(".")[0]
+                    if (alias.name not in self._ALLOWED_ABSOLUTE_IMPORTS
+                            and top not in self._ALLOWED_ABSOLUTE_IMPORTS
+                            and not any(alias.name.startswith(p) for p in self._ALLOWED_IMPORT_PREFIXES)):
+                        violations.append(f"import {alias.name}")
+            elif isinstance(node, ast.ImportFrom):
+                module_name = node.module or ""
+                top = module_name.split(".")[0]
+                if (module_name not in self._ALLOWED_ABSOLUTE_IMPORTS
+                        and top not in self._ALLOWED_ABSOLUTE_IMPORTS
+                        and not any(module_name.startswith(p) for p in self._ALLOWED_IMPORT_PREFIXES)):
+                    violations.append(f"from {module_name} import ...")
+            elif isinstance(node, ast.Name) and node.id in self._BANNED_NAMES:
                 violations.append(f"name:{node.id}")
             elif isinstance(node, ast.Attribute) and node.attr in self._BANNED_ATTRS:
                 violations.append(f"attr:{node.attr}")
@@ -627,6 +777,29 @@ class ExecutionPrimitiveTests(unittest.TestCase):
 
     def test_no_execution_primitives_in_source(self) -> None:
         self.assertEqual(self._violations(), [])
+
+    def test_trip_wire_catches_subprocess_run(self) -> None:
+        """자기검증 — 트립와이어 자체가 codex 가 놓쳤던 3종을 실제로 잡는지 확인."""
+        for mutant_source in (
+            "import subprocess\nsubprocess.run(['ls'])\n",
+            "from subprocess import Popen\nPopen(['ls'])\n",
+            "import os\nos.execv('/bin/ls', [])\n",
+        ):
+            tree = ast.parse(mutant_source)
+            found = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.split(".")[0] not in self._ALLOWED_ABSOLUTE_IMPORTS:
+                            found.append(f"import {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    if (node.module or "").split(".")[0] not in self._ALLOWED_ABSOLUTE_IMPORTS:
+                        found.append(f"from {node.module}")
+                elif isinstance(node, ast.Name) and node.id in self._BANNED_NAMES:
+                    found.append(f"name:{node.id}")
+                elif isinstance(node, ast.Attribute) and node.attr in self._BANNED_ATTRS:
+                    found.append(f"attr:{node.attr}")
+            self.assertTrue(found, f"트립와이어가 놓침: {mutant_source!r}")
 
 
 if __name__ == "__main__":

@@ -72,13 +72,18 @@ from tools.multi_position_sourcing.discord_routing import (
     load_discord_access_config,
     parse_discord_command_text,
 )
-from tools.multi_position_sourcing.fleet_dispatch import (
-    FLEET_COMMANDS,
-    OWNER_USER_IDS,
-    owner_user_ids_from_env,
-)
+from tools.multi_position_sourcing.fleet_dispatch import FLEET_COMMANDS, OWNER_USER_IDS
 
 logger = logging.getLogger("discord_direct_gateway")
+# Codex 2차검증 재재현: logger.info() 만으로는 루트 로거에 핸들러가 없으면(기본 파이썬
+# 상태) 아무 것도 출력되지 않아 "감사 배선"이 이름뿐이었다 — 이 모듈 전용 핸들러를
+# 붙여 외부 logging.basicConfig() 호출 여부와 무관하게 항상 보이게 한다(중복 부착 방지).
+if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False  # 루트 로거 설정에 좌우되지 않고 항상 자기 핸들러로만 출력.
 
 _SNOWFLAKE_RE = re.compile(r"^[0-9]{15,22}$")
 
@@ -91,6 +96,49 @@ _RESPONSE_CHAR_LIMIT = 1900  # goal §4 — 1,900자 분할 회신 계약과 동
 # (SUPABASE_SERVICE_ROLE_KEY, 관리자급)을 절대 쓰지 않는다. 전용 최소권한 env 만.
 QUEUE_URL_ENV = "DISCORD_GATEWAY_SUPABASE_URL"
 QUEUE_KEY_ENV = "DISCORD_GATEWAY_SUPABASE_KEY"
+
+
+def backup_current_discord_commands(
+    *, application_id: str, bot_token: str, guild_id: str = "",
+    backup_dir: str = ".harness/discord-command-backups",
+) -> Optional[str]:
+    """goal §3 "등록 롤백" — 전체 PUT 교체 전에 기존 명령 payload 를 파일로 백업한다.
+
+    ``register_discord_commands.discord_command_registration_url()`` 를 그대로 재사용해
+    같은 엔드포인트를 GET 한다(URL 조립 로직 복제 금지). 실패(네트워크·권한 등)하면
+    None 을 반환 — 호출부는 백업 없이는 PUT 을 진행하지 않는다(fail-closed 롤백 안전망).
+    """
+    import json
+    import time
+    import urllib.error
+    import urllib.request
+    from pathlib import Path
+
+    from tools.multi_position_sourcing.register_discord_commands import (
+        discord_command_registration_url,
+    )
+
+    url = discord_command_registration_url(application_id, guild_id)
+    req = urllib.request.Request(
+        url, method="GET",
+        headers={"Authorization": f"Bot {bot_token}", "User-Agent": "Valuehire-Multisearch/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            body = response.read().decode("utf-8")
+            current_commands = json.loads(body) if body else []
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
+        return None
+
+    out_dir = Path(backup_dir)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        out_path = out_dir / f"discord-commands-{application_id}-{guild_id or 'global'}-{stamp}.json"
+        out_path.write_text(json.dumps(current_commands, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        return None
+    return str(out_path)
 
 
 def slash_commands_to_register() -> list[dict[str, Any]]:
@@ -337,16 +385,28 @@ class DirectGatewayClient(discord.Client):
 
         register_discord_commands.py 를 새로 만들지 않고 그 함수를 그대로 재사용(단일
         출처) — payloads 만 slash_commands_to_register() 로 필터해서 넘긴다.
+
+        goal §3 "등록 롤백": 전체 PUT 교체 전에 기존 명령 payload 를 파일로 백업한다
+        (Codex 2차검증 재재현 지적 — 예전엔 백업 없이 바로 덮어썼다).
         """
         application_id = os.environ.get("DISCORD_CLIENT_ID", "").strip()
         if not application_id:
             logger.warning("discord_direct_gateway: DISCORD_CLIENT_ID 미설정 — 명령 등록 생략")
             return
+        token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
+        guild_id = os.environ.get("DISCORD_GUILD_ID", "").strip()
+        backup_path = backup_current_discord_commands(
+            application_id=application_id, bot_token=token, guild_id=guild_id)
+        if backup_path is None:
+            logger.warning(
+                "discord_direct_gateway: 명령 등록 전 백업 실패 — 롤백 안전망 없이 "
+                "PUT 을 진행하지 않고 등록을 건너뜁니다(fail-closed).")
+            return
+        logger.info("discord_direct_gateway: 기존 명령 백업 완료 %s", backup_path)
+
         from tools.multi_position_sourcing.register_discord_commands import (
             bulk_register_discord_commands,
         )
-        token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
-        guild_id = os.environ.get("DISCORD_GUILD_ID", "").strip()
         result = bulk_register_discord_commands(
             application_id=application_id, bot_token=token, guild_id=guild_id,
             payloads=slash_commands_to_register(),
@@ -391,6 +451,17 @@ def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover
             f"{QUEUE_URL_ENV}/{QUEUE_KEY_ENV} 환경변수가 필요합니다 — 게이트웨이는 "
             "SUPABASE_SERVICE_ROLE_KEY(관리자급)를 직접 쓰지 않는다(INV-D5 최소권한)."
         )
+    # 방어적 2중 검사(Codex 2차검증 재재현 지적: "관리자급 키를 전용 env 에 넣어도 그대로
+    # 수용") — 이름만 다른 변수에 관리자 키를 그대로 복붙하는 흔한 설정 실수를 최소한
+    # 문자열 비교로 걸러낸다. DB 쪽에 실제 제한 역할/RLS 정책이 아직 없다는 근본 한계는
+    # 이 코드로 못 없앤다 — verdict 에 인프라 과제로 명시(이 스크립트 범위 밖).
+    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if service_role_key and key == service_role_key:
+        raise SystemExit(
+            f"{QUEUE_KEY_ENV} 값이 SUPABASE_SERVICE_ROLE_KEY(관리자급)와 동일합니다 — "
+            "전용 최소권한 키를 발급해 주입하라(INV-D5). 이 방어는 문자열 일치만 잡으며, "
+            "실제 DB 쪽 제한 역할/RLS 를 대체하지 않는다."
+        )
     from tools.multi_position_sourcing.job_queue import JobQueueClient
 
     return lambda: JobQueueClient(url=url, key=key)
@@ -399,11 +470,22 @@ def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover
 def _build_client() -> DirectGatewayClient:  # pragma: no cover — 실 기동 조립부
     config = load_discord_access_config()
     authorized_users = load_authorized_discord_users()
+    # Codex 2차검증 재재현 CRITICAL: owner_user_ids_from_env()(FLEET_OWNER_DISCORD_IDS)
+    # 를 여기서만 쓰면, 이 값이 게이트웨이의 텍스트 DM 범위 필터에는 반영되는데
+    # direct_receiver.handle_envelope → dispatch_fleet_command 내부의 owner 판정(resume/
+    # cancel 등 owner 전용 명령 허용 여부)은 fleet_dispatch.OWNER_USER_IDS 고정값만 보고
+    # 전혀 이 값을 받지 않는다(그 경로는 이 조각 밖 — direct_receiver.py 수정은 범위
+    # 밖). 두 지점이 다른 owner 를 참조하면 "새 owner 는 DM 은 통과하지만 resume/cancel
+    # 은 거부당하는" 불일치가 실제로 재현된다. 이 조각은 fleet_dispatch 쪽을 못 고치므로,
+    # 대신 게이트웨이 전역에서 항상 같은 고정 OWNER_USER_IDS 를 쓰게 해 최소한 자기
+    # 안에서는 일관되게 만든다 — FLEET_OWNER_DISCORD_IDS 로 owner 를 바꾸고 싶다면
+    # fleet_dispatch/direct_receiver 쪽까지 같이 배선하는 별도 작업이 필요하다(한계로
+    # verdict 에 명시).
     return DirectGatewayClient(
         authorized_users=authorized_users, config=config,
         queue_factory=_minimal_privilege_queue_factory(),
         audit=_default_audit,
-        owner_user_ids=owner_user_ids_from_env(),
+        owner_user_ids=OWNER_USER_IDS,
     )
 
 
