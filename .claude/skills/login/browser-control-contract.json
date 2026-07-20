@@ -16,7 +16,7 @@
     },
     "HUMAN_ACTIVE": {
       "allowed_actions": ["read_owner_idle", "wait"],
-      "resume_after_idle_seconds": 180,
+      "resume_after_idle_seconds": 60,
       "next": ["AI_ATTACHED"]
     },
     "AI_ATTACHED": {
@@ -63,7 +63,7 @@
     "required_before_every_mutation": true,
     "idle_checks": 2,
     "quiet_dwell_seconds": 1,
-    "minimum_idle_seconds": 180,
+    "minimum_idle_seconds": 60,
     "lease_token_recheck": true,
     "failure_state": "HUMAN_ACTIVE"
   },

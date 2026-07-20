@@ -309,7 +309,7 @@ class TestPauseCooldown:
         assert sleep_seconds_after("paused_for_human", 30) == PAUSE_COOLDOWN_SECONDS
         # 이슈 #107(SOT29 INV9, 2026-07-15 사장님 지시): "3분 뒤까지 이상이 없으면
         # 계속 시작해" — 구 스펙(>=300, 10분 쿨다운)은 자동 재개를 방해하는 코드라 폐기.
-        assert PAUSE_COOLDOWN_SECONDS == 180, "SOT29 INV9 — 사장님 양보 3분 자동 재개"
+        assert PAUSE_COOLDOWN_SECONDS == 60, "SOT29 INV9(2026-07-20 개정) — 사장님 양보 1분 자동 재개"
 
     def test_기존_상태별_대기시간_유지(self):
         assert sleep_seconds_after("idle", 30) == 30

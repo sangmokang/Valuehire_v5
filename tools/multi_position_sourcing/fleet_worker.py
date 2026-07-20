@@ -55,7 +55,7 @@ _NOTIFICATION_DEDUPE: dict[str, float] = {}
 # 이상이 없으면 계속 시작해." — 사람 개입(캡차/2FA/사장님 사용) 신호 후 180초 동안
 # 조용하면 자동 재개한다. 영구 중단·10분 쿨다운(구 QA-2 600초)은 이 원칙을 방해하는
 # 코드라 삭제됨. owner_activity.DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS(180)와 같은 원칙.
-OWNER_YIELD_RESUME_SECONDS = 180
+OWNER_YIELD_RESUME_SECONDS = 60
 PAUSE_COOLDOWN_SECONDS = OWNER_YIELD_RESUME_SECONDS  # 하위호환 별칭(단일 출처)
 _RELEASE_RETRY_ATTEMPTS = 3
 _RELEASE_RETRY_BACKOFF = (2, 10)
