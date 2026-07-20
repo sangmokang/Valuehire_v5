@@ -145,14 +145,16 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
     return None
 
 
-def _make_handler(command_name: str):
+def _make_handler(command_name: str, *, fixed_skill: str = ""):
     def _handler(raw_args: str) -> str:
         bridge = _load_bridge_module()
 
         gateway_user_id = _GATEWAY_USER_ID.get()
+        dispatch_command = "fleet-run" if fixed_skill else command_name
+        dispatch_args = f"{fixed_skill} {raw_args}".strip() if fixed_skill else raw_args
         try:
             result = bridge.dispatch_hermes_fleet_command(
-                command_name, raw_args, gateway_user_id=gateway_user_id
+                dispatch_command, dispatch_args, gateway_user_id=gateway_user_id
             )
         except bridge.HermesFleetBridgeError as exc:
             return f"거부됨: {exc}"
@@ -175,9 +177,23 @@ _COMMANDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+_DIRECT_SEARCH_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("url", "Run the Valuehire URL sourcing skill."),
+    ("aisearch", "Run the Valuehire AI Search skill."),
+    ("humansearch", "Run the Valuehire Human Search skill."),
+)
+
+
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _capture_gateway_identity)
     for name, args_hint, description in _COMMANDS:
         ctx.register_command(
             name, handler=_make_handler(name), description=description, args_hint=args_hint
+        )
+    for name, description in _DIRECT_SEARCH_COMMANDS:
+        ctx.register_command(
+            name,
+            handler=_make_handler(name, fixed_skill=name),
+            description=description,
+            args_hint="<position URL> [win|winpc|macmini|macbook]",
         )

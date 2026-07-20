@@ -67,6 +67,7 @@ from tools.multi_position_sourcing.access import (
 )
 from tools.multi_position_sourcing.direct_receiver import DiscordEnvelope, handle_envelope
 from tools.multi_position_sourcing.discord_routing import (
+    DIRECT_SEARCH_SKILL_COMMANDS,
     DiscordAccessConfig,
     discord_slash_command_payloads,
     load_discord_access_config,
@@ -142,12 +143,14 @@ def backup_current_discord_commands(
 
 
 def slash_commands_to_register() -> list[dict[str, Any]]:
-    """명령 소유권 일치(goal §3) — FLEET_COMMANDS 처리 로직이 실제 있는 명령만 등록.
+    """실처리 경로가 있는 fleet 명령과 직접 검색 별칭만 Discord에 등록한다.
 
-    ``FLEET_COMMANDS`` 를 하드코딩 복제하지 않고 직접 참조한다 — 그 값이 바뀌면
-    등록 대상도 같이 따라간다(정적 목록 고정 아님, Codex 2차검증 반박 반영).
+    직접 검색 별칭은 수신 즉시 ``fleet-run``으로 정규화되므로 디스패처에 새 실행
+    분기를 만들지 않는다. ``FLEET_COMMANDS``와 ``DIRECT_SEARCH_SKILL_COMMANDS``를
+    직접 참조해 등록 목록과 처리 목록이 함께 움직이게 한다.
     """
-    return [p for p in discord_slash_command_payloads() if p.get("name") in FLEET_COMMANDS]
+    owned = set(FLEET_COMMANDS) | set(DIRECT_SEARCH_SKILL_COMMANDS)
+    return [p for p in discord_slash_command_payloads() if p.get("name") in owned]
 
 
 def _member_role_ids(user: Any) -> tuple[str, ...]:
@@ -175,6 +178,19 @@ def _options_to_raw_args(options: Sequence[Mapping[str, Any]] | None) -> str:
             continue
         tokens.append(f"{name}:{shlex.quote(str(value))}")
     return " ".join(tokens)
+
+
+def _normalize_direct_search_command(command: str, raw_args: str) -> tuple[str, str]:
+    """``/url`` 등 직접 명령을 기존 ``/fleet-run`` 계약으로만 변환한다.
+
+    고정 skill을 사용자 옵션보다 앞에 넣는다. 위조 인터랙션이 별도 ``skill`` 옵션을
+    끼워 넣으면 하위 단일 파서가 중복 필드로 거부하므로 조용한 덮어쓰기가 없다.
+    """
+    skill = DIRECT_SEARCH_SKILL_COMMANDS.get(command)
+    if skill is None:
+        return command, raw_args
+    fixed = f"skill:{skill}"
+    return "fleet-run", f"{fixed} {raw_args}".strip()
 
 
 def _with_discord_idempotency_key(command: str, raw_args: str, event_id: str) -> str:
@@ -212,8 +228,9 @@ def interaction_to_envelope(interaction: Any) -> Optional[DiscordEnvelope]:
     user_id = str(getattr(user, "id", "")) if user is not None else ""
     role_ids = () if is_dm else _member_role_ids(user)
     event_id = str(getattr(interaction, "id", ""))
-    raw_args = _with_discord_idempotency_key(
-        command, _options_to_raw_args(data.get("options")), event_id)
+    command, raw_args = _normalize_direct_search_command(
+        command, _options_to_raw_args(data.get("options")))
+    raw_args = _with_discord_idempotency_key(command, raw_args, event_id)
     return DiscordEnvelope(
         event_id=event_id,
         user_id=user_id,
@@ -249,12 +266,13 @@ def message_to_envelope(message: Any, *, bot_user_id: str = "") -> Optional[Disc
     raw_args = " ".join(
         f"{key}:{shlex.quote(str(value))}" for key, value in (parsed.options or {}).items()
     )
-    raw_args = _with_discord_idempotency_key(parsed.command_name, raw_args, event_id)
+    command, raw_args = _normalize_direct_search_command(parsed.command_name, raw_args)
+    raw_args = _with_discord_idempotency_key(command, raw_args, event_id)
     return DiscordEnvelope(
         event_id=event_id,
         user_id=user_id,
         channel_id=str(channel_id or ""),
-        command=parsed.command_name,
+        command=command,
         raw_args=raw_args,
         is_dm=is_dm,
         guild_id=str(guild_id or ""),

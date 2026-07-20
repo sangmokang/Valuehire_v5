@@ -10,12 +10,19 @@ from typing import Any
 from .access import DiscordAuthorizedUser, is_authorized_discord_dm
 from .models import Channel
 
+DIRECT_SEARCH_SKILL_COMMANDS: dict[str, str] = {
+    "url": "url",
+    "aisearch": "aisearch",
+    "humansearch": "humansearch",
+}
+
 SUPPORTED_DISCORD_COMMANDS: tuple[str, ...] = (
     "search-status",
     "run-search",
     "register-position",
     "session-status",
     "relogin-needed",
+    *DIRECT_SEARCH_SKILL_COMMANDS,
     # 함대 작업 큐 명령(단계 C, 2026-07-11) — 기존 run-search(source/keyword) 와 별개.
     "fleet-run",
     "fleet-resume",
@@ -252,6 +259,33 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
             "type": 1,
             "contexts": [0, 1],
         },
+        *[
+            {
+                "name": command,
+                "description": f"Queue the Valuehire {skill} search skill.",
+                "type": 1,
+                "contexts": [0, 1],
+                "options": [
+                    {
+                        "name": "url",
+                        "description": "Position URL (ClickUp or supported job posting).",
+                        "type": 3,
+                        "required": True,
+                    },
+                    {
+                        "name": "machine",
+                        "description": "Target machine (optional).",
+                        "type": 3,
+                        "required": False,
+                        "choices": [
+                            {"name": machine, "value": machine}
+                            for machine in ("macmini", "macbook", "winpc")
+                        ],
+                    },
+                ],
+            }
+            for command, skill in DIRECT_SEARCH_SKILL_COMMANDS.items()
+        ],
         {
             "name": "fleet-run",
             "description": "Queue a Valuehire fleet search job (humansearch/aisearch/url).",

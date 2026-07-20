@@ -225,7 +225,7 @@ class CommandOwnershipTests(unittest.TestCase):
         이면 이 테스트가 실패한다(Codex 2차검증: "동적 추종이 검사로 봉인 안 됨" 반영)."""
         with patch.object(gw, "FLEET_COMMANDS", ("fleet-status",)):
             names = {p["name"] for p in slash_commands_to_register()}
-        self.assertEqual(names, {"fleet-status"})
+        self.assertEqual(names, {"fleet-status", "url", "aisearch", "humansearch"})
 
 
 class InteractionEnvelopeTests(unittest.TestCase):
@@ -656,6 +656,20 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
 
 
 class TextMessageTests(_NotifySilencedCase):
+    def test_owner_text_alias_normalizes_to_fleet_run(self) -> None:
+        for index, command in enumerate(("url", "aisearch", "humansearch"), start=1):
+            message = FakeMessage(
+                message_id=f"71{index:016d}",
+                author_id=OWNER_ID,
+                content=f"/{command} url:{CLICKUP_URL}",
+            )
+            envelope = message_to_envelope(message, bot_user_id="999999999999999999")
+            assert envelope is not None
+            self.assertEqual(envelope.command, "fleet-run")
+            tokens = shlex.split(envelope.raw_args)
+            self.assertIn(f"skill:{command}", tokens)
+            self.assertIn(f"url:{CLICKUP_URL}", tokens)
+
     def test_message_to_envelope_preserves_guild_context(self) -> None:
         message = FakeMessage(
             message_id="131313131313131313", author_id=MEMBER_ID,
