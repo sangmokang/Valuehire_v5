@@ -221,3 +221,29 @@ class SnapshotPortalScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HarvestDriverPortalWiringTests(unittest.TestCase):
+    """decide_tick/decide_resume 가 portal_site_active 를 순수계약으로 통과시키는지(배선)."""
+
+    def test_decide_tick_non_portal_runs_despite_recent_input(self) -> None:
+        from tools.multi_position_sourcing.harvest_driver import decide_tick
+
+        decision = decide_tick(
+            frontmost_is_chrome=True,
+            os_idle_seconds=1.0,
+            portal_site_active=False,
+        )
+        self.assertTrue(decision.run)
+
+    def test_decide_resume_portal_recent_input_yields(self) -> None:
+        from tools.multi_position_sourcing.harvest_driver import decide_resume
+
+        decision = decide_resume(
+            frontmost_is_chrome=True,
+            os_idle_seconds=1.0,
+            ticks_yielded=0,
+            seed=7,
+            portal_site_active=True,
+        )
+        self.assertFalse(decision.resume)
