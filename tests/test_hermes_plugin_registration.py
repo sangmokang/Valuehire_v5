@@ -51,12 +51,40 @@ def _telegram_event(user_id: str):
     return SimpleNamespace(source=source)
 
 
-def test_register_wires_pre_gateway_hook_and_all_four_commands() -> None:
+def test_register_wires_pre_gateway_hook_and_all_search_commands() -> None:
     plugin = _load_plugin_module()
     ctx = FakeCtx()
     plugin.register(ctx)
     assert "pre_gateway_dispatch" in ctx.hooks
-    assert set(ctx.commands) == {"fleet-run", "fleet-status", "fleet-resume", "fleet-cancel"}
+    assert set(ctx.commands) == {
+        "fleet-run", "fleet-status", "fleet-resume", "fleet-cancel",
+        "url", "aisearch", "humansearch",
+    }
+
+
+def test_direct_search_handlers_force_skill_and_reuse_fleet_run(monkeypatch) -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    plugin._GATEWAY_USER_ID.set("814353841088757800")
+    calls = []
+
+    def fake_dispatch(command, raw_args, *, gateway_user_id, queue=None, authorized_users=None):
+        calls.append((command, raw_args, gateway_user_id))
+        return {"action": "enqueued"}
+
+    bridge = plugin._load_bridge_module()
+    monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
+
+    for command in ("url", "aisearch", "humansearch"):
+        result = ctx.commands[command]["handler"]("https://app.clickup.com/t/abc winpc")
+        assert json.loads(result) == {"action": "enqueued"}
+
+    assert calls == [
+        ("fleet-run", "url https://app.clickup.com/t/abc winpc", "814353841088757800"),
+        ("fleet-run", "aisearch https://app.clickup.com/t/abc winpc", "814353841088757800"),
+        ("fleet-run", "humansearch https://app.clickup.com/t/abc winpc", "814353841088757800"),
+    ]
 
 
 def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
