@@ -6,3 +6,12 @@ psycopg[binary]>=3.2,<4
 # 일부 테스트가 가져오는 소스 모듈이 import 시점에 playwright를 당긴다(브라우저 실행은 안 함 — 가짜 매니저 사용).
 # CI에서 ModuleNotFoundError 방지용. 브라우저 바이너리(playwright install)는 불필요.
 playwright==1.60.0
+# 조각 C — 디스코드 직결 게이트웨이(scripts/discord_direct_gateway.py) 실접속용.
+# 버전 고정: docs/prompts/discord-direct-connect-goal-2026-07-17.md §5C.
+discord.py==2.4.0
+# discord.py 의 player.py 가 무조건 import audioop 하는데, 파이썬 3.13+ 는 audioop 를
+# stdlib 에서 제거했다(PEP 594 폐기 유예 종료) — 백포트 패키지로 보강해야 import 자체가 된다.
+# CI(.github/workflows/verify.yml)는 python-version: "3.12" 라 stdlib audioop 가 아직
+# 있으므로 설치 대상에서 뺀다 — audioop-lts 0.2.2 휠은 cp313+ 전용이라 3.12 에서 그대로
+# 걸면 설치 단계 자체가 깨진다(Codex 2차검증 CRITICAL 지적, 실측 확인 완료).
+audioop-lts==0.2.2; python_version >= "3.13"

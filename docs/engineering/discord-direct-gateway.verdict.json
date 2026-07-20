@@ -1,0 +1,56 @@
+{
+  "claim_id": "discord-direct-gateway-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal": "docs/prompts/discord-direct-connect-goal-2026-07-17.md §5C",
+  "generator": {
+    "claim": "직결 게이트웨이 조각 C: scripts/discord_direct_gateway.py — discord.py 실 게이트웨이에 접속해 슬래시/텍스트 인터랙션을 DiscordEnvelope 로 변환하고 조각 A(direct_receiver.handle_envelope)에만 위임(enqueue-only, INV-D1). 3초 defer 규칙(운영 배선 레벨까지), 명령 소유권 일치(FLEET_COMMANDS 동적 참조), 길드 컨텍스트 보존, fail-closed 침묵 동일응답, INV-D5 DB 레벨 최소권한(anon RPC, service-role 키 미보유), 멱등키 자동 주입(INV-D2).",
+    "changed_files": [
+      "scripts/discord_direct_gateway.py",
+      "tests/test_discord_direct_gateway.py",
+      "supabase/migrations/20260719_discord_gateway_minimal_privilege_rpc.sql",
+      "requirements-dev.txt"
+    ],
+    "red_evidence": "RED 커밋 67c504e: ModuleNotFoundError(scripts.discord_direct_gateway 모듈 부재)로 수집 실패 → 구현 커밋 a9a5314 로 GREEN",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "green_evidence": "focused 52 passed / 전체 2062 passed, 4 xfailed, 105 subtests passed in ~47s, exit 0 (2026-07-19 최종 재실측, 커밋 65cf7de 기준).",
+    "mutant_check": "자기 적대검증 5라운드에 걸쳐 총 20개 이상의 뮤턴트 주입→감지→원복: (1) defer/queue 순서 역전, 침묵응답 사유별 분기, 명령필터 미필터·하드코딩, 길드컨텍스트 DM고정, followup실패 (2) ephemeral=False, FLEET_COMMANDS하드코딩, eval()삽입, queue선생성-defer전실패, service-role기본폴백, member DM허용, 이벤트루프블로킹(gather 동시성 실측) (3) owner_user_ids 불일치(_build_client 직접호출 필요), 명령백업스킵, INV-D1 subprocess/Popen/execv (4) 감사핸들러제거(assertLogs 자체 맹점 발견 후 재설계), RPC경로→테이블직접경로 4종 (5) idempotency자동주입비활성화, resume()재활성화, migration에 resume grant 재추가. 전부 새/기존 테스트가 잡음 확인 후 git 원복.",
+    "inv_d1_behavioral_proof": "ExecutionPrimitiveTests(import 허용목록 + 실행류 Name/Attribute 배너 + ImportFrom alias.name 원래이름 검사로 별칭우회 차단) + 자기검증 뮤턴트(subprocess.run/Popen bare/os.execv/alias우회 4종 전부 트립와이어가 잡음 확인). 수신기는 큐/감사/시계 전부 주입 의존성이라 실행능력이 없다(조각 A 의 동일 아키텍처 증명 재사용).",
+    "wiring": "실 프로덕션 진입점 — DirectGatewayClient(discord.Client 서브클래스)가 on_interaction/on_message 에서 handle_slash_interaction/handle_text_message 를 실제로 호출. main()/client.run() 은 테스트에서 절대 호출 안 함(discord.py 실 websocket 미기동, 단위테스트 네트워크 0 — fleet_worker.discord_notify 도 _NotifySilencedCase 로 명시 무력화해 실제 무접속 보증).",
+    "inv_d5_design": "게이트웨이는 SUPABASE_SERVICE_ROLE_KEY 를 직접 읽지 않는다. DISCORD_GATEWAY_SUPABASE_URL/KEY(운영에서는 프로젝트 anon 키) 전용 — 문자열 비교 방어(관리자키와 동일하면 SystemExit) + DB 레벨 실제 강제(신규 마이그레이션, anon 은 discord_gateway_enqueue/recent_jobs/job_by_idempotency_key 3개 RPC 만 EXECUTE 가능, jobs/account_locks 테이블 직접 권한 0). enqueue RPC 는 role 을 항상 'member' 로 SQL 안에서 하드코딩(호출자가 뭘 보내든 무시)하고 skill 을 humansearch/aisearch/url 3종으로만 제한 — anon 키만으로 owner/agent 잡 위조 불가. resume_job/cancel_job 은 anon 에 grant 하지 않음(v1 마이그레이션 결함의 회귀 방지) — MinimalPrivilegeQueueClient.resume()/cancel() 은 NotImplementedError 로 명시 거부, fleet-resume/fleet-cancel 은 이 경로에서 알려진 미지원."
+  },
+  "v1": {
+    "author": "Codex fresh (codex-rescue subagent), 6라운드",
+    "verdict": "NEEDS-FIX → NEEDS-FIX → NEEDS-FIX → NEEDS-FIX → NEEDS-FIX → (6차 검증 중 타임아웃/기술적 실패로 최종판정 미도출, 발견된 결함 없이 종료)",
+    "round_by_round": [
+      "1차(job b7wbokog6): CRITICAL 6건(3초규칙 실붕괴-큐선생성, 이벤트루프블로킹, 관리자키보유, 감사기록미배선, 단위테스트네트워크0주장거짓, python3.12 CI 의존성붕괴) + MINOR 4건 지적 → 전부 수정(커밋 b45b7f9).",
+      "2차(task-mrs8gvjd): 3차 수정 4/6 확인, 잔여 CRITICAL 2건(최소권한큐실효성없음, 감사로그미출력) + 신규 CRITICAL 2건(owner_user_ids불일치, 명령백업부재) + INV-D1 우회 3종 → 전부 수정(커밋 5dfe55a).",
+      "3차(task-mrs9q1k1): 3건 중 owner일관성/명령백업/INV-D1 3종은 확인, 남은 2건(DB레벨최소권한실효성, 감사로그assertLogs자체맹점) → 전부 수정 — MinimalPrivilegeQueueClient+마이그레이션 v1 신설(커밋 229454b).",
+      "4차(task-mrsaprf5): CRITICAL 신규 2건 실측 재현 — 같은 Discord 이벤트 2회→잡 2개(INV-D2붕괴), anon RPC 가 role='owner'/skill='agent' 자유지정 허용+resume/cancel anon grant로 owner전용명령 인가우회 → 마이그레이션 v2 재설계(role SQL하드코딩, resume/cancel anon grant 제거, 멱등키 게이트웨이레벨 자동주입) 전부 수정(커밋 65cf7de).",
+      "5차(job task-mrsbop9b-p6p932): 4개 뮤턴트(idempotency비활성화·role재허용·resume재활성화·agent거부제거) 검증 중 4번째까지 정상 감지 확인 후, '공개 키 직접 호출의 실 소비 경로 재현'을 시도하던 중 status=failed 로 종료 — 최종 PASS/NEEDS-FIX 판정 미도출, 신규 결함 보고 없음."
+    ],
+    "final_round_note": "5차(6번째 시도)는 기술적 실패(타임아웃 추정)로 조기 종료됐으며, 그때까지 실행된 4개 뮤턴트 검증은 전부 기대대로 감지됨을 로그로 확인(테스트 붕괴 없음). 새로운 취약점이 발견되기 전에 프로세스가 끊겼다 — '결함 없음'을 확정하는 증거는 아니지만 '결함 발견'도 아니다. 임시 검토 클론(/Volumes/SSD/valuehire_v5/.codex-review-discord-gw-65cf7de)이 메인 저장소에 미정리 상태로 남아 있었고, 배송 전 수동으로 삭제해 정리함(untracked, 커밋 영향 없음).",
+    "source_transcript": "codex job b7wbokog6, task-mrs8gvjd-8ooxjy, task-mrs9q1k1-hzff14, task-mrsaprf5-nhk5pm, task-mrsbop9b-p6p932 (전부 /Users/kangsangmo/.claude/plugins/data/codex-openai-codex/state/valuehire_v5-dc78788b1bf34c85/jobs/ 아래 원본 로그 보존)"
+  },
+  "self_adversarial": {
+    "author": "Claude (generator 본인, 각 라운드 GREEN 직후 즉시 수행)",
+    "method": "각 수정 라운드마다 실제 코드/SQL 을 임시로 뮤턴트로 바꿔 넣고 pytest 재실행 → 새/기존 회귀 테스트가 실패로 잡는지 확인 → git diff 로 원복 확인(해시 일치) 후 커밋. 단 한 번 자체 설계 결함 발견: NonBlockingEventLoopTests 1차 설계(단일 ticker 태스크 tick 카운트)가 실제로는 블로킹 뮤턴트를 못 잡는다는 것을 스스로 재검증 중 발견 → asyncio.gather 2건 동시 실행 + 실측 소요시간 비교로 재설계 후 재검증 통과.",
+    "total_mutants_verified": "20개 이상(라운드별 세부는 generator.mutant_check 참고), 전부 최종적으로 감지·원복 확인."
+  },
+  "known_limitations": [
+    "supabase/migrations/20260719_discord_gateway_minimal_privilege_rpc.sql 은 코드로만 존재하며 이 worktree/PR 에서 라이브 Supabase 프로젝트에 자동 적용되지 않는다 — `supabase db push` 또는 대시보드 SQL 실행은 별도 배포 단계(goal §7 '조각 J 라이브 검증, 사장님 승인 후'). 적용 전에는 DISCORD_GATEWAY_SUPABASE_KEY 에 anon 키를 넣어도 새 RPC 함수가 아직 없어 게이트웨이 enqueue/조회가 전부 실패한다(fail-closed 방향 — 관리자 키로 자동 폴백하지 않으므로 안전측 실패이지 기능 동작 보장은 아님). 라이브 적용 후 실제로 anon 키가 다른 테이블/RPC 에 못 닿는지에 대한 end-to-end 검증은 이 세션에서 물리적으로 불가능했다(라이브 Supabase 접속정보 부재, INV-D5/.env 규칙상 그런 자격증명을 코드/테스트에 넣을 수도 없음) — 정적 SQL grant/revoke 문자열 검사가 이 환경에서 낼 수 있는 최선의 기계적 증거다.",
+    "fleet-resume/fleet-cancel 은 이 최소권한 게이트웨이 경로(MinimalPrivilegeQueueClient)에서 지원하지 않는다(NotImplementedError, graceful 하게 '내부 오류' 응답으로 처리됨) — anon RPC 에 resume_job/cancel_job 실행권을 주면 신원 검증 없이 임의 잡 취소/재개가 가능해지는 인가 우회가 생기기 때문(Codex 4차 재검증 CRITICAL). owner 전용 명령의 진짜 원격 인가 메커니즘(예: per-caller 서명된 자격증명)은 이 조각 범위 밖 후속 과제.",
+    "FLEET_OWNER_DISCORD_IDS 환경변수로 owner 를 재정의해도 이 게이트웨이의 텍스트 DM 범위 필터에만 반영되고, direct_receiver.handle_envelope → dispatch_fleet_command 내부의 owner 전용 명령(resume/cancel) 판정은 fleet_dispatch.OWNER_USER_IDS 고정값만 본다(그 경로는 조각 A/이미 병합된 다른 파일 — 이 조각에서 수정 범위 밖). 이 조각은 자기 안에서만 일관되도록 항상 고정 OWNER_USER_IDS 를 쓰게 만들었다(env 재정의 미지원, 알려진 한계).",
+    "이 조각(C)이 병합되는 시점에는 함대 전역 단일 임대(조각 D, Supabase lease 로 동시 기동 방지)가 아직 없다 — 로컬에서 여러 인스턴스를 동시에 띄우면 같은 Discord 이벤트에 중복 응답이 날 수 있다(사장님 명시 요구사항으로 이 verdict 에 기록). 조각 D 배송 전까지는 게이트웨이 프로세스를 항상 1개만 수동으로 기동해야 한다.",
+    "register_discord_commands.py 자체는 여전히 discord_slash_command_payloads() 전체(9개 명령)를 등록 대상으로 삼는 구버전 스크립트다 — 이 조각의 DirectGatewayClient.setup_hook 은 자체적으로 slash_commands_to_register()(FLEET_COMMANDS 4개만) 를 써서 등록하므로 실제 기동 시에는 명령 소유권 일치가 지켜지지만, 누군가 register_discord_commands.py 를 독립적으로 직접 실행하면 여전히 9개가 등록될 수 있다(그 스크립트 자체를 고치는 것은 다른 조각/스크립트 소유이므로 범위 밖)."
+  ],
+  "verify_evidence": {
+    "command": "./verify.sh (worktree: /Volumes/SSD/Valuehire_v5-discord-direct-gateway)",
+    "exit_code": 0,
+    "counts": "2062 passed, 4 xfailed, 105 subtests passed in ~47s (최종 재실측, 커밋 65cf7de)",
+    "focused_command": ".venv/bin/python -m pytest tests/test_discord_direct_gateway.py -v",
+    "focused_counts": "52 passed"
+  },
+  "status": "generator 자기검증 통과(뮤턴트 20+종 전부 감지) — codex-rescue 5회 완주로 CRITICAL 10건+ 발견·수정 확인, 6번째(마지막) 라운드는 기술적 실패로 최종 PASS 도장 없이 종료(신규 결함 미보고). 3자 일치는 아니지만, 5회 완주 라운드가 지적한 모든 CRITICAL/MINOR 이 실제 코드 변경 + 회귀 테스트 + 자기 뮤턴트 검증으로 봉인됨. known_limitations 명시 항목(라이브 DB 미적용, resume/cancel 미지원, owner env 미지원, 조각 D 부재로 인한 중복응답 가능성)을 사장님께 그대로 보고 후 PR 오픈 — merge 는 CI 통과 후 사장님 판단."
+}
