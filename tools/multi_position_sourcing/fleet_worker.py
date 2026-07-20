@@ -1070,7 +1070,7 @@ class FleetWorker:
 
 
 def default_owner_probe() -> Callable[[], bool] | None:
-    """V1 2R F3 배선: macOS 는 owner_activity 감지기(앞창·idle 180초)로 눈치를 본다.
+    """V1 2R F3 배선: macOS 는 owner_activity 감지기(3사 포털 한정·idle 60초)로 눈치를 본다.
 
     비-macOS(winpc)는 감지기 미구현 — None(게이트 없음). Windows 감지기는 후속 이슈.
     (owner_activity 의 unsupported=fail-closed 를 그대로 쓰면 winpc 가 영구 정지하므로

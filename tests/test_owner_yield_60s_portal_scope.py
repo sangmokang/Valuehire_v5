@@ -247,3 +247,109 @@ class HarvestDriverPortalWiringTests(unittest.TestCase):
             portal_site_active=True,
         )
         self.assertFalse(decision.resume)
+
+
+class MutationBarrierPortalScopeTests(unittest.TestCase):
+    """portal_worker 실조작 직전 장벽이 새 규칙(60초·3사 한정)을 따르는지 — Codex V1 HIGH1 회귀."""
+
+    @staticmethod
+    def _snap(idle: float, portal: bool | None):
+        from tools.multi_position_sourcing.owner_activity import OwnerActivitySnapshot
+
+        return OwnerActivitySnapshot(
+            owner_activity_detected=False,
+            foreground_app="Google Chrome",
+            idle_seconds=idle,
+            detection_status="ok",
+            portal_site_active=portal,
+        )
+
+    def test_portal_idle61_allows_mutation(self) -> None:
+        from tools.multi_position_sourcing.portal_worker import proved_owner_idle_seconds
+
+        self.assertEqual(proved_owner_idle_seconds(self._snap(61.0, True)), 61.0)
+
+    def test_non_portal_idle1_allows_mutation(self) -> None:
+        from tools.multi_position_sourcing.portal_worker import proved_owner_idle_seconds
+
+        self.assertEqual(proved_owner_idle_seconds(self._snap(1.0, False)), 1.0)
+
+    def test_portal_idle30_blocks_mutation(self) -> None:
+        from tools.multi_position_sourcing.portal_worker import (
+            ProfileLockError,
+            proved_owner_idle_seconds,
+        )
+
+        snap = self._snap(30.0, True)
+        object.__setattr__(snap, "owner_activity_detected", True)
+        with self.assertRaises(ProfileLockError):
+            proved_owner_idle_seconds(snap)
+
+    def test_unknown_portal_requires_60(self) -> None:
+        from tools.multi_position_sourcing.portal_worker import (
+            ProfileLockError,
+            proved_owner_idle_seconds,
+        )
+
+        with self.assertRaises(ProfileLockError):
+            proved_owner_idle_seconds(self._snap(30.0, None))
+        self.assertEqual(proved_owner_idle_seconds(self._snap(61.0, None)), 61.0)
+
+    def test_non_portal_typing_does_not_fail_dwell_increase(self) -> None:
+        # 비포털 확정 + idle 감소(사장님이 슬랙 타이핑) → dwell 증가 요건 면제
+        from tools.multi_position_sourcing.portal_worker import (
+            assert_raw_browser_mutation_allowed,
+        )
+
+        snaps = [self._snap(5.0, False), self._snap(2.0, False)]
+
+        class FakeLock:
+            def assert_owned(self) -> None:
+                return None
+
+        assert_raw_browser_mutation_allowed(
+            FakeLock(), owner_snapshot=lambda: snaps.pop(0), sleep=lambda _s: None
+        )
+
+
+class DetectorTimeoutTests(unittest.TestCase):
+    """osascript/ioreg 호출에 timeout 이 있어야 무기한 hang 이 없다 — Codex V1 HIGH2 회귀."""
+
+    def test_all_subprocess_calls_pass_timeout(self) -> None:
+        seen: list[float | None] = []
+
+        def spy_run(argv, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            if argv[0] == "osascript":
+                return _completed("Google Chrome\n")
+            return _completed('    "HIDIdleTime" = 1000000000\n')
+
+        detect_owner_activity_snapshot(system_name="Darwin", run_command=spy_run)
+        self.assertGreaterEqual(len(seen), 3)
+        for timeout in seen:
+            self.assertIsNotNone(timeout)
+            self.assertLessEqual(timeout, 10)
+
+
+class UrlSchemeAndHostNormalizationTests(unittest.TestCase):
+    """javascript:/file: 스킴 오판·후행점 호스트 — Codex V1 MED4 회귀."""
+
+    def test_javascript_scheme_is_not_portal_confirmed(self) -> None:
+        snap = detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run(
+                "Google Chrome", 61_000_000_000, "javascript://linkedin.com/x"
+            ),
+        )
+        self.assertIsNone(snap.portal_site_active)  # 비http(s) → 판독불가(60초 유계)
+        self.assertFalse(snap.owner_activity_detected)  # idle 61 → 재개
+
+    def test_trailing_dot_host_is_portal(self) -> None:
+        snap = detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run(
+                "Google Chrome", 1_000_000_000, "https://linkedin.com./talent"
+            ),
+        )
+        self.assertIs(snap.portal_site_active, True)
+        self.assertTrue(snap.owner_activity_detected)

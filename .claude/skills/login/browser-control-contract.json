@@ -98,7 +98,7 @@
     "failure_action": "HANDOFF"
   },
   "human_control": {
-    "activity_signal": "macos_os_idle_only",
+    "activity_signal": "macos_frontmost_app_plus_os_idle_plus_active_tab_host_portal_scope",
     "detection_failure_action": "HUMAN_ACTIVE",
     "no_keylogging": true,
     "no_browser_content_surveillance_for_activity": true

@@ -22,7 +22,7 @@
   - 검증: `python3 -m pytest tests/test_owner_yield_60s_portal_scope.py -q`
   - counter-AC: 크롬 활성 탭이 3사 도메인이고 idle<60 이면 반드시 양보한다.
 - AC2: WHEN 크롬 활성 탭이 3사 도메인이고 마지막 입력 후 60초가 지나면, THE 워커 SHALL 자동 재개(로그인 포함)한다. 임계값 단일 출처 60.0/60.
-- AC3: 판정 신호 읽기는 [앞창 앱 이름, OS idle, 크롬 활성 탭 URL의 **호스트만**]으로 한정한다(페이지 내용·키입력·전체 URL 경로 비열람·비기록).
+- AC3: 판정 신호는 [앞창 앱 이름, OS idle, 크롬 활성 탭 URL]로 한정하며, URL 은 판정 순간 메모리에서 **호스트 추출에만** 쓰고 경로·쿼리·전체 URL 을 기록·로그·전송하지 않는다(스냅샷에는 호스트만 남김). 페이지 내용·키입력 비열람.
 
 ## 입력 영역 표 (결정성 규율 §1-11)
 
@@ -61,4 +61,13 @@ RED(새 테스트 커밋) → GREEN(최소 변경: owner_activity.py, fleet_work
 
 ## 적대 검증 로그
 
-(후기록)
+### V1 (Codex Rescue, fresh read-only, 2026-07-21) — verdict=FAIL → 결함 수정 후 재검증 요청
+- HIGH portal_worker.py:917 실조작 장벽 180초 잔존 + portal 축 미반영 → **수정**: threshold 를 owner_activity 단일 출처(60)로, 비포털 확정은 idle 최소치·증가요건 면제. 회귀 테스트 MutationBarrierPortalScopeTests.
+- HIGH owner_activity subprocess timeout 부재(hang 시 60초 유계 불성립) → **수정**: DETECTOR_SUBPROCESS_TIMEOUT_SECONDS=5.0. 회귀 테스트 DetectorTimeoutTests.
+- MED javascript:/file: 스킴 오판·후행점 호스트 오판 → **수정**: http(s)만 확정, 호스트 후행점 정규화. 회귀 테스트 UrlSchemeAndHostNormalizationTests.
+- MED 계약 activity_signal=macos_os_idle_only 충돌 → **수정**: 복합 신호명으로 갱신(+.claude 미러).
+- MED AC3 문구-구현 불일치(전체 URL 이 파서에 전달) → **수정**: AC3 를 '판정 순간 메모리 호스트 추출만, 기록·로그·전송 금지'로 정정(호스트 추출은 URL 문자열 없이는 불가능).
+- HIGH fleet_worker default_owner_probe 비-macOS None → **보류(기존 의도 결정)**: winpc 는 감지기 미구현이라 fail-closed 시 영구 정지 → INV9 자동 재개 우선의 기존 명시 결정(docstring). Windows 감지기는 후속 이슈로 유지.
+- MED 사용자 크롬 vs 자동화 크롬(9223/9225) 인스턴스 구분 불가 → **수용(유계)**: 앞창 앱 이름 기반 한계. 오판 방향은 최대 60초 대기(안전측). PID/user-data-dir 결합 감지는 후속 이슈.
+- MED 기존 장벽 테스트가 200/201초만 사용해 180 잔존을 미검출 → **수정**: 61초+portal 축 테스트 추가(위 MutationBarrierPortalScopeTests).
+

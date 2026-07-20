@@ -75,6 +75,10 @@ def compute_yield_decision(
     return os_idle_seconds < idle_threshold_seconds
 
 
+# 감지 서브프로세스 상한(초) — osascript/ioreg 가 멈춰도 감지가 무기한 hang 하지 않게(V1 HIGH2).
+DETECTOR_SUBPROCESS_TIMEOUT_SECONDS = 5.0
+
+
 def _run_text(argv: list[str], run_command: RunCommand) -> subprocess.CompletedProcess[str]:
     return run_command(
         argv,
@@ -82,6 +86,7 @@ def _run_text(argv: list[str], run_command: RunCommand) -> subprocess.CompletedP
         stderr=subprocess.PIPE,
         text=True,
         check=False,
+        timeout=DETECTOR_SUBPROCESS_TIMEOUT_SECONDS,
     )
 
 
@@ -131,9 +136,13 @@ def _macos_active_chrome_tab_host(
     if not url:
         return None
     try:
-        host = (urlsplit(url).hostname or "").lower()
+        parts = urlsplit(url)
     except ValueError:
         return None
+    # http(s) 외 스킴(javascript:/file: 등)은 포털 확정에 쓰지 않는다(V1 MED4) → None(60초 유계).
+    if parts.scheme.lower() not in ("http", "https"):
+        return None
+    host = (parts.hostname or "").lower().rstrip(".")
     return host or None
 
 
