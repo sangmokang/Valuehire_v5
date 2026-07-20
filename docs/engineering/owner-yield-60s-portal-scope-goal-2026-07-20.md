@@ -34,9 +34,12 @@
 | 4 | 앞창 = Chrome, 탭 URL 읽기 실패/창 0개/AppleScript 오류 | portal_active=None(불명) → idle<60 양보(최대 60초로 유계) |
 | 5 | idle 읽기 실패(None) | fail-closed 양보(True) — 기존 유지 |
 | 6 | 앞창 앱 이름 읽기 실패 | detector_unavailable → fail-closed 양보 — 기존 유지 |
-| 7 | 비 macOS | unsupported_platform → fail-closed 양보 — 기존 유지 |
+| 7a | Windows(winpc) | GetLastInputInfo 기반 idle 단독 게이트(portal=None, 60초 유계). idle 판독 실패 → fail-closed 양보 |
+| 7b | 그 외 OS(Linux 등, 함대에 없음) | unsupported_platform → fail-closed 양보 |
 | 8 | idle == 60.0 경계 | 재개(>= 기존 규약 유지) |
 | 9 | URL 이 `linkedin.com` 유사 위장 호스트(예: `evilinkedin.com`) | 도메인 정확 매칭(`==` 또는 `.suffix`)으로 3사 아님 → 양보 안 함 |
+| 11 | 앞창 크롬 PID 에 CDP 포트 있음(사장님 9222·자동화 9223~9225) | 그 포트 /json/list 첫 page 탭 호스트로 판정(인스턴스 1:1 결합) |
+| 12 | 앞창 크롬에 CDP 포트 없음 + 크롬 루트 프로세스 2개+ | AppleScript 응답 인스턴스 보장 불가 → portal=None(60초 유계, False 확정 금지) |
 | 10 | 그 외 전부 | fail-closed 양보(True) + detection_status 기록 |
 
 ## 결정 목록 (오너 확정 근거)
@@ -71,3 +74,8 @@ RED(새 테스트 커밋) → GREEN(최소 변경: owner_activity.py, fleet_work
 - MED 사용자 크롬 vs 자동화 크롬(9223/9225) 인스턴스 구분 불가 → **수용(유계)**: 앞창 앱 이름 기반 한계. 오판 방향은 최대 60초 대기(안전측). PID/user-data-dir 결합 감지는 후속 이슈.
 - MED 기존 장벽 테스트가 200/201초만 사용해 180 잔존을 미검출 → **수정**: 61초+portal 축 테스트 추가(위 MutationBarrierPortalScopeTests).
 
+### V1 2차 (Codex Rescue, 2026-07-21) — verdict=FAIL → 격상 2건 실수정 + LOW 2건 정리
+- 1차 수정 6건은 전부 "안 깨짐" 확인(장벽 60초·portal 축, timeout 5초 실측, 스킴/후행점, 계약, AC3, 회귀 테스트).
+- HIGH(격상) 비-macOS probe None = 게이트 완전 우회 → **수정**: Windows 는 GetLastInputInfo idle 단독 게이트(portal=None, 60초 유계)로 default_owner_probe 활성. 회귀 WindowsIdleGateTests.
+- MED(격상) 크롬 다중 인스턴스에서 잘못된 인스턴스 URL 로 portal=False 오판(즉시 진행 방향) → **수정**: 앞창 PID 의 CDP 포트(사장님 9222 포함)로 그 인스턴스 탭을 직접 읽어 1:1 결합, 포트 없고 루트 2개+면 None(False 확정 금지). 회귀 ChromeInstanceBindingTests.
+- LOW fleet_worker 180/3분 잔존 주석 → 60/1분으로 정리. LOW goal EOF 공백 → 제거.

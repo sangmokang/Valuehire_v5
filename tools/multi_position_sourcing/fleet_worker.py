@@ -51,10 +51,10 @@ _NETWORK_CONFIG_FLAG = "sandbox_workspace_write.network_access=true"
 DEFAULT_REPORT_CHANNEL = "1512503041448743092"
 _NOTIFICATION_DEDUPE: dict[str, float] = {}
 
-# SOT29 INV9(2026-07-15 사장님 지시, #107): "내가 쓸 동안은 멈췄다가 3분 뒤까지
-# 이상이 없으면 계속 시작해." — 사람 개입(캡차/2FA/사장님 사용) 신호 후 180초 동안
-# 조용하면 자동 재개한다. 영구 중단·10분 쿨다운(구 QA-2 600초)은 이 원칙을 방해하는
-# 코드라 삭제됨. owner_activity.DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS(180)와 같은 원칙.
+# SOT29 INV9(2026-07-20 사장님 지시로 개정; 원본 2026-07-15 #107): 사람 개입(캡차/2FA/
+# 3사 포털 사용) 신호 후 60초(1분) 동안 조용하면 자동 재개한다. 영구 중단·10분 쿨다운은
+# 이 원칙을 방해하는 코드라 삭제됨. owner_activity.DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS(60)와
+# 같은 원칙(단일 출처).
 OWNER_YIELD_RESUME_SECONDS = 60
 PAUSE_COOLDOWN_SECONDS = OWNER_YIELD_RESUME_SECONDS  # 하위호환 별칭(단일 출처)
 _RELEASE_RETRY_ATTEMPTS = 3
@@ -632,13 +632,13 @@ class FleetWorker:
         self.timeout = timeout
         # 이슈 #104: "방금" done 종결된 humansearch 그룹의 미소진 필터 변형 backlog.
         # 큐 idle 일 때 1건씩 자동 enqueue(심야 지속).
-        # 이슈 #107(SOT29 INV9): paused_for_human 은 '3분 양보'다 — 폐기가 아니라
+        # 이슈 #107(SOT29 INV9): paused_for_human 은 '1분 양보'다 — 폐기가 아니라
         # _backlog_resume_at 까지 정지 후 자동 재개(영구 중단 금지, 사장님 지시).
         self._variant_backlog: list[dict[str, Any]] = []
         self._clock: Callable[[], float] = clock if clock is not None else time.monotonic
         self._wall_clock: Callable[[], float] = (
             wall_clock if wall_clock is not None else time.time)
-        # V1 2R F1: 3분 양보 창은 enqueue 만이 아니라 claim 도 막는 단일 게이트다.
+        # V1 2R F1: 1분 양보 창은 enqueue 만이 아니라 claim 도 막는 단일 게이트다.
         self._yield_until: float = 0.0
         # V1 2R F3: 사장님 활동 프로브(눈치) — 주입식. None 이면 게이트 없음(테스트/미지원 OS).
         # 프로덕션 배선은 main() 의 default_owner_probe() (macOS 전용, Windows 감지기는 후속).
@@ -783,7 +783,7 @@ class FleetWorker:
 
     def run_once(self, dry_run: bool = False) -> str:
         """큐에서 잡 1건 처리. 반환: idle|done|paused_for_human|failed."""
-        # V1 2R F1(INV9): 마지막 사람 개입 신호 후 3분 창 안에서는 claim 도 하지 않는다
+        # V1 2R F1(INV9): 마지막 사람 개입 신호 후 1분 창 안에서는 claim 도 하지 않는다
         # — release 예외(15초 백오프)·--once 경로로 창이 우회되는 구멍 봉인.
         if self._yield_remaining() > 0:
             return "idle"
@@ -868,10 +868,10 @@ class FleetWorker:
             return "failed"
         result = parse_worker_output(stdout, code, stderr=stderr)
         if result["status"] == "paused_for_human":
-            # 이슈 #107(SOT29 INV9, 사장님 지시): 사람 개입 신호 = '3분 양보' —
-            # backlog 를 폐기하지 않고, 마지막 이상 신호로부터 180초 동안만 자동
-            # enqueue 를 정지한다. 3분 뒤 이상이 없으면 자동 재개(영구 중단 금지).
-            # pause 가 반복되면 그 시점부터 창이 다시 3분으로 연장된다.
+            # 이슈 #107(SOT29 INV9, 사장님 지시): 사람 개입 신호 = '1분 양보' —
+            # backlog 를 폐기하지 않고, 마지막 이상 신호로부터 60초 동안만 자동
+            # enqueue 를 정지한다. 1분 뒤 이상이 없으면 자동 재개(영구 중단 금지).
+            # pause 가 반복되면 그 시점부터 창이 다시 1분으로 연장된다.
             self._start_yield()
             self._release(job, job_id, "paused_for_human", error=result["reason"])
             self._notify(job, (
@@ -1072,12 +1072,11 @@ class FleetWorker:
 def default_owner_probe() -> Callable[[], bool] | None:
     """V1 2R F3 배선: macOS 는 owner_activity 감지기(3사 포털 한정·idle 60초)로 눈치를 본다.
 
-    비-macOS(winpc)는 감지기 미구현 — None(게이트 없음). Windows 감지기는 후속 이슈.
-    (owner_activity 의 unsupported=fail-closed 를 그대로 쓰면 winpc 가 영구 정지하므로
-    워커 게이트에서는 '감지 불가 = 게이트 미적용'을 택한다 — INV9 의 자동 재개가 우선.)
+    Windows(winpc)는 GetLastInputInfo 기반 idle 단독 게이트(포털 축 없음, 60초 유계) —
+    V1 2차 HIGH(게이트 완전 우회) 봉쇄. 그 외 OS 만 None(함대에 해당 머신 없음).
     """
     import platform
-    if platform.system() != "Darwin":
+    if platform.system() not in ("Darwin", "Windows"):
         return None
     from .owner_activity import detect_owner_activity_snapshot
     return lambda: detect_owner_activity_snapshot().owner_activity_detected

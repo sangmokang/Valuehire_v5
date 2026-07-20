@@ -353,3 +353,147 @@ class UrlSchemeAndHostNormalizationTests(unittest.TestCase):
         )
         self.assertIs(snap.portal_site_active, True)
         self.assertTrue(snap.owner_activity_detected)
+
+
+class WindowsIdleGateTests(unittest.TestCase):
+    """비-macOS(winpc) 게이트 부재 — Codex V1 2차 HIGH 회귀. Windows 는 idle 단독 게이트."""
+
+    def test_windows_idle_61_resumes(self) -> None:
+        snap = detect_owner_activity_snapshot(
+            system_name="Windows", windows_idle_reader=lambda: 61.0
+        )
+        self.assertFalse(snap.owner_activity_detected)
+        self.assertIsNone(snap.portal_site_active)  # 포털 축 미지원 → 60초 유계
+
+    def test_windows_idle_30_yields(self) -> None:
+        snap = detect_owner_activity_snapshot(
+            system_name="Windows", windows_idle_reader=lambda: 30.0
+        )
+        self.assertTrue(snap.owner_activity_detected)
+
+    def test_windows_idle_unreadable_fail_closed(self) -> None:
+        snap = detect_owner_activity_snapshot(
+            system_name="Windows", windows_idle_reader=lambda: None
+        )
+        self.assertTrue(snap.owner_activity_detected)
+
+    def test_other_os_still_fail_closed(self) -> None:
+        snap = detect_owner_activity_snapshot(system_name="Linux")
+        self.assertTrue(snap.owner_activity_detected)
+        self.assertIn("unsupported_platform", snap.detection_status)
+
+    def test_fleet_default_probe_exists_on_windows(self) -> None:
+        from unittest.mock import patch
+
+        from tools.multi_position_sourcing.fleet_worker import default_owner_probe
+
+        with patch("platform.system", return_value="Windows"):
+            probe = default_owner_probe()
+        self.assertIsNotNone(probe)
+
+
+def _fake_run_pid(front: str, idle_ns: int, pid_command: str, roots: str, tab_url: str | None = None):
+    """{name, unix id} 앞창 + ps -p/-axo + ioreg 대역."""
+
+    def run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if argv[0] == "osascript":
+            script = " ".join(argv)
+            if "active tab" in script:
+                if tab_url is None:
+                    return _completed("", returncode=1)
+                return _completed(tab_url + "\n")
+            return _completed(front + "\n")
+        if argv[0] == "ps":
+            if "-p" in argv:
+                return _completed(pid_command + "\n")
+            return _completed(roots + "\n")
+        return _completed(f'    "HIDIdleTime" = {idle_ns}\n')
+
+    return run
+
+
+class ChromeInstanceBindingTests(unittest.TestCase):
+    """다중 크롬 인스턴스 오판(V1 2차 MEDIUM) — 앞창 PID 의 CDP 포트로 정확 결합."""
+
+    _CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+    def test_automation_chrome_frontmost_reads_its_own_tab(self) -> None:
+        # 사장님이 자동화 크롬(9225)을 직접 만지는 중 → 그 인스턴스의 탭(사람인) 기준 → 양보
+        snap = detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run_pid(
+                "Google Chrome, 500",
+                1_000_000_000,
+                f"{self._CHROME_BIN} --remote-debugging-port=9225 --user-data-dir=/x",
+                roots="",
+            ),
+            fetch_json=lambda url: [
+                {"type": "page", "url": "https://www.saramin.co.kr/zf_user"}
+            ],
+        )
+        self.assertIs(snap.portal_site_active, True)
+        self.assertTrue(snap.owner_activity_detected)
+
+    def test_user_chrome_9222_youtube_proceeds(self) -> None:
+        snap = detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run_pid(
+                "Google Chrome, 400",
+                1_000_000_000,
+                f"{self._CHROME_BIN} --remote-debugging-port=9222",
+                roots="",
+            ),
+            fetch_json=lambda url: [
+                {"type": "page", "url": "https://www.youtube.com/watch?v=1"}
+            ],
+        )
+        self.assertIs(snap.portal_site_active, False)
+        self.assertFalse(snap.owner_activity_detected)
+
+    def test_cdp_fetch_failure_is_bounded_unknown(self) -> None:
+        def boom(url: str):
+            raise OSError("cdp down")
+
+        snap = detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run_pid(
+                "Google Chrome, 400",
+                1_000_000_000,
+                f"{self._CHROME_BIN} --remote-debugging-port=9222",
+                roots="",
+            ),
+            fetch_json=boom,
+        )
+        self.assertIsNone(snap.portal_site_active)
+        self.assertTrue(snap.owner_activity_detected)  # idle 1s → 60초 유계 양보
+
+    def test_no_port_multiple_instances_is_ambiguous(self) -> None:
+        # 앞창 크롬에 CDP 포트가 없고 크롬 루트 프로세스가 2개+ → AppleScript 응답 인스턴스
+        # 보장 불가 → False 확정 금지(None, 60초 유계). V1 2차 MEDIUM(false-negative) 봉쇄.
+        roots = f"{self._CHROME_BIN}\n{self._CHROME_BIN} --remote-debugging-port=9223 --user-data-dir=/y"
+        snap = detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run_pid(
+                "Google Chrome, 400",
+                1_000_000_000,
+                self._CHROME_BIN,
+                roots=roots,
+                tab_url="https://www.youtube.com/watch?v=1",
+            ),
+        )
+        self.assertIsNone(snap.portal_site_active)
+        self.assertTrue(snap.owner_activity_detected)
+
+    def test_no_port_single_instance_trusts_applescript(self) -> None:
+        snap = detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run_pid(
+                "Google Chrome, 400",
+                1_000_000_000,
+                self._CHROME_BIN,
+                roots=self._CHROME_BIN,
+                tab_url="https://www.youtube.com/watch?v=1",
+            ),
+        )
+        self.assertIs(snap.portal_site_active, False)
+        self.assertFalse(snap.owner_activity_detected)
