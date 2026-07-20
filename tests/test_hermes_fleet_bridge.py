@@ -121,6 +121,27 @@ def test_unlisted_user_is_denied() -> None:
     assert result["action"] == "denied"
 
 
+def test_server_invocation_uses_channel_allowlist_instead_of_dm_bypass(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_ALLOWED_CHANNEL_IDS", "1512503222222222222")
+    monkeypatch.delenv("DISCORD_ALLOWED_ROLE_IDS", raising=False)
+    queue = FakeQueue()
+    result = dispatch_hermes_fleet_command(
+        "fleet-run",
+        "url https://app.clickup.com/t/abc idempotency:discord:1512503999999999999",
+        gateway_user_id=OWNER,
+        invocation_context={
+            "channel_id": "1512503041448743092",
+            "guild_id": "1512503000000000000",
+            "is_dm": False,
+            "role_ids": (),
+            "event_id": "1512503999999999999",
+        },
+        queue=queue,
+    )
+    assert result["action"] == "denied"
+    assert queue.enqueued == []
+
+
 def test_status_and_owner_actions_return_json_serializable_results() -> None:
     queue = FakeQueue()
     for command, raw in (("fleet-status", ""), ("fleet-resume", "job:7"), ("fleet-cancel", "job:8")):

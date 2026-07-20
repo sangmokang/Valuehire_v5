@@ -41,9 +41,31 @@ class FakeCtx:
         self.commands[name] = {"handler": handler, "description": description, "args_hint": args_hint}
 
 
-def _discord_event(user_id: str | None):
-    source = SimpleNamespace(platform=SimpleNamespace(value="discord"), user_id=user_id)
-    return SimpleNamespace(source=source)
+def _discord_event(
+    user_id: str | None,
+    *,
+    chat_id: str = "1512503041448743092",
+    chat_type: str = "dm",
+    guild_id: str | None = None,
+    message_id: str = "1512503999999999999",
+    role_ids: tuple[str, ...] = (),
+):
+    source = SimpleNamespace(
+        platform=SimpleNamespace(value="discord"),
+        user_id=user_id,
+        chat_id=chat_id,
+        chat_type=chat_type,
+        guild_id=guild_id,
+        message_id=message_id,
+    )
+    raw_message = SimpleNamespace(
+        id=message_id,
+        guild_id=guild_id,
+        user=SimpleNamespace(
+            roles=[SimpleNamespace(id=role_id) for role_id in role_ids]
+        ),
+    )
+    return SimpleNamespace(source=source, raw_message=raw_message, message_id=message_id)
 
 
 def _telegram_event(user_id: str):
@@ -69,7 +91,10 @@ def test_direct_search_handlers_force_skill_and_reuse_fleet_run(monkeypatch) -> 
     plugin._GATEWAY_USER_ID.set("814353841088757800")
     calls = []
 
-    def fake_dispatch(command, raw_args, *, gateway_user_id, queue=None, authorized_users=None):
+    def fake_dispatch(
+        command, raw_args, *, gateway_user_id, queue=None, authorized_users=None,
+        invocation_context=None,
+    ):
         calls.append((command, raw_args, gateway_user_id))
         return {"action": "enqueued"}
 
@@ -87,6 +112,46 @@ def test_direct_search_handlers_force_skill_and_reuse_fleet_run(monkeypatch) -> 
     ]
 
 
+def test_direct_alias_preserves_server_context_and_adds_event_idempotency(monkeypatch) -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    hook = ctx.hooks["pre_gateway_dispatch"][0]
+    hook(event=_discord_event(
+        "814353841088757800",
+        chat_id="1512503041448743092",
+        chat_type="group",
+        guild_id="1512503000000000000",
+        message_id="1512503999999999999",
+        role_ids=("1512503111111111111",),
+    ))
+    calls = []
+
+    def fake_dispatch(
+        command, raw_args, *, gateway_user_id, queue=None, authorized_users=None,
+        invocation_context=None,
+    ):
+        calls.append((command, raw_args, gateway_user_id, invocation_context))
+        return {"action": "enqueued"}
+
+    bridge = plugin._load_bridge_module()
+    monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
+    ctx.commands["url"]["handler"]("https://app.clickup.com/t/abc")
+
+    assert len(calls) == 1
+    command, raw_args, user_id, invocation_context = calls[0]
+    assert command == "fleet-run"
+    assert "idempotency:discord:1512503999999999999" in raw_args
+    assert user_id == "814353841088757800"
+    assert invocation_context == {
+        "channel_id": "1512503041448743092",
+        "guild_id": "1512503000000000000",
+        "is_dm": False,
+        "role_ids": ("1512503111111111111",),
+        "event_id": "1512503999999999999",
+    }
+
+
 def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
     plugin = _load_plugin_module()
     ctx = FakeCtx()
@@ -97,7 +162,10 @@ def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
 
     calls = []
 
-    def fake_dispatch(command, raw_args, *, gateway_user_id, queue=None, authorized_users=None):
+    def fake_dispatch(
+        command, raw_args, *, gateway_user_id, queue=None, authorized_users=None,
+        invocation_context=None,
+    ):
         calls.append((command, raw_args, gateway_user_id))
         return {"action": "status", "jobs": []}
 
@@ -124,7 +192,8 @@ def test_natural_discord_search_is_rewritten_to_fleet_run() -> None:
         "action": "rewrite",
         "text": (
             "/fleet-run humansearch https://app.clickup.com/t/abc "
-            "https://www.jobkorea.co.kr/Search/?stext=cto channels:jobkorea winpc"
+            "https://www.jobkorea.co.kr/Search/?stext=cto channels:jobkorea winpc "
+            "idempotency:discord:1512503999999999999"
         ),
     }
 
