@@ -1,4 +1,4 @@
-"""SOT30(docs/sot/31-fleet-run-reliability.md) S2·S3 계약 테스트 — RED 먼저.
+"""SOT31(docs/sot/31-fleet-run-reliability.md, 구 SOT30) S2·S3 계약 테스트 — RED 먼저.
 
 S2: queued 고착 감지(stalled_queued_jobs) + Watchdog 경보 + fleet-status heartbeat 나이.
 S3: 자격증명 프로브(classify_auth_probe/probe_auth) + 워커 기동 인증 게이트(fail-loud).
@@ -174,7 +174,7 @@ class TestFleetStatusHeartbeats:
             inv, authorized_users=users, config=DiscordAccessConfig(allow_dm=True),
             queue=FakeQueue())
         assert out["action"] == "status"
-        assert "heartbeats" in out, "SOT30 인수기준 3 — heartbeat 나이 표시"
+        assert "heartbeats" in out, "SOT31 인수기준 3 — heartbeat 나이 표시"
         assert out["heartbeats"]["macmini"] is not None
         assert out["heartbeats"]["macbook"] is None
 

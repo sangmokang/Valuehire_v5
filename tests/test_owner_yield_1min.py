@@ -424,8 +424,8 @@ def test_url_skill_doc_does_not_stop_on_plain_login_redirect():
         "일반 로그인 리다이렉트 STOP = 자동 로그인(SOT 불변식 1) 방해 코드"
 
 
-def test_sot30_qa2_superseded_by_inv9():
-    """V1 F8: 하위 SOT(30)에 600초 쿨다운이 '처치'로 남아 있으면 SOT 간 드리프트."""
+def test_sot31_qa2_superseded_by_inv9():
+    """V1 F8: 하위 SOT(31, 구30)에 600초 쿨다운이 '처치'로 남아 있으면 SOT 간 드리프트."""
     doc = (REPO / "docs" / "sot" / "31-fleet-run-reliability.md").read_text("utf-8")
     assert "PAUSE_COOLDOWN_SECONDS=600" not in doc, "구 600초 스펙 잔존(INV9 와 충돌)"
     assert "INV9" in doc, "INV9(60초) 로 대체됐음을 명시해야 함"

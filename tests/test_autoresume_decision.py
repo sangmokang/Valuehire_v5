@@ -154,6 +154,9 @@ def test_resume_matches_decide_tick_over_full_grid() -> None:
             )
             tick = decide_tick(frontmost_is_chrome=chrome, os_idle_seconds=idle)
             assert decision.resume == tick.run, (chrome, idle)
+            # 방향 자체도 고정(두 래퍼가 같은 오답을 내는 대칭 오배선 봉인, V1 6차 LOW):
+            expected_run = idle is not None and idle >= 60.0
+            assert decision.resume == expected_run, (chrome, idle)
             if not decision.resume:
                 assert decision.delay_ms == 0
 

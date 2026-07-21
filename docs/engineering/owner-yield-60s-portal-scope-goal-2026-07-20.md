@@ -97,3 +97,7 @@ RED(새 테스트 커밋) → GREEN(최소 변경: owner_activity.py, fleet_work
 ### V1 5차 (Codex Rescue, 2026-07-21) — verdict=FAIL(LOW 5건만, HIGH/MED 0) → 정리
 - 과거 결함 7종을 일부러 되살린 변형(180 복귀·portal 축 절단·timeout 제거 등)이 전부 테스트에 잡힘을 Codex 가 확인 — 회귀 봉인 유효.
 - LOW test_autoresume_decision 180 그리드·문구 → 60 그리드로 갱신. LOW test_session_batch 함수명 3min → 1min. LOW SOT29 JSON invariant 키 INV9_owner_yield_3min → INV9_owner_yield_1min(+소비 테스트). LOW SOT31 제목 번호 30 → 31 정정. LOW '항상 True probe' 변형 미검출 → WindowsProbeResumeAsymmetryTests(61초 idle 에서 probe()==False)로 봉인.
+
+### V1 6차 (Codex Rescue, 2026-07-21) — verdict=FAIL(LOW 7건, 전부 테스트 위생) → 정리
+- 생산 동작 결함 재현 0. '항상 True probe' 변형이 이번 회귀에 실제로 잡힘 확인.
+- LOW 7건 수정: harvest/humansearch 그리드 179.9/180 → 59.9/60, autoresume 그리드에 방향 단언 추가(대칭 오배선 봉인), test_owner_activity 인수기준 docstring 포털 축으로 갱신, strict_v5_port 에 SOT31 제목 첫 줄 검사 추가, test_sot30_qa2→test_sot31_qa2 개명, test_fleet_reliability SOT30 호칭 → SOT31.
