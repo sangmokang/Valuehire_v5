@@ -9342,6 +9342,8 @@ Example format, not a real contact:
                 "fleet-run", "fleet-resume", "fleet-status", "fleet-cancel",
                 # 검색 스킬 직접 명령도 슬래시 옵션만 사용하고 fleet-run으로 정규화한다.
                 "url", "aisearch", "humansearch",
+                # AC-1 단일 봇 콘솔 명령 — 역시 슬래시 전용(자유문장 분류는 AC-5 별도).
+                "jobs", "login", "skill",
             },
             command_names,
         )

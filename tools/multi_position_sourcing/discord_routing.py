@@ -16,6 +16,10 @@ DIRECT_SEARCH_SKILL_COMMANDS: dict[str, str] = {
     "humansearch": "humansearch",
 }
 
+# 단일 봇 콘솔 명령(AC-1, 2026-07-22) — 게이트웨이가 기존 fleet-* 계약으로 정규화한다.
+# jobs → fleet-status(+웹 링크), skill/login → fleet-run(skill:<이름>, 화이트리스트 게이트).
+BOT_CONSOLE_COMMANDS: tuple[str, ...] = ("jobs", "login", "skill")
+
 SUPPORTED_DISCORD_COMMANDS: tuple[str, ...] = (
     "search-status",
     "run-search",
@@ -23,6 +27,7 @@ SUPPORTED_DISCORD_COMMANDS: tuple[str, ...] = (
     "session-status",
     "relogin-needed",
     *DIRECT_SEARCH_SKILL_COMMANDS,
+    *BOT_CONSOLE_COMMANDS,
     # 함대 작업 큐 명령(단계 C, 2026-07-11) — 기존 run-search(source/keyword) 와 별개.
     "fleet-run",
     "fleet-resume",
@@ -282,10 +287,94 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
                             for machine in ("macmini", "macbook", "winpc")
                         ],
                     },
+                    {
+                        "name": "engine",
+                        "description": "Execution engine (default: claude).",
+                        "type": 3,
+                        "required": False,
+                        "choices": [
+                            {"name": engine, "value": engine}
+                            for engine in ("claude", "codex")
+                        ],
+                    },
                 ],
             }
             for command, skill in DIRECT_SEARCH_SKILL_COMMANDS.items()
         ],
+        {
+            "name": "jobs",
+            "description": "Show recent Valuehire fleet jobs with the web dashboard link.",
+            "type": 1,
+            "contexts": [0, 1],
+        },
+        {
+            "name": "login",
+            "description": "Check/recover portal login sessions (not yet queue-supported).",
+            "type": 1,
+            "contexts": [0, 1],
+            "options": [
+                {
+                    "name": "portal",
+                    "description": "Portal to check.",
+                    "type": 3,
+                    "required": False,
+                    "choices": [
+                        {"name": portal, "value": portal}
+                        for portal in ("saramin", "jobkorea", "linkedin", "all")
+                    ],
+                },
+                {
+                    "name": "machine",
+                    "description": "Target machine (optional).",
+                    "type": 3,
+                    "required": False,
+                    "choices": [
+                        {"name": machine, "value": machine}
+                        for machine in ("macmini", "macbook", "winpc")
+                    ],
+                },
+            ],
+        },
+        {
+            "name": "skill",
+            "description": "Run a whitelisted Valuehire skill (humansearch/aisearch/url).",
+            "type": 1,
+            "contexts": [0, 1],
+            "options": [
+                {
+                    "name": "name",
+                    "description": "Skill name (whitelisted only).",
+                    "type": 3,
+                    "required": True,
+                },
+                {
+                    "name": "url",
+                    "description": "Position or search URL.",
+                    "type": 3,
+                    "required": False,
+                },
+                {
+                    "name": "machine",
+                    "description": "Target machine (optional).",
+                    "type": 3,
+                    "required": False,
+                    "choices": [
+                        {"name": machine, "value": machine}
+                        for machine in ("macmini", "macbook", "winpc")
+                    ],
+                },
+                {
+                    "name": "engine",
+                    "description": "Execution engine (default: claude).",
+                    "type": 3,
+                    "required": False,
+                    "choices": [
+                        {"name": engine, "value": engine}
+                        for engine in ("claude", "codex")
+                    ],
+                },
+            ],
+        },
         {
             "name": "fleet-run",
             "description": "Queue a Valuehire fleet search job (humansearch/aisearch/url).",
