@@ -28,6 +28,19 @@ from tests.test_discord_bot_console_ac1 import (
 from tools.multi_position_sourcing.fleet_worker import FleetWorker
 
 
+def _ready_login_receipt() -> dict:
+    """AC-3 G4 로그인 선행 게이트 통과용 신선 영수증 — 이 파일의 관심사는 엔진 선택이므로
+    로그인 게이트는 만족시켜 두고 러너 선택만 검증한다(test_fleet_worker._pass_login_gate 와 동형)."""
+    import time as _t
+    from datetime import datetime, timezone
+    gen = datetime.fromtimestamp(int(_t.time()) - 60, tz=timezone.utc).isoformat()
+    return {
+        "kind": "portal_session_preflight", "generated_at": gen, "ready": True,
+        "portal_sessions": [{"channel": c, "ready": True}
+                            for c in ("saramin", "jobkorea", "linkedin_rps")],
+    }
+
+
 def _receipt_stdout() -> str:
     """aisearch 완료 영수증 계약(validate_aisearch_receipt)을 만족하는 최소 stdout.
 
@@ -94,7 +107,8 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
             calls.append(list(cmd))
             return SimpleNamespace(stdout=_receipt_stdout(), stderr="", returncode=0)
 
-        with patch.object(fw.subprocess, "run", fake_run):
+        with patch.object(fw.subprocess, "run", fake_run), \
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: None)
@@ -112,7 +126,8 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
             calls.append(list(cmd))
             return SimpleNamespace(stdout=_receipt_stdout(), stderr="", returncode=0)
 
-        with patch.object(fw.subprocess, "run", fake_run):
+        with patch.object(fw.subprocess, "run", fake_run), \
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: None)
@@ -132,7 +147,8 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
             raise FileNotFoundError("codex: command not found")
 
         notes: list[str] = []
-        with patch.object(fw.subprocess, "run", fake_run):
+        with patch.object(fw.subprocess, "run", fake_run), \
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: notes.append(text))
@@ -151,7 +167,8 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
         def fake_run(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=9)
 
-        with patch.object(fw.subprocess, "run", fake_run):
+        with patch.object(fw.subprocess, "run", fake_run), \
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: None)
