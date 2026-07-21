@@ -40,7 +40,7 @@ def test_fleet_run_reliability_renumbered_to_31():
     moved = ROOT / "docs/sot/31-fleet-run-reliability.md"
     assert moved.is_file(), "31번 이동본 없음"
     first_line = moved.read_text(encoding="utf-8").splitlines()[0]
-    assert first_line.startswith("# SOT 31"), "이동본 제목 번호가 31이 아님(제목만 30으로 회귀 금지)"
+    assert first_line.startswith("# SOT 31 "), "이동본 제목 번호 토큰이 정확히 31이 아님(30 회귀·310 오기 금지)"
     # 남은 참조 0 (추적 파일 한정 — git grep, 매치 없으면 returncode 1)
     r = subprocess.run(["git", "grep", "-l", old_name],
                        capture_output=True, text=True, cwd=ROOT)

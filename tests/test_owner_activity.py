@@ -1,8 +1,10 @@
 """PC-F1 — owner-activity detector 순수모듈(compute_yield_decision).
 
-R4(양보·자동재개)의 첫 코드강제. 무인 워커가 사장님과 머신을 다투지 않도록, 앞창 앱과 OS idle
-시간만 읽어 '지금 양보할지(yield)'를 결정론적으로 계산한다. 로그인 클릭·키입력·브라우저 내용은
-절대 보지 않는다(SOT1). 감지 불가/실패는 fail-closed = 양보(사장님을 앞지르지 않는다).
+R4(양보·자동재개)의 첫 코드강제. 판정 신호는 앞창 앱·OS idle·(크롬 앞창일 때) 활성 탭
+호스트의 포털 축(2026-07-20 개정)이다. 이 파일의 순수함수 호출은 portal_site_active 를
+생략(=None, '포털 여부 불명')한 하위호환 경로를 검증한다 — 실전 snapshot 은 비포털 확정 시
+False 를 전달해 즉시 진행한다(전용 검증: tests/test_owner_yield_60s_portal_scope.py).
+감지 불가/실패는 fail-closed = 양보(사장님을 앞지르지 않는다).
 
 인수기준(compute_yield_decision, 2026-07-20 포털 축 개정):
   (a) portal_site_active=False(3사 포털 아님 확정)      → yield=False (idle 무관 재개)
@@ -38,7 +40,7 @@ class ComputeYieldDecisionTests(unittest.TestCase):
         )
 
     def test_b_non_chrome_idle_long_resumes(self) -> None:
-        # 크롬 아님 + 오래 자리 비움 → 재개(False).
+        # portal 불명(None 기본값) + 오래 자리 비움 → 재개(False).
         self.assertFalse(
             compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=60.0)
         )
@@ -47,7 +49,8 @@ class ComputeYieldDecisionTests(unittest.TestCase):
         )
 
     def test_c_non_chrome_recently_active_yields(self) -> None:
-        # 크롬 아님 + 최근 활동(idle<60) → 양보(True).
+        # portal 불명(None 기본값) + 최근 활동(idle<60) → 60초 유계 양보(True).
+        # (실전에서 앞창이 Slack/터미널이면 snapshot 이 portal=False 를 줘 즉시 진행 — 포털 스코프 테스트 참조)
         self.assertTrue(
             compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=0.0)
         )
@@ -65,7 +68,7 @@ class ComputeYieldDecisionTests(unittest.TestCase):
         )
 
     def test_failclosed_unknown_idle_yields(self) -> None:
-        # 크롬 아님인데 idle 을 못 읽으면(None) 판단 불가 → fail-closed 양보(True).
+        # portal 불명 + idle 판독 불가(None) → fail-closed 양보(True).
         self.assertTrue(
             compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=None)
         )

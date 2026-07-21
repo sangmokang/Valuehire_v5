@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 STALE_SECONDS = 300      # 5분 무응답 → stale
 ALERT_SUPPRESS_SECONDS = 1800  # 30분 중복 경보 억제
-QUEUED_STALL_SECONDS = 600  # SOT30 S2 — queued 가 10분 초과 미claim 이면 고착 경보
+QUEUED_STALL_SECONDS = 600  # SOT31(구 SOT30) S2 — queued 가 10분 초과 미claim 이면 고착 경보
 # QA-1(2026-07-13): claude 잡 상한 2400s(fleet_worker.CLAUDE_TIMEOUT_SECONDS)보다 넉넉히
 # 길게 — 정상 40분 잡을 고아로 오판하지 않으면서, 워커 급사로 release 를 못 한
 # running 고아(+account_locks 잔존 → 머신 큐 데드락)를 가시화한다.
@@ -183,7 +183,7 @@ def stalled_queued_jobs(
     now_epoch: int,
     stall_seconds: int = QUEUED_STALL_SECONDS,
 ) -> list[dict[str, Any]]:
-    """SOT30 S2 — queued 상태로 stall_seconds *초과* 방치된 잡 목록.
+    """SOT31(구 SOT30) S2 — queued 상태로 stall_seconds *초과* 방치된 잡 목록.
 
     - status != "queued" 는 제외(고착 개념이 없음).
     - 생성 시각을 증명 못 하는 queued 행(결손·비정수·ISO 해석불가)은 신선하다고
@@ -248,7 +248,7 @@ def heartbeat_ages(
     now_epoch: int,
     expected: Sequence[str] = FLEET_MACHINES,
 ) -> dict[str, int | None]:
-    """SOT30 인수기준 3 — 머신별 마지막 heartbeat 나이(초). beat 없으면 None.
+    """SOT31(구 SOT30) 인수기준 3 — 머신별 마지막 heartbeat 나이(초). beat 없으면 None.
 
     입력 rows: heartbeats_epoch RPC 형상 [{"machine", "beat_at_epoch"}, ...]
     """
@@ -321,7 +321,7 @@ class Watchdog:
         self.load_alert_state = load_alert_state
         self.save_alert_state = save_alert_state
         self.expected = tuple(expected)
-        self.fetch_queued_jobs = fetch_queued_jobs  # SOT30 S2 — None 이면 기존 동작 그대로
+        self.fetch_queued_jobs = fetch_queued_jobs  # SOT31(구 SOT30) S2 — None 이면 기존 동작 그대로
         self.fetch_running_jobs = fetch_running_jobs  # QA-1 — running 고아 가시화
 
     def _alert(self, key: str, text: str, state: dict[str, int],

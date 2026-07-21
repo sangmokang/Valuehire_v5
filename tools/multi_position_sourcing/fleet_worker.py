@@ -528,7 +528,7 @@ def _load_env_line(key: str) -> str:
     return ""
 
 
-AUTH_BACKOFF_SECONDS: tuple[int, ...] = (60, 300, 900)  # SOT30 S3 재시도 백오프
+AUTH_BACKOFF_SECONDS: tuple[int, ...] = (60, 300, 900)  # SOT31(구 SOT30) S3 재시도 백오프
 
 
 def wait_until_authenticated(
@@ -538,7 +538,7 @@ def wait_until_authenticated(
     sleep: Callable[[float], None],
     max_attempts: int | None = None,
 ) -> bool:
-    """SOT30 S3 — 기동 인증 게이트. 죽은 열쇠(401)로 조용히 폴링루프에 들어가지 않는다.
+    """SOT31(구 SOT30) S3 — 기동 인증 게이트. 죽은 열쇠(401)로 조용히 폴링루프에 들어가지 않는다.
 
     probe() → (분류, 상세). "ok" 면 True. "credential_error" 는 첫 발견 시 1회만
     명시 경보(notify — 같은 원인 스팸 금지)하고 백오프 재시도(크래시루프 금지).
@@ -1035,7 +1035,7 @@ class FleetWorker:
 
     def loop(self, poll_seconds: int = POLL_SECONDS, heartbeat_seconds: int = 60) -> None:
         print(f"[fleet] worker 시작 — machine={self.machine}")
-        # SOT30 S3: 폴링 전에 인증 프로브 — 죽은 열쇠가 15초 조용한 재시도로 위장 못 하게.
+        # SOT31(구 SOT30) S3: 폴링 전에 인증 프로브 — 죽은 열쇠가 15초 조용한 재시도로 위장 못 하게.
         probe = getattr(self.queue, "probe_auth", None)
         if callable(probe):
             wait_until_authenticated(
