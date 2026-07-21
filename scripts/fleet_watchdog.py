@@ -30,7 +30,7 @@ def _fetch(now_epoch: int):
 
 
 def _fetch_queued(now_epoch: int):
-    """SOT30 S2 — queued 고착 판정용 잡 목록(조회 실패는 Watchdog 이 fail-soft 처리)."""
+    """SOT31(구 SOT30) S2 — queued 고착 판정용 잡 목록(조회 실패는 Watchdog 이 fail-soft 처리)."""
     rows = JobQueueClient().queued_jobs()
     return rows if isinstance(rows, list) else []
 
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args(argv)
 
-    # SOT30 S3 — 기동 인증 프로브: 죽은 열쇠로 '경보 시스템 자신이 죽은 줄 모르는'
+    # SOT31(구 SOT30) S3 — 기동 인증 프로브: 죽은 열쇠로 '경보 시스템 자신이 죽은 줄 모르는'
     # 상태를 금지(fail-loud). --once 는 1회 판정, 상주는 백오프 재시도.
     from tools.multi_position_sourcing.fleet_worker import wait_until_authenticated
     authed = wait_until_authenticated(

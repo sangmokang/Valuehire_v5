@@ -37,7 +37,10 @@ def test_sot30_is_strict_pointer_with_v5_overlay():
 def test_fleet_run_reliability_renumbered_to_31():
     old_name = "30-fleet" + "-run-reliability"  # 동적 조합 — 이 테스트 파일 자기매치 방지
     assert not (ROOT / f"docs/sot/{old_name}.md").exists(), "30번 충돌 잔존"
-    assert (ROOT / "docs/sot/31-fleet-run-reliability.md").is_file(), "31번 이동본 없음"
+    moved = ROOT / "docs/sot/31-fleet-run-reliability.md"
+    assert moved.is_file(), "31번 이동본 없음"
+    first_line = moved.read_text(encoding="utf-8").splitlines()[0]
+    assert first_line.startswith("# SOT 31 "), "이동본 제목 번호 토큰이 정확히 31이 아님(30 회귀·310 오기 금지)"
     # 남은 참조 0 (추적 파일 한정 — git grep, 매치 없으면 returncode 1)
     r = subprocess.run(["git", "grep", "-l", old_name],
                        capture_output=True, text=True, cwd=ROOT)

@@ -52,12 +52,18 @@ def decide_tick(
     frontmost_is_chrome: bool,
     os_idle_seconds: float | None,
     idle_threshold_seconds: float = DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS,
+    portal_site_active: bool | None = None,
 ) -> TickDecision:
-    """run == not compute_yield_decision(...) — PC-F1 단일출처, 재구현 금지."""
+    """run == not compute_yield_decision(...) — PC-F1 단일출처, 재구현 금지.
+
+    portal_site_active(2026-07-20 개정): False(3사 포털 아님 확정)면 idle 무관 run.
+    호출자는 detect_owner_activity_snapshot().portal_site_active 를 그대로 넘긴다.
+    """
     should_yield = compute_yield_decision(
         frontmost_is_chrome=frontmost_is_chrome,
         os_idle_seconds=os_idle_seconds,
         idle_threshold_seconds=idle_threshold_seconds,
+        portal_site_active=portal_site_active,
     )
     if should_yield:
         return TickDecision(run=False, reason="owner activity detected (R4 yield)")
@@ -84,6 +90,7 @@ def decide_resume(
     seed: int,
     idle_threshold_seconds: float = DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS,
     pacing_kind: str = "short",
+    portal_site_active: bool | None = None,
 ) -> ResumeDecision:
     """PC-F1 ``decide_tick`` 으로 재개여부 판단(재구현 금지) → 재개면 PC-E1 간격 합성.
 
@@ -98,6 +105,7 @@ def decide_resume(
         frontmost_is_chrome=frontmost_is_chrome,
         os_idle_seconds=os_idle_seconds,
         idle_threshold_seconds=idle_threshold_seconds,
+        portal_site_active=portal_site_active,
     )
     if not tick.run:
         return ResumeDecision(resume=False, delay_ms=0, reason=tick.reason)

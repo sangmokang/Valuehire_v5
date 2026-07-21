@@ -401,7 +401,7 @@ def cancel_job_payload(job_id: int, reason: str = "") -> dict[str, Any]:
 
 
 def classify_auth_probe(status: Any) -> str:
-    """SOT30 S3 — 프로브 HTTP 상태코드 분류(순수).
+    """SOT31(구 SOT30) S3 — 프로브 HTTP 상태코드 분류(순수).
 
     "ok"(2xx) / "credential_error"(401·403, 재시도 무의미·사람 개입) /
     "server_error"(그 외 전부 — 재시도성). 비정수 입력은 절대 "ok" 로 위장하지
@@ -575,7 +575,7 @@ class JobQueueClient:
         return self._call("GET", f"/jobs?order=id.desc&limit={limit}")
 
     def queued_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
-        """SOT30 S2 — watchdog 고착 판정용 queued 잡 목록(생성 오래된 것부터)."""
+        """SOT31(구 SOT30) S2 — watchdog 고착 판정용 queued 잡 목록(생성 오래된 것부터)."""
         limit = max(1, min(int(limit), 100))
         return self._call(
             "GET",
@@ -601,7 +601,7 @@ class JobQueueClient:
         return list(rows) if isinstance(rows, list) else []
 
     def probe_auth(self) -> tuple[str, str]:
-        """SOT30 S3 — 기동 인증 프로브(가벼운 GET 1회).
+        """SOT31(구 SOT30) S3 — 기동 인증 프로브(가벼운 GET 1회).
 
         반환 (분류, 상세). 죽은 열쇠(401)가 '조용한 무응답'으로 위장하지 못하게
         분류를 명시 반환한다. 네트워크 예외는 "server_error"(재시도성)로.

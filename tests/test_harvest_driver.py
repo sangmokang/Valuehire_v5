@@ -51,7 +51,7 @@ def test_resolve_repo_dir_is_current_checkout(monkeypatch, tmp_path) -> None:
 # ----------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "frontmost_is_chrome,os_idle_seconds",
-    list(product([True, False], [None, 0.0, 100.0, 179.9, 180.0, 500.0])),
+    list(product([True, False], [None, 0.0, 30.0, 59.9, 60.0, 500.0])),
 )
 def test_decide_tick_matches_compute_yield_decision_grid(
     frontmost_is_chrome, os_idle_seconds

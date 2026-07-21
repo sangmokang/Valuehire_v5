@@ -55,7 +55,7 @@ def no_human_delay(monkeypatch) -> None:
 
 def test_worker_should_yield_matches_owner_detector_grid() -> None:
     for frontmost_is_chrome in (True, False):
-        for idle in (None, 0.0, 179.9, 180.0, 300.0):
+        for idle in (None, 0.0, 59.9, 60.0, 300.0):
             detected = compute_yield_decision(
                 frontmost_is_chrome=frontmost_is_chrome,
                 os_idle_seconds=idle,

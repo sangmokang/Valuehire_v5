@@ -226,7 +226,7 @@ def test_machine_contract_is_identical_and_fail_closed() -> None:
         "required_before_every_mutation": True,
         "idle_checks": 2,
         "quiet_dwell_seconds": 1,
-        "minimum_idle_seconds": 180,
+        "minimum_idle_seconds": 60,
         "lease_token_recheck": True,
         "failure_state": "HUMAN_ACTIVE",
     }

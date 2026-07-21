@@ -906,15 +906,23 @@ class ProfileLock:
 
 
 def proved_owner_idle_seconds(snapshot: Any) -> float:
-    """Return one trustworthy idle proof or fail closed before mutation."""
+    """Return one trustworthy idle proof or fail closed before mutation.
+
+    2026-07-20 사장님 지시(SOT29 INV9 개정): 사장님 개입은 3사 포털 화면일 때만.
+    portal_site_active=False(비포털 확정)면 idle 최소치를 요구하지 않고,
+    True/None(포털 또는 판독불가)이면 60초(threshold 단일 출처) 이상을 요구한다.
+    """
+    from .owner_activity import DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS
+
     value = getattr(snapshot, "idle_seconds", None)
+    portal = getattr(snapshot, "portal_site_active", None)
     if (
         getattr(snapshot, "detection_status", "") != "ok"
         or getattr(snapshot, "owner_activity_detected", True) is not False
         or isinstance(value, bool)
         or not isinstance(value, (int, float))
         or not math.isfinite(float(value))
-        or float(value) < 180.0
+        or (portal is not False and float(value) < DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS)
     ):
         raise ProfileLockError("owner activity blocks raw browser mutation")
     return float(value)
@@ -929,7 +937,8 @@ def assert_raw_browser_mutation_allowed(
     """Prove lease ownership and increasing OS idle before one raw mutation."""
     lock.assert_owned()
     try:
-        first = proved_owner_idle_seconds(owner_snapshot())
+        first_snapshot = owner_snapshot()
+        first = proved_owner_idle_seconds(first_snapshot)
     except ProfileLockError:
         raise
     except Exception as exc:
@@ -937,12 +946,18 @@ def assert_raw_browser_mutation_allowed(
     sleep(1.0)
     lock.assert_owned()
     try:
-        second = proved_owner_idle_seconds(owner_snapshot())
+        second_snapshot = owner_snapshot()
+        second = proved_owner_idle_seconds(second_snapshot)
     except ProfileLockError:
         raise
     except Exception as exc:
         raise ProfileLockError("owner activity detection failed closed") from exc
-    if second <= first:
+    both_confirmed_non_portal = (
+        getattr(first_snapshot, "portal_site_active", None) is False
+        and getattr(second_snapshot, "portal_site_active", None) is False
+    )
+    # 비포털 확정이면 사장님 입력으로 idle 이 리셋돼도 개입이 아니다(증가 요건 면제, INV9 개정).
+    if not both_confirmed_non_portal and second <= first:
         raise ProfileLockError("owner idle proof did not increase during quiet dwell")
     lock.assert_owned()
 

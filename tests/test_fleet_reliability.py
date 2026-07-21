@@ -1,4 +1,4 @@
-"""SOT30(docs/sot/31-fleet-run-reliability.md) S2·S3 계약 테스트 — RED 먼저.
+"""SOT31(docs/sot/31-fleet-run-reliability.md, 구 SOT30) S2·S3 계약 테스트 — RED 먼저.
 
 S2: queued 고착 감지(stalled_queued_jobs) + Watchdog 경보 + fleet-status heartbeat 나이.
 S3: 자격증명 프로브(classify_auth_probe/probe_auth) + 워커 기동 인증 게이트(fail-loud).
@@ -174,7 +174,7 @@ class TestFleetStatusHeartbeats:
             inv, authorized_users=users, config=DiscordAccessConfig(allow_dm=True),
             queue=FakeQueue())
         assert out["action"] == "status"
-        assert "heartbeats" in out, "SOT30 인수기준 3 — heartbeat 나이 표시"
+        assert "heartbeats" in out, "SOT31 인수기준 3 — heartbeat 나이 표시"
         assert out["heartbeats"]["macmini"] is not None
         assert out["heartbeats"]["macbook"] is None
 
@@ -307,9 +307,9 @@ class TestStalledRunningJobs:
 class TestPauseCooldown:
     def test_paused_후_쿨다운_시간(self):
         assert sleep_seconds_after("paused_for_human", 30) == PAUSE_COOLDOWN_SECONDS
-        # 이슈 #107(SOT29 INV9, 2026-07-15 사장님 지시): "3분 뒤까지 이상이 없으면
+        # 이슈 #107(SOT29 INV9; 2026-07-20 60초 개정): "1분 뒤까지 이상이 없으면
         # 계속 시작해" — 구 스펙(>=300, 10분 쿨다운)은 자동 재개를 방해하는 코드라 폐기.
-        assert PAUSE_COOLDOWN_SECONDS == 180, "SOT29 INV9 — 사장님 양보 3분 자동 재개"
+        assert PAUSE_COOLDOWN_SECONDS == 60, "SOT29 INV9(2026-07-20 개정) — 사장님 양보 1분 자동 재개"
 
     def test_기존_상태별_대기시간_유지(self):
         assert sleep_seconds_after("idle", 30) == 30

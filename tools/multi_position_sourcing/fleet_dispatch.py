@@ -179,7 +179,7 @@ def dispatch_fleet_command(
                 out["linkedin_ready"] = fetch_lr()
             except Exception as exc:  # noqa: BLE001 — 표시 실패가 status 를 죽이면 안 됨
                 out["linkedin_ready"] = {"error": str(exc)[:200]}
-        # SOT30 인수기준 3 — 머신별 heartbeat 나이(초). 일꾼 생존을 명령 한 번으로.
+        # SOT31(구 SOT30) 인수기준 3 — 머신별 heartbeat 나이(초). 일꾼 생존을 명령 한 번으로.
         fetch_hb = getattr(q, "heartbeats_epoch", None)
         if callable(fetch_hb):
             import time as _time

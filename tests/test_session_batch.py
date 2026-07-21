@@ -271,11 +271,11 @@ def test_variant_job_does_not_rebacklog():
     assert q.enqueued == []
 
 
-def test_paused_for_human_yields_3min_not_permanent():
-    """이슈 #107(SOT29 INV9, 사장님 지시)로 스펙 교체: paused = '3분 양보'(폐기 아님).
+def test_paused_for_human_yields_1min_not_permanent():
+    """이슈 #107(SOT29 INV9, 사장님 지시; 2026-07-20 60초 개정)로 스펙 교체: paused = '1분 양보'(폐기 아님).
 
-    구 스펙("paused 후 영구 enqueue 중단", #104)은 사장님 지시로 폐기됐다. 3분 창
-    내에는 enqueue 하지 않고(눈치), 3분 뒤 자동 재개는 tests/test_owner_yield_3min.py
+    구 스펙("paused 후 영구 enqueue 중단", #104)은 사장님 지시로 폐기됐다. 1분 창
+    내에는 enqueue 하지 않고(눈치), 1분 뒤 자동 재개는 tests/test_owner_yield_1min.py
     가 시계 주입으로 검증한다 — 여기서는 창 내 양보만 확인.
     """
     q = FakeWorkerQueue([_group_job(), _base_job(id=8)])
@@ -286,10 +286,10 @@ def test_paused_for_human_yields_3min_not_permanent():
             else ("PAUSED_FOR_HUMAN: 캡차", 0)),
         notifier=lambda job, text: None)
     assert w.run_once() == "done"            # 잡7 → backlog 적재
-    assert w.run_once() == "paused_for_human"  # 잡8 캡차 → 3분 양보 시작
+    assert w.run_once() == "paused_for_human"  # 잡8 캡차 → 1분 양보 시작
     assert w.run_once() == "idle"
-    assert q.enqueued == [], "이상 신호 후 3분 내 자동 enqueue = INV9 양보 위반"
-    assert w._variant_backlog, "backlog 영구 폐기 금지 — 3분 뒤 자동 재개용으로 보존(INV9)"
+    assert q.enqueued == [], "이상 신호 후 1분 내 자동 enqueue = INV9 양보 위반"
+    assert w._variant_backlog, "backlog 영구 폐기 금지 — 1분 뒤 자동 재개용으로 보존(INV9)"
 
 
 def test_idle_enqueue_failure_is_fail_soft_and_drops_variant():

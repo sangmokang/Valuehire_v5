@@ -1,13 +1,16 @@
 """PC-F1 — owner-activity detector 순수모듈(compute_yield_decision).
 
-R4(양보·자동재개)의 첫 코드강제. 무인 워커가 사장님과 머신을 다투지 않도록, 앞창 앱과 OS idle
-시간만 읽어 '지금 양보할지(yield)'를 결정론적으로 계산한다. 로그인 클릭·키입력·브라우저 내용은
-절대 보지 않는다(SOT1). 감지 불가/실패는 fail-closed = 양보(사장님을 앞지르지 않는다).
+R4(양보·자동재개)의 첫 코드강제. 판정 신호는 앞창 앱·OS idle·(크롬 앞창일 때) 활성 탭
+호스트의 포털 축(2026-07-20 개정)이다. 이 파일의 순수함수 호출은 portal_site_active 를
+생략(=None, '포털 여부 불명')한 하위호환 경로를 검증한다 — 실전 snapshot 은 비포털 확정 시
+False 를 전달해 즉시 진행한다(전용 검증: tests/test_owner_yield_60s_portal_scope.py).
+감지 불가/실패는 fail-closed = 양보(사장님을 앞지르지 않는다).
 
-인수기준(compute_yield_decision):
-  (a) frontmost_is_chrome=True                         → yield=True  (사장님이 크롬 앞창)
-  (b) frontmost_is_chrome=False & os_idle_seconds>=180 → yield=False (자리 비움 → 재개)
-  (c) frontmost_is_chrome=False & os_idle_seconds<180  → yield=True  (다른 앱 활성 → 양보)
+인수기준(compute_yield_decision, 2026-07-20 포털 축 개정):
+  (a) portal_site_active=False(3사 포털 아님 확정)      → yield=False (idle 무관 재개)
+  (b) portal_site_active∈{True,None} & idle>=60         → yield=False (자리 비움 → 재개)
+  (c) portal_site_active∈{True,None} & idle<60 또는 None → yield=True (양보, 60초 유계)
+  ※ frontmost_is_chrome 은 호환용 관측 파라미터(판정은 snapshot 의 포털 축이 담당).
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from tools.multi_position_sourcing.owner_activity import (
 class ComputeYieldDecisionTests(unittest.TestCase):
     def test_a_chrome_frontmost_recent_or_unknown_yields(self) -> None:
         # INV9(2026-07-15 사장님 지시, #107): 판단 신호는 idle. 크롬 앞창 + 최근 활동/판단불가는
-        # 양보하되, 크롬을 앞창에 둔 채 3분 이상 자리를 비우면 재개(구 "앞창=영구 양보" 폐기).
+        # 양보하되, 크롬을 앞창에 둔 채 60초 이상 자리를 비우면 재개(구 "앞창=영구 양보" 폐기).
         self.assertTrue(
             compute_yield_decision(frontmost_is_chrome=True, os_idle_seconds=0.0)
         )
@@ -37,21 +40,22 @@ class ComputeYieldDecisionTests(unittest.TestCase):
         )
 
     def test_b_non_chrome_idle_long_resumes(self) -> None:
-        # 크롬 아님 + 오래 자리 비움 → 재개(False).
+        # portal 불명(None 기본값) + 오래 자리 비움 → 재개(False).
         self.assertFalse(
-            compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=180.0)
+            compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=60.0)
         )
         self.assertFalse(
             compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=600.0)
         )
 
     def test_c_non_chrome_recently_active_yields(self) -> None:
-        # 크롬 아님 + 최근 활동(idle<180) → 양보(True).
+        # portal 불명(None 기본값) + 최근 활동(idle<60) → 60초 유계 양보(True).
+        # (실전에서 앞창이 Slack/터미널이면 snapshot 이 portal=False 를 줘 즉시 진행 — 포털 스코프 테스트 참조)
         self.assertTrue(
             compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=0.0)
         )
         self.assertTrue(
-            compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=179.999)
+            compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=59.999)
         )
 
     def test_boundary_exactly_threshold_resumes(self) -> None:
@@ -64,7 +68,7 @@ class ComputeYieldDecisionTests(unittest.TestCase):
         )
 
     def test_failclosed_unknown_idle_yields(self) -> None:
-        # 크롬 아님인데 idle 을 못 읽으면(None) 판단 불가 → fail-closed 양보(True).
+        # portal 불명 + idle 판독 불가(None) → fail-closed 양보(True).
         self.assertTrue(
             compute_yield_decision(frontmost_is_chrome=False, os_idle_seconds=None)
         )
@@ -97,8 +101,8 @@ class OwnerActivitySnapshotTests(unittest.TestCase):
 
         snapshot = detect_owner_activity_snapshot(system_name="Darwin", run_command=fake_run)
 
-        # INV9(#107): 크롬을 앞창에 둔 채 3분 이상 자리 비움(idle 300s) → 재개(감지 False).
-        # 구 스펙("앞창=영구 양보")은 사장님 3분 자동 재개 지시로 폐기.
+        # INV9(#107): 크롬을 앞창에 둔 채 60초 이상 자리 비움(idle 300s) → 재개(감지 False).
+        # 구 스펙("앞창=영구 양보")은 사장님 자동 재개 지시(2026-07-20 60초 개정)로 폐기.
         self.assertFalse(snapshot.owner_activity_detected)
         self.assertEqual(snapshot.foreground_app, "Google Chrome")
 
@@ -111,7 +115,7 @@ class OwnerActivitySnapshotTests(unittest.TestCase):
         snapshot = detect_owner_activity_snapshot(system_name="Darwin", run_command=fake_run)
         self.assertTrue(snapshot.owner_activity_detected)
 
-    def test_non_chrome_recently_active_yields(self) -> None:
+    def test_non_chrome_recently_active_proceeds(self) -> None:
         def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             if argv[0] == "osascript":
                 return _completed("Terminal\n")
@@ -119,8 +123,9 @@ class OwnerActivitySnapshotTests(unittest.TestCase):
 
         snapshot = detect_owner_activity_snapshot(system_name="Darwin", run_command=fake_run)
 
-        # 터미널 앞창이지만 방금 활동(1s) → 양보(True) — compute_yield_decision (c).
-        self.assertTrue(snapshot.owner_activity_detected)
+        # 2026-07-20 개정: 크롬(3사 포털) 아님이 확정이면 방금 활동(1s)이어도 진행(False).
+        # 3사 포털을 만질 때만 개입으로 본다 — 표 1(goal 문서).
+        self.assertFalse(snapshot.owner_activity_detected)
 
     def test_non_chrome_idle_long_resumes(self) -> None:
         def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:

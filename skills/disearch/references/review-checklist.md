@@ -94,7 +94,7 @@ Check:
 - Whether legacy listeners can consume the same intent and cause double execution.
 - Whether Windows launch, encoding, PID locks, paths, and scheduled-task behavior are tested separately from macOS.
 
-Known architectural follow-ups in SOT30 should remain visible until code and migrations prove closure: running-job lease recovery, paused-account lock retention, and live gateway single-instance enforcement.
+Known architectural follow-ups in SOT31(구 SOT30) should remain visible until code and migrations prove closure: running-job lease recovery, paused-account lock retention, and live gateway single-instance enforcement.
 
 ## 5. Test matrix
 
