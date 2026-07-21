@@ -298,6 +298,59 @@ def test_human_auth_runner_waits_for_lease_conflict_without_browser_action() -> 
     assert trace.index("resolve") > trace.index("lease.acquire:2")
 
 
+def test_linkedin_session_conflict_is_terminal_before_human_auth_presentation() -> None:
+    trace: list[str] = []
+    emitted: list[dict[str, object]] = []
+    lease = _Lease(trace)
+    tab = _Tab(trace)
+
+    def conflict(_tab: object, _site: str) -> AuthObservation:
+        trace.append("auth.conflict")
+        return AuthObservation(
+            authenticated=False,
+            challenge=False,
+            url="https://www.linkedin.com/enterprise-authentication/sessions",
+            proof_names=("session_conflict",),
+            auth_conflict=True,
+        )
+
+    result = run_human_auth_episode(
+        "linkedin_rps",
+        agent="Codex",
+        target_id="target-exact",
+        stop_requested=lambda: False,
+        owner_snapshot=_increasing_owner(trace),
+        mutation_sleep=lambda _seconds: trace.append("mutation.sleep"),
+        wait_sleep=lambda _seconds: pytest.fail("terminal conflict must not wait"),
+        locator_sink=lambda payload: emitted.append(dict(payload)),
+        _lease_factory=lambda _site: lease,
+        _target_resolver=lambda *_args, **_kwargs: _ref(),
+        _tab_attacher=lambda *_args, **_kwargs: tab,
+        _auth_reader=conflict,
+        _presenter=lambda *_args, **_kwargs: pytest.fail(
+            "terminal conflict must not present a human-auth window"
+        ),
+        _auth_waiter=lambda **_kwargs: pytest.fail(
+            "terminal conflict must not enter HUMAN_AUTH polling"
+        ),
+        _cleanup=lambda *_args, **_kwargs: pytest.fail(
+            "terminal conflict must not mutate the conflict page during cleanup"
+        ),
+    )
+
+    assert result == {
+        "status": "auth_conflict",
+        "site": "linkedin_rps",
+        "terminal": True,
+        "reason": "linkedin_multiple_signin",
+        "auth_url": "https://www.linkedin.com/enterprise-authentication/sessions",
+    }
+    assert emitted == []
+    assert trace.count("auth.conflict") == 1
+    assert trace.count("tab.disconnect") == 1
+    assert trace[-1] == "lease.release"
+
+
 def test_human_auth_production_detector_uses_fifteen_second_quiet_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

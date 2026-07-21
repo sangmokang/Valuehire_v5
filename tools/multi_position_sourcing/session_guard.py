@@ -62,6 +62,7 @@ class AuthObservation:
     challenge: bool
     url: str
     proof_names: tuple[str, ...] = ()
+    auth_conflict: bool = False
 
 
 @dataclass(frozen=True)
@@ -471,6 +472,11 @@ def wait_for_human_auth(
             observation = auth_probe()
         except Exception:
             observation = None
+        if (
+            isinstance(observation, AuthObservation)
+            and observation.auth_conflict is True
+        ):
+            return observation
         try:
             snapshot = owner_snapshot()
         except Exception:
@@ -511,16 +517,20 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
   const bodyText = document.body && document.body.innerText || '';
   const folded = bodyText.toLowerCase();
   const path = location.pathname.toLowerCase();
-  const challengePath = /\/(checkpoint|uas\/login-cap|enterprise-authentication|authwall)(\/|$)/.test(path);
+  const sessionConflictPath = /\/enterprise-authentication\/sessions(\/|$)/.test(path);
+  const enterpriseChallengePath = /\/enterprise-authentication\//.test(path) && !sessionConflictPath;
+  const challengePath = /\/(checkpoint|uas\/login-cap|authwall)(\/|$)/.test(path) || enterpriseChallengePath;
   const challengeControl = visible(
     'iframe[src*="captcha"], [class*="captcha"], [id*="captcha"], input[name*="captcha"], input[autocomplete="one-time-code"]'
   );
-  const challengePhrase = folded.includes('multiple sign-ins') ||
-    folded.includes('only one session') || folded.includes('보안문자') ||
+  const sessionConflictPhrase = folded.includes('multiple sign-ins') ||
+    folded.includes('only one session');
+  const challengePhrase = folded.includes('보안문자') ||
     folded.includes('인증번호') || folded.includes('2단계 인증');
   return {
     url: location.href,
     hasChallenge: challengePath || challengeControl || challengePhrase,
+    hasSessionConflict: sessionConflictPath || sessionConflictPhrase,
     hasLogout: folded.includes('로그아웃') || folded.includes('log out'),
     hasValueConnect: folded.includes('valueconnect') || folded.includes('value connect') || bodyText.includes('밸류커넥트'),
     saraminSearch: !!document.querySelector('input.search_input') && !!document.querySelector('#career_min') && !!document.querySelector('#career_max'),
@@ -535,9 +545,14 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
         return AuthObservation(False, False, "", ())
     url = str(raw.get("url") or "")
     challenge = raw.get("hasChallenge") is True
+    auth_conflict = (
+        site == "linkedin_rps" and raw.get("hasSessionConflict") is True
+    )
     proofs: list[str] = []
     authenticated = False
-    if site == "saramin":
+    if auth_conflict:
+        proofs.append("session_conflict")
+    elif site == "saramin":
         account = raw.get("hasLogout") is True or raw.get("hasValueConnect") is True
         search = raw.get("saraminSearch") is True
         if account:
@@ -570,10 +585,11 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
         # search link remains optional corroborating evidence.
         authenticated = bool(surface and account)
     return AuthObservation(
-        authenticated=authenticated and not challenge,
+        authenticated=authenticated and not challenge and not auth_conflict,
         challenge=challenge,
         url=url,
         proof_names=tuple(proofs),
+        auth_conflict=auth_conflict,
     )
 
 
@@ -727,9 +743,28 @@ def _auth_matches(observation: Any, expected_url: str) -> bool:
         isinstance(observation, AuthObservation)
         and observation.authenticated is True
         and observation.challenge is False
+        and observation.auth_conflict is False
         and observation.url == expected_url
         and observation.proof_names
     )
+
+
+def _terminal_auth_conflict_result(
+    site: Site,
+    observation: AuthObservation,
+    *,
+    cleanup_pending: bool = False,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "auth_conflict",
+        "site": site,
+        "terminal": True,
+        "reason": "linkedin_multiple_signin",
+        "auth_url": _sanitize_locator_url(observation.url),
+    }
+    if cleanup_pending:
+        result["cleanup_pending"] = True
+    return result
 
 
 def _history_source_entry(tab: Any, source_url: str) -> int | None:
@@ -1553,6 +1588,12 @@ def run_human_auth_episode(
         if _tab_target_id(tab) != ref.target_id:
             raise RuntimeError("attached target identity does not match resolved target")
         initial_auth = auth_reader(tab, site)
+        if (
+            site == "linkedin_rps"
+            and isinstance(initial_auth, AuthObservation)
+            and initial_auth.auth_conflict is True
+        ):
+            return _terminal_auth_conflict_result(site, initial_auth)
         if _auth_matches(initial_auth, ref.initial_url):
             return {
                 "status": "authenticated",
@@ -1592,6 +1633,21 @@ def run_human_auth_episode(
             sleep=wait_sleep,
             stop_requested=stop,
         )
+        if (
+            site == "linkedin_rps"
+            and isinstance(observation, AuthObservation)
+            and observation.auth_conflict is True
+        ):
+            # AUTH_CONFLICT permits no UI mutation.  If an ordinary login page
+            # turned into a conflict after its one presentation, leave the
+            # marker untouched, disconnect the WebSocket, and report cleanup
+            # pending instead of focusing or modifying the page again.
+            cleanup_attempted = True
+            return _terminal_auth_conflict_result(
+                site,
+                observation,
+                cleanup_pending=locator is not None,
+            )
         if observation is None or stop():
             cleanup_attempted = True
             cleanup_result = cleanup(

@@ -17,8 +17,8 @@ from tools.multi_position_sourcing.humansearch_preflight import PreflightError
 PROFILE_URL = "https://www.linkedin.com/talent/profile/AEMAA-test"
 NAVIGATION_URL = (
     PROFILE_URL
-    + "?authType=name&authToken=search-scoped-token"
-    + "&searchContextId=search-context-156"
+    + "?project=1752949252&searchContextId=search-context-156"
+    + "&trk=SEARCH_CONTEXTUAL"
 )
 
 
