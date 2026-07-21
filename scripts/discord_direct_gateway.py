@@ -181,6 +181,10 @@ def _options_to_raw_args(options: Sequence[Mapping[str, Any]] | None) -> str:
     parse_hermes_fleet_args 1곳에서만 한다(INV-D3, 파싱 단일화).
     """
     tokens: list[str] = []
+    if not isinstance(options, list):
+        # m2 봉인(Codex V2): 옵션 컨테이너가 리스트가 아니면(위조·버그) 문자열을 글자 단위로
+        # 순회하다 AttributeError 로 새는 대신 옵션 없음으로 취급한다(크래시 금지, fail-safe).
+        return ""
     for opt in options or []:
         name = str(opt.get("name", "")).strip()
         value = opt.get("value")
@@ -230,8 +234,8 @@ def _requested_console_skill(command: str, options: Sequence[Mapping[str, Any]] 
     if command == "login":
         return "login"
     if command == "skill":
-        for opt in options or []:
-            if str(opt.get("name", "")).strip() == "name":
+        for opt in options if isinstance(options, list) else []:
+            if isinstance(opt, Mapping) and str(opt.get("name", "")).strip() == "name":
                 return str(opt.get("value", "")).strip()
     return ""
 
@@ -278,10 +282,19 @@ def _with_discord_idempotency_key(command: str, raw_args: str, event_id: str) ->
     """
     if command != "fleet-run" or not event_id:
         return raw_args
-    if re.search(r"(?:^|\s)idempotency:", raw_args):
-        return raw_args
+    # C1 봉인(Codex V2 CRITICAL): event_id 는 이 인터랙션의 유일한 dedup 뿌리다. 호출자가
+    # idempotency: 를 끼워 넣어도 event_id 키가 항상 이긴다 — 같은 event_id 는 어떤 입력
+    # 조합으로도 잡 2개가 될 수 없다. 기존 idempotency 토큰은 제거하고 event_id 로 교체한다
+    # (예전엔 명시값 우선이라, 재시도마다 다른 idempotency 를 붙여 중복 방지를 우회할 수 있었다).
+    rebuilt: list[str] = []
+    for tok in shlex.split(raw_args or ""):
+        key, sep, value = tok.partition(":")
+        if sep and key == "idempotency":
+            continue
+        rebuilt.append(f"{key}:{shlex.quote(value)}" if sep else shlex.quote(tok))
     token = f"idempotency:{shlex.quote(f'discord:{event_id}')}"
-    return f"{raw_args} {token}".strip() if raw_args else token
+    joined = " ".join(rebuilt)
+    return f"{joined} {token}".strip() if joined else token
 
 
 def interaction_to_envelope(interaction: Any) -> Optional[DiscordEnvelope]:
@@ -349,6 +362,34 @@ def message_to_envelope(message: Any, *, bot_user_id: str = "") -> Optional[Disc
     )
 
 
+class _LazyQueue:
+    """M1 봉인(Codex V2): 큐를 '실제로 쓸 때만' 생성한다.
+
+    예전엔 handle_slash_interaction 이 defer 뒤에 곧바로 queue_factory() 를 호출해,
+    비인가·화이트리스트 거부처럼 큐를 만질 필요조차 없는 경로에서도 큐가 생성됐다 —
+    죽은 큐면 비인가자에게 '접수 불가'가 새어 운영 상태를 노출했다. 이 프록시는
+    dispatch 가 권한 통과 후 처음 enqueue/recent 등을 호출하는 순간에만 factory 를
+    돌린다. 권한 거부 경로(route 에서 침묵)는 큐를 아예 안 만진다.
+    """
+
+    __slots__ = ("_factory", "_real")
+
+    def __init__(self, factory: Optional[Callable[[], Any]]) -> None:
+        self._factory = factory
+        self._real: Any = None
+
+    def _resolve(self) -> Any:
+        if self._real is None:
+            if self._factory is None:
+                raise RuntimeError("queue_factory 미제공")
+            self._real = self._factory()  # 실패 시 예외 전파 → handle_envelope 가 internal_error 로 보고
+        return self._real
+
+    def __getattr__(self, name: str) -> Any:
+        # __slots__ 밖 속성 접근 = 큐 메서드(enqueue/recent/...) → 이때 처음 생성.
+        return getattr(self._resolve(), name)
+
+
 async def _safe_first_reply(interaction: Any, content: str, *, event_id: str) -> None:
     """defer 이후 첫(그리고 유일한) 회신 — discord 권고대로 원응답 수정을 우선 시도.
 
@@ -389,14 +430,9 @@ async def handle_slash_interaction(
         await _safe_first_reply(interaction, _GENERIC_SILENT_ACK, event_id="?")
         return {"handled": False, "action": "unsupported_interaction", "response": None}
 
-    try:
-        resolved_queue = queue if queue is not None else queue_factory()  # type: ignore[misc]
-    except Exception:  # noqa: BLE001 — 큐 생성 실패도 fail-closed 보고, 크래시 금지.
-        logger.warning(
-            "discord_direct_gateway: queue_factory 실패 event_id=%s", envelope.event_id)
-        # E19 — 큐 장애는 인가 신호가 아니므로 침묵 대신 "접수 불가"를 즉답한다(명령 삼킴 금지).
-        await _safe_first_reply(interaction, _QUEUE_UNAVAILABLE_MSG, event_id=envelope.event_id)
-        return {"handled": False, "action": "internal_error", "response": None}
+    # M1 봉인: 큐를 미리 만들지 않고 프록시를 넘긴다 — 권한 통과 후 dispatch 가 처음
+    # 큐를 만질 때만 factory 가 돈다(비인가·거부 경로는 큐 무접촉 → 운영 상태 비노출).
+    resolved_queue = queue if queue is not None else _LazyQueue(queue_factory)
 
     kwargs: dict[str, Any] = {}
     if clock is not None:
@@ -407,21 +443,29 @@ async def handle_slash_interaction(
         config=config, audit=audit, **kwargs,
     )
 
+    action = result.get("action")
     response = result.get("response")
     outgoing = _GENERIC_SILENT_ACK if response is None else response[:_RESPONSE_CHAR_LIMIT]
     if response is not None:
-        # AC-1 콘솔 표면 후처리 — 인가자에게만(response None=침묵 경로는 그대로 둔다).
-        data = getattr(interaction, "data", None) or {}
-        original_command = str(data.get("name") or "").strip().lower()
-        if original_command in ("skill", "login") \
-                and result.get("action") in ("error", "parse_error"):
-            requested = _requested_console_skill(original_command, data.get("options"))
-            if requested and requested not in FLEET_SKILLS:
-                outgoing = _UNSUPPORTED_SKILL_MSG
-        elif original_command == "jobs" and result.get("action") == "status":
-            outgoing = (
-                f"{response}\n🔗 진행중/완료/실패 상세: {_FLEET_TAB_URL}"
-            )[:_RESPONSE_CHAR_LIMIT]
+        # M2 봉인: 인가 통과 후 큐 접촉이 실패(생성·enqueue·recent 어디서든)하면
+        # handle_envelope 가 internal_error 로 보고한다 — 봇 콘솔에서는 일반 '내부 오류'가
+        # 아니라 항상 '지금 접수 불가'로 통일한다(비밀·스키마 비노출 + E19 문구 일관).
+        if action == "internal_error":
+            outgoing = _QUEUE_UNAVAILABLE_MSG
+        else:
+            # AC-1 콘솔 표면 후처리 — 인가자에게만(response None=침묵 경로는 그대로 둔다).
+            data = getattr(interaction, "data", None) or {}
+            original_command = str(data.get("name") or "").strip().lower()
+            if original_command in ("skill", "login") \
+                    and action in ("error", "parse_error"):
+                requested = _requested_console_skill(original_command, data.get("options"))
+                # m1 봉인: 빈 name('') 도 화이트리스트 밖이므로 '아직 지원' 안내로 통일.
+                if requested not in FLEET_SKILLS:
+                    outgoing = _UNSUPPORTED_SKILL_MSG
+            elif original_command == "jobs" and action == "status":
+                outgoing = (
+                    f"{response}\n🔗 진행중/완료/실패 상세: {_FLEET_TAB_URL}"
+                )[:_RESPONSE_CHAR_LIMIT]
     await _safe_first_reply(interaction, outgoing, event_id=envelope.event_id)
     return result
 

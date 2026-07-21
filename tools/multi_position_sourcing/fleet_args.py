@@ -50,6 +50,15 @@ class FleetArgsError(ValueError):
     """입력이 계약을 벗어남(fail-closed) — 명령/필드/신원 검증 실패."""
 
 
+# m3 — raw_args 길이 상한(문자). filters64(6,000자)+URL 등 정상 입력을 넉넉히 덮되
+# 비정상적으로 긴 입력은 거부한다(Codex V2 지적).
+_MAX_RAW_ARGS_LEN = 8000
+
+# M3 — "명시적으로 빈 값" vs "필드 부재"를 구분하는 센티넬. options.pop 이 이 값을
+# 돌려주면 필드가 아예 없었던 것이고, "" 를 돌려주면 사용자가 빈 값을 명시한 것이다.
+_MISSING = object()
+
+
 def _classify_bare_fleet_run_token(token: str) -> tuple[str, str] | None:
     """fleet-run 전용: ``key:value`` 가 아닌 맨 토큰이 url/skill/machine 중 뭔지 판정.
 
@@ -97,6 +106,11 @@ def parse_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
     """
     if command not in FLEET_ARG_COMMANDS:
         raise FleetArgsError(f"알 수 없는 fleet 명령: {command!r}")
+    # m3 봉인(Codex V2): 입력 길이 상한 — 비정상적으로 긴 인자를 큐 입구에서 거부한다
+    # (URL·필터 합쳐도 8,000자면 충분. filters64 는 별도 6,000자 필드 상한이 이미 있다).
+    if raw_args is not None and len(raw_args) > _MAX_RAW_ARGS_LEN:
+        raise FleetArgsError(
+            f"입력이 너무 깁니다({len(raw_args)}자 > {_MAX_RAW_ARGS_LEN}자 상한)")
     allowed = _ALLOWED_FIELDS[command]
     try:
         tokens = shlex.split(raw_args or "")
@@ -158,8 +172,10 @@ def parse_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
                 raise FleetArgsError(f"followup 은 {FLEET_SKILLS} 만 허용합니다")
             params["followup_skill"] = followup
         # 이슈 B(2026-07-15): 실행 엔진 선택 — claude|codex 만(fail-closed)
-        agent = options.pop("agent", "")
-        if agent:
+        agent = options.pop("agent", _MISSING)
+        if agent is not _MISSING:
+            # M3 봉인(Codex V2): 명시된 agent 는 정확히 claude|codex 만. 빈 문자열('')도
+            # 이상값으로 거부한다 — 조용히 '미지정(agent 없음)'으로 떨어뜨리지 않는다.
             if agent not in ("claude", "codex"):
                 raise FleetArgsError("agent 는 claude|codex 만 허용합니다")
             params["agent"] = agent
