@@ -83,7 +83,13 @@ def human_delay(lo: float = 180.0, hi: float = 420.0) -> None:
 # ── 추출 헬퍼 (LinkedIn Recruiter profile innerText 기반) ──
 EXTRACT_JS = r"""(() => {
   const t = document.body ? document.body.innerText : '';
-  const name = (document.querySelector('h1') ? document.querySelector('h1').innerText : '').trim();
+  const h1Name = (document.querySelector('h1') ? document.querySelector('h1').innerText : '').trim();
+  const titleName = (document.title || '').replace(/\s*\|\s*LinkedIn\s*$/i, '').trim();
+  // Recruiter can keep the search project in the first h1 while the standalone
+  // profile is already loaded. Its document title is the stable candidate name.
+  const name = location.pathname.includes('/talent/profile/') &&
+    titleName && !/^LinkedIn Talent Solutions$/i.test(titleName)
+      ? titleName : h1Name;
   const otw = /open to work/i.test(t);
   // headline: h1 다음 줄 근방 — '· 2nd' 위쪽 한 줄
   let headline = '';

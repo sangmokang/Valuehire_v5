@@ -192,6 +192,12 @@ def test_candidate_identity_mismatch_stops_before_screenshot_or_archive(
     assert archive_calls == []
 
 
+def test_recruiter_profile_extractor_uses_document_title_for_candidate_name() -> None:
+    assert "location.pathname.includes('/talent/profile/')" in runner.EXTRACT_JS
+    assert "const titleName = (document.title || '')" in runner.EXTRACT_JS
+    assert "? titleName : h1Name" in runner.EXTRACT_JS
+
+
 def test_missing_existing_recruiter_target_never_creates_tab(monkeypatch) -> None:
     monkeypatch.setattr(runner.cdp, "find_page_by_url", lambda _value: None)
     created: list[str] = []
