@@ -27,6 +27,15 @@ class FakeTab:
     def close(self) -> None:
         self.closed = True
 
+    def disconnect(self) -> None:
+        self.closed = True
+
+    def eval(self, _script: str):
+        return hcr.SEARCH_URL_BASE
+
+    def mark_busy(self, _label: str, *, expected_url: str) -> bool:
+        return expected_url == hcr.SEARCH_URL_BASE
+
 
 def _cards(start: int, count: int) -> list[dict]:
     return [
@@ -122,14 +131,14 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
     monkeypatch.setattr(
-        hcr.cdp,
-        "list_pages",
-        lambda: [{"id": "t1", "url": hcr.SEARCH_URL_BASE}],
+        hcr,
+        "resolve_exact_recruiter_target",
+        lambda **_kwargs: {"id": "t1", "url": hcr.SEARCH_URL_BASE},
     )
     monkeypatch.setattr(hcr.cdp, "new_tab", lambda _url: {"targetId": "new"})
-    monkeypatch.setattr(hcr.cdp, "attach", lambda _target: tab)
-    monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start: None)
-    monkeypatch.setattr(hcr, "extract_cards_from_current_page", lambda _tab: [])
+    monkeypatch.setattr(hcr.cdp, "attach", lambda _target, **_kwargs: tab)
+    monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start, **_kwargs: None)
+    monkeypatch.setattr(hcr, "extract_cards_from_current_page", lambda _tab, **_kwargs: [])
     monkeypatch.setattr(hcr, "assert_not_blocked_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "assert_live_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "read_result_count", lambda _tab: 60, raising=False)
@@ -138,8 +147,13 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
         calls.append(kwargs)
         return _cards(0, 3)
 
-    def fake_process(_tab, card: dict, idx: int, *, live_check=None) -> dict:
+    def fake_process(
+        _tab, card: dict, idx: int, *, live_check=None, mutation_guard=None,
+        badge_guard=None,
+    ) -> dict:
         assert live_check is hcr.assert_not_blocked_or_abort
+        mutation_guard()
+        badge_guard(_tab)
         processed.append(card["url"])
         return {
             "idx": idx,

@@ -20,6 +20,10 @@ NAVIGATION_URL = (
     + "?project=1752949252&searchContextId=search-context-156"
     + "&trk=SEARCH_CONTEXTUAL"
 )
+SOURCE_SEARCH_URL = (
+    "https://www.linkedin.com/talent/search"
+    "?searchContextId=search-context-156&searchHistoryId=history-156"
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,7 @@ def _card(*, profile_url: str = PROFILE_URL, navigation_url: str = NAVIGATION_UR
     return {
         "url": profile_url,
         "navigation_url": navigation_url,
+        "source_search_url": SOURCE_SEARCH_URL,
         "name": "Candidate One",
         "snippet": "robotics",
     }
@@ -52,6 +57,7 @@ def test_card_harvest_preserves_exact_navigation_href_with_query(monkeypatch) ->
             }
             if "navigation_url" in script:
                 row["navigation_url"] = NAVIGATION_URL
+                row["source_search_url"] = SOURCE_SEARCH_URL
             return [row]
 
     monkeypatch.setattr(hcr.time, "sleep", lambda _seconds: None)
@@ -60,6 +66,7 @@ def test_card_harvest_preserves_exact_navigation_href_with_query(monkeypatch) ->
 
     assert rows[0]["url"] == PROFILE_URL
     assert rows[0]["navigation_url"] == NAVIGATION_URL
+    assert rows[0]["source_search_url"] == SOURCE_SEARCH_URL
 
 
 def test_profile_open_prefers_navigation_url_over_bare_profile_url() -> None:

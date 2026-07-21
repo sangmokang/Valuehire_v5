@@ -25,6 +25,15 @@ class FakeTab:
     def close(self) -> None:
         self.closed = True
 
+    def disconnect(self) -> None:
+        self.closed = True
+
+    def eval(self, _script: str):
+        return hcr.SEARCH_URL_BASE
+
+    def mark_busy(self, _label: str, *, expected_url: str) -> bool:
+        return expected_url == hcr.SEARCH_URL_BASE
+
 
 def _cards(count: int) -> list[dict]:
     return [
@@ -185,22 +194,26 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
     monkeypatch.setattr(
-        hcr.cdp,
-        "list_pages",
-        lambda: [{"id": "t1", "url": hcr.SEARCH_URL_BASE}],
+        hcr,
+        "resolve_exact_recruiter_target",
+        lambda **_kwargs: {"id": "t1", "url": hcr.SEARCH_URL_BASE},
     )
     monkeypatch.setattr(hcr.cdp, "new_tab", lambda _url: {"targetId": "new"})
-    monkeypatch.setattr(hcr.cdp, "attach", lambda _target: tab)
-    monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start: None)
+    monkeypatch.setattr(hcr.cdp, "attach", lambda _target, **_kwargs: tab)
+    monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start, **_kwargs: None)
     monkeypatch.setattr(hcr, "assert_not_blocked_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "assert_live_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "read_result_count", lambda _tab: 5)
-    monkeypatch.setattr(hcr, "extract_cards_from_current_page", lambda _tab: [])
+    monkeypatch.setattr(hcr, "extract_cards_from_current_page", lambda _tab, **_kwargs: [])
     monkeypatch.setattr(hcr, "iter_planned_cards", lambda _tab, **_kwargs: _cards(2))
 
-    def fake_process_cards(_tab, cards, *, owner_snapshot, live_check):
+    def fake_process_cards(
+        _tab, cards, *, owner_snapshot, live_check, mutation_guard, badge_guard
+    ):
         calls.append(owner_snapshot)
         assert live_check is hcr.assert_not_blocked_or_abort
+        mutation_guard()
+        badge_guard(_tab)
         return [_row(card, idx) for idx, card in enumerate(cards, 1)]
 
     monkeypatch.setattr(hcr, "process_cards_with_r4", fake_process_cards)

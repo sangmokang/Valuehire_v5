@@ -37,6 +37,7 @@ from tools.multi_position_sourcing.models import (
 )
 from tools.multi_position_sourcing.owner_activity import detect_owner_activity_snapshot
 from tools.multi_position_sourcing.session_guard import _default_login_lease
+from tools.multi_position_sourcing.session_guard import resolve_existing_target
 
 SEARCH_URL_BASE = (
     "https://www.linkedin.com/talent/search?"
@@ -135,17 +136,41 @@ def _search_url(start: int) -> str:
     return SEARCH_URL_BASE + f"&start={start}"
 
 
-def navigate_results_page(tab, start: int) -> None:
+def _run_mutation_guard(mutation_guard) -> None:
+    if mutation_guard is not None:
+        mutation_guard()
+
+
+def _mark_busy_or_abort(tab) -> None:
+    current_url = str(tab.eval("location.href") or "")
+    marker = getattr(tab, "mark_busy", None)
+    if not callable(marker) or marker(
+        "Codex:humansearch",
+        expected_url=current_url,
+    ) is not True:
+        raise _profile_context_error("automation badge could not be proven on exact target")
+
+
+def navigate_results_page(tab, start: int, *, mutation_guard=None) -> None:
+    _run_mutation_guard(mutation_guard)
     tab.navigate(_search_url(start), wait_ms=7000)
 
 
-def extract_cards_from_current_page(tab) -> list[dict]:
+def extract_cards_from_current_page(tab, *, mutation_guard=None, live_check=None) -> list[dict]:
     # lazy-load: 결과 리스트를 천천히 스크롤
     for _ in range(8):
+        if live_check is not None:
+            live_check(tab)
+        _run_mutation_guard(mutation_guard)
         tab.eval("window.scrollBy(0, 900)")
         time.sleep(1.2)
+    if live_check is not None:
+        live_check(tab)
+    _run_mutation_guard(mutation_guard)
     tab.eval("window.scrollTo(0,0)")
     time.sleep(1.0)
+    if live_check is not None:
+        live_check(tab)
     cards = tab.eval(r"""(() => {
       const seen = new Set(); const out = [];
       for (const a of document.querySelectorAll('a[href*="/talent/profile/"]')) {
@@ -154,6 +179,7 @@ def extract_cards_from_current_page(tab) -> list[dict]:
         if (seen.has(href)) continue; seen.add(href);
         const li = a.closest('li');
         out.push({url: href, navigation_url, name:(a.innerText||'').trim(),
+                  source_search_url:location.href,
                   snippet:(li?li.innerText:'').replace(/\n+/g,' | ').slice(0,200)});
       }
       return out;
@@ -161,40 +187,76 @@ def extract_cards_from_current_page(tab) -> list[dict]:
     return cards or []
 
 
-def collect_cards(tab, start: int) -> list[dict]:
-    navigate_results_page(tab, start)
+def collect_cards(tab, start: int, *, mutation_guard=None, badge_guard=None) -> list[dict]:
+    navigate_results_page(tab, start, mutation_guard=mutation_guard)
     assert_not_blocked_or_abort(tab)
-    return extract_cards_from_current_page(tab)
+    if badge_guard is not None:
+        badge_guard(tab)
+    return extract_cards_from_current_page(
+        tab,
+        mutation_guard=mutation_guard,
+        live_check=assert_not_blocked_or_abort,
+    )
 
 
-def resolve_exact_recruiter_target(*, target_id: str | None = None) -> dict:
-    pages = cdp.list_pages()
-    expected_context = parse_qs(urlsplit(SEARCH_URL_BASE).query).get(
-        "searchContextId", [""]
-    )[0]
-    matches: list[dict] = []
-    for page in pages:
-        page_id = str(page.get("id") or page.get("targetId") or "")
-        parts = urlsplit(str(page.get("url") or ""))
-        is_recruiter = (
-            parts.scheme == "https"
-            and parts.netloc.lower() == "www.linkedin.com"
-            and parts.path.startswith("/talent/")
+def _scope_values(url: str) -> dict[str, str]:
+    parts = urlsplit(str(url or ""))
+    if parts.scheme != "https" or parts.netloc.lower() != "www.linkedin.com":
+        return {}
+    query = parse_qs(parts.query)
+    scope: dict[str, str] = {}
+    for key in ("searchContextId", "searchHistoryId", "searchRequestId", "project"):
+        value = str((query.get(key) or [""])[0]).strip()
+        if value:
+            scope[key] = value
+    project_match = re.match(r"^/talent/hire/([^/]+)/", parts.path)
+    if project_match and "project" not in scope:
+        scope["project"] = project_match.group(1)
+    return scope
+
+
+def resolve_exact_recruiter_target(
+    *,
+    target_id: str | None = None,
+    target_resolver=None,
+) -> dict:
+    wanted_id = str(target_id or "").strip()
+    if not wanted_id:
+        raise _profile_context_error("explicit Recruiter target id is required")
+    resolver = target_resolver or resolve_existing_target
+    try:
+        ref = resolver("linkedin_rps", target_id=wanted_id)
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise _profile_context_error("exact managed Recruiter target could not be resolved") from error
+    expected_scope = _scope_values(SEARCH_URL_BASE)
+    initial_scope = _scope_values(ref.initial_url)
+    initial_parts = urlsplit(ref.initial_url)
+    if initial_parts.path.startswith("/talent/profile/"):
+        required_keys = ("searchHistoryId",)
+    else:
+        required_keys = ("searchContextId", "searchHistoryId", "searchRequestId")
+    if (
+        ref.site != "linkedin_rps"
+        or ref.target_id != wanted_id
+        or not ref.endpoint.startswith("http://127.0.0.1:")
+        or not ref.websocket_url
+        or not ref.profile_path
+        or ref.browser_pid <= 0
+        or any(
+            not expected_scope.get(key)
+            or initial_scope.get(key) != expected_scope.get(key)
+            for key in required_keys
         )
-        if not is_recruiter:
-            continue
-        if target_id:
-            if page_id == target_id:
-                matches.append(page)
-            continue
-        context = parse_qs(parts.query).get("searchContextId", [""])[0]
-        if expected_context and context == expected_context:
-            matches.append(page)
-    if len(matches) != 1:
-        raise _profile_context_error(
-            f"exact Recruiter target count={len(matches)}; refusing generic tab selection"
-        )
-    return matches[0]
+    ):
+        raise _profile_context_error("exact managed Recruiter target identity or search scope changed")
+    return {
+        "id": ref.target_id,
+        "url": ref.initial_url,
+        "webSocketDebuggerUrl": ref.websocket_url,
+        "_endpoint": ref.endpoint,
+        "_profile_path": ref.profile_path,
+        "_browser_pid": ref.browser_pid,
+    }
 
 
 _RESULT_COUNT_RE = re.compile(
@@ -237,6 +299,8 @@ def iter_planned_cards(
     page_size: int = PAGE_SIZE,
     pacing_seed: int = 0,
     first_page_cards: list[dict] | None = None,
+    mutation_guard=None,
+    badge_guard=None,
 ) -> list[dict]:
     """Collect search cards according to the SOT22 traversal plan.
 
@@ -265,7 +329,17 @@ def iter_planned_cards(
     seen_urls: set[str] = set()
     for page_index in range(max_pages):
         offset = start + (page_index * page_size)
-        page = first_page_cards if page_index == 0 and first_page_cards is not None else collect_cards(tab, offset)
+        if page_index == 0 and first_page_cards is not None:
+            page = first_page_cards
+        elif mutation_guard is None:
+            page = collect_cards(tab, offset)
+        else:
+            page = collect_cards(
+                tab,
+                offset,
+                mutation_guard=mutation_guard,
+                badge_guard=badge_guard,
+            )
         if not page:
             break
         for card in page:
@@ -290,14 +364,10 @@ def _clean(s: str) -> str:
 
 
 _PROFILE_PATH_RE = re.compile(r"^/talent/profile/[^/?#]+$")
-_SCOPED_PROFILE_QUERY_KEYS = {
-    "project",
-    "searchhistoryid",
-    "searchcontextid",
-    "authtoken",
-}
-
-
+_SEARCH_PATH_RE = re.compile(
+    r"^/talent/(?:search|hire/[^/]+/discover/recruiterSearch)$",
+    re.IGNORECASE,
+)
 def _profile_context_error(reason: str) -> PreflightError:
     return PreflightError(
         {
@@ -312,10 +382,11 @@ def _profile_context_error(reason: str) -> PreflightError:
 def _validate_profile_card_context(card: dict) -> tuple[str, str, str]:
     profile_url = str(card.get("url") or "").strip()
     navigation_url = str(card.get("navigation_url") or "").strip()
+    source_search_url = str(card.get("source_search_url") or "").strip()
     expected_name = _clean(str(card.get("name") or ""))
     if not expected_name:
         raise _profile_context_error("candidate name missing from Recruiter result")
-    if not navigation_url:
+    if not navigation_url or not source_search_url:
         raise _profile_context_error("profile URL is missing its scoped Recruiter href")
 
     profile_parts = urlsplit(profile_url)
@@ -327,14 +398,42 @@ def _validate_profile_card_context(card: dict) -> tuple[str, str, str]:
         and not profile_parts.query
         and not profile_parts.fragment
     )
-    query_keys = {key.casefold() for key in parse_qs(navigation_parts.query).keys()}
-    navigation_is_scoped = (
+    source_parts = urlsplit(source_search_url)
+    source_scope = _scope_values(source_search_url)
+    navigation_scope = _scope_values(navigation_url)
+    scope_keys = {"project", "searchHistoryId", "searchContextId"}
+    common_scope = scope_keys & source_scope.keys() & navigation_scope.keys()
+    conflicting_scope = {
+        key
+        for key in common_scope
+        if source_scope.get(key) != navigation_scope.get(key)
+    }
+    shared_scope = common_scope - conflicting_scope
+    source_is_search = (
+        source_parts.scheme == "https"
+        and source_parts.netloc.lower() == "www.linkedin.com"
+        and _SEARCH_PATH_RE.fullmatch(source_parts.path) is not None
+        and bool(source_scope)
+    )
+    navigation_is_basic = (
         navigation_parts.scheme == "https"
         and navigation_parts.netloc.lower() == "www.linkedin.com"
         and navigation_parts.path == profile_parts.path
-        and bool(query_keys & _SCOPED_PROFILE_QUERY_KEYS)
     )
-    if not profile_is_canonical or not navigation_is_scoped:
+    navigation_is_scoped = (
+        navigation_is_basic
+        and bool(shared_scope)
+        and not conflicting_scope
+    )
+    if not profile_is_canonical or not source_is_search or not navigation_is_scoped:
+        if (
+            profile_is_canonical
+            and source_is_search
+            and navigation_is_basic
+            and bool(navigation_scope)
+            and (bool(conflicting_scope) or not shared_scope)
+        ):
+            raise _profile_context_error("profile navigation search scope does not match harvest")
         raise _profile_context_error("profile URL is not an exact scoped LinkedIn Recruiter link")
     return profile_url, navigation_url, expected_name
 
@@ -424,6 +523,8 @@ def process_cards_with_r4(
     *,
     owner_snapshot=detect_owner_activity_snapshot,
     live_check=assert_not_blocked_or_abort,
+    mutation_guard=None,
+    badge_guard=None,
 ) -> list[dict]:
     """Open cards while respecting owner Chrome yield and mid-run preflight STOP."""
     all_rows: list[dict] = []
@@ -433,7 +534,15 @@ def process_cards_with_r4(
             log("R4 yield — owner Chrome activity detected; stopping profile traversal")
             break
         try:
-            r = process_profile(tab, card, i, live_check=live_check)
+            _run_mutation_guard(mutation_guard)
+            r = process_profile(
+                tab,
+                card,
+                i,
+                live_check=live_check,
+                mutation_guard=mutation_guard,
+                badge_guard=badge_guard,
+            )
             hx = r.get("hard_exclude")
             tag = "⛔HX  " if hx else ("✅PASS" if r["score"] >= 70 else "  ")
             log(f"{tag} #{i:02d} {r['name']!r} score={r['score']} otw={r['otw']} edu={r['education'][:30]!r}"
@@ -457,16 +566,21 @@ def process_profile(
     idx: int,
     *,
     live_check=None,
+    mutation_guard=None,
+    badge_guard=None,
 ) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     profile_url, navigation_url, expected_name = _validate_profile_card_context(card)
     guard = live_check or assert_not_blocked_or_abort
+    _run_mutation_guard(mutation_guard)
     tab.navigate(navigation_url, wait_ms=8000)
     # Escaped defect #156: a multiple-sign-in page used to be extracted, screenshotted,
     # archived, and scored as a candidate because this check ran only after process_profile.
     # Challenge/session-conflict detection must be the first operation after navigation.
     guard(tab)
     _assert_current_profile_identity(tab, profile_url)
+    if badge_guard is not None:
+        badge_guard(tab)
     info = tab.eval(EXTRACT_JS)
     name = _clean(str(info.get("name") or ""))
     if not name or name.casefold() != expected_name.casefold():
@@ -476,6 +590,7 @@ def process_profile(
     shot = OUT_DIR / f"{idx:02d}_{safe}.png"
     guard(tab)
     _assert_current_profile_identity(tab, profile_url)
+    _run_mutation_guard(mutation_guard)
     try:
         tab.screenshot(str(shot))
     except Exception as e:
@@ -484,6 +599,7 @@ def process_profile(
     try:
         guard(tab)
         _assert_current_profile_identity(tab, profile_url)
+        _run_mutation_guard(mutation_guard)
     except Exception:
         shot.unlink(missing_ok=True)
         raise
@@ -546,26 +662,41 @@ def main(
     owner_snapshot=detect_owner_activity_snapshot,
     target_id: str | None = None,
     lease_factory=None,
+    target_resolver=None,
 ) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
     lease.acquire()
     tab = None
     try:
-        t = resolve_exact_recruiter_target(target_id=target_id)
-        tab = cdp.attach(t)
+        mutation_guard = getattr(lease, "assert_owned", None)
+        if not callable(mutation_guard):
+            raise RuntimeError("LinkedIn profile lease cannot prove ownership")
+        mutation_guard()
+        t = resolve_exact_recruiter_target(
+            target_id=target_id,
+            target_resolver=target_resolver,
+        )
+        mutation_guard()
+        tab = cdp.attach(t, badge=False)
         log(f"=== humansearch CDP run | start={start} ===")
 
         # A login/session-conflict surface must stop before the runner mutates history by
         # navigating to search. Authentication recovery belongs to the exact-target login guard.
         assert_not_blocked_or_abort(tab)
-        navigate_results_page(tab, start)
+        _mark_busy_or_abort(tab)
+        navigate_results_page(tab, start, mutation_guard=mutation_guard)
         # fail-closed 라이브 게이트 (docs/sot/27): 검색이 살아있는 상태가 아니면(세션 만료/세션충돌/
         # 캡차/로그인 리다이렉트/결과 미렌더) 여기서 PreflightError 로 즉시 중단 — 수집/채점을
         # 시작조차 하지 않는다. 봇처럼 같은 네비게이션을 반복하지 않는다(SOT22 R2).
         assert_live_or_abort(tab)
+        _mark_busy_or_abort(tab)
         result_count = read_result_count(tab)
-        first_page_cards = extract_cards_from_current_page(tab)
+        first_page_cards = extract_cards_from_current_page(
+            tab,
+            mutation_guard=mutation_guard,
+            live_check=assert_not_blocked_or_abort,
+        )
         cards = iter_planned_cards(
             tab,
             result_count=result_count,
@@ -573,6 +704,8 @@ def main(
             start=start,
             pacing_seed=result_count + start,
             first_page_cards=first_page_cards,
+            mutation_guard=mutation_guard,
+            badge_guard=_mark_busy_or_abort,
         )
         log(f"planned traversal result_count={result_count} collected={len(cards)} start={start}")
         all_rows = process_cards_with_r4(
@@ -580,6 +713,8 @@ def main(
             cards,
             owner_snapshot=owner_snapshot,
             live_check=assert_not_blocked_or_abort,
+            mutation_guard=mutation_guard,
+            badge_guard=_mark_busy_or_abort,
         )
         results = collect_results(all_rows)
         excluded = [r for r in all_rows if r.get("hard_exclude")]
@@ -589,12 +724,33 @@ def main(
     finally:
         try:
             if tab is not None:
-                tab.close()
+                safe_for_badge_cleanup = False
+                try:
+                    assert_not_blocked_or_abort(tab)
+                    safe_for_badge_cleanup = True
+                except Exception:
+                    safe_for_badge_cleanup = False
+                if safe_for_badge_cleanup:
+                    try:
+                        closed = tab.close()
+                    except Exception:
+                        closed = False
+                    if closed is not True:
+                        tab.disconnect()
+                else:
+                    tab.disconnect()
         finally:
             lease.release()
 
 
+def _parse_cli_args(argv: list[str]) -> tuple[int, int, str]:
+    if len(argv) < 4 or not str(argv[3]).strip():
+        raise SystemExit(
+            "usage: humansearch_cdp_run.py <max_profiles> <start> <exact_target_id>"
+        )
+    return int(argv[1]), int(argv[2]), str(argv[3]).strip()
+
+
 if __name__ == "__main__":
-    mx = int(sys.argv[1]) if len(sys.argv) > 1 else 25
-    st = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-    main(max_profiles=mx, start=st)
+    mx, st, exact_target_id = _parse_cli_args(sys.argv)
+    main(max_profiles=mx, start=st, target_id=exact_target_id)

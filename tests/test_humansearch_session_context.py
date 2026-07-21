@@ -7,6 +7,14 @@ import pytest
 
 from tools.multi_position_sourcing import humansearch_cdp_run as runner
 from tools.multi_position_sourcing.humansearch_preflight import PreflightError
+from tools.multi_position_sourcing.session_guard import BrowserTargetRef
+
+
+SOURCE_SEARCH_URL = (
+    "https://www.linkedin.com/talent/hire/1752949252/discover/recruiterSearch"
+    "?searchContextId=context-156&searchHistoryId=21211832492"
+    "&searchRequestId=request-156"
+)
 
 
 class _HarvestTab:
@@ -26,6 +34,7 @@ class _HarvestTab:
                         "https://www.linkedin.com/talent/profile/AAA"
                         "?project=1752949252&searchHistoryId=21211832492&trk=SEARCH_CONTEXTUAL"
                     ),
+                    "source_search_url": SOURCE_SEARCH_URL,
                     "name": "Candidate",
                 }
             ]
@@ -44,6 +53,7 @@ def test_harvest_keeps_canonical_identity_and_exact_navigation_href(monkeypatch)
                 "https://www.linkedin.com/talent/profile/AAA"
                 "?project=1752949252&searchHistoryId=21211832492&trk=SEARCH_CONTEXTUAL"
             ),
+            "source_search_url": SOURCE_SEARCH_URL,
             "name": "Candidate",
         }
     ]
@@ -103,6 +113,7 @@ def test_profile_open_prefers_exact_result_href_over_bare_profile_url(
         {
             "url": "https://www.linkedin.com/talent/profile/AAA",
             "navigation_url": navigation_url,
+            "source_search_url": SOURCE_SEARCH_URL,
             "name": "Candidate",
         },
         1,
@@ -140,6 +151,7 @@ def test_session_conflict_stops_before_extract_screenshot_or_archive(
                     "https://www.linkedin.com/talent/profile/AAA"
                     "?project=1752949252&searchHistoryId=21211832492"
                 ),
+                "source_search_url": SOURCE_SEARCH_URL,
                 "name": "Candidate",
             },
             1,
@@ -187,6 +199,7 @@ def test_candidate_identity_mismatch_stops_before_screenshot_or_archive(
                     "https://www.linkedin.com/talent/profile/AAA"
                     "?project=1752949252&searchHistoryId=21211832492"
                 ),
+                "source_search_url": SOURCE_SEARCH_URL,
                 "name": "Candidate",
             },
             1,
@@ -212,6 +225,7 @@ def test_missing_candidate_name_is_terminal_before_navigation(
                     "https://www.linkedin.com/talent/profile/AAA"
                     "?project=1752949252&searchHistoryId=21211832492"
                 ),
+                "source_search_url": SOURCE_SEARCH_URL,
                 "name": missing_name,
             },
             1,
@@ -250,6 +264,7 @@ def test_unscoped_or_untrusted_profile_urls_stop_before_navigation(
             {
                 "url": profile_url,
                 "navigation_url": navigation_url,
+                "source_search_url": SOURCE_SEARCH_URL,
                 "name": "Candidate",
             },
             1,
@@ -281,6 +296,7 @@ def test_stale_profile_url_after_navigation_is_terminal_before_extract(
                 "navigation_url": (
                     "https://www.linkedin.com/talent/profile/AAA?project=1752949252"
                 ),
+                "source_search_url": SOURCE_SEARCH_URL,
                 "name": "Candidate",
             },
             1,
@@ -318,6 +334,7 @@ def test_profile_is_rechecked_after_screenshot_before_archive(
                 "navigation_url": (
                     "https://www.linkedin.com/talent/profile/AAA?project=1752949252"
                 ),
+                "source_search_url": SOURCE_SEARCH_URL,
                 "name": "Candidate",
             },
             1,
@@ -380,22 +397,155 @@ def test_collect_cards_checks_session_before_scrolling_or_extracting(monkeypatch
     assert trace[1:] == ["block-check"]
 
 
-def test_exact_recruiter_target_refuses_generic_or_ambiguous_tabs(monkeypatch) -> None:
-    exact_url = runner.SEARCH_URL_BASE + "&start=0"
-    monkeypatch.setattr(
-        runner.cdp,
-        "list_pages",
-        lambda: [
-            {"id": "generic", "url": "https://www.linkedin.com/talent/home"},
-            {"id": "exact-1", "url": exact_url},
-            {"id": "exact-2", "url": exact_url.replace("start=0", "start=25")},
-        ],
-    )
+def test_card_scroll_rechecks_session_and_stops_before_card_extraction() -> None:
+    trace: list[str] = []
+    checks = {"count": 0}
 
-    with pytest.raises(PreflightError, match="exact Recruiter target"):
+    class Tab:
+        def eval(self, script: str):
+            trace.append("card-extract" if "const seen" in script else "scroll")
+            return []
+
+    def late_conflict(_tab):
+        checks["count"] += 1
+        if checks["count"] == 3:
+            raise PreflightError({"reasons": ["late multiple sign-ins"]})
+        return {"ok": True}
+
+    with pytest.raises(PreflightError, match="late multiple sign-ins"):
+        runner.extract_cards_from_current_page(Tab(), live_check=late_conflict)
+
+    assert "card-extract" not in trace
+
+
+def test_final_scroll_top_is_preceded_by_a_fresh_session_check() -> None:
+    trace: list[str] = []
+    checks = {"count": 0}
+
+    class Tab:
+        def eval(self, script: str):
+            if "scrollTo" in script:
+                trace.append("scroll-top")
+            return []
+
+    def conflict_before_scroll_top(_tab):
+        checks["count"] += 1
+        if checks["count"] == 9:
+            raise PreflightError({"reasons": ["conflict before scroll top"]})
+        return {"ok": True}
+
+    with pytest.raises(PreflightError, match="conflict before scroll top"):
+        runner.extract_cards_from_current_page(
+            Tab(), live_check=conflict_before_scroll_top
+        )
+
+    assert "scroll-top" not in trace
+
+
+def test_exact_recruiter_target_refuses_generic_or_ambiguous_tabs(monkeypatch) -> None:
+    with pytest.raises(PreflightError, match="explicit Recruiter target id"):
         runner.resolve_exact_recruiter_target()
 
-    assert runner.resolve_exact_recruiter_target(target_id="exact-2")["id"] == "exact-2"
+    calls: list[tuple[str, str | None]] = []
+
+    def exact_resolver(site: str, *, target_id: str | None = None):
+        calls.append((site, target_id))
+        return BrowserTargetRef(
+            site="linkedin_rps",
+            endpoint="http://127.0.0.1:9224",
+            target_id="exact-2",
+            websocket_url="ws://127.0.0.1:9224/devtools/page/exact-2",
+            initial_url=runner.SEARCH_URL_BASE,
+            profile_path="/tmp/linkedin-profile",
+            browser_pid=4242,
+        )
+
+    target = runner.resolve_exact_recruiter_target(
+        target_id="exact-2", target_resolver=exact_resolver
+    )
+    assert calls == [("linkedin_rps", "exact-2")]
+    assert target["id"] == "exact-2"
+    assert target["_endpoint"] == "http://127.0.0.1:9224"
+    assert target["_profile_path"] == "/tmp/linkedin-profile"
+
+
+def test_navigation_scope_must_match_harvest_search_context(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tab = _ProfileTab(tmp_path)
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+
+    with pytest.raises(PreflightError, match="search scope"):
+        runner.process_profile(
+            tab,
+            {
+                "url": "https://www.linkedin.com/talent/profile/AAA",
+                "navigation_url": (
+                    "https://www.linkedin.com/talent/profile/AAA"
+                    "?project=other-project&searchHistoryId=other-history"
+                ),
+                "source_search_url": SOURCE_SEARCH_URL,
+                "name": "Candidate",
+            },
+            1,
+        )
+
+    assert tab.navigated == []
+
+
+def test_any_conflicting_shared_scope_key_rejects_navigation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tab = _ProfileTab(tmp_path)
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+
+    with pytest.raises(PreflightError, match="search scope"):
+        runner.process_profile(
+            tab,
+            {
+                "url": "https://www.linkedin.com/talent/profile/AAA",
+                "navigation_url": (
+                    "https://www.linkedin.com/talent/profile/AAA"
+                    "?project=other-project&searchHistoryId=21211832492"
+                ),
+                "source_search_url": SOURCE_SEARCH_URL,
+                "name": "Candidate",
+            },
+            1,
+        )
+
+    assert tab.navigated == []
+
+
+def test_non_search_talent_source_path_is_rejected(monkeypatch, tmp_path: Path) -> None:
+    tab = _ProfileTab(tmp_path)
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+
+    with pytest.raises(PreflightError, match="profile URL"):
+        runner.process_profile(
+            tab,
+            {
+                "url": "https://www.linkedin.com/talent/profile/AAA",
+                "navigation_url": (
+                    "https://www.linkedin.com/talent/profile/AAA?project=1752949252"
+                ),
+                "source_search_url": (
+                    "https://www.linkedin.com/talent/not-a-search?project=1752949252"
+                ),
+                "name": "Candidate",
+            },
+            1,
+        )
+
+    assert tab.navigated == []
+
+
+def test_cli_accepts_explicit_target_id() -> None:
+    assert runner._parse_cli_args(["runner.py", "25", "0", "exact-target"]) == (
+        25,
+        0,
+        "exact-target",
+    )
 
 
 def test_main_holds_one_linkedin_profile_lease_and_releases_on_attach_error(
@@ -407,26 +557,158 @@ def test_main_holds_one_linkedin_profile_lease_and_releases_on_attach_error(
         def acquire(self):
             trace.append("acquire")
 
+        def assert_owned(self):
+            trace.append("assert_owned")
+
         def release(self):
             trace.append("release")
 
     monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
     monkeypatch.setattr(runner, "LOG", tmp_path / "run.log")
-    monkeypatch.setattr(
-        runner.cdp,
-        "list_pages",
-        lambda: [{"id": "exact", "url": runner.SEARCH_URL_BASE}],
+    ref = BrowserTargetRef(
+        site="linkedin_rps",
+        endpoint="http://127.0.0.1:9224",
+        target_id="exact",
+        websocket_url="ws://127.0.0.1:9224/devtools/page/exact",
+        initial_url=runner.SEARCH_URL_BASE,
+        profile_path="/tmp/linkedin-profile",
+        browser_pid=4242,
     )
     monkeypatch.setattr(
         runner.cdp,
         "attach",
-        lambda _target: (_ for _ in ()).throw(RuntimeError("attach failed")),
+        lambda _target, **_kwargs: (_ for _ in ()).throw(RuntimeError("attach failed")),
     )
 
     with pytest.raises(RuntimeError, match="attach failed"):
-        runner.main(lease_factory=lambda _site: Lease())
+        runner.main(
+            target_id="exact",
+            target_resolver=lambda *_args, **_kwargs: ref,
+            lease_factory=lambda _site: Lease(),
+        )
 
-    assert trace == ["acquire", "release"]
+    assert trace == ["acquire", "assert_owned", "assert_owned", "release"]
+
+
+def test_conflict_target_is_attached_without_badge_and_only_disconnected(
+    monkeypatch, tmp_path: Path
+) -> None:
+    trace: list[str] = []
+
+    class Lease:
+        def acquire(self):
+            trace.append("lease.acquire")
+
+        def assert_owned(self):
+            trace.append("lease.assert_owned")
+
+        def release(self):
+            trace.append("lease.release")
+
+    class Tab:
+        def disconnect(self):
+            trace.append("tab.disconnect")
+            return True
+
+        def close(self):
+            raise AssertionError("humansearch must never run badge cleanup on conflict")
+
+    ref = BrowserTargetRef(
+        site="linkedin_rps",
+        endpoint="http://127.0.0.1:9224",
+        target_id="exact",
+        websocket_url="ws://127.0.0.1:9224/devtools/page/exact",
+        initial_url=runner.SEARCH_URL_BASE,
+        profile_path="/tmp/linkedin-profile",
+        browser_pid=4242,
+    )
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(runner, "LOG", tmp_path / "run.log")
+
+    def attach(_target, *, badge: bool):
+        trace.append(f"attach.badge={badge}")
+        return Tab()
+
+    monkeypatch.setattr(runner.cdp, "attach", attach)
+    monkeypatch.setattr(
+        runner,
+        "assert_not_blocked_or_abort",
+        lambda _tab: (_ for _ in ()).throw(
+            PreflightError({"reasons": ["multiple sign-ins"]})
+        ),
+    )
+
+    with pytest.raises(PreflightError, match="multiple sign-ins"):
+        runner.main(
+            target_id="exact",
+            target_resolver=lambda *_args, **_kwargs: ref,
+            lease_factory=lambda _site: Lease(),
+        )
+
+    assert "attach.badge=False" in trace
+    assert "tab.disconnect" in trace
+    assert trace[-1] == "lease.release"
+
+
+def test_safe_target_proves_badge_before_first_navigation(monkeypatch, tmp_path: Path) -> None:
+    trace: list[str] = []
+
+    class Lease:
+        def acquire(self):
+            trace.append("lease.acquire")
+
+        def assert_owned(self):
+            trace.append("lease.assert_owned")
+
+        def release(self):
+            trace.append("lease.release")
+
+    class Tab:
+        def eval(self, script: str):
+            if script == "location.href":
+                return runner.SEARCH_URL_BASE
+            return None
+
+        def mark_busy(self, _label: str, *, expected_url: str):
+            trace.append(f"badge:{expected_url}")
+            return True
+
+        def navigate(self, _url: str, wait_ms: int = 0):
+            trace.append("navigate")
+            raise RuntimeError("stop after first navigation")
+
+        def close(self):
+            trace.append("tab.close")
+            return True
+
+        def disconnect(self):
+            trace.append("tab.disconnect")
+            return True
+
+    ref = BrowserTargetRef(
+        site="linkedin_rps",
+        endpoint="http://127.0.0.1:9224",
+        target_id="exact",
+        websocket_url="ws://127.0.0.1:9224/devtools/page/exact",
+        initial_url=runner.SEARCH_URL_BASE,
+        profile_path="/tmp/linkedin-profile",
+        browser_pid=4242,
+    )
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(runner, "LOG", tmp_path / "run.log")
+    monkeypatch.setattr(runner.cdp, "attach", lambda _target, **_kwargs: Tab())
+    monkeypatch.setattr(runner, "assert_not_blocked_or_abort", lambda _tab: {"ok": True})
+
+    with pytest.raises(RuntimeError, match="stop after first navigation"):
+        runner.main(
+            target_id="exact",
+            target_resolver=lambda *_args, **_kwargs: ref,
+            lease_factory=lambda _site: Lease(),
+        )
+
+    assert trace.index(f"badge:{runner.SEARCH_URL_BASE}") < trace.index("navigate")
+    assert "tab.close" in trace
+    assert trace[-1] == "lease.release"
 
 
 def test_recruiter_profile_extractor_uses_document_title_for_candidate_name() -> None:
@@ -445,7 +727,7 @@ def test_missing_existing_recruiter_target_never_creates_tab(monkeypatch) -> Non
 
     monkeypatch.setattr(runner.cdp, "new_tab", forbidden_new_tab)
 
-    with pytest.raises(RuntimeError, match="exact Recruiter target"):
+    with pytest.raises(RuntimeError, match="explicit Recruiter target id"):
         runner.main()
 
     assert created == []
