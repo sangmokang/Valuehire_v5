@@ -661,7 +661,24 @@ def _capture_subprocess(monkeypatch):
     return calls
 
 
+def _pass_login_gate(monkeypatch):
+    """AC-3 G4 — 기본 러너 경로 테스트가 로그인 영수증 게이트를 통과하도록 주입."""
+    import time as _time
+    from datetime import datetime, timezone
+    from tools.multi_position_sourcing import fleet_worker as fw
+    gen = datetime.fromtimestamp(int(_time.time()) - 60, tz=timezone.utc).isoformat()
+    receipt = {
+        "kind": "portal_session_preflight", "generated_at": gen, "ready": True,
+        "portal_sessions": [
+            {"channel": c, "ready": True}
+            for c in ("saramin", "jobkorea", "linkedin_rps")
+        ],
+    }
+    monkeypatch.setattr(fw, "_read_login_receipt", lambda: receipt)
+
+
 def test_runner_default_uses_codex_exec_for_agent_codex(monkeypatch):
+    _pass_login_gate(monkeypatch)
     calls = _capture_subprocess(monkeypatch)
     q = FakeQueue(_job(params={"agent": "codex"}))
     w = FleetWorker(machine="macmini", queue=q,
@@ -672,6 +689,7 @@ def test_runner_default_uses_codex_exec_for_agent_codex(monkeypatch):
 
 
 def test_runner_default_uses_claude_p_when_agent_unspecified(monkeypatch):
+    _pass_login_gate(monkeypatch)
     calls = _capture_subprocess(monkeypatch)
     q = FakeQueue(_job())
     w = FleetWorker(machine="macmini", queue=q,
@@ -717,6 +735,7 @@ def test_falsy_injected_runner_still_wins(monkeypatch):
 def test_timeout_error_names_selected_agent(monkeypatch):
     # V1(Codex) 반증 수용 — codex 잡 타임아웃이 'claude 타임아웃'으로 오표기되면 안 됨
     from tools.multi_position_sourcing import fleet_worker as fw
+    _pass_login_gate(monkeypatch)
 
     def fake_run(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=9)
@@ -799,6 +818,7 @@ def test_owner_agent_codex_failure_never_falls_back_to_claude(monkeypatch, tmp_p
 def test_default_runner_env_carries_busy_badge_claude(monkeypatch):
     """기본 러너 실행 시 subprocess env 에 VH_BUSY_TASK='fleet #<id> (<skill>)' 와
     VH_BUSY_AGENT 가 실려야 raw_cdp 배지(🤖 자동화 사용중)가 실제 작업명을 보여준다."""
+    _pass_login_gate(monkeypatch)
     from types import SimpleNamespace
     from tools.multi_position_sourcing import fleet_worker as fw
     captured = {}
@@ -818,6 +838,7 @@ def test_default_runner_env_carries_busy_badge_claude(monkeypatch):
 
 
 def test_default_runner_env_busy_agent_codex(monkeypatch):
+    _pass_login_gate(monkeypatch)
     from types import SimpleNamespace
     from tools.multi_position_sourcing import fleet_worker as fw
     captured = {}

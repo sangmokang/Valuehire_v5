@@ -40,6 +40,77 @@ from .job_queue import (
 
 REPO = Path(__file__).resolve().parents[2]
 
+# ── AC-3 G4: 로그인 선행 게이트 (goal: discord-single-bot-console §7) ─────────
+# 검색 스킬 잡은 로그인 영수증(portal_login.py 산출)이 유효할 때만 시작한다.
+# 훅(H2 guards/discord-bot-login-gate.py)은 2층 — 1층 강제는 이 코드다(훅 fail-open 전제).
+LOGIN_RECEIPT_RELPATH = "artifacts/portal_session_status_latest.json"
+LOGIN_RECEIPT_MAX_AGE_SECONDS = 86400  # fleet_heartbeat.PORTAL_STATUS_MAX_AGE_SECONDS 와 동일 기준
+
+
+def _read_login_receipt() -> Any:
+    """영수증 JSON 읽기 — 없거나 깨지면 None(판정은 login_gate_block_reason 이 fail-closed)."""
+    try:
+        return json.loads((REPO / LOGIN_RECEIPT_RELPATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def login_gate_required_channels(job: Mapping[str, Any]) -> tuple[str, ...]:
+    """잡이 요구하는 포털 채널. 검색 스킬이 아니면 () — 게이트 미적용."""
+    skill = job.get("skill")
+    if skill == "url":
+        return ("linkedin_rps",)
+    if skill in ("humansearch", "aisearch"):
+        raw = (job.get("params") or {}).get("channels") or ["saramin", "jobkorea"]
+        mapped = []
+        for ch in raw:
+            name = str(ch).strip()
+            mapped.append("linkedin_rps" if name in ("linkedin", "linkedin_rps") else name)
+        return tuple(dict.fromkeys(m for m in mapped if m))
+    return ()
+
+
+def login_gate_block_reason(payload: Any, job: Mapping[str, Any],
+                            now_epoch: int) -> str | None:
+    """G4 순수 판정 — 차단이면 사유 문자열, 통과면 None. 모호하면 전부 차단(fail-closed).
+
+    영수증 계약: portal_login.build_portal_session_preflight_payload —
+    {generated_at(tz 필수), portal_sessions: [{channel, ready}, ...]}.
+    """
+    required = login_gate_required_channels(job)
+    if not required:
+        return None
+    if not isinstance(payload, Mapping):
+        return "로그인 영수증 없음(artifacts/portal_session_status_latest.json)"
+    from datetime import datetime
+    raw_gen = payload.get("generated_at")
+    if not isinstance(raw_gen, str) or not raw_gen.strip():
+        return "로그인 영수증에 generated_at 없음"
+    try:
+        dt = datetime.fromisoformat(raw_gen.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return "로그인 영수증 generated_at 형식 오류"
+    if dt.tzinfo is None:
+        return "로그인 영수증 generated_at 에 시간대 없음(신뢰 불가)"
+    age = now_epoch - int(dt.timestamp())
+    if age < 0 or age > LOGIN_RECEIPT_MAX_AGE_SECONDS:
+        return f"로그인 영수증 만료/미래 시각(age={age}s)"
+    sessions = payload.get("portal_sessions")
+    if not isinstance(sessions, list):
+        return "로그인 영수증에 portal_sessions 없음"
+    by_channel = {}
+    for entry in sessions:
+        if isinstance(entry, Mapping):
+            by_channel[str(entry.get("channel") or "")] = entry
+    for channel in required:
+        entry = by_channel.get(channel)
+        if not isinstance(entry, Mapping):
+            return f"{channel} 로그인 영수증 항목 없음"
+        if entry.get("ready") is not True:
+            return f"{channel} 로그인 not-ready"
+    return None
+
+
 CLAUDE_TIMEOUT_SECONDS = 2400  # 40분
 POLL_SECONDS = 30
 _SUMMARY_LIMIT = 800
@@ -818,6 +889,18 @@ class FleetWorker:
             self._release(job, job_id, "done", result_summary="dry-run — 실행기 미실행")
             self._notify(job, f"🧪 잡 #{job_id} dry-run 완료 (실행기 미실행)")
             return "done"
+        # AC-3 G4(1층): 검색 스킬은 로그인 영수증이 유효할 때만 실행. 기본 러너 경로 한정
+        # — 주입 러너(테스트/시뮬레이션)는 브라우저를 안 여니 기존 계약 유지.
+        if not self._runner_injected and job.get("skill") in FLEET_SKILLS:
+            reason = login_gate_block_reason(_read_login_receipt(), job, int(time.time()))
+            if reason is not None:
+                self._release(job, job_id, "paused_for_human",
+                              error=f"로그인 선행 게이트: {reason}")
+                self._notify(job, (
+                    f"⏸️ 잡 #{job_id} 대기(paused_for_human) — {reason}\n"
+                    f"사장님, /login 으로 포털 로그인을 먼저 완료해 주세요. "
+                    f"영수증 갱신 후 fleet-resume 로 재개됩니다."))
+                return "paused_for_human"
         if job.get("skill") == OWNER_AGENT_SKILL:
             try:
                 self.skill_sync()
