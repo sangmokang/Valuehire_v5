@@ -111,6 +111,32 @@ def question_violation(payload):
     return None
 
 
+# --- AC-3 H4: fleet 잡 완료 주장 증거 게이트 (goal: discord-single-bot-console §9) ---
+# fleet 잡 세션(워커가 주입하는 env VH_BUSY_TASK) 한정. 마지막 응답이 완료를 주장하는데
+# 증거 토큰(영수증 마커·건수·잡 번호)이 하나도 없으면 1턴 저지한다. 휴리스틱이므로
+# 모호하면 통과(fail-open) — 완결 검증은 워커의 영수증 계약(validate_aisearch_receipt)이 1층.
+_FLEET_DONE_RE = re.compile(r"(완료|끝났|마쳤|모두 처리|done\b)", re.I)
+_FLEET_EVIDENCE_RE = re.compile(
+    r"FLEET_SEARCH_RECEIPT:|\d+\s*건|\d+\s*명|잡\s*#\d+|job\s*#\d+|영수증|paused_for_human|실패|중단",
+    re.I,
+)
+
+
+def fleet_job_violation(payload):
+    if not (os.environ.get("VH_BUSY_TASK") or "").strip():
+        return None
+    text = _last_assistant_text(payload.get("transcript_path") or "")
+    if not text:
+        return None
+    if _FLEET_DONE_RE.search(text) and not _FLEET_EVIDENCE_RE.search(text):
+        return (
+            "[stop-evidence-gate/H4] fleet 잡 완료 보고에 증거가 없습니다 — 결과 요약"
+            "(처리 건수·후보 수·잡 번호·FLEET_SEARCH_RECEIPT)을 포함해 다시 보고하세요. "
+            "증거 없는 '완료'는 인정되지 않습니다(goal §9 H4, 1턴 저지)."
+        )
+    return None
+
+
 def _git(args, timeout):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     return subprocess.run(["git", *args], capture_output=True, text=True,
@@ -135,6 +161,10 @@ def judge(payload):
     """차단이면 사유 문자열, 통과면 None. 예외는 호출부에서 fail-open."""
     if payload.get("stop_hook_active"):
         return None
+    # AC-3 H4 — fleet 잡 세션은 strict 마커와 무관하게 증거 게이트를 먼저 검사.
+    reason_fleet = fleet_job_violation(payload)
+    if reason_fleet:
+        return reason_fleet
     marker_path = find_marker(payload.get("cwd", "."))
     if marker_path is None:
         return None
