@@ -640,7 +640,7 @@ class FleetWorker:
             wall_clock if wall_clock is not None else time.time)
         # V1 2R F1: 1분 양보 창은 enqueue 만이 아니라 claim 도 막는 단일 게이트다.
         self._yield_until: float = 0.0
-        # V1 2R F3: 사장님 활동 프로브(눈치) — 주입식. None 이면 게이트 없음(테스트/미지원 OS).
+        # V1 2R F3: 사장님 활동 프로브(눈치) — 주입식. None 은 테스트 주입용뿐(프로덕션은 전 OS 게이트).
         # 프로덕션 배선은 main() 의 default_owner_probe() (macOS 포털 한정 + Windows idle, 전 OS 게이트).
         self.owner_probe: Callable[[], bool] | None = owner_probe
         self.skill_sync = sync_owner_agent_skills if skill_sync is None else skill_sync

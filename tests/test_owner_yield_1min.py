@@ -1,6 +1,6 @@
 """사장님 양보 1분 자동 재개(SOT29 INV9, 2026-07-20 60초 개정) + LinkedIn 로그인 머신 탐색 prompting — 이슈 #107.
 
-사장님 지시(2026-07-15): "내가 쓸 동안은 멈췄다가 3분 뒤까지 이상이 없으면 계속 시작해."
+사장님 지시(2026-07-15, 2026-07-20 60초·3사 한정 개정): "내가 쓸 동안은 멈췄다가 1분 뒤까지 이상이 없으면 계속 시작해."
 - 영구 중단(변형 backlog 폐기·10분 쿨다운·>=300 스펙)은 이 원칙을 방해하는 코드 → 삭제.
 - LinkedIn(skill=url) 잡은 로그인된 기기(macmini/macbook/winpc 중 하나)를 탐색해 쓰도록 프롬프트에 명시.
 """
@@ -23,7 +23,7 @@ OWNER_ID = "814353841088757800"
 
 # ── 인수 1: 대기 시간 = 1분(60초), 10분(600) 잔존 0 ────────────────
 
-def test_pause_resume_is_three_minutes():
+def test_pause_resume_is_one_minute():
     assert OWNER_YIELD_RESUME_SECONDS == 60, "SOT29 INV9(2026-07-20 개정) — 1분 뒤 자동 재개"
     assert PAUSE_COOLDOWN_SECONDS == OWNER_YIELD_RESUME_SECONDS, "별칭 드리프트 금지(단일 출처)"
     assert sleep_seconds_after("paused_for_human", 30) == 60
@@ -31,10 +31,10 @@ def test_pause_resume_is_three_minutes():
 
 def test_no_600_cooldown_left_in_worker_source():
     src = (REPO / "tools" / "multi_position_sourcing" / "fleet_worker.py").read_text("utf-8")
-    assert "PAUSE_COOLDOWN_SECONDS = 600" not in src, "사장님 원칙(3분)을 방해하는 10분 쿨다운 잔존"
+    assert "PAUSE_COOLDOWN_SECONDS = 600" not in src, "사장님 원칙(1분)을 방해하는 10분 쿨다운 잔존"
 
 
-# ── 인수 2: paused 후 backlog 미폐기 → 3분 양보 → 자동 재개 ─────────
+# ── 인수 2: paused 후 backlog 미폐기 → 1분 양보 → 자동 재개 ─────────
 
 class FakeQueue:
     def __init__(self, jobs):
@@ -96,7 +96,7 @@ def _worker(queue, clock, pause_on_job_id=None, *, wall_clock=None, yield_state_
         wall_clock=wall_clock, yield_state_path=yield_state_path)
 
 
-def test_paused_suspends_backlog_then_resumes_after_3min():
+def test_paused_suspends_backlog_then_resumes_after_1min():
     """사장님 스펙(#107): paused 는 '1분 양보'지 '영구 폐기'가 아니다.
 
     기존 #104 의 영구 폐기 테스트(test_paused_for_human_clears_backlog_no_night_reentry)를

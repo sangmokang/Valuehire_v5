@@ -86,3 +86,10 @@ RED(새 테스트 커밋) → GREEN(최소 변경: owner_activity.py, fleet_work
 - LOW Linux 등 미지원 OS probe None fail-open → **수정**: default_owner_probe 가 전 OS 에서 감지기를 반환(미지원 OS 는 감지기의 fail-closed 그대로 소비). 회귀 AllOsProbeTests.
 - LOW fleet_worker 938 '3분'·1002 '고정 180초' 잔존 → **수정**.
 - LOW 644 'macOS 전용' 배선 주석 충돌 → **수정**.
+
+### V1 4차 (Codex Rescue, 2026-07-21) — verdict=FAIL(LOW 4건만) → 정리
+- 핵심 로직 전부 "안 깨짐" 확정: Windows 순수계산 1,065,825건 공격 통과, restype 실호출 확인, CDP 3상태 전 분기, 전 OS probe fail-closed, 주입/timeout, 실조작 장벽 이중 재검사.
+- LOW fleet_worker:643 'None=미지원 OS' 잔존 주석 → **수정**(None 은 테스트 주입용뿐).
+- LOW SOT31:91 180/3분 현행 서술 + 테스트 문구·이름 잔존 → **수정**(SOT31 60초 개정 반영, test_owner_yield_3min.py → test_owner_yield_1min.py 개명, 3분 문구 일괄 갱신. 과거 기록 문서(docs/prompts·구 goal)는 역사 보존).
+- LOW WindowsTickWrapTests 생산 연결 미봉인 → **수정**: WindowsProductionReaderTests(가짜 ctypes.windll 로 _windows_idle_seconds 실호출, restype=c_uint32 증명 + 실패 시 None).
+- LOW AllOsProbeTests callable 미실행 → **수정**: Linux/Windows probe() 실행 결과 True(fail-closed)까지 검증.

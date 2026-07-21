@@ -389,7 +389,9 @@ class WindowsIdleGateTests(unittest.TestCase):
 
         with patch("platform.system", return_value="Windows"):
             probe = default_owner_probe()
-        self.assertIsNotNone(probe)
+            self.assertIsNotNone(probe)
+            # 이 macOS 테스트 환경에선 ctypes.windll 부재 → idle None → fail-closed True
+            self.assertIs(probe(), True)
 
 
 def _fake_run_pid(front: str, idle_ns: int, pid_command: str, roots: str, tab_url: str | None = None):
@@ -573,4 +575,60 @@ class AllOsProbeTests(unittest.TestCase):
 
         with patch("platform.system", return_value="Linux"):
             probe = default_owner_probe()
-        self.assertIsNotNone(probe)
+            self.assertIsNotNone(probe)
+            # callable 실행까지 봉인: 미지원 OS 는 감지기의 fail-closed(True) 를 그대로 소비
+            self.assertIs(probe(), True)
+
+
+class WindowsProductionReaderTests(unittest.TestCase):
+    """_windows_idle_seconds 생산 연결(ctypes→순수함수) 봉인 — Codex V1 4차 LOW 회귀."""
+
+    def test_reader_sets_unsigned_restype_and_uses_modular_math(self) -> None:
+        import ctypes
+        from unittest.mock import patch
+
+        from tools.multi_position_sourcing import owner_activity as oa
+
+        class FakeGetTick:
+            restype = None
+
+            def __call__(self):
+                # restype 을 c_uint32 로 지정하지 않으면 signed 값이 나오는 실제 ctypes 동작 모사
+                if self.restype is ctypes.c_uint32:
+                    return 2147487744  # unsigned 해석
+                return -2147479552  # signed 해석(결함 재현용)
+
+        fake_tick = FakeGetTick()
+
+        class FakeUser32:
+            @staticmethod
+            def GetLastInputInfo(ref):
+                ref._obj.dwTime = 0x7FFF0000
+                return 1
+
+        class FakeWindll:
+            user32 = FakeUser32()
+
+            class kernel32:
+                GetTickCount = fake_tick
+
+        with patch.object(ctypes, "windll", FakeWindll(), create=True):
+            idle = oa._windows_idle_seconds()
+
+        self.assertIsNotNone(idle)
+        self.assertAlmostEqual(idle, 69.632, places=3)
+        self.assertIs(fake_tick.restype, ctypes.c_uint32)
+
+    def test_reader_failure_returns_none(self) -> None:
+        import ctypes
+        from unittest.mock import patch
+
+        from tools.multi_position_sourcing import owner_activity as oa
+
+        class BoomWindll:
+            @property
+            def user32(self):
+                raise OSError("no user32")
+
+        with patch.object(ctypes, "windll", BoomWindll(), create=True):
+            self.assertIsNone(oa._windows_idle_seconds())
