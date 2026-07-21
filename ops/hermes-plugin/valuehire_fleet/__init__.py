@@ -79,6 +79,10 @@ def _load_bridge_module():
 _GATEWAY_USER_ID: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "valuehire_fleet_gateway_user_id", default=""
 )
+_GATEWAY_INVOCATION_CONTEXT: "contextvars.ContextVar[dict[str, object]]" = contextvars.ContextVar(
+    "valuehire_fleet_gateway_invocation_context", default={}
+)
+_SNOWFLAKE_RE = re.compile(r"^[0-9]{15,22}$")
 
 # Only Discord identities are meaningful here — docs/search-access.md only
 # lists Discord snowflake IDs. A Telegram/WhatsApp numeric id must never be
@@ -96,12 +100,35 @@ def _platform_name(source: object) -> str:
 
 
 def _event_value(event: object, source: object, *names: str) -> str:
-    for owner in (event, source):
+    raw_message = getattr(event, "raw_message", None)
+    for owner in (event, source, raw_message):
+        if owner is None:
+            continue
         for name in names:
             value = getattr(owner, name, None)
             if value is not None and str(value).strip():
                 return str(value).strip()
     return ""
+
+
+def _discord_role_ids(event: object) -> tuple[str, ...]:
+    raw_message = getattr(event, "raw_message", None)
+    member = getattr(raw_message, "user", None) or getattr(raw_message, "author", None)
+    role_ids: list[str] = []
+    for role in getattr(member, "roles", ()) or ():
+        role_id = str(getattr(role, "id", "") or "").strip()
+        if _SNOWFLAKE_RE.fullmatch(role_id):
+            role_ids.append(role_id)
+    return tuple(dict.fromkeys(role_ids))
+
+
+def _discord_guild_id(event: object, source: object) -> str:
+    guild_id = _event_value(event, source, "guild_id")
+    if guild_id:
+        return guild_id
+    raw_message = getattr(event, "raw_message", None)
+    guild = getattr(raw_message, "guild", None)
+    return str(getattr(guild, "id", "") or "").strip()
 
 
 def _position_context_store(bridge):
@@ -121,11 +148,29 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
         if raw:
             user_id = str(raw).strip()
     _GATEWAY_USER_ID.set(user_id)
+    _GATEWAY_INVOCATION_CONTEXT.set({})
     if not user_id:
         return None
+
+    guild_id = _discord_guild_id(event, source)
+    channel_id = _event_value(
+        event, source, "chat_id", "channel_id", "conversation_id", "thread_id"
+    ) or ("hermes-dm" if not guild_id else "hermes-unknown-channel")
+    chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
+    is_dm = chat_type in {"dm", "private"} if chat_type else not bool(guild_id)
+    event_id = _event_value(event, source, "message_id", "event_id", "id")
+    if not _SNOWFLAKE_RE.fullmatch(event_id):
+        event_id = ""
+    _GATEWAY_INVOCATION_CONTEXT.set({
+        "channel_id": channel_id,
+        "guild_id": guild_id,
+        "is_dm": is_dm,
+        "role_ids": _discord_role_ids(event),
+        "event_id": event_id,
+    })
+
     bridge = _load_bridge_module()
-    channel_id = _event_value(event, source, "channel_id", "conversation_id", "thread_id") or "hermes-dm"
-    message_id = _event_value(event, source, "message_id", "event_id", "id")
+    message_id = event_id
     store = _position_context_store(bridge)
     context = store.get(user_id, channel_id)
     text = getattr(event, "text", "") or ""
@@ -145,14 +190,31 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
     return None
 
 
-def _make_handler(command_name: str):
+def _make_handler(command_name: str, *, fixed_skill: str = ""):
     def _handler(raw_args: str) -> str:
         bridge = _load_bridge_module()
 
         gateway_user_id = _GATEWAY_USER_ID.get()
+        invocation_context = dict(_GATEWAY_INVOCATION_CONTEXT.get())
+        dispatch_command = "fleet-run" if fixed_skill else command_name
+        if fixed_skill and re.search(r"(?:^|\s)(?:skill|idempotency):", raw_args):
+            return "거부됨: 직접 검색 명령의 skill/idempotency 값은 Discord 이벤트로 고정됩니다"
+        dispatch_args = f"{fixed_skill} {raw_args}".strip() if fixed_skill else raw_args
+        event_id = str(invocation_context.get("event_id", "") or "")
+        if fixed_skill and not _SNOWFLAKE_RE.fullmatch(event_id):
+            return "거부됨: Discord event identity missing — 중복 방지 키 없이 직접 검색을 실행할 수 없음"
+        if (
+            dispatch_command == "fleet-run"
+            and _SNOWFLAKE_RE.fullmatch(event_id)
+            and not re.search(r"(?:^|\s)idempotency:", dispatch_args)
+        ):
+            dispatch_args = f"{dispatch_args} idempotency:discord:{event_id}".strip()
         try:
             result = bridge.dispatch_hermes_fleet_command(
-                command_name, raw_args, gateway_user_id=gateway_user_id
+                dispatch_command,
+                dispatch_args,
+                gateway_user_id=gateway_user_id,
+                invocation_context=invocation_context,
             )
         except bridge.HermesFleetBridgeError as exc:
             return f"거부됨: {exc}"
@@ -175,9 +237,23 @@ _COMMANDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+_DIRECT_SEARCH_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("url", "Run the Valuehire URL sourcing skill."),
+    ("aisearch", "Run the Valuehire AI Search skill."),
+    ("humansearch", "Run the Valuehire Human Search skill."),
+)
+
+
 def register(ctx) -> None:
     ctx.register_hook("pre_gateway_dispatch", _capture_gateway_identity)
     for name, args_hint, description in _COMMANDS:
         ctx.register_command(
             name, handler=_make_handler(name), description=description, args_hint=args_hint
+        )
+    for name, description in _DIRECT_SEARCH_COMMANDS:
+        ctx.register_command(
+            name,
+            handler=_make_handler(name, fixed_skill=name),
+            description=description,
+            args_hint="<position URL> [win|winpc|macmini|macbook]",
         )

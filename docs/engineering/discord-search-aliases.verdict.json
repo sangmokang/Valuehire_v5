@@ -1,0 +1,54 @@
+{
+  "claim_id": "discord-search-aliases-01",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal": "docs/prompts/discord-search-aliases-goal-2026-07-21.md",
+  "issue": "https://github.com/sangmokang/Valuehire_v5/issues/154",
+  "generator": {
+    "claim": "Discord /url, /aisearch, /humansearch를 Hermes 플러그인과 직결 게이트웨이에서 기존 fleet-run 안전 경로로 정규화하고, 고정 skill·권한 컨텍스트·Discord 이벤트 멱등키를 보존한다.",
+    "red_evidence": [
+      "0e40c48: 직결 명령 미등록/미정규화/미큐잉 5건 실패",
+      "e15b29d: Hermes 직접 명령 미등록/고정 skill 미배선 2건 실패",
+      "50c8939: Hermes 서버 채널 권한 우회, 이벤트 멱등키 누락, URL 제어문자 허용 반례 실패"
+    ],
+    "green_evidence": "관련 검사 241개 통과. 전체 ./verify.sh: 2079 passed, 4 xfailed, 105 subtests passed, exit 0.",
+    "mutant_check": "직접 별칭을 fleet-run으로 정규화하지 않도록 임시 변이했을 때 4 failed, 55 passed로 검사 실패를 확인한 뒤 원복했다.",
+    "security_properties": [
+      "직접 별칭의 skill과 idempotency 사용자 덮어쓰기 거부",
+      "Discord guild/channel/role/DM 컨텍스트를 기존 권한 검사까지 전달",
+      "직접 별칭은 유효한 Discord event id 없이는 fail-closed",
+      "같은 이벤트는 discord:<snowflake> 멱등키 재사용",
+      "URL 공백 및 Unicode C 범주 제어문자 거부",
+      "큐 스킬 화이트리스트를 재사용해 발송성 스킬 진입 불가"
+    ]
+  },
+  "v1": {
+    "author": "Codex read-only adversarial review",
+    "verdict": "FAIL",
+    "findings": [
+      "HIGH: Hermes 경로가 서버 호출을 DM으로 강제해 채널 허용목록을 우회",
+      "HIGH: Hermes 직접 별칭에 Discord 이벤트 멱등키 누락",
+      "MEDIUM: URL NUL/제어문자 허용"
+    ],
+    "resolution": "세 결함을 실패 검사로 재현한 뒤 권한 컨텍스트 전달, event id 강제, Unicode 제어문자 거부로 수정했다."
+  },
+  "v2": {
+    "author": "Codex read-only adversarial re-review",
+    "verdict": "PASS",
+    "evidence": "이전 3개 결함 재현이 모두 차단됨. 고정 skill, 덮어쓰기 거부, 발송성 skill 차단, URL 없음/자유문/따옴표 오류 fail-closed, 기존 fleet 명령 유지, Hermes 등록 배선을 확인했다.",
+    "new_findings": []
+  },
+  "verify_evidence": {
+    "focused_command": "python -m pytest tests/test_discord_direct_gateway.py tests/test_hermes_plugin_registration.py tests/test_hermes_fleet_bridge.py tests/test_fleet_dispatch.py tests/test_job_queue.py -q",
+    "focused_counts": "241 passed",
+    "full_command": "./verify.sh",
+    "full_counts": "2079 passed, 4 xfailed, 105 subtests passed",
+    "exit_code": 0
+  },
+  "known_limitations": [
+    "현재 운영 Hermes 심링크는 별도 기본 저장소를 가리켜 PR 병합과 운영 저장소 갱신 전에는 새 명령이 보이지 않는다.",
+    "향후 직결 Discord 게이트웨이는 단일 임대 조각이 아직 운영되지 않아 이번 변경만으로 라이브 전환하지 않는다.",
+    "운영 반영에는 Hermes 게이트웨이 재시작과 Discord 명령 재등록 확인이 필요하다."
+  ],
+  "status": "code PASS; merge/deploy pending owner confirmation"
+}

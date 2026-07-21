@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .access import DiscordAuthorizedUser, load_authorized_discord_users
-from .discord_routing import DiscordAccessConfig, DiscordInvocation
+from .discord_routing import (
+    DiscordInvocation,
+    load_discord_access_config,
+)
 from .fleet_dispatch import FLEET_COMMANDS, dispatch_fleet_command
 from .job_queue import FLEET_MACHINES, FLEET_SKILLS
 
@@ -334,6 +337,7 @@ def dispatch_hermes_fleet_command(
     gateway_user_id: str,
     queue: Any = None,
     authorized_users: Sequence[DiscordAuthorizedUser] | None = None,
+    invocation_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Hermes 플러그인 커맨드 1건 처리. 성공/거부 모두 JSON 직렬화 가능한 dict 반환.
 
@@ -354,15 +358,29 @@ def dispatch_hermes_fleet_command(
             if authorized_users is not None
             else load_authorized_discord_users(str(_DEFAULT_ACCESS_DOC))
         )
+        context = invocation_context or {}
+        has_context = invocation_context is not None
+        is_dm = context.get("is_dm") is True if has_context else True
+        channel_id = str(context.get("channel_id", "") or "").strip()
+        if not channel_id:
+            channel_id = "hermes-dm" if is_dm else "hermes-unknown-channel"
+        guild_id = str(context.get("guild_id", "") or "").strip()
+        role_ids = tuple(
+            str(role_id).strip()
+            for role_id in (context.get("role_ids", ()) or ())
+            if str(role_id).strip()
+        )
         invocation = DiscordInvocation(
             user_id=str(gateway_user_id).strip(),
-            channel_id="hermes-dm",
+            channel_id=channel_id,
             command_name=command,
-            is_dm=True,
+            is_dm=is_dm,
             invocation_kind="hermes-plugin",
+            guild_id=guild_id,
+            member_role_ids=role_ids,
             options=options,
         )
-        config = DiscordAccessConfig(allow_dm=True)
+        config = load_discord_access_config()
         result = dispatch_fleet_command(
             invocation, authorized_users=users, config=config, queue=queue
         )

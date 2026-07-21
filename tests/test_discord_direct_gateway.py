@@ -195,9 +195,20 @@ class FakeMessage:
 
 
 class CommandOwnershipTests(unittest.TestCase):
-    def test_only_fleet_dispatch_owned_commands_registered(self) -> None:
+    def test_fleet_commands_and_direct_search_aliases_registered(self) -> None:
         names = {p["name"] for p in slash_commands_to_register()}
-        self.assertEqual(names, set(FLEET_COMMANDS))
+        self.assertEqual(
+            names,
+            set(FLEET_COMMANDS) | {"url", "aisearch", "humansearch"},
+        )
+
+    def test_direct_search_alias_payloads_require_position_url(self) -> None:
+        payloads = {p["name"]: p for p in slash_commands_to_register()}
+        for command in ("url", "aisearch", "humansearch"):
+            options = payloads[command]["options"]
+            url_option = next(option for option in options if option["name"] == "url")
+            self.assertTrue(url_option["required"])
+            self.assertFalse(any(option["name"] == "skill" for option in options))
 
     def test_dead_ui_commands_excluded(self) -> None:
         names = {p["name"] for p in slash_commands_to_register()}
@@ -214,10 +225,42 @@ class CommandOwnershipTests(unittest.TestCase):
         이면 이 테스트가 실패한다(Codex 2차검증: "동적 추종이 검사로 봉인 안 됨" 반영)."""
         with patch.object(gw, "FLEET_COMMANDS", ("fleet-status",)):
             names = {p["name"] for p in slash_commands_to_register()}
-        self.assertEqual(names, {"fleet-status"})
+        self.assertEqual(names, {"fleet-status", "url", "aisearch", "humansearch"})
 
 
 class InteractionEnvelopeTests(unittest.TestCase):
+    def test_direct_search_aliases_normalize_to_fleet_run_with_fixed_skill(self) -> None:
+        for index, command in enumerate(("url", "aisearch", "humansearch"), start=1):
+            interaction = FakeInteraction(
+                interaction_id=f"41{index:016d}",
+                user_id=OWNER_ID,
+                command=command,
+                options=[{"name": "url", "value": CLICKUP_URL}],
+            )
+            envelope = interaction_to_envelope(interaction)
+            assert envelope is not None
+            self.assertEqual(envelope.command, "fleet-run")
+            tokens = shlex.split(envelope.raw_args)
+            self.assertIn(f"skill:{command}", tokens)
+            self.assertIn(f"url:{CLICKUP_URL}", tokens)
+            self.assertIn(f"idempotency:discord:{interaction.id}", tokens)
+
+    def test_direct_alias_cannot_override_fixed_skill(self) -> None:
+        interaction = FakeInteraction(
+            interaction_id="424242424242424242",
+            user_id=OWNER_ID,
+            command="url",
+            options=[
+                {"name": "url", "value": CLICKUP_URL},
+                {"name": "skill", "value": "humansearch"},
+            ],
+        )
+        envelope = interaction_to_envelope(interaction)
+        assert envelope is not None
+        self.assertEqual(envelope.command, "fleet-run")
+        self.assertEqual(shlex.split(envelope.raw_args).count("skill:url"), 1)
+        self.assertIn("skill:humansearch", shlex.split(envelope.raw_args))
+
     def test_guild_context_preserved_not_dm_locked(self) -> None:
         interaction = FakeInteraction(
             interaction_id="111111111111111111", user_id=MEMBER_ID,
@@ -445,6 +488,62 @@ class NonBlockingEventLoopTests(_NotifySilencedCase):
 
 
 class HandleSlashInteractionTests(_NotifySilencedCase):
+    async def test_each_direct_search_alias_enqueues_its_fixed_skill(self) -> None:
+        for index, command in enumerate(("url", "aisearch", "humansearch"), start=1):
+            interaction = FakeInteraction(
+                interaction_id=f"61{index:016d}",
+                user_id=OWNER_ID,
+                command=command,
+                options=[{"name": "url", "value": CLICKUP_URL}],
+            )
+            queue = FakeQueue()
+            result = await handle_slash_interaction(
+                interaction,
+                queue=queue,
+                authorized_users=AUTHORIZED,
+                config=DiscordAccessConfig(allow_dm=True),
+            )
+            self.assertEqual(result["action"], "enqueued")
+            self.assertEqual(len(queue.enqueued), 1)
+            self.assertEqual(queue.enqueued[0]["skill"], command)
+
+    async def test_direct_alias_missing_url_does_not_enqueue(self) -> None:
+        interaction = FakeInteraction(
+            interaction_id="626262626262626262",
+            user_id=OWNER_ID,
+            command="aisearch",
+            options=[],
+        )
+        queue = FakeQueue()
+        result = await handle_slash_interaction(
+            interaction,
+            queue=queue,
+            authorized_users=AUTHORIZED,
+            config=DiscordAccessConfig(allow_dm=True),
+        )
+        self.assertNotEqual(result.get("action"), "enqueued")
+        self.assertEqual(queue.enqueued, [])
+
+    async def test_direct_alias_skill_override_does_not_enqueue(self) -> None:
+        interaction = FakeInteraction(
+            interaction_id="636363636363636363",
+            user_id=OWNER_ID,
+            command="url",
+            options=[
+                {"name": "url", "value": CLICKUP_URL},
+                {"name": "skill", "value": "humansearch"},
+            ],
+        )
+        queue = FakeQueue()
+        result = await handle_slash_interaction(
+            interaction,
+            queue=queue,
+            authorized_users=AUTHORIZED,
+            config=DiscordAccessConfig(allow_dm=True),
+        )
+        self.assertNotEqual(result.get("action"), "enqueued")
+        self.assertEqual(queue.enqueued, [])
+
     async def test_authorized_fleet_run_enqueues_and_replies_once(self) -> None:
         interaction = FakeInteraction(
             interaction_id="666666666666666666", user_id=OWNER_ID,
@@ -557,6 +656,20 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
 
 
 class TextMessageTests(_NotifySilencedCase):
+    def test_owner_text_alias_normalizes_to_fleet_run(self) -> None:
+        for index, command in enumerate(("url", "aisearch", "humansearch"), start=1):
+            message = FakeMessage(
+                message_id=f"71{index:016d}",
+                author_id=OWNER_ID,
+                content=f"/{command} url:{CLICKUP_URL}",
+            )
+            envelope = message_to_envelope(message, bot_user_id="999999999999999999")
+            assert envelope is not None
+            self.assertEqual(envelope.command, "fleet-run")
+            tokens = shlex.split(envelope.raw_args)
+            self.assertIn(f"skill:{command}", tokens)
+            self.assertIn(f"url:{CLICKUP_URL}", tokens)
+
     def test_message_to_envelope_preserves_guild_context(self) -> None:
         message = FakeMessage(
             message_id="131313131313131313", author_id=MEMBER_ID,

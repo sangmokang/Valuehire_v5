@@ -41,9 +41,31 @@ class FakeCtx:
         self.commands[name] = {"handler": handler, "description": description, "args_hint": args_hint}
 
 
-def _discord_event(user_id: str | None):
-    source = SimpleNamespace(platform=SimpleNamespace(value="discord"), user_id=user_id)
-    return SimpleNamespace(source=source)
+def _discord_event(
+    user_id: str | None,
+    *,
+    chat_id: str = "1512503041448743092",
+    chat_type: str = "dm",
+    guild_id: str | None = None,
+    message_id: str = "1512503999999999999",
+    role_ids: tuple[str, ...] = (),
+):
+    source = SimpleNamespace(
+        platform=SimpleNamespace(value="discord"),
+        user_id=user_id,
+        chat_id=chat_id,
+        chat_type=chat_type,
+        guild_id=guild_id,
+        message_id=message_id,
+    )
+    raw_message = SimpleNamespace(
+        id=message_id,
+        guild_id=guild_id,
+        user=SimpleNamespace(
+            roles=[SimpleNamespace(id=role_id) for role_id in role_ids]
+        ),
+    )
+    return SimpleNamespace(source=source, raw_message=raw_message, message_id=message_id)
 
 
 def _telegram_event(user_id: str):
@@ -51,12 +73,108 @@ def _telegram_event(user_id: str):
     return SimpleNamespace(source=source)
 
 
-def test_register_wires_pre_gateway_hook_and_all_four_commands() -> None:
+def test_register_wires_pre_gateway_hook_and_all_search_commands() -> None:
     plugin = _load_plugin_module()
     ctx = FakeCtx()
     plugin.register(ctx)
     assert "pre_gateway_dispatch" in ctx.hooks
-    assert set(ctx.commands) == {"fleet-run", "fleet-status", "fleet-resume", "fleet-cancel"}
+    assert set(ctx.commands) == {
+        "fleet-run", "fleet-status", "fleet-resume", "fleet-cancel",
+        "url", "aisearch", "humansearch",
+    }
+
+
+def test_direct_search_handlers_force_skill_and_reuse_fleet_run(monkeypatch) -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    ctx.hooks["pre_gateway_dispatch"][0](event=_discord_event("814353841088757800"))
+    calls = []
+
+    def fake_dispatch(
+        command, raw_args, *, gateway_user_id, queue=None, authorized_users=None,
+        invocation_context=None,
+    ):
+        calls.append((command, raw_args, gateway_user_id))
+        return {"action": "enqueued"}
+
+    bridge = plugin._load_bridge_module()
+    monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
+
+    for command in ("url", "aisearch", "humansearch"):
+        result = ctx.commands[command]["handler"]("https://app.clickup.com/t/abc winpc")
+        assert json.loads(result) == {"action": "enqueued"}
+
+    idem = "idempotency:discord:1512503999999999999"
+    assert calls == [
+        ("fleet-run", f"url https://app.clickup.com/t/abc winpc {idem}", "814353841088757800"),
+        ("fleet-run", f"aisearch https://app.clickup.com/t/abc winpc {idem}", "814353841088757800"),
+        ("fleet-run", f"humansearch https://app.clickup.com/t/abc winpc {idem}", "814353841088757800"),
+    ]
+
+
+def test_direct_alias_rejects_skill_and_idempotency_overrides(monkeypatch) -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    ctx.hooks["pre_gateway_dispatch"][0](event=_discord_event("814353841088757800"))
+    calls = []
+
+    def fake_dispatch(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"action": "enqueued"}
+
+    bridge = plugin._load_bridge_module()
+    monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
+    for raw_args in (
+        "skill:humansearch https://app.clickup.com/t/abc",
+        "https://app.clickup.com/t/abc idempotency:attacker-key",
+    ):
+        result = ctx.commands["url"]["handler"](raw_args)
+        assert result.startswith("거부됨:")
+    assert calls == []
+
+
+def test_direct_alias_preserves_server_context_and_adds_event_idempotency(monkeypatch) -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    hook = ctx.hooks["pre_gateway_dispatch"][0]
+    hook(event=_discord_event(
+        "814353841088757800",
+        chat_id="1512503041448743092",
+        chat_type="group",
+        guild_id="1512503000000000000",
+        message_id="1512503999999999999",
+        role_ids=("1512503111111111111",),
+    ))
+    calls = []
+
+    def fake_dispatch(
+        command, raw_args, *, gateway_user_id, queue=None, authorized_users=None,
+        invocation_context=None,
+    ):
+        calls.append((command, raw_args, gateway_user_id, invocation_context))
+        return {"action": "enqueued"}
+
+    bridge = plugin._load_bridge_module()
+    monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
+    ctx.commands["url"]["handler"]("https://app.clickup.com/t/abc")
+    ctx.commands["url"]["handler"]("https://app.clickup.com/t/abc")
+
+    assert len(calls) == 2
+    command, raw_args, user_id, invocation_context = calls[0]
+    assert calls[1] == calls[0]
+    assert command == "fleet-run"
+    assert "idempotency:discord:1512503999999999999" in raw_args
+    assert user_id == "814353841088757800"
+    assert invocation_context == {
+        "channel_id": "1512503041448743092",
+        "guild_id": "1512503000000000000",
+        "is_dm": False,
+        "role_ids": ("1512503111111111111",),
+        "event_id": "1512503999999999999",
+    }
 
 
 def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
@@ -69,7 +187,10 @@ def test_discord_identity_is_captured_and_used_by_handler(monkeypatch) -> None:
 
     calls = []
 
-    def fake_dispatch(command, raw_args, *, gateway_user_id, queue=None, authorized_users=None):
+    def fake_dispatch(
+        command, raw_args, *, gateway_user_id, queue=None, authorized_users=None,
+        invocation_context=None,
+    ):
         calls.append((command, raw_args, gateway_user_id))
         return {"action": "status", "jobs": []}
 
@@ -96,7 +217,8 @@ def test_natural_discord_search_is_rewritten_to_fleet_run() -> None:
         "action": "rewrite",
         "text": (
             "/fleet-run humansearch https://app.clickup.com/t/abc "
-            "https://www.jobkorea.co.kr/Search/?stext=cto channels:jobkorea winpc"
+            "https://www.jobkorea.co.kr/Search/?stext=cto channels:jobkorea winpc "
+            "idempotency:discord:1512503999999999999"
         ),
     }
 
@@ -197,3 +319,15 @@ def test_handler_denies_with_no_stack_trace_when_identity_missing() -> None:
     result = ctx.commands["fleet-run"]["handler"]("skill:humansearch url:https://x.test machine:macmini")
     assert result.startswith("거부됨:")
     assert "identity" in result
+
+
+def test_direct_alias_fails_closed_without_discord_event_id() -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    plugin._GATEWAY_USER_ID.set("814353841088757800")
+    plugin._GATEWAY_INVOCATION_CONTEXT.set({})
+
+    result = ctx.commands["url"]["handler"]("https://app.clickup.com/t/abc")
+    assert result.startswith("거부됨:")
+    assert "event identity" in result
