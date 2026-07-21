@@ -428,6 +428,37 @@ def _path_exists(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
 
+def _remove_directory_contents_fd(directory_fd: int, display_path: Path) -> None:
+    """Recursively remove one already-open directory without resolving its parent path.
+
+    Python 3.9's ``shutil.rmtree`` has no ``dir_fd`` argument.  Keeping the
+    traversal descriptor-relative preserves the installer's symlink/race
+    boundary on every supported Python version.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    with os.scandir(directory_fd) as entries:
+        for entry in entries:
+            child_path = display_path / entry.name
+            metadata = entry.stat(follow_symlinks=False)
+            if stat.S_ISDIR(metadata.st_mode):
+                child_fd = os.open(entry.name, flags, dir_fd=directory_fd)
+                try:
+                    if not os.path.samestat(metadata, os.fstat(child_fd)):
+                        raise RuntimeError(
+                            f"login skill directory changed during removal: {child_path}"
+                        )
+                    _remove_directory_contents_fd(child_fd, child_path)
+                finally:
+                    os.close(child_fd)
+                os.rmdir(entry.name, dir_fd=directory_fd)
+            elif stat.S_ISLNK(metadata.st_mode) or stat.S_ISREG(metadata.st_mode):
+                os.unlink(entry.name, dir_fd=directory_fd)
+            else:
+                raise ValueError(
+                    f"login skill special path removal rejected: {child_path}"
+                )
+
+
 def _remove_path(
     path: Path,
     *,
@@ -451,7 +482,17 @@ def _remove_path(
     if stat.S_ISLNK(metadata.st_mode) or stat.S_ISREG(metadata.st_mode):
         os.unlink(path.name, dir_fd=parent.descriptor)
     elif stat.S_ISDIR(metadata.st_mode):
-        shutil.rmtree(path.name, dir_fd=parent.descriptor)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(path.name, flags, dir_fd=parent.descriptor)
+        try:
+            if not os.path.samestat(metadata, os.fstat(directory_fd)):
+                raise RuntimeError(
+                    f"login skill directory changed during removal: {path}"
+                )
+            _remove_directory_contents_fd(directory_fd, path)
+        finally:
+            os.close(directory_fd)
+        os.rmdir(path.name, dir_fd=parent.descriptor)
     else:
         raise ValueError(f"login skill special path removal rejected: {path}")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -341,6 +342,60 @@ def test_natural_language_search_url_end_to_end_selects_humansearch() -> None:
     command, raw_args = rewritten[1:].split(" ", 1)
     options = parse_hermes_fleet_args(command, raw_args)
     assert options["skill"] == "humansearch"
+
+
+def test_natural_filters_survive_rewrite_and_parse() -> None:
+    rewritten = natural_fleet_command_text(
+        "humansearch https://app.clickup.com/t/abc "
+        "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search "
+        "경력 7~12년, 서울, 대기업 재직자 우선"
+    )
+    assert rewritten is not None and "filters64:" in rewritten
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["params"]["search_filters_text"].endswith(
+        "경력 7~12년, 서울, 대기업 재직자 우선"
+    )
+
+    generic = natural_fleet_command_text(
+        "humansearch https://app.clickup.com/t/abc 핀테크 경험 우대"
+    )
+    assert generic is not None and "filters64:" in generic
+    generic_command, generic_args = generic[1:].split(" ", 1)
+    generic_options = parse_hermes_fleet_args(generic_command, generic_args)
+    assert "핀테크 경험 우대" in generic_options["params"]["search_filters_text"]
+
+
+def test_aisearch_position_routes_linkedin_then_two_portal_followup() -> None:
+    rewritten = natural_fleet_command_text(
+        "aisearch https://app.clickup.com/t/abc 경력 5년 이상",
+        force_linkedin_first=True,
+    )
+    assert rewritten is not None
+    assert rewritten.startswith("/fleet-run url https://app.clickup.com/t/abc ")
+    assert "followup:aisearch" in rewritten
+    command, raw_args = rewritten[1:].split(" ", 1)
+    options = parse_hermes_fleet_args(command, raw_args)
+    assert options["skill"] == "url"
+    assert options["params"]["followup_skill"] == "aisearch"
+    assert options["params"]["channels"] == ["saramin", "jobkorea"]
+    assert "경력 5년 이상" in options["params"]["search_filters_text"]
+
+
+def test_filters64_rejects_invalid_or_control_text() -> None:
+    with pytest.raises(HermesFleetBridgeError, match="filters64"):
+        parse_hermes_fleet_args(
+            "fleet-run", "https://app.clickup.com/t/abc filters64:not+urlsafe"
+        )
+    encoded = base64.urlsafe_b64encode(b"bad\x00filter").decode("ascii")
+    with pytest.raises(HermesFleetBridgeError, match="일반 텍스트"):
+        parse_hermes_fleet_args(
+            "fleet-run", f"https://app.clickup.com/t/abc filters64:{encoded}"
+        )
+    with pytest.raises(HermesFleetBridgeError, match="디코딩"):
+        parse_hermes_fleet_args(
+            "fleet-run", "https://app.clickup.com/t/abc filters64:QR=="
+        )
 
 
 def test_two_position_urls_are_rejected_not_silently_dropped() -> None:
