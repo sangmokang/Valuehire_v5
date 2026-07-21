@@ -343,13 +343,16 @@ class IdempotencyKeyInjectionTests(unittest.TestCase):
         envelope = interaction_to_envelope(interaction)
         self.assertNotIn("idempotency", envelope.raw_args)
 
-    def test_explicit_idempotency_not_overwritten(self) -> None:
+    def test_explicit_idempotency_is_overridden_by_event_id(self) -> None:
+        # C1 봉인(Codex V2 CRITICAL): event_id 가 dedup 뿌리다 — 호출자가 idempotency 를
+        # 끼워 넣어도 event_id 키가 이긴다(예전엔 명시값 우선이라 재시도마다 다른 키를
+        # 붙여 '같은 event_id → 잡 1개' 계약을 우회할 수 있었다).
         result = gw._with_discord_idempotency_key(
             "fleet-run", "url:https://x.example.com idempotency:manual-key-123",
             "999999999999999999",
         )
-        self.assertIn("idempotency:manual-key-123", result)
-        self.assertNotIn("discord:999999999999999999", result)
+        self.assertIn("idempotency:discord:999999999999999999", result)
+        self.assertNotIn("manual-key-123", result)
 
     def test_text_message_fleet_run_gets_idempotency_key(self) -> None:
         message = FakeMessage(

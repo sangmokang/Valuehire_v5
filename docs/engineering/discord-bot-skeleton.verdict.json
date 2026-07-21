@@ -1,0 +1,50 @@
+{
+  "slug": "discord-bot-skeleton",
+  "ac": "AC-1 (단일 봇 뼈대) + V2 후속 결함 봉인",
+  "generator": "claude-fable-5 (main loop)",
+  "v1_self_adversarial": {
+    "attempts": [
+      "engine+agent 필드 스머글링 → 중복 필드 거부(REJECTED)",
+      "/skill name+위조 skill 옵션 → 중복 필드 거부",
+      "/skill name 없음 → 정규화 안 함, 파서 거부",
+      "100k 인자 → 형식 오류 거부",
+      "제어문자 URL → 거부",
+      "jobs 위조 인자 → fleet-status 로 정규화, 무시",
+      "login 위조 url → skill:login 고정(화이트리스트 밖 거부)"
+    ],
+    "result": "PASS (초판)"
+  },
+  "v2_codex_rescue": {
+    "agent_id": "a681c860e7fae7e50",
+    "verdict": "NEEDS-FIX",
+    "findings_addressed": [
+      {"id": "C1", "severity": "CRITICAL", "detail": "멱등키 스머글링 — 호출자 idempotency 가 event_id 를 덮어씀",
+       "fix": "_with_discord_idempotency_key 가 기존 idempotency 토큰을 제거하고 event_id 키로 항상 교체",
+       "test": "tests/test_bot_skeleton_v2fix.py::IdempotencySmugglingTests"},
+      {"id": "M1", "severity": "MAJOR", "detail": "권한 확인 전 큐 생성 — 비인가자에게 운영 상태 노출",
+       "fix": "_LazyQueue 프록시 — dispatch 가 권한 통과 후 처음 큐 접근 시에만 factory 실행",
+       "test": "LazyQueueTests::test_unauthorized_never_touches_queue_factory"},
+      {"id": "M2", "severity": "MAJOR", "detail": "enqueue 실패가 일반 '내부 오류'로 회신(생성 실패만 '접수 불가')",
+       "fix": "action==internal_error 는 봇 콘솔에서 항상 '지금 접수 불가'로 통일",
+       "test": "LazyQueueTests::test_enqueue_failure_replies_unavailable"},
+      {"id": "M3", "severity": "MAJOR", "detail": "명시적 빈 engine 값이 거부되지 않고 미지정 취급",
+       "fix": "fleet_args 가 _MISSING 센티넬로 '부재' vs '빈값 명시'를 구분 — 빈값은 거부",
+       "test": "EngineValueTests"},
+      {"id": "m1", "severity": "MINOR", "detail": "빈 /skill name 이 '아직 지원' 안내를 못 받음",
+       "fix": "requested not in FLEET_SKILLS(빈 문자열 포함) → 안내 통일",
+       "test": "MalformedInputTests::test_empty_skill_name_gets_friendly_rejection"},
+      {"id": "m2", "severity": "MINOR", "detail": "옵션 컨테이너 타입 오염 → 처리기 밖 AttributeError",
+       "fix": "_options_to_raw_args/_requested_console_skill 이 비-리스트를 옵션 없음으로 처리",
+       "test": "MalformedInputTests::test_options_container_type_pollution_no_crash"},
+      {"id": "m3", "severity": "MINOR", "detail": "입력 길이 상한 없음",
+       "fix": "parse_fleet_args 가 raw_args 8,000자 상한 강제",
+       "test": "MalformedInputTests::test_parse_rejects_oversized_raw_args"}
+    ],
+    "findings_accepted_as_designed": [
+      {"detail": "URL 가장자리 공백/제어문자 strip 후 통과 — 표준화(정상 입력 관용)로 수용. 내부 공백·제어문자 포함 URL 은 여전히 거부(_valid_url).",
+       "rationale": "가장자리 공백 제거는 흔한 관용 정규화이며 검증 자체를 우회하지 않는다(내부 제어문자는 여전히 거부됨)."}
+    ]
+  },
+  "status": "V2 결함 7건 코드 수정 + 회귀 테스트, 1건 설계 수용(사유 기록)",
+  "note": "V2 전체 검사 20건 실패는 포트·프로세스 조회·홈 디렉터리 권한 제한(환경)이며 코드 결함 아님 — verify.sh 로컬 GREEN 으로 확인."
+}
