@@ -121,11 +121,16 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
-    monkeypatch.setattr(hcr.cdp, "find_page_by_url", lambda _needle: {"targetId": "t1"})
+    monkeypatch.setattr(
+        hcr.cdp,
+        "list_pages",
+        lambda: [{"id": "t1", "url": hcr.SEARCH_URL_BASE}],
+    )
     monkeypatch.setattr(hcr.cdp, "new_tab", lambda _url: {"targetId": "new"})
     monkeypatch.setattr(hcr.cdp, "attach", lambda _target: tab)
     monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start: None)
     monkeypatch.setattr(hcr, "extract_cards_from_current_page", lambda _tab: [])
+    monkeypatch.setattr(hcr, "assert_not_blocked_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "assert_live_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "read_result_count", lambda _tab: 60, raising=False)
 
@@ -133,7 +138,8 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
         calls.append(kwargs)
         return _cards(0, 3)
 
-    def fake_process(_tab, card: dict, idx: int) -> dict:
+    def fake_process(_tab, card: dict, idx: int, *, live_check=None) -> dict:
+        assert live_check is hcr.assert_not_blocked_or_abort
         processed.append(card["url"])
         return {
             "idx": idx,

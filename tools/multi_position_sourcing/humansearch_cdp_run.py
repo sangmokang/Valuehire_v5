@@ -15,7 +15,7 @@ import time
 from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -36,6 +36,7 @@ from tools.multi_position_sourcing.models import (
     Position,
 )
 from tools.multi_position_sourcing.owner_activity import detect_owner_activity_snapshot
+from tools.multi_position_sourcing.session_guard import _default_login_lease
 
 SEARCH_URL_BASE = (
     "https://www.linkedin.com/talent/search?"
@@ -162,7 +163,38 @@ def extract_cards_from_current_page(tab) -> list[dict]:
 
 def collect_cards(tab, start: int) -> list[dict]:
     navigate_results_page(tab, start)
+    assert_not_blocked_or_abort(tab)
     return extract_cards_from_current_page(tab)
+
+
+def resolve_exact_recruiter_target(*, target_id: str | None = None) -> dict:
+    pages = cdp.list_pages()
+    expected_context = parse_qs(urlsplit(SEARCH_URL_BASE).query).get(
+        "searchContextId", [""]
+    )[0]
+    matches: list[dict] = []
+    for page in pages:
+        page_id = str(page.get("id") or page.get("targetId") or "")
+        parts = urlsplit(str(page.get("url") or ""))
+        is_recruiter = (
+            parts.scheme == "https"
+            and parts.netloc.lower() == "www.linkedin.com"
+            and parts.path.startswith("/talent/")
+        )
+        if not is_recruiter:
+            continue
+        if target_id:
+            if page_id == target_id:
+                matches.append(page)
+            continue
+        context = parse_qs(parts.query).get("searchContextId", [""])[0]
+        if expected_context and context == expected_context:
+            matches.append(page)
+    if len(matches) != 1:
+        raise _profile_context_error(
+            f"exact Recruiter target count={len(matches)}; refusing generic tab selection"
+        )
+    return matches[0]
 
 
 _RESULT_COUNT_RE = re.compile(
@@ -255,6 +287,68 @@ def iter_planned_cards(
 
 def _clean(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip()
+
+
+_PROFILE_PATH_RE = re.compile(r"^/talent/profile/[^/?#]+$")
+_SCOPED_PROFILE_QUERY_KEYS = {
+    "project",
+    "searchhistoryid",
+    "searchcontextid",
+    "authtoken",
+}
+
+
+def _profile_context_error(reason: str) -> PreflightError:
+    return PreflightError(
+        {
+            "ok": False,
+            "reasons": [reason],
+            "checks": {"candidate_profile_context": False},
+            "card_count": 0,
+        }
+    )
+
+
+def _validate_profile_card_context(card: dict) -> tuple[str, str, str]:
+    profile_url = str(card.get("url") or "").strip()
+    navigation_url = str(card.get("navigation_url") or "").strip()
+    expected_name = _clean(str(card.get("name") or ""))
+    if not expected_name:
+        raise _profile_context_error("candidate name missing from Recruiter result")
+    if not navigation_url:
+        raise _profile_context_error("profile URL is missing its scoped Recruiter href")
+
+    profile_parts = urlsplit(profile_url)
+    navigation_parts = urlsplit(navigation_url)
+    profile_is_canonical = (
+        profile_parts.scheme == "https"
+        and profile_parts.netloc.lower() == "www.linkedin.com"
+        and _PROFILE_PATH_RE.fullmatch(profile_parts.path) is not None
+        and not profile_parts.query
+        and not profile_parts.fragment
+    )
+    query_keys = {key.casefold() for key in parse_qs(navigation_parts.query).keys()}
+    navigation_is_scoped = (
+        navigation_parts.scheme == "https"
+        and navigation_parts.netloc.lower() == "www.linkedin.com"
+        and navigation_parts.path == profile_parts.path
+        and bool(query_keys & _SCOPED_PROFILE_QUERY_KEYS)
+    )
+    if not profile_is_canonical or not navigation_is_scoped:
+        raise _profile_context_error("profile URL is not an exact scoped LinkedIn Recruiter link")
+    return profile_url, navigation_url, expected_name
+
+
+def _assert_current_profile_identity(tab, profile_url: str) -> None:
+    current_url = tab.eval("location.href")
+    expected = urlsplit(profile_url)
+    current = urlsplit(str(current_url or ""))
+    if (
+        current.scheme != "https"
+        or current.netloc.lower() != "www.linkedin.com"
+        or current.path != expected.path
+    ):
+        raise _profile_context_error("candidate profile identity changed after navigation")
 
 
 _YEAR_RE = re.compile(r"(19\d{2}|20\d{2})")
@@ -365,41 +459,34 @@ def process_profile(
     live_check=None,
 ) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    profile_url = str(card.get("url") or "").strip()
-    navigation_url = str(card.get("navigation_url") or "").strip()
-    if not navigation_url:
-        raise RuntimeError(
-            "LinkedIn result navigation href missing; refusing bare profile deep-link"
-        )
-    profile_parts = urlsplit(profile_url)
-    navigation_parts = urlsplit(navigation_url)
-    if (
-        navigation_parts.scheme not in {"http", "https"}
-        or navigation_parts.netloc.lower() != "www.linkedin.com"
-        or navigation_parts.path != profile_parts.path
-        or not navigation_parts.query
-    ):
-        raise RuntimeError("LinkedIn result navigation href is not the exact scoped profile link")
+    profile_url, navigation_url, expected_name = _validate_profile_card_context(card)
+    guard = live_check or assert_not_blocked_or_abort
     tab.navigate(navigation_url, wait_ms=8000)
     # Escaped defect #156: a multiple-sign-in page used to be extracted, screenshotted,
     # archived, and scored as a candidate because this check ran only after process_profile.
     # Challenge/session-conflict detection must be the first operation after navigation.
-    (live_check or assert_not_blocked_or_abort)(tab)
+    guard(tab)
+    _assert_current_profile_identity(tab, profile_url)
     info = tab.eval(EXTRACT_JS)
-    name = info.get("name") or card.get("name") or f"cand{idx}"
-    expected_name = re.sub(r"\s+", " ", _clean(str(card.get("name") or ""))).strip()
-    captured_name = re.sub(r"\s+", " ", _clean(str(name or ""))).strip()
-    if expected_name and captured_name.casefold() != expected_name.casefold():
-        raise RuntimeError(
-            "LinkedIn candidate identity mismatch after navigation; refusing screenshot/archive"
-        )
+    name = _clean(str(info.get("name") or ""))
+    if not name or name.casefold() != expected_name.casefold():
+        raise _profile_context_error("candidate identity mismatch after navigation")
     education = _clean(info.get("education", "")).replace("School name", "").strip()
     safe = re.sub(r"[^A-Za-z0-9]+", "_", name)[:40] or f"cand{idx}"
     shot = OUT_DIR / f"{idx:02d}_{safe}.png"
+    guard(tab)
+    _assert_current_profile_identity(tab, profile_url)
     try:
         tab.screenshot(str(shot))
     except Exception as e:
+        shot.unlink(missing_ok=True)
         raise RuntimeError("profile screenshot save failed; traversal must not advance") from e
+    try:
+        guard(tab)
+        _assert_current_profile_identity(tab, profile_url)
+    except Exception:
+        shot.unlink(missing_ok=True)
+        raise
     tenures = build_tenures(info.get("dates", []))
     prof = CapturedProfile(
         profile_url=profile_url,
@@ -452,47 +539,59 @@ def process_profile(
     }
 
 
-def main(max_profiles: int = 25, start: int = 0, *, owner_snapshot=detect_owner_activity_snapshot) -> None:
+def main(
+    max_profiles: int = 25,
+    start: int = 0,
+    *,
+    owner_snapshot=detect_owner_activity_snapshot,
+    target_id: str | None = None,
+    lease_factory=None,
+) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    t = cdp.find_page_by_url("searchContextId=8d792952") or cdp.find_page_by_url("linkedin.com/talent/search")
-    if not t:
-        raise RuntimeError(
-            "existing LinkedIn Recruiter target not found; refusing to create a new tab/session"
-        )
-    tab = cdp.attach(t)
-    log(f"=== humansearch CDP run | start={start} ===")
+    lease = (lease_factory or _default_login_lease)("linkedin_rps")
+    lease.acquire()
+    tab = None
+    try:
+        t = resolve_exact_recruiter_target(target_id=target_id)
+        tab = cdp.attach(t)
+        log(f"=== humansearch CDP run | start={start} ===")
 
-    # A login/session-conflict surface must stop before the runner mutates history by
-    # navigating to search. Authentication recovery belongs to the exact-target login guard.
-    assert_not_blocked_or_abort(tab)
-    navigate_results_page(tab, start)
-    # fail-closed 라이브 게이트 (docs/sot/27): 검색이 살아있는 상태가 아니면(세션 만료/세션충돌/
-    # 캡차/로그인 리다이렉트/결과 미렌더) 여기서 PreflightError 로 즉시 중단 — 수집/채점을
-    # 시작조차 하지 않는다. 봇처럼 같은 네비게이션을 반복하지 않는다(SOT22 R2).
-    assert_live_or_abort(tab)
-    result_count = read_result_count(tab)
-    first_page_cards = extract_cards_from_current_page(tab)
-    cards = iter_planned_cards(
-        tab,
-        result_count=result_count,
-        channel="linkedin",
-        start=start,
-        pacing_seed=result_count + start,
-        first_page_cards=first_page_cards,
-    )
-    log(f"planned traversal result_count={result_count} collected={len(cards)} start={start}")
-    all_rows = process_cards_with_r4(
-        tab,
-        cards,
-        owner_snapshot=owner_snapshot,
-        live_check=assert_not_blocked_or_abort,
-    )
-    tab.close()
-    results = collect_results(all_rows)
-    excluded = [r for r in all_rows if r.get("hard_exclude")]
-    passers = [r for r in results if r["score"] >= 70]
-    log(f"=== DONE: {len(results) + len(excluded)} opened, {len(excluded)} hard-excluded, "
-        f"{len(results)} scored, {len(passers)} passers(>=70) ===")
+        # A login/session-conflict surface must stop before the runner mutates history by
+        # navigating to search. Authentication recovery belongs to the exact-target login guard.
+        assert_not_blocked_or_abort(tab)
+        navigate_results_page(tab, start)
+        # fail-closed 라이브 게이트 (docs/sot/27): 검색이 살아있는 상태가 아니면(세션 만료/세션충돌/
+        # 캡차/로그인 리다이렉트/결과 미렌더) 여기서 PreflightError 로 즉시 중단 — 수집/채점을
+        # 시작조차 하지 않는다. 봇처럼 같은 네비게이션을 반복하지 않는다(SOT22 R2).
+        assert_live_or_abort(tab)
+        result_count = read_result_count(tab)
+        first_page_cards = extract_cards_from_current_page(tab)
+        cards = iter_planned_cards(
+            tab,
+            result_count=result_count,
+            channel="linkedin",
+            start=start,
+            pacing_seed=result_count + start,
+            first_page_cards=first_page_cards,
+        )
+        log(f"planned traversal result_count={result_count} collected={len(cards)} start={start}")
+        all_rows = process_cards_with_r4(
+            tab,
+            cards,
+            owner_snapshot=owner_snapshot,
+            live_check=assert_not_blocked_or_abort,
+        )
+        results = collect_results(all_rows)
+        excluded = [r for r in all_rows if r.get("hard_exclude")]
+        passers = [r for r in results if r["score"] >= 70]
+        log(f"=== DONE: {len(results) + len(excluded)} opened, {len(excluded)} hard-excluded, "
+            f"{len(results)} scored, {len(passers)} passers(>=70) ===")
+    finally:
+        try:
+            if tab is not None:
+                tab.close()
+        finally:
+            lease.release()
 
 
 if __name__ == "__main__":

@@ -184,7 +184,11 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
 
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
-    monkeypatch.setattr(hcr.cdp, "find_page_by_url", lambda _needle: {"targetId": "t1"})
+    monkeypatch.setattr(
+        hcr.cdp,
+        "list_pages",
+        lambda: [{"id": "t1", "url": hcr.SEARCH_URL_BASE}],
+    )
     monkeypatch.setattr(hcr.cdp, "new_tab", lambda _url: {"targetId": "new"})
     monkeypatch.setattr(hcr.cdp, "attach", lambda _target: tab)
     monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start: None)

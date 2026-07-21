@@ -87,7 +87,7 @@ def test_missing_existing_recruiter_target_never_creates_new_tab(monkeypatch, tm
     created: list[str] = []
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
-    monkeypatch.setattr(hcr.cdp, "find_page_by_url", lambda _needle: None)
+    monkeypatch.setattr(hcr.cdp, "list_pages", lambda: [])
 
     def forbidden_new_tab(url: str):
         created.append(url)
