@@ -12,6 +12,7 @@ import hashlib
 import ipaddress
 import json
 import re
+import unicodedata
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -78,7 +79,7 @@ def _valid_url(url: Any) -> bool:
     if not isinstance(url, str) or not url.strip():
         return False
     u = url.strip()
-    if any(ch.isspace() for ch in u):
+    if any(ch.isspace() or unicodedata.category(ch).startswith("C") for ch in u):
         return False
     # V1 4R: urlparse 는 스킴을 소문자화해 'HTTPS://' 도 통과시키지만 SQL CHECK 는
     # 소문자만 허용 — DB 와 1:1 정합 위해 소문자 프리픽스만 인정.

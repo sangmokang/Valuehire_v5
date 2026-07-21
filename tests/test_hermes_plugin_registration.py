@@ -88,7 +88,7 @@ def test_direct_search_handlers_force_skill_and_reuse_fleet_run(monkeypatch) -> 
     plugin = _load_plugin_module()
     ctx = FakeCtx()
     plugin.register(ctx)
-    plugin._GATEWAY_USER_ID.set("814353841088757800")
+    ctx.hooks["pre_gateway_dispatch"][0](event=_discord_event("814353841088757800"))
     calls = []
 
     def fake_dispatch(
@@ -105,11 +105,34 @@ def test_direct_search_handlers_force_skill_and_reuse_fleet_run(monkeypatch) -> 
         result = ctx.commands[command]["handler"]("https://app.clickup.com/t/abc winpc")
         assert json.loads(result) == {"action": "enqueued"}
 
+    idem = "idempotency:discord:1512503999999999999"
     assert calls == [
-        ("fleet-run", "url https://app.clickup.com/t/abc winpc", "814353841088757800"),
-        ("fleet-run", "aisearch https://app.clickup.com/t/abc winpc", "814353841088757800"),
-        ("fleet-run", "humansearch https://app.clickup.com/t/abc winpc", "814353841088757800"),
+        ("fleet-run", f"url https://app.clickup.com/t/abc winpc {idem}", "814353841088757800"),
+        ("fleet-run", f"aisearch https://app.clickup.com/t/abc winpc {idem}", "814353841088757800"),
+        ("fleet-run", f"humansearch https://app.clickup.com/t/abc winpc {idem}", "814353841088757800"),
     ]
+
+
+def test_direct_alias_rejects_skill_and_idempotency_overrides(monkeypatch) -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    ctx.hooks["pre_gateway_dispatch"][0](event=_discord_event("814353841088757800"))
+    calls = []
+
+    def fake_dispatch(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"action": "enqueued"}
+
+    bridge = plugin._load_bridge_module()
+    monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
+    for raw_args in (
+        "skill:humansearch https://app.clickup.com/t/abc",
+        "https://app.clickup.com/t/abc idempotency:attacker-key",
+    ):
+        result = ctx.commands["url"]["handler"](raw_args)
+        assert result.startswith("거부됨:")
+    assert calls == []
 
 
 def test_direct_alias_preserves_server_context_and_adds_event_idempotency(monkeypatch) -> None:
@@ -137,9 +160,11 @@ def test_direct_alias_preserves_server_context_and_adds_event_idempotency(monkey
     bridge = plugin._load_bridge_module()
     monkeypatch.setattr(bridge, "dispatch_hermes_fleet_command", fake_dispatch)
     ctx.commands["url"]["handler"]("https://app.clickup.com/t/abc")
+    ctx.commands["url"]["handler"]("https://app.clickup.com/t/abc")
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     command, raw_args, user_id, invocation_context = calls[0]
+    assert calls[1] == calls[0]
     assert command == "fleet-run"
     assert "idempotency:discord:1512503999999999999" in raw_args
     assert user_id == "814353841088757800"
@@ -294,3 +319,15 @@ def test_handler_denies_with_no_stack_trace_when_identity_missing() -> None:
     result = ctx.commands["fleet-run"]["handler"]("skill:humansearch url:https://x.test machine:macmini")
     assert result.startswith("거부됨:")
     assert "identity" in result
+
+
+def test_direct_alias_fails_closed_without_discord_event_id() -> None:
+    plugin = _load_plugin_module()
+    ctx = FakeCtx()
+    plugin.register(ctx)
+    plugin._GATEWAY_USER_ID.set("814353841088757800")
+    plugin._GATEWAY_INVOCATION_CONTEXT.set({})
+
+    result = ctx.commands["url"]["handler"]("https://app.clickup.com/t/abc")
+    assert result.startswith("거부됨:")
+    assert "event identity" in result
