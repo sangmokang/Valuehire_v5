@@ -60,6 +60,10 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 - 포털 액션 전 각 채널을 `READY`/`OCCUPIED`/`BLOCKED`로 분류한다.
 - **사장님이 크롬 사용 중이면 자동화 액션 0, 손 떼면 자동 재개**(INV2).
 - 캡차·2FA·봇차단·로그인캡·LinkedIn 멀티세션락 → 해당 채널 STOP. 우회·반복재시도 금지(INV4).
+- **LinkedIn 세션 문맥 보존(`SESSION_CONTEXT_PRESERVATION`, #156)**: 이미 인증된 exact target 하나만
+  재사용하고 다른 Chrome 프로필에 RPS 세션 신호가 있으면 `AUTH_CONFLICT`로 중단한다. 새 탭·두 번째
+  로그인·Continue/Confirm은 0회다. 카드의 query 포함 `navigation_url`로 이동하고 canonical
+  `profile_url`은 저장·중복제거에만 사용하며, 이동 직후 차단 검사를 추출·스크린샷·저장보다 먼저 한다.
 - **채널을 직무로 가르지 않는다**(INV5). 라이브 포털 검색 범위에선 사람인·잡코리아·LinkedIn RPS 모두 전 직무 대상.
 - **LinkedIn RPS는 좌측 필터 패널 필수**(2026-07-07 사장님 지시): 검색 시 좌측 "Show filters"를 열어 **Locations = South Korea** 를 드롭다운 제안으로 선택하고, **연차(Years of experience)도 좌측 패널**에 JD ±1~2년 버퍼로 설정한다. 키워드(Boolean)만 넣고 지역·연차를 생략하면 스펙 위반. 상세는 `docs/sot/22-talent-search-filters.json` channels.linkedin.filters.left_panel_required.
 - 상세 진입·저장은 차감 0 → 검토 가치 있으면 즉시 저장(INV6). 차감 버튼만 사람 컨펌.

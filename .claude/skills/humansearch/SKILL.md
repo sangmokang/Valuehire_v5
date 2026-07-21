@@ -29,6 +29,15 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
 - 저장: results.json + `~/.vh-data/ai-search-candidates.db` `ai_search_candidates`
   (url,position_id) upsert — 열어본 프로필 전원, 점수 무관.
 
+## LinkedIn RPS 세션 문맥 보존 (`SESSION_CONTEXT_PRESERVATION`, #156)
+
+- 이미 인증된 정확한 RPS target 하나만 재사용한다. 다른 Chrome 프로필의 RPS 세션 신호나
+  target/profile/endpoint 불일치는 `AUTH_CONFLICT`이며 새 탭·두 번째 로그인 없이 중단한다.
+- 수확 JSON은 canonical `profile_url`과 query 포함 원본 `navigation_url`을 둘 다 보존한다. 이동은
+  `navigation_url`, 저장·중복제거는 `profile_url`만 사용한다.
+- 이동 직후 차단 검사를 추출·스크린샷·DB 저장·채점보다 먼저 한다. 세션 충돌은 terminal이며
+  Continue/Confirm·자동 로그인·재네비게이션·두 번째 사람 인계를 하지 않는다.
+
 ## 등록 직전 3중 게이트 (순서 고정)
 1. 영문 학교명→한글 신호 보정 재채점 (SKY·성균관 저평가 방지)
 2. `hard_exclude_reason` 전원 재적용 (프리랜서·단기이직 2회+ / '외주' 마커는 문맥 확인)
