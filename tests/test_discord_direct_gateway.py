@@ -199,7 +199,8 @@ class CommandOwnershipTests(unittest.TestCase):
         names = {p["name"] for p in slash_commands_to_register()}
         self.assertEqual(
             names,
-            set(FLEET_COMMANDS) | {"url", "aisearch", "humansearch"},
+            set(FLEET_COMMANDS) | {"url", "aisearch", "humansearch"}
+            | {"jobs", "login", "skill"},  # AC-1 단일 봇 콘솔 표면
         )
 
     def test_direct_search_alias_payloads_require_position_url(self) -> None:
@@ -225,7 +226,9 @@ class CommandOwnershipTests(unittest.TestCase):
         이면 이 테스트가 실패한다(Codex 2차검증: "동적 추종이 검사로 봉인 안 됨" 반영)."""
         with patch.object(gw, "FLEET_COMMANDS", ("fleet-status",)):
             names = {p["name"] for p in slash_commands_to_register()}
-        self.assertEqual(names, {"fleet-status", "url", "aisearch", "humansearch"})
+        self.assertEqual(
+            names,
+            {"fleet-status", "url", "aisearch", "humansearch", "jobs", "login", "skill"})
 
 
 class InteractionEnvelopeTests(unittest.TestCase):

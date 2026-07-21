@@ -2,7 +2,7 @@
 
 인수 기준(기계 단언):
 - /fleet-run envelope 1건 → dispatch_fleet_command 정확히 1회 + 응답문(잡 번호 포함).
-- 파싱(parse_hermes_fleet_args)·권한검사(route_discord_invocation)는 경로당 정확히 1회(INV-D3).
+- 파싱(parse_fleet_args, AC-1 이사)·권한검사(route_discord_invocation)는 경로당 정확히 1회(INV-D3).
 - 비인가 사용자·신원미상 → 응답 None(침묵) + 감사 이벤트만(INV-D6). 큐 접촉 0.
 - 길드 컨텍스트 보존: guild_id/channel_id/role_ids 가 DiscordInvocation 까지 그대로 전달
   (기존 hermes_fleet_bridge 의 DM 고정 재사용 금지 — goal §3).
@@ -37,7 +37,7 @@ _ALLOWED_ABSOLUTE_IMPORTS = frozenset({
 })
 # 패키지 상대 import 는 레벨 1(같은 패키지) + 정확한 모듈명만(하위 경로 금지).
 _ALLOWED_RELATIVE_MODULES = frozenset({
-    "access", "discord_routing", "fleet_dispatch", "hermes_fleet_bridge",
+    "access", "discord_routing", "fleet_dispatch", "fleet_args",  # AC-1: 파싱 이사(hermes_fleet_bridge 제외)
 })
 # 맨 이름(builtin)으로 나타나면 안 되는 식별자 — __import__ 를 변수에 담아 나중에
 # 부르는 우회(V1 재공격)까지 이름 존재 자체로 막는다. re.compile 처럼 안전한
@@ -139,8 +139,8 @@ class FleetRunDispatchTests(_NotifySilencedCase):
     def test_fleet_run_dispatches_once_and_replies_with_job_id(self) -> None:
         queue = FakeQueue()
         audit: list[dict] = []
-        with patch.object(dr, "parse_hermes_fleet_args",
-                          side_effect=dr.parse_hermes_fleet_args) as parse_spy, \
+        with patch.object(dr, "parse_fleet_args",
+                          side_effect=dr.parse_fleet_args) as parse_spy, \
              patch.object(fleet_dispatch, "route_discord_invocation",
                           side_effect=fleet_dispatch.route_discord_invocation) as route_spy, \
              patch.object(dr, "dispatch_fleet_command",

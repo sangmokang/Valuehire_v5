@@ -67,6 +67,7 @@ from tools.multi_position_sourcing.access import (
 )
 from tools.multi_position_sourcing.direct_receiver import DiscordEnvelope, handle_envelope
 from tools.multi_position_sourcing.discord_routing import (
+    BOT_CONSOLE_COMMANDS,
     DIRECT_SEARCH_SKILL_COMMANDS,
     DiscordAccessConfig,
     discord_slash_command_payloads,
@@ -74,6 +75,7 @@ from tools.multi_position_sourcing.discord_routing import (
     parse_discord_command_text,
 )
 from tools.multi_position_sourcing.fleet_dispatch import FLEET_COMMANDS, OWNER_USER_IDS
+from tools.multi_position_sourcing.job_queue import FLEET_SKILLS
 
 logger = logging.getLogger("discord_direct_gateway")
 # Codex 2차검증 재재현: logger.info() 만으로는 루트 로거에 핸들러가 없으면(기본 파이썬
@@ -95,6 +97,14 @@ _RESPONSE_CHAR_LIMIT = 1900  # goal §4 — 1,900자 분할 회신 계약과 동
 
 # INV-D5 — 게이트웨이 자신의 큐 자격증명은 job_queue.JobQueueClient() 기본값
 # (SUPABASE_SERVICE_ROLE_KEY, 관리자급)을 절대 쓰지 않는다. 전용 최소권한 env 만.
+# AC-1(단일 봇 콘솔) — /jobs 회신에 붙는 웹 대시보드 링크(Fleet-job 탭, goal §6.2).
+_FLEET_TAB_URL = "https://admin.valuehire.cc/ai-search-list?view=fleet"
+# E19 — 큐(Supabase) 장애 시 명령을 삼키지 않고 즉답한다(goal §8.3).
+_QUEUE_UNAVAILABLE_MSG = "⚠️ 지금 접수 불가 — 작업 큐 연결에 실패했습니다. 잠시 후 다시 시도해 주세요."
+# G2/E24 — 큐 화이트리스트 밖 스킬 안내(마이그레이션 전까지 3종 고정, goal §4 T4).
+_UNSUPPORTED_SKILL_MSG = (
+    "⚠️ 아직 지원하지 않는 스킬입니다 — 허용 목록: " + ", ".join(FLEET_SKILLS) + ".")
+
 QUEUE_URL_ENV = "DISCORD_GATEWAY_SUPABASE_URL"
 QUEUE_KEY_ENV = "DISCORD_GATEWAY_SUPABASE_KEY"
 
@@ -149,7 +159,7 @@ def slash_commands_to_register() -> list[dict[str, Any]]:
     분기를 만들지 않는다. ``FLEET_COMMANDS``와 ``DIRECT_SEARCH_SKILL_COMMANDS``를
     직접 참조해 등록 목록과 처리 목록이 함께 움직이게 한다.
     """
-    owned = set(FLEET_COMMANDS) | set(DIRECT_SEARCH_SKILL_COMMANDS)
+    owned = set(FLEET_COMMANDS) | set(DIRECT_SEARCH_SKILL_COMMANDS) | set(BOT_CONSOLE_COMMANDS)
     return [p for p in discord_slash_command_payloads() if p.get("name") in owned]
 
 
@@ -193,6 +203,65 @@ def _normalize_direct_search_command(command: str, raw_args: str) -> tuple[str, 
     return "fleet-run", f"{fixed} {raw_args}".strip()
 
 
+def _rename_option_tokens(raw_args: str, rename: Mapping[str, str]) -> str:
+    """``key:value`` 토큰의 key 만 바꿔 재조립(값은 shlex 왕복 보존). 검증은 하위 파서 1곳."""
+    tokens: list[str] = []
+    for token in shlex.split(raw_args or ""):
+        key, sep, value = token.partition(":")
+        if sep and key in rename:
+            key = rename[key]
+        tokens.append(f"{key}:{shlex.quote(value)}" if sep else shlex.quote(token))
+    return " ".join(tokens)
+
+
+def _ensure_agent_token(raw_args: str) -> str:
+    """engine 미지정 → params.agent=claude 를 명시 라벨로 고정(goal §6.1 공통 인자).
+
+    이미 agent: 토큰이 있으면(engine 옵션 rename 결과 포함) 덮어쓰지 않는다 — 중복이면
+    하위 파서의 중복 필드 거부(fail-closed)가 그대로 동작한다.
+    """
+    if re.search(r"(?:^|\s)agent:", raw_args):
+        return raw_args
+    return f"{raw_args} agent:claude".strip()
+
+
+def _requested_console_skill(command: str, options: Sequence[Mapping[str, Any]] | None) -> str:
+    """/skill·/login 이 요청한 스킬 이름(화이트리스트 안내용). 없으면 ""."""
+    if command == "login":
+        return "login"
+    if command == "skill":
+        for opt in options or []:
+            if str(opt.get("name", "")).strip() == "name":
+                return str(opt.get("value", "")).strip()
+    return ""
+
+
+def _normalize_bot_console_command(command: str, raw_args: str) -> tuple[str, str]:
+    """AC-1 — 단일 봇 콘솔 명령을 기존 fleet-* 계약으로만 정규화한다(새 실행 분기 금지).
+
+    - jobs  → fleet-status (게이트웨이가 회신에 웹 링크를 덧붙임)
+    - login → fleet-run skill:login — login 은 아직 큐 화이트리스트 밖이라 인가자에게
+      "아직 지원하지 않습니다" 안내로 끝난다(비인가는 기존 침묵 유지, E24 후속).
+    - skill → name:X 를 skill:X 로 고정 매핑(name 없으면 정규화하지 않고 형식 오류 경로)
+    - 직접 검색 별칭(url/aisearch/humansearch)은 기존 정규화 + engine→agent 매핑
+    - engine 옵션은 agent 로 개명해 하위 단일 파서(fleet_args)가 검증(claude|codex 외 거부)
+    """
+    if command == "jobs":
+        return "fleet-status", ""
+    if command == "login":
+        return "fleet-run", "skill:login"
+    if command == "skill":
+        if not re.search(r"(?:^|\s)name:", raw_args or ""):
+            return command, raw_args  # name 없음 — 추측 매핑 금지(형식 오류로 거부)
+        renamed = _rename_option_tokens(raw_args, {"name": "skill", "engine": "agent"})
+        return "fleet-run", _ensure_agent_token(renamed)
+    normalized_command, normalized_args = _normalize_direct_search_command(command, raw_args)
+    if command in DIRECT_SEARCH_SKILL_COMMANDS:
+        normalized_args = _ensure_agent_token(
+            _rename_option_tokens(normalized_args, {"engine": "agent"}))
+    return normalized_command, normalized_args
+
+
 def _with_discord_idempotency_key(command: str, raw_args: str, event_id: str) -> str:
     """조각 B(INV-D2, "같은 이벤트 2회 → 잡 1개") 를 게이트웨이 레벨에서 실제로 보증.
 
@@ -228,7 +297,7 @@ def interaction_to_envelope(interaction: Any) -> Optional[DiscordEnvelope]:
     user_id = str(getattr(user, "id", "")) if user is not None else ""
     role_ids = () if is_dm else _member_role_ids(user)
     event_id = str(getattr(interaction, "id", ""))
-    command, raw_args = _normalize_direct_search_command(
+    command, raw_args = _normalize_bot_console_command(
         command, _options_to_raw_args(data.get("options")))
     raw_args = _with_discord_idempotency_key(command, raw_args, event_id)
     return DiscordEnvelope(
@@ -266,7 +335,7 @@ def message_to_envelope(message: Any, *, bot_user_id: str = "") -> Optional[Disc
     raw_args = " ".join(
         f"{key}:{shlex.quote(str(value))}" for key, value in (parsed.options or {}).items()
     )
-    command, raw_args = _normalize_direct_search_command(parsed.command_name, raw_args)
+    command, raw_args = _normalize_bot_console_command(parsed.command_name, raw_args)
     raw_args = _with_discord_idempotency_key(command, raw_args, event_id)
     return DiscordEnvelope(
         event_id=event_id,
@@ -325,7 +394,8 @@ async def handle_slash_interaction(
     except Exception:  # noqa: BLE001 — 큐 생성 실패도 fail-closed 보고, 크래시 금지.
         logger.warning(
             "discord_direct_gateway: queue_factory 실패 event_id=%s", envelope.event_id)
-        await _safe_first_reply(interaction, _GENERIC_SILENT_ACK, event_id=envelope.event_id)
+        # E19 — 큐 장애는 인가 신호가 아니므로 침묵 대신 "접수 불가"를 즉답한다(명령 삼킴 금지).
+        await _safe_first_reply(interaction, _QUEUE_UNAVAILABLE_MSG, event_id=envelope.event_id)
         return {"handled": False, "action": "internal_error", "response": None}
 
     kwargs: dict[str, Any] = {}
@@ -339,6 +409,19 @@ async def handle_slash_interaction(
 
     response = result.get("response")
     outgoing = _GENERIC_SILENT_ACK if response is None else response[:_RESPONSE_CHAR_LIMIT]
+    if response is not None:
+        # AC-1 콘솔 표면 후처리 — 인가자에게만(response None=침묵 경로는 그대로 둔다).
+        data = getattr(interaction, "data", None) or {}
+        original_command = str(data.get("name") or "").strip().lower()
+        if original_command in ("skill", "login") \
+                and result.get("action") in ("error", "parse_error"):
+            requested = _requested_console_skill(original_command, data.get("options"))
+            if requested and requested not in FLEET_SKILLS:
+                outgoing = _UNSUPPORTED_SKILL_MSG
+        elif original_command == "jobs" and result.get("action") == "status":
+            outgoing = (
+                f"{response}\n🔗 진행중/완료/실패 상세: {_FLEET_TAB_URL}"
+            )[:_RESPONSE_CHAR_LIMIT]
     await _safe_first_reply(interaction, outgoing, event_id=envelope.event_id)
     return result
 
@@ -372,6 +455,10 @@ async def handle_text_message(
     except Exception:  # noqa: BLE001
         logger.warning(
             "discord_direct_gateway: queue_factory 실패(text) event_id=%s", envelope.event_id)
+        try:
+            await message.channel.send(_QUEUE_UNAVAILABLE_MSG)  # E19 — 명령 삼킴 금지
+        except Exception:  # noqa: BLE001
+            pass
         return {"handled": False, "action": "internal_error", "response": None}
 
     kwargs: dict[str, Any] = {}

@@ -14,8 +14,6 @@ fleet_dispatch.dispatch_fleet_command(단일출처)를 그대로 감싼다.
 from __future__ import annotations
 
 import re
-import shlex
-import urllib.parse
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -24,189 +22,32 @@ from .discord_routing import (
     DiscordInvocation,
     load_discord_access_config,
 )
+from .fleet_args import (  # AC-1 이사(2026-07-22) — 파싱 단일출처는 fleet_args, 여기는 호환 re-export
+    FLEET_ARG_COMMANDS,
+    FleetArgsError,
+    _ALLOWED_FIELDS,
+    _FLEET_RUN_DEFAULT_SKILL,
+    _MACHINE_ALIASES,
+    _SEARCH_HOST_MARKERS,
+    _classify_bare_fleet_run_token,
+    _default_skill_for_urls,
+    _is_search_url,
+    _set_option_once,
+    parse_fleet_args,
+)
 from .fleet_dispatch import FLEET_COMMANDS, dispatch_fleet_command
 from .job_queue import FLEET_MACHINES, FLEET_SKILLS
 
-FLEET_PLUGIN_COMMANDS: tuple[str, ...] = FLEET_COMMANDS  # ("fleet-run","fleet-resume","fleet-status","fleet-cancel")
+FLEET_PLUGIN_COMMANDS: tuple[str, ...] = FLEET_ARG_COMMANDS  # ("fleet-run","fleet-resume","fleet-status","fleet-cancel")
 
-# fleet-run 전용 완화 규칙(2026-07-13 사장님 요청) — "/fleet-run <url>" 만 줘도 동작하게.
-# 다른 명령(status/resume/cancel)은 여전히 엄격 key:value 만 받는다(대상이 애매해질 여지 없음).
-_FLEET_RUN_DEFAULT_SKILL = "aisearch"
-
-_MACHINE_ALIASES: dict[str, str] = {
-    "win": "winpc",
-    "windows": "winpc",
-    "윈도우": "winpc",
-    "윈도우pc": "winpc",
-    "맥미니": "macmini",
-    "mini": "macmini",
-    "맥북": "macbook",
-}
-_SEARCH_HOST_MARKERS: tuple[str, ...] = (
-    "linkedin.com", "saramin.co.kr", "jobkorea.co.kr",
-)
+# 옛 이름 호환(AC-8 헤르메스 폐기 때 이 모듈째 삭제) — 같은 객체를 가리켜 드리프트 0.
+HermesFleetBridgeError = FleetArgsError
+parse_hermes_fleet_args = parse_fleet_args
 
 # 레포 루트 기준 절대경로 — Hermes 게이트웨이 프로세스는 cwd 가 ~/.hermes 라
 # (실측: pid 5698, lsof cwd=/Users/kangsangmo/.hermes) 상대경로 "docs/search-access.md" 는
 # 그 프로세스에서 항상 못 찾는다(FileNotFoundError). 이 파일 위치에서 파생해 cwd 와 무관하게 만든다.
 _DEFAULT_ACCESS_DOC = Path(__file__).resolve().parents[2] / "docs" / "search-access.md"
-
-_ALLOWED_FIELDS: dict[str, frozenset[str]] = {
-    "fleet-run": frozenset({"skill", "url", "machine", "channels", "idempotency", "followup", "agent"}),
-    "fleet-status": frozenset(),
-    "fleet-resume": frozenset({"job"}),
-    "fleet-cancel": frozenset({"job"}),
-}
-
-
-class HermesFleetBridgeError(ValueError):
-    """플러그인 입력이 계약을 벗어남(fail-closed) — 명령/필드/신원 검증 실패."""
-
-
-def _classify_bare_fleet_run_token(token: str) -> tuple[str, str] | None:
-    """fleet-run 전용: ``key:value`` 가 아닌 맨 토큰이 url/skill/machine 중 뭔지 판정.
-
-    모호하면(아무 것에도 확실히 안 맞으면) None — 추측하지 않고 호출부가 거부하게 한다.
-    URL 은 소문자 스킴(``http://``/``https://``)만 인정 — 대소문자 우회로 판정을 피해가는
-    시도를 허용하지 않는다(다른 필드들도 소문자 고정값이라 일관성 유지).
-    """
-    if token.startswith("http://") or token.startswith("https://"):
-        return ("url", token)
-    if token in FLEET_SKILLS:
-        return ("skill", token)
-    if token in FLEET_MACHINES:
-        return ("machine", token)
-    if token.lower() in _MACHINE_ALIASES:
-        return ("machine", _MACHINE_ALIASES[token.lower()])
-    return None
-
-
-def _set_option_once(options: dict[str, str], field: str, value: str, command: str) -> None:
-    if field in options:
-        # 같은 필드 중복 지정(명시든 맨 토큰이든)은 "마지막 값으로 조용히 덮어쓰기"가 아니라
-        # 명시 거부한다 — 뒤에 몰래 붙은 값으로 앞 값을 밀어내는 스머글링을 fail-closed 로 막는다.
-        raise HermesFleetBridgeError(f"필드 중복 지정: {field!r}")
-    options[field] = value
-
-
-def _is_search_url(url: str) -> bool:
-    """호스트명 기준으로만 판정한다(2026-07-14, Codex Rescue 적대검증에서 발견한 결함 수정).
-
-    이전엔 URL 문자열 전체에서 마커가 *어디든* 나오면 True였다 — 그래서
-    ``https://app.clickup.com/t/abc?source=jobkorea.co.kr``(쿼리 문자열에 마커가 우연히
-    들어간 포지션 링크)나 ``https://linkedin.com.evil.example/...``(도메인 뒤에 마커
-    문자열을 붙인 유사 도메인)까지 검색결과 URL로 오판했다. 호스트명이 마커와 정확히
-    같거나 그 서브도메인일 때만 True로 좁힌다.
-    """
-    try:
-        host = (urllib.parse.urlparse(url).hostname or "").lower()
-    except ValueError:
-        return False
-    return any(host == marker or host.endswith("." + marker) for marker in _SEARCH_HOST_MARKERS)
-
-
-def _default_skill_for_urls(urls: Sequence[str]) -> str:
-    """URL 모양만으로 fleet-run 기본 skill을 고른다(2026-07-14 사장님 요청).
-
-    채용포털 검색결과 리스트(사람인/잡코리아/링크드인 검색결과, ``_is_search_url``)가
-    하나라도 섞여 있으면 humansearch(사람이 미리 준비한 결과를 순회·채점하는 스킬)를,
-    없으면 기존 기본값 aisearch를 쓴다. ``options.setdefault`` 뒤에서만 호출되므로
-    호출자가 ``skill:``을 명시했으면 이 함수는 아예 참조되지 않는다 — 명시 지정이
-    항상 이 추론보다 우선한다. natural_fleet_command_text(자연어 경로)와
-    parse_hermes_fleet_args(직접 명령 경로) 양쪽이 이 함수 하나만 참조해, 판정이
-    갈라지거나 한쪽만 배선되는 일이 없게 한다(단일 출처).
-    """
-    return "humansearch" if any(_is_search_url(u) for u in urls) else _FLEET_RUN_DEFAULT_SKILL
-
-
-def parse_hermes_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
-    """``key:value key2:value2`` 형태를 허용. 모르는 명령/필드는 조용히 무시하지 않고 거부.
-
-    fleet-run 만 예외로, ``key:value`` 가 아닌 맨 토큰도 URL/스킬/머신으로 자동 인식한다
-    (2026-07-13 사장님 요청 — "그냥 /fleet-run 하고 링크만 주면 서치하도록"). skill 생략 시
-    기본값은 ``_default_skill_for_urls``가 정한다 — 검색결과 URL이 섞여 있으면
-    humansearch, 포지션 URL만 있으면 기존처럼 aisearch(2026-07-14 사장님 요청 — "채용포털
-    url 도 search list 를 주면 humansearch 가 발동되도록"). machine 생략은
-    하위(build_fleet_job_payload)의 기존 fleet 기본값과 account binding 정책에 맡긴다.
-    url 은 필수 — fleet-run 인데 끝까지 url 이 안 잡히면 명확히 거부한다.
-    """
-    if command not in FLEET_PLUGIN_COMMANDS:
-        raise HermesFleetBridgeError(f"알 수 없는 fleet 명령: {command!r}")
-    allowed = _ALLOWED_FIELDS[command]
-    try:
-        tokens = shlex.split(raw_args or "")
-    except ValueError as exc:
-        # 따옴표 안 닫힘 등 shlex 파싱 실패 — 원본 ValueError 를 그대로 새지 않게 감싼다.
-        raise HermesFleetBridgeError(f"입력을 파싱할 수 없음: {exc}") from exc
-    options: dict[str, Any] = {}
-    bare_urls: list[str] = []
-    for token in tokens:
-        key = None
-        if ":" in token:
-            key, _, value = token.partition(":")
-            key = key.strip()
-            if key in allowed:
-                _set_option_once(options, key, value.strip(), command)
-                continue
-        if command == "fleet-run":
-            classified = _classify_bare_fleet_run_token(token)
-            if classified is not None:
-                field, value = classified
-                if field == "url":
-                    bare_urls.append(value)
-                    continue
-                _set_option_once(options, field, value, command)
-                continue
-        if key is not None:
-            raise HermesFleetBridgeError(f"'{command}' 에 허용 안 된 필드: {key!r}")
-        raise HermesFleetBridgeError(f"형식 오류(키:값 아님): {token!r}")
-    if command == "fleet-run":
-        if bare_urls:
-            position_urls = [url for url in bare_urls if not _is_search_url(url)]
-            if len(position_urls) > 1:
-                raise HermesFleetBridgeError("한 fleet job에는 포지션 URL을 하나만 지정할 수 있습니다")
-            if "url" in options:
-                if position_urls:
-                    raise HermesFleetBridgeError("url 필드와 포지션 URL을 중복 지정할 수 없습니다")
-            else:
-                position_url = position_urls[0] if position_urls else bare_urls[0]
-                options["url"] = position_url
-            search_urls = [url for url in bare_urls if _is_search_url(url)]
-            if search_urls:
-                options["params"] = {"search_urls": search_urls}
-        options.setdefault("skill", _default_skill_for_urls(bare_urls))
-        params = dict(options.get("params") or {})
-        raw_channels = options.pop("channels", "")
-        if raw_channels:
-            channels = tuple(dict.fromkeys(x for x in raw_channels.split(",") if x))
-            if not channels or any(x not in {"saramin", "jobkorea"} for x in channels):
-                raise HermesFleetBridgeError("channels 는 saramin,jobkorea 만 허용합니다")
-            params["channels"] = list(channels)
-        idempotency = options.pop("idempotency", "")
-        if idempotency:
-            if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", idempotency):
-                raise HermesFleetBridgeError("idempotency 형식 오류")
-            params["idempotency_key"] = idempotency
-        # 이슈 A(2026-07-15): url→aisearch 순차 핸드오프 — 후속 스킬도 화이트리스트만
-        followup = options.pop("followup", "")
-        if followup:
-            if followup not in FLEET_SKILLS:
-                raise HermesFleetBridgeError(f"followup 은 {FLEET_SKILLS} 만 허용합니다")
-            params["followup_skill"] = followup
-        # 이슈 B(2026-07-15): 실행 엔진 선택 — claude|codex 만(fail-closed)
-        agent = options.pop("agent", "")
-        if agent:
-            if agent not in ("claude", "codex"):
-                raise HermesFleetBridgeError("agent 는 claude|codex 만 허용합니다")
-            params["agent"] = agent
-        if raw_channels or idempotency:
-            params.setdefault("execution", "live")
-            params.setdefault("channels", ["saramin", "jobkorea"])
-        if params:
-            options["params"] = params
-        if "url" not in options:
-            raise HermesFleetBridgeError("fleet-run 에는 url(ClickUp 등 포지션 링크)이 필요합니다")
-    return options
 
 
 _URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)

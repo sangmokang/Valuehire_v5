@@ -250,7 +250,9 @@ class SlashBehaviorTests(_NotifySilencedCase):
 
     async def test_engine_garbage_rejected_not_silent_claude(self) -> None:
         queue = FakeQueue()
-        for bad in ("CODEX", "codex ", "gpt5"):
+        # "codex "(가장자리 공백)는 기존 파서의 strip 정규화로 codex 가 된다(허용 값으로의
+        # 표준화지 다른 엔진으로의 조용한 폴백이 아님) — 내부 공백·대문자·미지 이름만 거부 대상.
+        for bad in ("CODEX", "co dex", "gpt5"):
             interaction = _dm("aisearch", [{"name": "url", "value": CLICKUP_URL},
                                            {"name": "engine", "value": bad}])
             result = await handle_slash_interaction(
