@@ -162,18 +162,36 @@ def _host_from_url(url: str) -> str | None:
     return host or None
 
 
-def _cdp_active_tab_host(port: int, fetch_json: Callable[[str], Any]) -> str | None:
-    """해당 인스턴스의 최근 포커스 페이지 탭(/json/list 첫 page) 호스트. 실패는 None."""
+def _cdp_portal_state(port: int, fetch_json: Callable[[str], Any]) -> tuple[bool | None, str]:
+    """(portal_state, host) — /json/list 는 활성 탭 순서를 보장하지 않는다(V1 3차 MED).
+
+    - 첫 page 가 3사 → (True, host): 최상단 후보가 포털이므로 개입 가능으로 본다.
+    - 어떤 page 도 3사 아님 → (False, 첫 page host): 그 인스턴스에 포털 탭 자체가 없어
+      포털 개입이 불가능 — False 확정 안전.
+    - 첫 page 는 비포털인데 뒤에 포털 page 존재 → (None, ""): 활성 탭 미보장 → 60초 유계.
+    - 조회/파싱 실패 → (None, "").
+    """
     try:
         tabs = fetch_json(f"http://127.0.0.1:{port}/json/list")
     except Exception:
-        return None
+        return None, ""
     if not isinstance(tabs, list):
-        return None
-    for tab in tabs:
-        if isinstance(tab, dict) and tab.get("type") == "page":
-            return _host_from_url(str(tab.get("url") or ""))
-    return None
+        return None, ""
+    page_hosts: list[str | None] = [
+        _host_from_url(str(tab.get("url") or ""))
+        for tab in tabs
+        if isinstance(tab, dict) and tab.get("type") == "page"
+    ]
+    if not page_hosts:
+        return None, ""
+    first = page_hosts[0]
+    if first is not None and _is_portal_host(first):
+        return True, first
+    if any(host is not None and _is_portal_host(host) for host in page_hosts[1:]):
+        return None, ""
+    if first is None:
+        return None, ""
+    return False, first
 
 
 def _macos_idle_seconds(run_command: RunCommand = subprocess.run) -> float | None:
@@ -214,6 +232,15 @@ def _is_portal_host(host: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in PORTAL_HOSTS)
 
 
+def _windows_idle_from_ticks(tick_count: int, last_input_tick: int) -> float:
+    """GetTickCount(DWORD, 49.7일 wrap)와 dwTime 의 32비트 모듈러 경과초.
+
+    ctypes 기본 반환형(C int, signed)과 wrap 을 모두 32비트 마스크로 정규화한다(V1 3차 HIGH).
+    """
+    elapsed_ms = ((tick_count & 0xFFFFFFFF) - (last_input_tick & 0xFFFFFFFF)) & 0xFFFFFFFF
+    return elapsed_ms / 1000.0
+
+
 def _windows_idle_seconds() -> float | None:
     """Windows GetLastInputInfo 기반 idle 초. 실패는 None(fail-closed)."""
     try:
@@ -226,8 +253,9 @@ def _windows_idle_seconds() -> float | None:
         info.cbSize = ctypes.sizeof(_LASTINPUTINFO)
         if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):  # type: ignore[attr-defined]
             return None
-        tick = ctypes.windll.kernel32.GetTickCount()  # type: ignore[attr-defined]
-        return max(0.0, (tick - info.dwTime) / 1000.0)
+        get_tick = ctypes.windll.kernel32.GetTickCount  # type: ignore[attr-defined]
+        get_tick.restype = ctypes.c_uint32  # DWORD — signed 해석 금지(V1 3차 HIGH)
+        return _windows_idle_from_ticks(int(get_tick()), int(info.dwTime))
     except Exception:
         return None
 
@@ -301,7 +329,24 @@ def detect_owner_activity_snapshot(
                 else None
             )
             if port is not None:
-                host = _cdp_active_tab_host(port, fetch_json or _default_fetch_json)
+                portal_state, host = _cdp_portal_state(port, fetch_json or _default_fetch_json)
+                if host is None:
+                    host = ""
+                portal_site_active = portal_state
+                active_tab_host = host if portal_state is not None else ""
+                detected = compute_yield_decision(
+                    frontmost_is_chrome=True,
+                    os_idle_seconds=idle_seconds,
+                    idle_threshold_seconds=idle_threshold_seconds,
+                    portal_site_active=portal_site_active,
+                )
+                return OwnerActivitySnapshot(
+                    owner_activity_detected=detected,
+                    foreground_app=foreground_app,
+                    idle_seconds=idle_seconds,
+                    portal_site_active=portal_site_active,
+                    active_tab_host=active_tab_host,
+                )
             else:
                 # 2순위: CDP 포트가 없으면 크롬 루트가 1개일 때만 AppleScript 를 신뢰한다.
                 # 2개+면 어느 인스턴스가 응답할지 보장 불가 → None(60초 유계, False 확정 금지).

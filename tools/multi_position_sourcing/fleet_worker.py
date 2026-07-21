@@ -641,7 +641,7 @@ class FleetWorker:
         # V1 2R F1: 1분 양보 창은 enqueue 만이 아니라 claim 도 막는 단일 게이트다.
         self._yield_until: float = 0.0
         # V1 2R F3: 사장님 활동 프로브(눈치) — 주입식. None 이면 게이트 없음(테스트/미지원 OS).
-        # 프로덕션 배선은 main() 의 default_owner_probe() (macOS 전용, Windows 감지기는 후속).
+        # 프로덕션 배선은 main() 의 default_owner_probe() (macOS 포털 한정 + Windows idle, 전 OS 게이트).
         self.owner_probe: Callable[[], bool] | None = owner_probe
         self.skill_sync = sync_owner_agent_skills if skill_sync is None else skill_sync
         # V1 2R F2: launchd 재기동이 양보 창을 지우지 못하게 벽시계 기반 로컬 영속(fail-soft).
@@ -935,7 +935,7 @@ class FleetWorker:
         """
         if not self._variant_backlog:
             return
-        # 이슈 #107(SOT29 INV9): 마지막 사람 개입 신호 후 3분이 지나기 전엔 양보(no-op).
+        # 이슈 #107(SOT29 INV9, 2026-07-20 60초 개정): 마지막 사람 개입 신호 후 1분 전엔 양보(no-op).
         # 창이 지나면 아래 enqueue 로 자동 재개 — 별도 사람 조치 불필요.
         if self._yield_remaining() > 0:
             return
@@ -999,7 +999,7 @@ class FleetWorker:
             self._notify(job, f"⚠️ 잡 #{job.get('id')} 후속 잡 enqueue 실패: {exc}")
 
     def _post_status_delay(self, status: str, poll_seconds: int) -> int:
-        """V1 2R F5: paused 대기는 고정 180초가 아니라 *남은 창*만큼만(ceil, 0 하한)."""
+        """V1 2R F5: paused 대기는 고정 60초가 아니라 *남은 창*만큼만(ceil, 0 하한)."""
         import math
         delay = sleep_seconds_after(status, poll_seconds)
         if status == "paused_for_human":
@@ -1070,14 +1070,11 @@ class FleetWorker:
 
 
 def default_owner_probe() -> Callable[[], bool] | None:
-    """V1 2R F3 배선: macOS 는 owner_activity 감지기(3사 포털 한정·idle 60초)로 눈치를 본다.
+    """V1 2R F3 배선: 모든 OS 에서 owner_activity 감지기를 게이트로 쓴다(fail-open 금지).
 
-    Windows(winpc)는 GetLastInputInfo 기반 idle 단독 게이트(포털 축 없음, 60초 유계) —
-    V1 2차 HIGH(게이트 완전 우회) 봉쇄. 그 외 OS 만 None(함대에 해당 머신 없음).
+    macOS = 3사 포털 한정 + idle 60초, Windows = GetLastInputInfo idle 단독(60초 유계),
+    그 외 OS = 감지기 fail-closed(unsupported → 양보) 그대로 소비 — V1 3차 LOW 봉쇄.
     """
-    import platform
-    if platform.system() not in ("Darwin", "Windows"):
-        return None
     from .owner_activity import detect_owner_activity_snapshot
     return lambda: detect_owner_activity_snapshot().owner_activity_detected
 

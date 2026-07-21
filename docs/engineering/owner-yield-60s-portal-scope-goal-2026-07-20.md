@@ -79,3 +79,10 @@ RED(새 테스트 커밋) → GREEN(최소 변경: owner_activity.py, fleet_work
 - HIGH(격상) 비-macOS probe None = 게이트 완전 우회 → **수정**: Windows 는 GetLastInputInfo idle 단독 게이트(portal=None, 60초 유계)로 default_owner_probe 활성. 회귀 WindowsIdleGateTests.
 - MED(격상) 크롬 다중 인스턴스에서 잘못된 인스턴스 URL 로 portal=False 오판(즉시 진행 방향) → **수정**: 앞창 PID 의 CDP 포트(사장님 9222 포함)로 그 인스턴스 탭을 직접 읽어 1:1 결합, 포트 없고 루트 2개+면 None(False 확정 금지). 회귀 ChromeInstanceBindingTests.
 - LOW fleet_worker 180/3분 잔존 주석 → 60/1분으로 정리. LOW goal EOF 공백 → 제거.
+
+### V1 3차 (Codex Rescue, 2026-07-21) — verdict=FAIL → 5건 수정
+- HIGH Windows GetTickCount signed/32비트 wrap 오산(장기 가동 시 60초 재개 무효) → **수정**: restype=c_uint32 + 32비트 모듈러 순수함수 `_windows_idle_from_ticks` 분리. 회귀 WindowsTickWrapTests(경계값 -2147479552/0x7FFF0000 = 69.632초, wrap 교차).
+- MED /json/list 첫 page = 활성 탭 가정(같은 인스턴스 다중 탭에서 false-negative) → **수정**: 3상태 판정 — 첫 page 포털=True / 인스턴스에 포털 탭 전무=False 확정 / 첫 page 비포털 + 뒤에 포털 탭 존재=None(60초 유계, False 확정 금지). 회귀 CdpMultiTabPortalStateTests.
+- LOW Linux 등 미지원 OS probe None fail-open → **수정**: default_owner_probe 가 전 OS 에서 감지기를 반환(미지원 OS 는 감지기의 fail-closed 그대로 소비). 회귀 AllOsProbeTests.
+- LOW fleet_worker 938 '3분'·1002 '고정 180초' 잔존 → **수정**.
+- LOW 644 'macOS 전용' 배선 주석 충돌 → **수정**.

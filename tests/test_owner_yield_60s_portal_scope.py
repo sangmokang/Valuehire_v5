@@ -497,3 +497,80 @@ class ChromeInstanceBindingTests(unittest.TestCase):
         )
         self.assertIs(snap.portal_site_active, False)
         self.assertFalse(snap.owner_activity_detected)
+
+
+class WindowsTickWrapTests(unittest.TestCase):
+    """GetTickCount signed/32비트 wrap 오산 — Codex V1 3차 HIGH 회귀."""
+
+    def test_signed_tick_and_wrap_computes_true_elapsed(self) -> None:
+        from tools.multi_position_sourcing.owner_activity import _windows_idle_from_ticks
+
+        # ctypes 기본 C int(signed) 반환 -2147479552 == unsigned 2147487744,
+        # dwTime 0x7FFF0000(2147418112) → 실제 경과 69632ms = 69.632초
+        self.assertAlmostEqual(
+            _windows_idle_from_ticks(-2147479552, 0x7FFF0000), 69.632, places=3
+        )
+
+    def test_plain_elapsed(self) -> None:
+        from tools.multi_position_sourcing.owner_activity import _windows_idle_from_ticks
+
+        self.assertEqual(_windows_idle_from_ticks(61_000, 0), 61.0)
+
+    def test_wrap_across_zero(self) -> None:
+        from tools.multi_position_sourcing.owner_activity import _windows_idle_from_ticks
+
+        # tick 이 0xFFFFFFFF 를 넘어 wrap: last=0xFFFFFF00, now=0x100 → 512ms
+        self.assertAlmostEqual(
+            _windows_idle_from_ticks(0x100, 0xFFFFFF00), 0.512, places=3
+        )
+
+
+class CdpMultiTabPortalStateTests(unittest.TestCase):
+    """같은 인스턴스에 비포털 첫 탭 + 포털 후속 탭 공존 오판 — Codex V1 3차 MEDIUM 회귀."""
+
+    _PS = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-port=9347"
+
+    def _snap(self, tabs):
+        return detect_owner_activity_snapshot(
+            system_name="Darwin",
+            run_command=_fake_run_pid("Google Chrome, 400", 1_000_000_000, self._PS, roots=""),
+            fetch_json=lambda url: tabs,
+        )
+
+    def test_portal_tab_second_in_list_is_not_false(self) -> None:
+        # 첫 page 가 유튜브라도 같은 인스턴스에 포털 탭이 있으면 False 확정 금지(None, 60초 유계)
+        snap = self._snap([
+            {"type": "page", "url": "https://www.youtube.com/watch?v=1"},
+            {"type": "page", "url": "https://www.saramin.co.kr/zf_user"},
+        ])
+        self.assertIsNone(snap.portal_site_active)
+        self.assertTrue(snap.owner_activity_detected)  # idle 1s → 양보(유계)
+
+    def test_no_portal_tab_anywhere_is_confidently_false(self) -> None:
+        snap = self._snap([
+            {"type": "page", "url": "https://www.youtube.com/watch?v=1"},
+            {"type": "page", "url": "https://news.ycombinator.com/"},
+        ])
+        self.assertIs(snap.portal_site_active, False)
+        self.assertFalse(snap.owner_activity_detected)
+
+    def test_first_page_portal_is_true(self) -> None:
+        snap = self._snap([
+            {"type": "page", "url": "https://www.linkedin.com/talent/home"},
+            {"type": "page", "url": "https://www.youtube.com/"},
+        ])
+        self.assertIs(snap.portal_site_active, True)
+        self.assertTrue(snap.owner_activity_detected)
+
+
+class AllOsProbeTests(unittest.TestCase):
+    """미지원 OS 도 fail-open 하지 않는다 — Codex V1 3차 LOW 회귀."""
+
+    def test_linux_probe_is_not_none_and_fail_closed(self) -> None:
+        from unittest.mock import patch
+
+        from tools.multi_position_sourcing.fleet_worker import default_owner_probe
+
+        with patch("platform.system", return_value="Linux"):
+            probe = default_owner_probe()
+        self.assertIsNotNone(probe)
