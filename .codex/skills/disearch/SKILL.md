@@ -10,7 +10,7 @@ Audit the Discord control plane that starts Valuehire candidate search. Distingu
 ## Start safely
 
 1. Locate the active Valuehire checkout from the current directory. Do not assume a macOS-only path.
-2. Read `CLAUDE.md`, `docs/search-access.md`, and the relevant SOT files, especially `docs/sot/25-ai-search-execution-process.*`, `29-fleet-control.*`, and `30-fleet-run-reliability.md` when present.
+2. Read `CLAUDE.md`, `docs/search-access.md`, and the relevant SOT files, especially `docs/sot/25-ai-search-execution-process.*`, `29-fleet-control.*`, and `31-fleet-run-reliability.md` when present.
 3. Inspect `git status --short` and preserve unrelated or in-progress changes.
 4. State whether the request is read-only analysis or authorizes implementation. Do not refactor code for an audit-only request.
 5. Keep all external writes off by default. Do not register Discord commands, enqueue live jobs, restart gateways/workers, send Discord messages, or run portal searches without explicit approval.
