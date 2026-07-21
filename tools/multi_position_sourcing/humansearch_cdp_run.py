@@ -381,6 +381,12 @@ def process_profile(
     (live_check or assert_not_blocked_or_abort)(tab)
     info = tab.eval(EXTRACT_JS)
     name = info.get("name") or card.get("name") or f"cand{idx}"
+    expected_name = re.sub(r"\s+", " ", _clean(str(card.get("name") or ""))).strip()
+    captured_name = re.sub(r"\s+", " ", _clean(str(name or ""))).strip()
+    if expected_name and captured_name.casefold() != expected_name.casefold():
+        raise RuntimeError(
+            "LinkedIn candidate identity mismatch after navigation; refusing screenshot/archive"
+        )
     education = _clean(info.get("education", "")).replace("School name", "").strip()
     safe = re.sub(r"[^A-Za-z0-9]+", "_", name)[:40] or f"cand{idx}"
     shot = OUT_DIR / f"{idx:02d}_{safe}.png"

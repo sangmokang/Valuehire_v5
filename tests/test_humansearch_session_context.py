@@ -148,6 +148,50 @@ def test_session_conflict_stops_before_extract_screenshot_or_archive(
     assert archive_calls == []
 
 
+def test_candidate_identity_mismatch_stops_before_screenshot_or_archive(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tab = _ProfileTab(tmp_path)
+    archive_calls: list[object] = []
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+
+    original_eval = tab.eval
+
+    def wrong_candidate(script: str):
+        payload = original_eval(script)
+        payload["name"] = "토트, Physical AI Engineer"
+        return payload
+
+    tab.eval = wrong_candidate  # type: ignore[method-assign]
+
+    def archive(*args, **kwargs):
+        archive_calls.append((args, kwargs))
+        return SimpleNamespace(row_id=1)
+
+    monkeypatch.setattr(runner, "assert_not_blocked_or_abort", lambda _tab: {"ok": True})
+    monkeypatch.setattr(
+        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save",
+        archive,
+    )
+
+    with pytest.raises(RuntimeError, match="candidate identity mismatch"):
+        runner.process_profile(
+            tab,
+            {
+                "url": "https://www.linkedin.com/talent/profile/AAA",
+                "navigation_url": (
+                    "https://www.linkedin.com/talent/profile/AAA"
+                    "?project=1752949252&searchHistoryId=21211832492"
+                ),
+                "name": "Candidate",
+            },
+            1,
+        )
+
+    assert tab.screenshots == 0
+    assert archive_calls == []
+
+
 def test_missing_existing_recruiter_target_never_creates_tab(monkeypatch) -> None:
     monkeypatch.setattr(runner.cdp, "find_page_by_url", lambda _value: None)
     created: list[str] = []
