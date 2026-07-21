@@ -517,6 +517,44 @@ def test_any_conflicting_shared_scope_key_rejects_navigation(
     assert tab.navigated == []
 
 
+def test_conflicting_search_request_id_rejects_navigation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+
+    with pytest.raises(PreflightError, match="search scope"):
+        runner._validate_profile_card_context(
+            {
+                "url": "https://www.linkedin.com/talent/profile/AAA",
+                "navigation_url": (
+                    "https://www.linkedin.com/talent/profile/AAA"
+                    "?project=1752949252&searchHistoryId=21211832492"
+                    "&searchRequestId=other-request"
+                ),
+                "source_search_url": SOURCE_SEARCH_URL,
+                "name": "Candidate",
+            }
+        )
+
+
+def test_badge_mutation_runs_lease_guard_immediately_before_dom_change() -> None:
+    trace: list[str] = []
+
+    class Tab:
+        def eval(self, _script: str):
+            return SOURCE_SEARCH_URL
+
+        def mark_busy(self, _label: str, *, expected_url: str):
+            trace.append(f"badge:{expected_url}")
+            return True
+
+    runner._mark_busy_or_abort(
+        Tab(), mutation_guard=lambda: trace.append("lease.assert_owned")
+    )
+
+    assert trace == ["lease.assert_owned", f"badge:{SOURCE_SEARCH_URL}"]
+
+
 def test_non_search_talent_source_path_is_rejected(monkeypatch, tmp_path: Path) -> None:
     tab = _ProfileTab(tmp_path)
     monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
@@ -708,6 +746,7 @@ def test_safe_target_proves_badge_before_first_navigation(monkeypatch, tmp_path:
 
     assert trace.index(f"badge:{runner.SEARCH_URL_BASE}") < trace.index("navigate")
     assert "tab.close" in trace
+    assert trace[trace.index("tab.close") - 1] == "lease.assert_owned"
     assert trace[-1] == "lease.release"
 
 

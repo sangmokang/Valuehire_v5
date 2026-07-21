@@ -141,9 +141,10 @@ def _run_mutation_guard(mutation_guard) -> None:
         mutation_guard()
 
 
-def _mark_busy_or_abort(tab) -> None:
+def _mark_busy_or_abort(tab, *, mutation_guard=None) -> None:
     current_url = str(tab.eval("location.href") or "")
     marker = getattr(tab, "mark_busy", None)
+    _run_mutation_guard(mutation_guard)
     if not callable(marker) or marker(
         "Codex:humansearch",
         expected_url=current_url,
@@ -401,7 +402,12 @@ def _validate_profile_card_context(card: dict) -> tuple[str, str, str]:
     source_parts = urlsplit(source_search_url)
     source_scope = _scope_values(source_search_url)
     navigation_scope = _scope_values(navigation_url)
-    scope_keys = {"project", "searchHistoryId", "searchContextId"}
+    scope_keys = {
+        "project",
+        "searchHistoryId",
+        "searchContextId",
+        "searchRequestId",
+    }
     common_scope = scope_keys & source_scope.keys() & navigation_scope.keys()
     conflicting_scope = {
         key
@@ -679,18 +685,22 @@ def main(
         )
         mutation_guard()
         tab = cdp.attach(t, badge=False)
+        badge_guard = lambda current_tab: _mark_busy_or_abort(
+            current_tab,
+            mutation_guard=mutation_guard,
+        )
         log(f"=== humansearch CDP run | start={start} ===")
 
         # A login/session-conflict surface must stop before the runner mutates history by
         # navigating to search. Authentication recovery belongs to the exact-target login guard.
         assert_not_blocked_or_abort(tab)
-        _mark_busy_or_abort(tab)
+        badge_guard(tab)
         navigate_results_page(tab, start, mutation_guard=mutation_guard)
         # fail-closed 라이브 게이트 (docs/sot/27): 검색이 살아있는 상태가 아니면(세션 만료/세션충돌/
         # 캡차/로그인 리다이렉트/결과 미렌더) 여기서 PreflightError 로 즉시 중단 — 수집/채점을
         # 시작조차 하지 않는다. 봇처럼 같은 네비게이션을 반복하지 않는다(SOT22 R2).
         assert_live_or_abort(tab)
-        _mark_busy_or_abort(tab)
+        badge_guard(tab)
         result_count = read_result_count(tab)
         first_page_cards = extract_cards_from_current_page(
             tab,
@@ -705,7 +715,7 @@ def main(
             pacing_seed=result_count + start,
             first_page_cards=first_page_cards,
             mutation_guard=mutation_guard,
-            badge_guard=_mark_busy_or_abort,
+            badge_guard=badge_guard,
         )
         log(f"planned traversal result_count={result_count} collected={len(cards)} start={start}")
         all_rows = process_cards_with_r4(
@@ -714,7 +724,7 @@ def main(
             owner_snapshot=owner_snapshot,
             live_check=assert_not_blocked_or_abort,
             mutation_guard=mutation_guard,
-            badge_guard=_mark_busy_or_abort,
+            badge_guard=badge_guard,
         )
         results = collect_results(all_rows)
         excluded = [r for r in all_rows if r.get("hard_exclude")]
@@ -732,6 +742,7 @@ def main(
                     safe_for_badge_cleanup = False
                 if safe_for_badge_cleanup:
                     try:
+                        mutation_guard()
                         closed = tab.close()
                     except Exception:
                         closed = False
