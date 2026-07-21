@@ -13,6 +13,8 @@ fleet_dispatch.dispatch_fleet_command(단일출처)를 그대로 감싼다.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -56,6 +58,20 @@ _NATURAL_TRIGGERS: tuple[str, ...] = (
 )
 _FOLLOWUP_TRIGGERS: tuple[str, ...] = ("계속해", "잡코리아도", "사람인부터", "방금 포지션")
 _EXPLICIT_SKILL_IN_TEXT_RE = re.compile(r"skill:(aisearch|humansearch)")
+_FILTER_CONTROL_RE = re.compile(
+    r"skill:(?:aisearch|humansearch)|aisearch|humansearch|"
+    r"후보|이\s*링크|링크|사람인|잡코리아|링크드인|linkedin|"
+    r"찾아줘|검색해줘|서치해줘|실행해줘|돌려줘|해줘|말고|이걸로|"
+    r"맥미니|macmini|맥북|macbook|winpc|windows|윈도우pc|윈도우|win|"
+    r"claude|codex|에서|부터|으로|로|도",
+    re.IGNORECASE,
+)
+
+
+def _has_natural_filter_text(text_without_urls: str) -> bool:
+    """명령·채널·기기 제어어를 뺀 일반 문장이 남으면 필터 원문을 보존한다."""
+    residual = _FILTER_CONTROL_RE.sub(" ", text_without_urls)
+    return bool(re.sub(r"[^0-9A-Za-z가-힣]+", "", residual))
 # 뒤에 \b 를 안 붙인다: Python 정규식의 \b 는 유니코드 인식이라 "aisearch로"처럼 한글
 # 조사가 바로 붙으면(h·로 둘 다 \w) 경계로 안 잡혀 매치가 깨진다 — 실측 재현됨.
 
@@ -92,6 +108,7 @@ def natural_fleet_command_text(
     context_url: str = "",
     context_channels: Sequence[str] = (),
     message_id: str = "",
+    force_linkedin_first: bool = False,
 ) -> str | None:
     """일반 Discord 문장을 Hermes slash command로 좁게 변환한다.
 
@@ -133,7 +150,13 @@ def natural_fleet_command_text(
         and len(position_urls) == len(urls)
         and ("링크드인" in low_no_urls or "linkedin" in low_no_urls)
     )
-    if not linkedin_handoff and len(clickup_urls) != 1:
+    aisearch_three_channel = (
+        force_linkedin_first
+        and explicit_skill == "aisearch"
+        and len(position_urls) == 1
+        and len(position_urls) == len(urls)
+    )
+    if not (linkedin_handoff or aisearch_three_channel) and len(clickup_urls) != 1:
         return None
     known_url = bool(clickup_urls)
     if (not known_url and not any(trigger in low for trigger in _NATURAL_TRIGGERS)
@@ -153,11 +176,14 @@ def natural_fleet_command_text(
     else:
         channels = ("saramin", "jobkorea")
 
-    skill = explicit_skill or (
-        "url" if linkedin_handoff else _default_skill_for_urls(urls))
+    skill = "url" if (linkedin_handoff or aisearch_three_channel) else (
+        explicit_skill or _default_skill_for_urls(urls))
     parts = ["/fleet-run", skill, *urls, f"channels:{','.join(channels)}"]
-    if linkedin_handoff:
+    if linkedin_handoff or aisearch_three_channel:
         parts.append("followup:aisearch")
+    if _has_natural_filter_text(low_no_urls):
+        encoded_filters = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+        parts.append(f"filters64:{encoded_filters}")
     # 이슈 B(2026-07-15): 본문(URL 제외)에 "codex" 단어가 있으면 codex 엔진 선택.
     # URL 안 문자열은 트리거 아님(low_no_urls). V1 반증 수용: 라틴 토큰 속
     # 부분문자열("precodexpost")은 오탐 — 양옆이 영숫자가 아닐 때만 단어로 인정

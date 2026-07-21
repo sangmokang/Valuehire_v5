@@ -31,6 +31,7 @@ import importlib.util
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 # Resolve the Valuehire_v5 repo root through this file's own path. Works
@@ -89,6 +90,8 @@ _SNOWFLAKE_RE = re.compile(r"^[0-9]{15,22}$")
 # silently treated as a Discord id (cross-platform identity conflation).
 _TRUSTED_PLATFORM = "discord"
 _POSITION_CONTEXT_STORE = None
+_SEARCH_INTAKE_TTL_SECONDS = 300.0
+_PENDING_SEARCH_INTAKES: dict[tuple[str, str], tuple[float, str]] = {}
 
 
 def _platform_name(source: object) -> str:
@@ -174,6 +177,43 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
     store = _position_context_store(bridge)
     context = store.get(user_id, channel_id)
     text = getattr(event, "text", "") or ""
+    pending_key = (user_id, channel_id)
+    pending = _PENDING_SEARCH_INTAKES.get(pending_key)
+    if pending:
+        created_at, fixed_skill = pending
+        if time.time() - created_at > _SEARCH_INTAKE_TTL_SECONDS:
+            _PENDING_SEARCH_INTAKES.pop(pending_key, None)
+        elif text.strip() and not text.lstrip().startswith("/") and message_id:
+            _PENDING_SEARCH_INTAKES.pop(pending_key, None)
+            context_url = context.position_url if context else ""
+            context_channels = context.channels if context else ()
+            rewritten = bridge.natural_fleet_command_text(
+                f"{fixed_skill} {text}",
+                context_url=context_url,
+                context_channels=context_channels,
+                message_id=message_id,
+                force_linkedin_first=fixed_skill == "aisearch",
+            )
+            if rewritten:
+                clickup = re.search(r"https?://app\.clickup\.com/[^\s<>]+", text, re.IGNORECASE)
+                if clickup:
+                    store.put(
+                        user_id,
+                        channel_id,
+                        clickup.group(0).rstrip(".,);]}"),
+                        ("saramin", "jobkorea"),
+                    )
+                return {"action": "rewrite", "text": rewritten}
+            # 자연어 정규화가 못 알아본 입력도 기존 fleet-run 파서로 넘긴다.
+            # fixed_skill을 앞에 고정하고 event-derived idempotency를 뒤에 붙여
+            # skill/idempotency 덮어쓰기는 중복 필드 오류로 fail-closed 된다.
+            return {
+                "action": "rewrite",
+                "text": (
+                    f"/fleet-run {fixed_skill} {text.strip()} "
+                    f"idempotency:discord:{message_id}"
+                ),
+            }
     rewritten = bridge.natural_fleet_command_text(
         text,
         context_url=context.position_url if context else "",
@@ -227,6 +267,30 @@ def _make_handler(command_name: str, *, fixed_skill: str = ""):
     return _handler
 
 
+def _make_search_intake_handler(command_name: str):
+    fixed_skill = "humansearch" if command_name in {"url", "humansearch"} else "aisearch"
+
+    def _handler(_raw_args: str) -> str:
+        gateway_user_id = _GATEWAY_USER_ID.get()
+        invocation_context = dict(_GATEWAY_INVOCATION_CONTEXT.get())
+        channel_id = str(invocation_context.get("channel_id", "") or "")
+        event_id = str(invocation_context.get("event_id", "") or "")
+        if not gateway_user_id or not channel_id or not _SNOWFLAKE_RE.fullmatch(event_id):
+            return "거부됨: Discord event identity missing — 검색 입력을 안전하게 연결할 수 없음"
+        _PENDING_SEARCH_INTAKES[(gateway_user_id, channel_id)] = (time.time(), fixed_skill)
+        if fixed_skill == "aisearch":
+            return (
+                "검색할 포지션 링크를 다음 메시지로 보내주세요. 받는 즉시 login 스킬로 "
+                "기존 로그인을 확인하고 사람인·잡코리아·LinkedIn AI Search를 시작합니다."
+            )
+        return (
+            "인재검색 URL과 필터값을 다음 메시지로 보내주세요. 직전 포지션을 이어받아 "
+            "login 스킬로 기존 로그인을 확인한 뒤 humansearch를 시작합니다."
+        )
+
+    return _handler
+
+
 _COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("fleet-run",
      "<position/search URL...> [win|winpc|macmini|macbook]",
@@ -238,9 +302,9 @@ _COMMANDS: tuple[tuple[str, str, str], ...] = (
 
 
 _DIRECT_SEARCH_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("url", "Run the Valuehire URL sourcing skill."),
-    ("aisearch", "Run the Valuehire AI Search skill."),
-    ("humansearch", "Run the Valuehire Human Search skill."),
+    ("url", "다음 메시지의 인재검색 URL·필터로 Human Search 시작"),
+    ("aisearch", "다음 메시지의 포지션으로 3채널 AI Search 시작"),
+    ("humansearch", "다음 메시지의 인재검색 URL·필터로 Human Search 시작"),
 )
 
 
@@ -253,7 +317,7 @@ def register(ctx) -> None:
     for name, description in _DIRECT_SEARCH_COMMANDS:
         ctx.register_command(
             name,
-            handler=_make_handler(name, fixed_skill=name),
+            handler=_make_search_intake_handler(name),
             description=description,
-            args_hint="<position URL> [win|winpc|macmini|macbook]",
+            args_hint="",
         )

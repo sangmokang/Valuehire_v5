@@ -12,7 +12,7 @@
   무정보 ack 를 보낸다.
 - 예외 메시지·raw 옵션 값이 회신에 노출되지 않는다.
 - 게이트웨이 자신은 SUPABASE_SERVICE_ROLE_KEY(관리자급)를 읽지 않는다(INV-D5).
-- 텍스트 명령은 owner DM + 봇 멘션만(인가된 일반 멤버의 자유 DM 은 무시).
+- 텍스트 DM 명령은 Discord Contacts 전체가 사용할 수 있고, 길드 텍스트는 봇 멘션만 처리한다.
 - 단위테스트는 discord.py 의 실제 게이트웨이/HTTP 를 켜지 않는다 — fleet-run 성공 경로가
   거치는 fleet_worker.discord_notify 도 명시적으로 무력화한다(네트워크 0 실제 보증).
 """
@@ -708,14 +708,13 @@ class TextMessageTests(_NotifySilencedCase):
             message, bot_user_id="999999999999999999", queue=queue,
             authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
         )
-        self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result["action"], "enqueued")
         self.assertEqual(len(queue.enqueued), 1)
         self.assertIn("channel.send", message.calls)
 
-    async def test_member_dm_text_command_ignored_owner_only_scope(self) -> None:
-        """goal §3 — 텍스트 명령 기본 범위는 owner DM + 봇 멘션만. 인가된 일반 멤버라도
-        자유 DM 슬래시 텍스트는 큐에 닿으면 안 된다(Codex 2차검증 MINOR 지적 반영)."""
+    async def test_member_dm_text_command_enqueues_for_authorized_contact(self) -> None:
+        """친구/연락처로 등록된 사용자는 DM 텍스트 명령도 큐에 넣을 수 있어야 한다."""
         message = FakeMessage(
             message_id="171717171717171717", author_id=MEMBER_ID,
             content=f"/fleet-run url:{CLICKUP_URL}",
@@ -725,9 +724,10 @@ class TextMessageTests(_NotifySilencedCase):
             message, bot_user_id="999999999999999999", queue=queue,
             authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
         )
-        self.assertIsNone(result)
-        self.assertEqual(queue.enqueued, [])
-        self.assertEqual(message.calls, [])
+        assert result is not None
+        self.assertEqual(result["action"], "enqueued")
+        self.assertEqual(len(queue.enqueued), 1)
+        self.assertIn("channel.send", message.calls)
 
     async def test_text_message_unsupported_returns_none_no_network(self) -> None:
         message = FakeMessage(

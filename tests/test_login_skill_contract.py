@@ -175,7 +175,7 @@ def test_codex_sync_classifies_login_as_full(tmp_path: Path) -> None:
 def test_machine_contract_is_identical_and_fail_closed() -> None:
     canonical = json.loads(_text(CONTRACT))
     assert _text(CONTRACT) == _text(CLAUDE_CONTRACT)
-    assert canonical["schema_version"] == "1.3.0"
+    assert canonical["schema_version"] == "1.4.0"
     assert canonical["state_machine"]["HUMAN_AUTH"]["allowed_actions"] == ["read_state", "wait"]
     assert canonical["state_machine"]["HUMAN_AUTH"]["timeout_seconds"] is None
     assert canonical["browser_limits"] == {
