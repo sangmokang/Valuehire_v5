@@ -1,0 +1,100 @@
+{
+  "verdict": "PASS",
+  "defects": [
+    {
+      "severity": "LOW",
+      "file_line": "skills/disearch/references/review-checklist.md:97",
+      "repro": "rg -n 'SOT30' . --glob '!.git/**' 실행 후 '구 SOT30'과 strict 계약의 'SOT-30'을 제외하면, 현재 사용하는 disearch 점검 안내문이 fleet-run 후속 항목을 아직 SOT30으로 가리킨다. 실제 fleet-run 신뢰성 문서는 docs/sot/31-fleet-run-reliability.md이므로 번호 표기 잔존이다. 생산 코드 실행에는 영향이 없다."
+    },
+    {
+      "severity": "LOW",
+      "file_line": "docs/prompts/fix-107-then-resume-dongtan-ai-search-2026-07-15.md:17",
+      "repro": "rg -n 'SOT30' docs/prompts 실행 시 과거 실행 프롬프트가 SOT29·SOT30·SOT25를 읽으라고 남아 있다. 작성 당시의 과거 기록이지만 현재 번호 기준으로는 fleet-run 문서를 SOT31로 표시하지 않은 표기 잔존이다. 생산 코드 실행에는 영향이 없다."
+    },
+    {
+      "severity": "LOW",
+      "file_line": "docs/prompts/discord-direct-connect-goal-2026-07-17.md:12",
+      "repro": "rg -n 'SOT30' docs/prompts 실행 시 게이트웨이 중복 설명이 아직 SOT30을 가리킨다. 해당 fleet-run 신뢰성 근거는 현재 SOT31이므로 과거 프롬프트의 번호 표기 잔존이다. 생산 코드 실행에는 영향이 없다."
+    }
+  ],
+  "attempts": [
+    {
+      "what": "git rev-parse HEAD, git status, git log -1 -p와 git diff HEAD~1..HEAD로 대상 커밋과 변경 8파일을 대조했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "tests/test_owner_activity.py 서두와 test_b/test_c/fail-closed 주석을 실제 compute_yield_decision 기본값 portal_site_active=None 동작과 대조했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "detect_owner_activity_snapshot을 직접 호출해 Slack 및 YouTube 최근 입력은 portal_site_active=False와 즉시 진행, LinkedIn 59.9초는 양보, 60.0초는 재개인지 재현했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "rg -n 'SOT30' tools scripts를 실행하고 '구 SOT30'을 제외한 잔존을 검사했으며 heartbeat 4곳, dispatch 1곳, job_queue 3곳, fleet_worker 3곳, fleet_watchdog 2곳을 파일별로 확인했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "전체 저장소에서 SOT30을 재검색해 역사 보존 표기와 strict 계약의 SOT-30을 제외했다.",
+      "result": "깨짐"
+    },
+    {
+      "what": "tests/test_strict_v5_port.py의 startswith('# SOT 31 ') 구현을 열고 실제 제목 통과 뒤 '# SOT 310'과 '# SOT 30'을 메모리에서 주입해 같은 검사를 호출했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "생산 소스의 180/60초 수치를 전수 검색해 owner-yield 임계는 owner_activity 60.0과 fleet_worker 60으로 정리됐고, 남은 180은 로그인 타임아웃·사람 흉내 지연 등 별도 기능인지 확인했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "portal_site_active 배선을 owner_activity에서 harvest_driver, fleet_worker 기본 probe, humansearch, portal_worker 실조작 직전 장벽까지 호출 경로로 추적했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "osascript/ioreg/ps 호출마다 5초 timeout이 전달되는지 직접 수집하고, 악성 앞창 앱 이름을 넣어 활성 탭 AppleScript 문자열 조립 경로에 도달하지 못하는지 확인했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "LinkedIn 정상·서브도메인·후행점과 evil-linkedin, linkedin.com.evil, userinfo, javascript, file, 잘못된 IPv6 등 URL 9종을 정규화 함수로 공격했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "앞창 PID의 CDP 포트 결합, 9222/9225 구분, 포트 없는 다중 Chrome의 None 처리, 단일 Chrome의 AppleScript 허용을 코드와 검사로 대조했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "Windows GetTickCount 계산을 signed 경계와 wrap 교차를 포함한 1,048,576개 조합으로 독립 계산과 대조하고 생산 ctypes restype=c_uint32 배선을 확인했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "CDP 응답을 조회 실패, 비목록, page 없음, 첫 포털, 첫 비포털+후속 포털, 포털 없음, 첫 URL 무효의 7상태로 호출해 True/False/None 3상태를 대조했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "Linux 등 미지원 OS가 owner_activity_detected=True로 닫히고 Windows 판독 실패도 True로 닫히는지 함수 호출로 확인했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "portal 축 절단, 항상 True probe, Windows wrap 제거, 다중 Chrome 오판, CDP 후속 포털 False 오판, 두 wrapper 동시 항상 재개의 잘못된 구현 6종을 메모리에서 주입했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "관련 검사 8파일을 실행해 owner 활동·포털 범위·제목·harvest·humansearch·자동재개·fleet 양보·session batch를 함께 검사했다.",
+      "result": "안 깨짐"
+    },
+    {
+      "what": "전체 pytest를 저장소 기존 venv로 실행했다. 2037 passed, 20 failed, 4 xfailed, 105 subtests passed였고, 실패 20개는 포트 bind·ps·사용자 홈/컴파일러 캐시 쓰기가 차단된 환경 제한이었다. 2037+20=2057로 주장 수는 일치하지만 이 제한 환경에서 2057 passed 문구 자체는 완전 재현하지 못했다.",
+      "result": "검증 불가"
+    },
+    {
+      "what": "전체 9개 커밋의 테스트 단언 변경과 skip/xfail 추가 여부를 대조하고, 마지막에 git diff --exit-code HEAD 및 git status로 저장소 무변경을 확인했다.",
+      "result": "안 깨짐"
+    }
+  ],
+  "notes": {
+    "a_harvest_wiring": "portal_site_active 배선은 생산 경로에 실제 연결돼 있다. macOS snapshot은 비Chrome을 False, 정확한 3사 호스트를 True, 판독 불가·다중 인스턴스 모호성을 None으로 만든 뒤 compute_yield_decision에 전달한다. harvest의 decide_tick/decide_resume는 이 값을 그대로 전달하고, 실전 harvest·fleet·humansearch는 snapshot의 owner_activity_detected를 소비하며, portal_worker 실조작 장벽은 portal_site_active를 다시 확인한다. 직접 호출에서 Slack/YouTube 최근 입력은 즉시 진행, LinkedIn은 59.9초 양보와 60.0초 재개가 확인됐다.",
+    "b_osascript_injection": "모든 osascript/ioreg/ps 호출은 argv 배열로 실행되고 5초 timeout이 걸린다. 동적으로 AppleScript에 들어가는 foreground_app은 CHROME_APP_NAMES의 정확한 허용 목록을 통과한 값만 도달한다. 악성 앱 이름 재현에서는 활성 탭 AppleScript 호출이 0회였고 portal_site_active=False로 처리됐다. CDP 조회도 127.0.0.1 고정 주소와 숫자로 파싱된 포트만 사용한다. timeout·명령 주입 관련 생산 안전 결함은 재현되지 않았다.",
+    "c_test_weakening": "이번 커밋은 tests/test_owner_activity.py의 설명과 주석만 고쳤고, SOT31 제목 단언은 '# SOT 31 ' 정확 토큰으로 강화했다. 관련 검사 144개가 전부 통과했다. 잘못된 구현 6종과 제목 반례 2종을 일부러 주입했을 때 모두 검사가 실패해 portal 축, 재개 방향, wrap, 다중 인스턴스, CDP 3상태, 항상 True probe를 잡았다. 59.9/60 경계와 resume/run 양방향 독립 단언도 존재한다. 테스트 삭제·skip/xfail 추가·주요 단언 약화는 확인되지 않았다.",
+    "d_deferred_items": "9라운드 전체 동작 영역을 재공격했으나 생산 동작·안전 결함은 발견되지 않았다. 이전 V8 LOW 4건은 이번 커밋에서 실제로 정리됐다. tools/scripts의 SOT30 13곳은 모두 'SOT31(구 SOT30)'이고 역사 표기를 제외한 잔존은 0건이다. 다만 전체 저장소에는 현재 점검 안내문 1곳과 과거 실행 프롬프트 2곳의 옛 번호가 남아 LOW로 기록했다. 전체 검사 20개는 샌드박스가 로컬 포트, 프로세스 목록, 사용자 폴더/캐시 쓰기를 막아 실행되지 않았으며 이번 변경 관련 144개는 모두 통과했다. 사장님 기준상 생산 결함 0건이고 남은 것은 표기 수준 LOW뿐이므로 verdict=PASS다."
+  }
+}

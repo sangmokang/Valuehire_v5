@@ -105,3 +105,8 @@ RED(새 테스트 커밋) → GREEN(최소 변경: owner_activity.py, fleet_work
 ### V1 7차 (Codex Rescue, 2026-07-21) — verdict=FAIL(LOW 4건, 전부 표기 정합성) → 정리
 - 생산 동작 공격 전 항목 "안 깨짐"(URL 위장 9종, CDP 7상태, Windows wrap 1,048,576조합, 오배선 변형 등).
 - LOW 4건 수정: test_owner_activity 서두·주석을 '순수함수 portal=None 하위호환 경로 검증'으로 명시(실전 snapshot 대비 모순 제거), 생산 코드 SOT30 호칭 → SOT31(구 SOT30) — heartbeat·dispatch 지적 5곳 + 선제 발견 job_queue·fleet_worker·fleet_watchdog 8곳, SOT31 제목 검사 '# SOT 31 ' 토큰 정확 매칭(310 오기 봉쇄).
+
+### V1 최종 8차 (Codex Rescue, 2026-07-21) — **verdict=PASS**
+- 판정문: docs/engineering/owner-yield-60s-portal-scope.verdict.json (총 8라운드, 생산 동작·안전 결함 0).
+- 잔존 LOW 3건은 전부 문서 번호 표기(비생산): disearch 체크리스트 1곳은 본 커밋에서 정리, 과거 프롬프트 2곳은 역사 기록으로 보존.
+- 라이브 검증: detect_owner_activity_snapshot 실호출로 Slack·YouTube 최근 입력=즉시 진행 / LinkedIn 59.9초=양보·60.0초=재개를 Codex 가 직접 재현.
