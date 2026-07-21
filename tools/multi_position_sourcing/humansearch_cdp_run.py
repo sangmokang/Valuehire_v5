@@ -15,6 +15,7 @@ import time
 from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -141,10 +142,11 @@ def extract_cards_from_current_page(tab) -> list[dict]:
     cards = tab.eval(r"""(() => {
       const seen = new Set(); const out = [];
       for (const a of document.querySelectorAll('a[href*="/talent/profile/"]')) {
-        const href = a.href.split('?')[0];
+        const navigation_url = a.href;
+        const href = navigation_url.split('?')[0];
         if (seen.has(href)) continue; seen.add(href);
         const li = a.closest('li');
-        out.push({url: href, name:(a.innerText||'').trim(),
+        out.push({url: href, navigation_url, name:(a.innerText||'').trim(),
                   snippet:(li?li.innerText:'').replace(/\n+/g,' | ').slice(0,200)});
       }
       return out;
@@ -331,14 +333,13 @@ def process_cards_with_r4(
             log("R4 yield — owner Chrome activity detected; stopping profile traversal")
             break
         try:
-            r = process_profile(tab, card, i)
+            r = process_profile(tab, card, i, live_check=live_check)
             hx = r.get("hard_exclude")
             tag = "⛔HX  " if hx else ("✅PASS" if r["score"] >= 70 else "  ")
             log(f"{tag} #{i:02d} {r['name']!r} score={r['score']} otw={r['otw']} edu={r['education'][:30]!r}"
                 + (f" hard_exclude={hx}" if hx else ""))
             all_rows.append(r)
             _write_results(all_rows)
-            live_check(tab)
         except PreflightError as e:
             log(f"R4 STOP — live preflight failed during traversal: {e}")
             break
@@ -350,9 +351,34 @@ def process_cards_with_r4(
     return all_rows
 
 
-def process_profile(tab, card: dict, idx: int) -> dict:
+def process_profile(
+    tab,
+    card: dict,
+    idx: int,
+    *,
+    live_check=None,
+) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    tab.navigate(card["url"], wait_ms=8000)
+    profile_url = str(card.get("url") or "").strip()
+    navigation_url = str(card.get("navigation_url") or "").strip()
+    if not navigation_url:
+        raise RuntimeError(
+            "LinkedIn result navigation href missing; refusing bare profile deep-link"
+        )
+    profile_parts = urlsplit(profile_url)
+    navigation_parts = urlsplit(navigation_url)
+    if (
+        navigation_parts.scheme not in {"http", "https"}
+        or navigation_parts.netloc.lower() != "www.linkedin.com"
+        or navigation_parts.path != profile_parts.path
+        or not navigation_parts.query
+    ):
+        raise RuntimeError("LinkedIn result navigation href is not the exact scoped profile link")
+    tab.navigate(navigation_url, wait_ms=8000)
+    # Escaped defect #156: a multiple-sign-in page used to be extracted, screenshotted,
+    # archived, and scored as a candidate because this check ran only after process_profile.
+    # Challenge/session-conflict detection must be the first operation after navigation.
+    (live_check or assert_not_blocked_or_abort)(tab)
     info = tab.eval(EXTRACT_JS)
     name = info.get("name") or card.get("name") or f"cand{idx}"
     education = _clean(info.get("education", "")).replace("School name", "").strip()
@@ -364,7 +390,7 @@ def process_profile(tab, card: dict, idx: int) -> dict:
         raise RuntimeError("profile screenshot save failed; traversal must not advance") from e
     tenures = build_tenures(info.get("dates", []))
     prof = CapturedProfile(
-        profile_url=card["url"],
+        profile_url=profile_url,
         source_channel="linkedin_rps",
         visible_text=info.get("full", ""),
         summary=info.get("summary", "") or info.get("headline", ""),
@@ -382,7 +408,7 @@ def process_profile(tab, card: dict, idx: int) -> dict:
 
     hard_exclude = runner_hard_exclude(prof)
     receipt = ProfileArchiveStore().save(
-        profile_url=card["url"], channel="linkedin_rps", position_id=POSITION.position_id,
+        profile_url=profile_url, channel="linkedin_rps", position_id=POSITION.position_id,
         scenario="humansearch", page=1, candidate_index=idx, screenshot_path=shot,
         resume_text=prof.visible_text, hard_exclude_reason=hard_exclude or "",
     )
@@ -390,7 +416,7 @@ def process_profile(tab, card: dict, idx: int) -> dict:
     return {
         "idx": idx,
         "name": name,
-        "url": card["url"],
+        "url": profile_url,
         # 러너면 하드제외(PC-C3a): 캡처 직후 적용 — 프리랜서·단기이직·전문대면 results.json 제외.
         "hard_exclude": hard_exclude,
         "otw": info.get("otw", False),
@@ -418,10 +444,15 @@ def main(max_profiles: int = 25, start: int = 0, *, owner_snapshot=detect_owner_
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     t = cdp.find_page_by_url("searchContextId=8d792952") or cdp.find_page_by_url("linkedin.com/talent/search")
     if not t:
-        t = cdp.new_tab("about:blank")
+        raise RuntimeError(
+            "existing LinkedIn Recruiter target not found; refusing to create a new tab/session"
+        )
     tab = cdp.attach(t)
     log(f"=== humansearch CDP run | start={start} ===")
 
+    # A login/session-conflict surface must stop before the runner mutates history by
+    # navigating to search. Authentication recovery belongs to the exact-target login guard.
+    assert_not_blocked_or_abort(tab)
     navigate_results_page(tab, start)
     # fail-closed 라이브 게이트 (docs/sot/27): 검색이 살아있는 상태가 아니면(세션 만료/세션충돌/
     # 캡차/로그인 리다이렉트/결과 미렌더) 여기서 PreflightError 로 즉시 중단 — 수집/채점을

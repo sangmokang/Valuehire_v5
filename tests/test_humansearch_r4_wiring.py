@@ -69,7 +69,11 @@ def test_owner_activity_before_first_profile_opens_zero(monkeypatch, tmp_path: P
     opened: list[str] = []
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
-    monkeypatch.setattr(hcr, "process_profile", lambda _tab, card, _idx: opened.append(card["url"]) or _row(card, 1))
+    monkeypatch.setattr(
+        hcr,
+        "process_profile",
+        lambda _tab, card, _idx, **_kwargs: opened.append(card["url"]) or _row(card, 1),
+    )
 
     rows = hcr.process_cards_with_r4(
         FakeTab(),
@@ -89,7 +93,8 @@ def test_owner_activity_after_one_profile_preserves_partial_results(monkeypatch,
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
 
-    def fake_process(_tab, card: dict, idx: int) -> dict:
+    def fake_process(_tab, card: dict, idx: int, **_kwargs) -> dict:
+        _kwargs["live_check"](_tab)
         opened.append(card["url"])
         return _row(card, idx)
 
@@ -113,7 +118,7 @@ def test_no_owner_activity_processes_all_cards(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
 
-    def fake_process(_tab, card: dict, idx: int) -> dict:
+    def fake_process(_tab, card: dict, idx: int, **_kwargs) -> dict:
         opened.append(card["url"])
         return _row(card, idx)
 
@@ -136,7 +141,8 @@ def test_mid_run_preflight_error_stops_without_opening_remaining(monkeypatch, tm
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
 
-    def fake_process(_tab, card: dict, idx: int) -> dict:
+    def fake_process(_tab, card: dict, idx: int, **_kwargs) -> dict:
+        _kwargs["live_check"](_tab)
         opened.append(card["url"])
         return _row(card, idx)
 
@@ -164,11 +170,9 @@ def test_mid_run_preflight_error_stops_without_opening_remaining(monkeypatch, tm
 
     assert [row["url"] for row in rows] == [
         "https://www.linkedin.com/talent/profile/000",
-        "https://www.linkedin.com/talent/profile/001",
     ]
     assert opened == [
         "https://www.linkedin.com/talent/profile/000",
-        "https://www.linkedin.com/talent/profile/001",
     ]
     assert checks["count"] == 2
 
@@ -184,6 +188,7 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(hcr.cdp, "new_tab", lambda _url: {"targetId": "new"})
     monkeypatch.setattr(hcr.cdp, "attach", lambda _target: tab)
     monkeypatch.setattr(hcr, "navigate_results_page", lambda _tab, _start: None)
+    monkeypatch.setattr(hcr, "assert_not_blocked_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "assert_live_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(hcr, "read_result_count", lambda _tab: 5)
     monkeypatch.setattr(hcr, "extract_cards_from_current_page", lambda _tab: [])
