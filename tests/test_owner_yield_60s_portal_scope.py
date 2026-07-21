@@ -632,3 +632,33 @@ class WindowsProductionReaderTests(unittest.TestCase):
 
         with patch.object(ctypes, "windll", BoomWindll(), create=True):
             self.assertIsNone(oa._windows_idle_seconds())
+
+
+class WindowsProbeResumeAsymmetryTests(unittest.TestCase):
+    """probe 가 '항상 True'로 오배선돼도 잡는다 — Codex V1 5차 LOW: 60초 재개 방향 봉인."""
+
+    def test_windows_probe_resumes_after_61s_idle(self) -> None:
+        from unittest.mock import patch
+
+        from tools.multi_position_sourcing import owner_activity as oa
+        from tools.multi_position_sourcing.fleet_worker import default_owner_probe
+
+        with patch("platform.system", return_value="Windows"), patch.object(
+            oa, "_windows_idle_seconds", lambda: 61.0
+        ):
+            probe = default_owner_probe()
+            self.assertIsNotNone(probe)
+            self.assertIs(probe(), False)  # 61초 idle → 재개(양보 아님)
+
+    def test_windows_probe_yields_within_60s(self) -> None:
+        from unittest.mock import patch
+
+        from tools.multi_position_sourcing import owner_activity as oa
+        from tools.multi_position_sourcing.fleet_worker import default_owner_probe
+
+        with patch("platform.system", return_value="Windows"), patch.object(
+            oa, "_windows_idle_seconds", lambda: 30.0
+        ):
+            probe = default_owner_probe()
+            self.assertIsNotNone(probe)
+            self.assertIs(probe(), True)

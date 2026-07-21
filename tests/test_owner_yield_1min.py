@@ -165,7 +165,7 @@ def test_humansearch_prompt_unchanged_by_url_rule():
 
 def test_sot29_has_owner_yield_invariant():
     data = json.loads((REPO / "docs" / "sot" / "29-fleet-control.json").read_text("utf-8"))
-    inv = data["invariants"].get("INV9_owner_yield_3min", "")
+    inv = data["invariants"].get("INV9_owner_yield_1min", "")
     assert "60" in inv and "재개" in inv, "SOT29 INV9(1분 자동 재개) 미명문화"
     md = (REPO / "docs" / "sot" / "29-fleet-control.md").read_text("utf-8")
     assert "1분" in md and "자동 재개" in md

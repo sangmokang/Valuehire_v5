@@ -93,3 +93,7 @@ RED(새 테스트 커밋) → GREEN(최소 변경: owner_activity.py, fleet_work
 - LOW SOT31:91 180/3분 현행 서술 + 테스트 문구·이름 잔존 → **수정**(SOT31 60초 개정 반영, test_owner_yield_3min.py → test_owner_yield_1min.py 개명, 3분 문구 일괄 갱신. 과거 기록 문서(docs/prompts·구 goal)는 역사 보존).
 - LOW WindowsTickWrapTests 생산 연결 미봉인 → **수정**: WindowsProductionReaderTests(가짜 ctypes.windll 로 _windows_idle_seconds 실호출, restype=c_uint32 증명 + 실패 시 None).
 - LOW AllOsProbeTests callable 미실행 → **수정**: Linux/Windows probe() 실행 결과 True(fail-closed)까지 검증.
+
+### V1 5차 (Codex Rescue, 2026-07-21) — verdict=FAIL(LOW 5건만, HIGH/MED 0) → 정리
+- 과거 결함 7종을 일부러 되살린 변형(180 복귀·portal 축 절단·timeout 제거 등)이 전부 테스트에 잡힘을 Codex 가 확인 — 회귀 봉인 유효.
+- LOW test_autoresume_decision 180 그리드·문구 → 60 그리드로 갱신. LOW test_session_batch 함수명 3min → 1min. LOW SOT29 JSON invariant 키 INV9_owner_yield_3min → INV9_owner_yield_1min(+소비 테스트). LOW SOT31 제목 번호 30 → 31 정정. LOW '항상 True probe' 변형 미검출 → WindowsProbeResumeAsymmetryTests(61초 idle 에서 probe()==False)로 봉인.

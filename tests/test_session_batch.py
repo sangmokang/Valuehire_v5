@@ -271,7 +271,7 @@ def test_variant_job_does_not_rebacklog():
     assert q.enqueued == []
 
 
-def test_paused_for_human_yields_3min_not_permanent():
+def test_paused_for_human_yields_1min_not_permanent():
     """이슈 #107(SOT29 INV9, 사장님 지시; 2026-07-20 60초 개정)로 스펙 교체: paused = '1분 양보'(폐기 아님).
 
     구 스펙("paused 후 영구 enqueue 중단", #104)은 사장님 지시로 폐기됐다. 1분 창
