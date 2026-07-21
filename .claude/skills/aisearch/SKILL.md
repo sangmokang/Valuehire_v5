@@ -36,6 +36,7 @@ description: "Valuehire AI Search를 실행·점검·디버깅한다. \"AI Searc
 
 ## First Moves
 
+0. **⛔ /login 먼저 (선행 게이트, 2026-07-20 사장님 지시)**: 포털(사람인·잡코리아·LinkedIn)에 브라우저로 붙는 라이브 작업이면 stage `0_preflight` 진입 전에 `login` 스킬(`.claude/skills/login/SKILL.md`, 정본 `skills/login/`)을 먼저 적용한다 — 기존 CDP 브라우저·정확한 기존 탭만 재사용(새 창 0·새 탭 0), 사이트별 로그인 마커로 증명된 뒤에만 검색을 시작한다. 브리핑·dry-run 등 브라우저 무접촉 작업은 예외.
 1. `docs/sot/25-ai-search-execution-process.md`(사람용 입구) → `25-ai-search-execution-process.json`(기계 명세)를 읽는다. **이 JSON이 한 턴의 단계·게이트 권위다.**
 2. 라이브/코드 작업 전 SOT 체커를 돌린다:
 

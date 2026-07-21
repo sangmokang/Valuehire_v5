@@ -8,6 +8,8 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
 정본(SOT)은 레포에 있다. **이 파일은 발동용 심** — 절차·규칙·설정을 여기 복제하지 않는다.
 
 ## ⛔ 시작 게이트 (생략 금지)
+0. **/login 먼저 (2026-07-20 사장님 지시)**: 브라우저에 붙기 전 `login` 스킬(`skills/login/SKILL.md`)을 먼저 적용한다 — 기존 CDP 브라우저·정확한 기존 탭만 재사용(새 창 0·새 탭 0), 로그인 마커 증명 후에만 순회 시작. 로그아웃이면 login 스킬 절차로 복구하고, 캡차·2FA·세션충돌이면 STOP.
+
 발동 즉시, 작업 전에 반드시 읽는다:
 1. `skills/humansearch/SKILL.md` — 절차 정본(순회·채점·발송 + **확장 스펙 2026-07-02** 5요건 + 실행 함정)
 2. `skills/humansearch/humansearch.config.json` — 설정 단일 출처(가중치·합격선·하드제외·`position_inputs`·`clickup_registration`·`persistence`·`reporting`)

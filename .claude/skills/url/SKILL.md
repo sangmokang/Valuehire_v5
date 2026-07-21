@@ -49,6 +49,7 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 - 보고는 **짧고 쉬운 한국어**(CLAUDE.md 0번 규칙).
 
 ## 🖥️ 브라우저 드라이버
+- **⛔ /login 먼저 (2026-07-20 사장님 지시)**: RPS에 브라우저로 붙기 전 `login` 스킬(`skills/login/SKILL.md`)을 먼저 적용한다 — 기존 CDP 브라우저·정확한 기존 탭만 재사용(새 창 0·새 탭 0), LinkedIn Recruiter 로그인 마커 증명 후에만 STEP 0 진행.
 - **검색어 입력·필터 클릭·"Start a keyword search" 실행 = claude-in-chrome 확장 실제입력**(합성입력 안 먹음).
 - **결과 URL·DOM 수확 = raw CDP 단일탭 OK**(`tools/multi_position_sourcing/raw_cdp.py`, `suppress_origin=True`). 수확 직전 `Page.bringToFront`.
 - **🔴 점유 배지**: raw CDP 로 붙기 전에 `export VH_BUSY_TASK=/url`(Codex 면 `VH_BUSY_AGENT=Codex`). `raw_cdp.attach()` 하면 화면에 "🤖 …자동화 사용중 · /url" 배지가 자동으로 뜬다(사장님이 점유 인지, SOT 투명성). 상세 규약은 humansearch SKILL "브라우저 드라이버" 절.
