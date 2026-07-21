@@ -1,0 +1,4 @@
+interface:
+  display_name: "Strict Mode"
+  short_description: "Evidence-backed strict execution mode"
+  default_prompt: "Use $st to run the requested task in strict Codex mode."

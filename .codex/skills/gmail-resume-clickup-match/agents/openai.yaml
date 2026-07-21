@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gmail Resume Match"
+  short_description: "Run Gmail resume rematch readiness safely"
+  default_prompt: "Use $gmail-resume-clickup-match to audit the recommended Gmail resume rematch readiness."

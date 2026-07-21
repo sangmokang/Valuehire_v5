@@ -1,0 +1,7 @@
+interface:
+  display_name: "Docs Review"
+  short_description: "승인 게이트로 docs 중복·충돌을 정리합니다"
+  default_prompt: "Use $docsreview to audit docs/ read-only and present an approval package without changing documents."
+
+policy:
+  allow_implicit_invocation: true

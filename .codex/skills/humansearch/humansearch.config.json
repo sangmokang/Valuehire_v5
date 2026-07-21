@@ -1,0 +1,176 @@
+{
+  "$schema_version": "1.0.0",
+  "title": "humansearch — 사람이 걸어둔 검색 결과 순회·채점·디스코드 발송 설정 (SSOT)",
+  "owner_decisions_2026-06-25": "합격선 70 / 지방 국공립 허용 / 사람인·잡코리아도 링크드인과 동일 가중치 / 채널 병렬 / 10페이지 랜덤·천천히",
+  "code_single_source": "tools/multi_position_sourcing/humansearch.py — 상수(SCORING_WEIGHTS·PASS_THRESHOLD·마커)와 이 JSON은 테스트(H2/H3)가 일치 강제",
+
+  "invocation": {
+    "trigger_keywords": ["humansearch", "휴먼서치", "이 화면 순회", "후보 솎아서 디스코드", "리스팅 돌면서 채점"],
+    "mode": {
+      "by_position_name": "사장님이 포지션명 또는 ClickUp positionId 제공 → JD 로드",
+      "by_visible_screen": "현재 브라우저에 검색결과·포지션이 명확히 보임 → 그 화면을 SOT 삼음"
+    },
+    "required_any": ["position_name", "position_id", "position_text", "position_url", "visible_search_url"],
+    "required_any_note": "최소 1개 필요, 복수 허용(2026-07-02 확장) — 포지션·검색 URL 모두 여러 개를 받을 수 있다. 상세 스키마는 position_inputs / search_url_inputs.",
+    "search_already_set_by_human": true
+  },
+
+  "browser_driver": {
+    "primary": "raw_cdp",
+    "primary_note": "주력은 raw CDP 단일탭(tools/multi_position_sourcing/raw_cdp.py) — 사장님 9222 디버그 크롬에 websocket 으로 *한 타깃*에만 붙는다. 탭 과다(수십 개) 환경에서 connectOverCDP 전체 attach hang 을 회피하기 위함(2026-06-26 사장님 지시).",
+    "endpoint": "http://localhost:9222",
+    "origin_workaround": "Chrome 가 Origin 헤더 붙은 ws 핸드셰이크를 403 거부 → websocket-client 의 suppress_origin=True 로 우회(--remote-allow-origins 재기동 불필요).",
+    "fallback": "mcp_claude_in_chrome",
+    "fallback_note": "확장이 연결돼 있고 raw CDP 가 불가할 때만 MCP claude-in-chrome 으로 폴백.",
+    "single_tab_rule": "전용 탭 1개에만 붙는다. 사장님 다른 탭은 건드리지 않는다(양보 R4)."
+  },
+
+  "channels": {
+    "values": ["linkedin_rps", "saramin", "jobkorea"],
+    "execution": "parallel",
+    "execution_note": "세션 충돌·봇 가드 안전하면 3채널 동시. 위험 감지 시 순차 폴백.",
+    "infer_from": "활성 탭 talent pool URL 패턴 또는 사장님 지정",
+    "filter_dom_sot": "docs/sot/22-talent-search-filters.json + docs/sot/23-channel-dom-selectors.md (셀렉터·결과수 트리 재사용)"
+  },
+
+  "traversal": {
+    "max_pages": 10,
+    "page_order": "random",
+    "page_order_note": "start=0,25,50… 페이지를 무작위 순서로 오감 — 순차 PAGINATION 패턴 회피",
+    "human_like_pacing": true,
+    "pacing_note": "프로필·페이지 열 때 너무 빠른 속도 금지(사장님 2026-06-25). 사람처럼 천천히.",
+    "linkedin_delay_ms": {"min": 20000, "max": 60000, "source": "SOT22 linkedin.bot_protection"},
+    "portal_delay_ms": {"min": 3000, "max": 8000},
+    "linkedin_pool": "Open to work 위주, 랜덤값 부여 후 하나씩 클릭"
+  },
+
+  "per_profile": {
+    "actions": ["프로필 상세 진입", "화면 스크린샷 1장 저장", "레쥬메 텍스트 추출"],
+    "screenshot_dir": "~/.vh-search-results/{channel}/{date}/{keyword}/",
+    "save_unconditionally": "검토 가치 있는 카드는 점수 무관 저장(SOT22 R6, 차감 0)"
+  },
+
+  "scoring": {
+    "weights": {"education": 0.30, "role_fit": 0.50, "profile_logic": 0.10, "job_stability": 0.10},
+    "weights_note": "학력30%·직무적합50%·프로필 논리력10%·이직 안정성10% (사장님 지시 그대로). 3채널 공통.",
+    "pass_threshold": 70,
+    "score_range": "0~100 가중합",
+    "function": "tools/multi_position_sourcing/humansearch.py score_humansearch()"
+  },
+
+  "hard_exclude": {
+    "applies_before_scoring": true,
+    "channels_with_school_cut": ["saramin", "jobkorea"],
+    "linkedin_skips_school_cut": "open-to-work 가중 점수제 — 학교는 가중치로 반영, 하드 제외 안 함",
+    "freelancer_markers": ["freelance", "freelancer", "프리랜서", "개인사업자", "독립계약자", "independent contractor", "외주", "contract worker"],
+    "frequent_job_change": {
+      "min_short_hops": 2,
+      "short_tenure_months": 12,
+      "rule": "재직 12개월 미만으로 끝난 이직이 2회 이상이면 프로필 통째 제외(아예제외)",
+      "current_job_excluded_from_count": true,
+      "function": "scoring.count_short_tenure_hops()"
+    },
+    "low_tier_school_markers": ["전문대", "전문학교", "직업전문학교", "사이버대", "방송통신대", "학점은행", "polytechnic", "vocational"],
+    "regional_national_allowed": ["부산대", "경북대", "전남대", "전북대", "충남대", "충북대", "경상국립대", "경상대", "강원대", "제주대", "단국대"],
+    "world_elite_full_score": ["UCLA", "UC Berkeley", "Stanford", "MIT", "Harvard", "Yale", "Princeton", "Columbia", "Cornell", "UPenn/Wharton", "Caltech", "U Chicago", "NYU", "Oxford", "Cambridge", "Imperial College", "UCL", "ETH Zurich", "NUS", "University of Tokyo", "University of Toronto"],
+    "world_elite_note": "2026-06-26 사장님 지시 — UCLA·미국 Ivy·세계 top 대학은 학력 만점(가중 30/30). 단일 출처는 scoring.HIGH_TIER_SCHOOL_SIGNALS, 테스트(test_world_elite_school_gets_full_education_score)가 강제. substring 매칭 특성상 'Berkeley College'(≠UC Berkeley) 류 오탐 가능 → 의심 시 SKILL 의 사람/LLM 판단으로 보정.",
+    "school_note": "지방 국공립대·단국대 이상 허용(memory/education-tier-screening). 전문대·비정규학위만 기계 제외. '하위권 지방 사립' 미세 판단은 SKILL 의 사람/LLM 판단 단언."
+  },
+
+  "output": {
+    "channel": "#ai_search",
+    "reuse": "tools/multi_position_sourcing/discord_briefing.py format_discord_candidate_briefing()",
+    "per_candidate_model": "PositionMatch",
+    "batch": "합격(>=70) 후보 여러 명을 한꺼번에 발송",
+    "url_integrity_gate": {
+      "rule": "발송 전 모든 candidate_url 검증 — 빈값·상대경로·javascript:void·비http 거부",
+      "function": "humansearch.is_valid_profile_url()",
+      "why": "사장님 0순위: 프로필 url 절대 오류 없어야 함"
+    }
+  },
+
+  "position_inputs": {
+    "multiple": true,
+    "sources": ["clickup_task", "text", "url"],
+    "note": "2026-07-02 사장님 — 포지션은 ClickUp task·텍스트·URL 로 복수 입력. 1검색 결과를 여러 JD 로 동시 채점(재오픈 없이 raw 필드 재채점)."
+  },
+
+  "search_url_inputs": {
+    "semi_assembled": true,
+    "channels": ["saramin", "jobkorea", "linkedin_rps"],
+    "note": "사람이 걸어둔 반조립 서치 URL 복수 — 안전하면 채널별 동시(병렬), 위험 시 순차 폴백(channels.execution 준용)."
+  },
+
+  "clickup_registration": {
+    "list_id": "901818680208",
+    "list_name": "FY26AI_Search",
+    "list_url": "https://app.clickup.com/9018789656/v/li/901818680208",
+    "applies_to": ["humansearch", "ai_search"],
+    "structure": "position_parent_task + candidate_subtasks",
+    "target_list_required": true,
+    "kanban_record_required": true,
+    "duplicate_check_required": true,
+    "duplicate_scope": ["position_parent_task", "candidate_profile_url_subtask"],
+    "parent_dedup": "부모 Task 를 먼저 검색해 없으면 생성, 있으면 재사용",
+    "candidate_dedup": "부모 Task 아래 후보 profile_url 로 기존 Subtask 를 먼저 검색하고, 있으면 새 Subtask 생성 금지",
+    "profile_save_evidence_required": true,
+    "profile_save_evidence_fields": ["screenshot", "screenshot_path", "evidence_paths", "archive_path", "saved_profile_path", "profile_archive_id", "sourcing_result_id", "db_row_id", "supabase_profile_archive_id"],
+    "priority_signals": [
+      "학력: 서울권 대학·해외 우수대·지방 국공립(단국대 이상)",
+      "직무 적합성",
+      "이직 안정(잦은 단기이직 아님)",
+      "프리랜서 제외",
+      "OTW(Open to work) 우선 — 이직 의향 분명"
+    ],
+    "subtask_requires": ["profile_url", "score", "why_fit", "profile_summary", "saved_profile_evidence", "profile_url 무결성(is_valid_profile_url)"],
+    "fail_closed_on": ["wrong_list_id", "duplicate_check_missing", "profile_save_evidence_missing", "invalid_profile_url", "missing_profile_url", "missing_required_output_field"]
+  },
+
+  "persistence": {
+    "save_all_opened_profiles": true,
+    "save_search_list": true,
+    "screenshot_then_text": true,
+    "db_path": "~/.vh-data/ai-search-candidates.db",
+    "db_table": "ai_search_candidates",
+    "db_upsert_key": "(url, position_id)",
+    "note": "열어본 프로필·검색 리스트는 점수 무관 전부 저장(SOT22 R6) — 스크린샷→텍스트 전환 후 results.json + DB upsert.",
+    "supabase": {
+      "enabled": true,
+      "profile_archives": "레쥬메 전문(text_content)+profile url — url 무효/본문 공허는 적재 거부(fail-closed)",
+      "sourcing_results": "포지션별 profile url(value)·학력(education_summary)·경력(career_summary/periods)·점수(match_score)·이유(fit_reason)",
+      "run_fk": "sourcing_results.run_id 는 sourcing_runs 에 run 을 먼저 등록해야 함(FK)",
+      "mapper": "tools/multi_position_sourcing/humansearch_supabase_sync.py",
+      "loader": "scripts/humansearch_supabase_backfill.py (url·(value,position_id) 조회 후 신규만 insert — 멱등)"
+    }
+  },
+
+  "reporting": {
+    "discord_dm_user_id": "814353841088757800",
+    "dm_bot": "hermes_v5 (1512101118543397056)",
+    "dm_channel_id": "1512503041448743092",
+    "helper": "scripts/dm_report.py",
+    "backup_bot": "hermes (1512501524792738064) → DM 채널 1509944917009629364",
+    "auth": "DISCORD_BOT_TOKEN (봇 메시지 API)",
+    "progress_report": true,
+    "completion_report": true,
+    "fallback": "VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL",
+    "no_alarm_bomb": "중간 보고는 페이지 단위 1건, 완료 1건으로 묶는다",
+    "completion_report_includes": ["clickup_urls", "keyword_gap_report"]
+  },
+
+  "keyword_expansion": {
+    "enabled": true,
+    "module": "tools/multi_position_sourcing/humansearch_keyword_expand.py",
+    "function": "expand_search_terms(owner_terms, jd_text) -> KeywordExpansion",
+    "steps": ["한↔영 양방향 확장", "띄어쓰기 변형", "JD 핵심 키워드 갭(missing) 검출", "LLM 문맥 검증·큐레이션", "재검색 제안·실행"],
+    "note": "2026-07-03 사장님 — 서치 후 사장님 검색어가 놓친 키워드를 찾아 재검색. 기계 확장은 보수적 사전, 최종 판단은 LLM."
+  },
+
+  "safety_invariants": {
+    "no_auto_send_offer": "제안·메일 '보내기' 자동 클릭 금지(SOT 3). humansearch 는 '후보 브리핑'만 발송.",
+    "yield_to_owner_chrome": "사장님 chrome 점유 시 즉시 양보 → 손 떼면 자동 재개(SOT 2 / R4). 봇 행동 금지.",
+    "stop_on_block": "캡차/봇차단/로그인 리다이렉트 감지 시 즉시 STOP, retry 금지(SOT22 R2).",
+    "no_channel_routing_by_job": "채널을 직무로 가르지 않음(SOT22 R5).",
+    "evidence_first_dom": "행동 전 DOM 덤프 — 셀렉터 추측이 fresh 덤프를 못 이김(SOT23)."
+  }
+}

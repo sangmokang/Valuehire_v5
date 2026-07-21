@@ -1,0 +1,7 @@
+interface:
+  display_name: "JD Builder"
+  short_description: "포지션 1건을 사람인·잡코리아·LinkedIn·Gmail 4채널에 등록/발송합니다"
+  default_prompt: "Use $jdbuilder to register/send one position across the 4 channels via the official tools/position-batch runners. Never use ad-hoc raw CDP or ad-hoc scripts outside those official runners."
+
+policy:
+  allow_implicit_invocation: true

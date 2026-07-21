@@ -1,0 +1,7 @@
+interface:
+  display_name: "ValueHire Skill"
+  short_description: "이름/요청으로 아무 ValueHire Claude 스킬이나 찾아 정식 경로로 실행합니다"
+  default_prompt: "Use $vhskill to locate the matching ValueHire skill under .claude/skills or ~/.claude/skills for the owner's request and follow its SKILL.md faithfully, honoring CLAUDE.md/AGENTS.md §0.2·§9 and the PreToolUse guards. Only perform irreversible sends/registrations when the owner's request explicitly says so."
+
+policy:
+  allow_implicit_invocation: true

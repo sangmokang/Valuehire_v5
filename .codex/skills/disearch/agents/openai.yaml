@@ -1,0 +1,4 @@
+interface:
+  display_name: "Disearch"
+  short_description: "Audit Discord search command flows and risks"
+  default_prompt: "Use $disearch to trace and audit the Discord search command workflow in this repository."

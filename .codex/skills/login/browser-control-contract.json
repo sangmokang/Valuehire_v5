@@ -1,0 +1,217 @@
+{
+  "schema_version": "1.3.0",
+  "skill": "login",
+  "supported_agents": ["claude", "codex", "hermes"],
+  "platform": "macos",
+  "source_priority": [
+    "browser-control-contract.json",
+    "SKILL.md",
+    "docs/sot/26-portal-login-spec.json",
+    "legacy runbooks"
+  ],
+  "state_machine": {
+    "DISCOVER": {
+      "allowed_actions": ["read_processes", "read_cdp_endpoints", "read_targets", "read_owner_idle"],
+      "next": ["HUMAN_ACTIVE", "AI_ATTACHED"]
+    },
+    "HUMAN_ACTIVE": {
+      "allowed_actions": ["read_owner_idle", "wait"],
+      "resume_after_idle_seconds": 60,
+      "next": ["AI_ATTACHED"]
+    },
+    "AI_ATTACHED": {
+      "allowed_actions": ["attach_one_raw_cdp_target", "install_badge", "present_exact_login_window_once", "read_state"],
+      "next": ["HUMAN_AUTH", "AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
+    },
+    "HUMAN_AUTH": {
+      "allowed_actions": ["read_state", "wait"],
+      "forbidden_actions": ["navigate", "reload", "back", "click", "type", "submit", "popup_close", "close", "focus", "focus_again", "new_page"],
+      "poll_interval_seconds": 5,
+      "quiet_after_success_seconds": 15,
+      "timeout_seconds": null,
+      "next": ["AUTHENTICATED", "HANDOFF"]
+    },
+    "AUTHENTICATED": {
+      "allowed_actions": ["record_non_secret_proof", "start_requested_task"],
+      "next": ["KEEPALIVE", "AUTH_LOST", "HANDOFF"]
+    },
+    "KEEPALIVE": {
+      "allowed_actions": ["read_state", "skip", "click_allowlisted_same_origin_get", "read_navigation_history", "restore_previous_history_entry"],
+      "next": ["AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
+    },
+    "AUTH_LOST": {
+      "allowed_actions": ["one_safe_autologin_attempt", "handoff_on_challenge"],
+      "next": ["AUTHENTICATED", "HUMAN_AUTH", "HANDOFF"]
+    },
+    "HANDOFF": {
+      "allowed_actions": ["guarded_restore_original_title", "guarded_remove_badge", "close_cdp_websocket", "report_non_secret_state"],
+      "cleanup_guard": "fresh_lease_and_owner_idle_mutation_guard",
+      "cleanup_guard_failure": "set_cleanup_pending_and_close_cdp_websocket_without_ui_mutation",
+      "terminal": true
+    }
+  },
+  "ownership_lease": {
+    "path_template": "~/.valuehire/browser_locks/login-<site>.lock",
+    "acquire": "atomic_mkdir",
+    "required_before_discover_or_create": true,
+    "required_until_handoff": true,
+    "recheck_token_before_every_mutation": true,
+    "on_conflict": "wait_without_browser_action",
+    "stale_removal": "manual_only_after_process_verification"
+  },
+  "mutation_guard": {
+    "required_before_every_mutation": true,
+    "idle_checks": 2,
+    "quiet_dwell_seconds": 1,
+    "minimum_idle_seconds": 60,
+    "lease_token_recheck": true,
+    "failure_state": "HUMAN_ACTIVE"
+  },
+  "browser_limits": {
+    "max_new_windows_when_browser_exists": 0,
+    "max_new_tabs_per_site": 0,
+    "max_attached_targets_per_site": 1
+  },
+  "managed_process": {
+    "identity_source": "unique_existing_root_browser_process_command_line",
+    "required_flags": ["--remote-debugging-port", "--user-data-dir"],
+    "pid_source": "root_browser_process_not_page_target_SystemInfo.getProcessInfo",
+    "endpoint_recheck_after_process_resolution": true,
+    "profile_flag_parser": "macos_ps_unquoted_long_option_boundaries",
+    "missing_or_ambiguous_action": "HANDOFF_without_starting_browser_window_or_tab",
+    "automatic_start_allowed": false
+  },
+  "forbidden_calls": [
+    "connectOverCDP",
+    "new_page",
+    "page.close",
+    "context.close",
+    "browser.close",
+    "kill_browser",
+    "portal_browsers stop",
+    "portal_browsers restart",
+    "portal_browsers start during login flow"
+  ],
+  "badge": {
+    "dom_id": "vh-automation-badge",
+    "required_before_first_mutation": true,
+    "failure_action": "HANDOFF"
+  },
+  "human_control": {
+    "activity_signal": "macos_frontmost_app_plus_os_idle_plus_active_tab_host_portal_scope",
+    "detection_failure_action": "HUMAN_ACTIVE",
+    "no_keylogging": true,
+    "no_browser_content_surveillance_for_activity": true
+  },
+  "exact_window": {
+    "resolver": "Swift CoreGraphics",
+    "script": "scripts/macos_window_locator.swift",
+    "preflight_join_keys": ["browser_pid", "cdp_window_bounds"],
+    "marked_join_keys": ["browser_pid", "cdp_window_bounds", "title_prefix_marker"],
+    "require_same_cg_window_id_before_and_after_marker": true,
+    "preflight_includes_offscreen_spaces": true,
+    "activation": ["Page.bringToFront", "PID-bound NSRunningApplication.activate"],
+    "inactive_tab_order": "install_marker_then_Page.bringToFront_then_resolve_marked_CGWindowID",
+    "activation_each_requires_fresh_mutation_guard": true,
+    "require_same_cg_window_id_on_screen_after_activation": true,
+    "require_exact_cg_window_id_frontmost_layer0_after_activation": true,
+    "title_match": "prefix_only",
+    "ambiguity": "fail_closed",
+    "capture": "screencapture -x -l <CGWindowID>",
+    "capture_scope": "exact_window_only",
+    "capture_cleanup_failure": "fail_closed",
+    "required_locator_fields": [
+      "agent",
+      "site",
+      "browser_pid",
+      "profile_path",
+      "cdp_endpoint",
+      "target_id_suffix",
+      "sanitized_title",
+      "sanitized_url",
+      "cg_window_id",
+      "application_activated"
+    ],
+    "forbid_first_window_or_title_substring_fallback": true,
+    "preflight_failure_mutations": 0
+  },
+  "human_auth": {
+    "presentation_state": "AI_ATTACHED",
+    "title_prefix_template": "[LOGIN HERE][<agent>][<site>][<target-id-suffix>]",
+    "max_presentations_per_episode": 1,
+    "allowed_during_wait": ["read_auth_marker", "read_owner_idle", "wait"],
+    "minimum_poll_seconds": 5,
+    "quiet_after_owner_input_seconds": 15,
+    "timeout_seconds": null,
+    "success_condition": "fresh_site_auth_marker_and_owner_quiet",
+    "success_requires_owner_activity_detected_false": true,
+    "outer_timeout_may_cancel": false,
+    "restore_original_title_on_handoff": true,
+    "handoff_cleanup_requires_mutation_guard": true,
+    "cleanup_guard_failure": "cleanup_pending_without_ui_mutation",
+    "cleanup_attempted_on_stop_or_base_exception": true
+  },
+  "production_entrypoints": {
+    "human_auth": "python3 -m tools.multi_position_sourcing.session_guard human-auth --site <site> --agent <Claude|Codex|Hermes> [--target-id <existing-target-id>]",
+    "keepalive": "python3 -m tools.multi_position_sourcing.session_guard keepalive --site <site> --agent <agent> --safe-target-json <pre-audited-record>",
+    "safe_target_record": "exact_target_same_origin_GET_self_free_readonly_link_pre_audited_by_human",
+    "missing_or_invalid_safe_target_record": "fail_closed_skip",
+    "legacy_cookie_classifier_is_not_a_login_or_keepalive_runner": true
+  },
+  "keepalive": {
+    "interval_seconds": {
+      "saramin": 900,
+      "jobkorea": 900,
+      "linkedin_rps": 1800
+    },
+    "navigation_default": "skip",
+    "require_fresh_owner_idle_check": true,
+    "require_clean_form": true,
+    "require_dedicated_safe_tab": true,
+    "allow_only_previously_opened_free_profile": true,
+    "forbid_paid_or_new_candidate_view": true,
+    "safe_link": {
+      "interaction": "single_click",
+      "same_origin": true,
+      "method": "GET",
+      "forbid_target_blank": true,
+      "forbid_download": true,
+      "forbid_paid_save_send_modal": true,
+      "unsafe_url_decode_passes": 4,
+      "remaining_percent_triplet_action": "fail_closed"
+    },
+    "require_same_target_before_and_after_click": true,
+    "require_authenticated_destination": true,
+    "navigation_is_async": true,
+    "stable_consecutive_target_auth_history_proofs": 2,
+    "recheck_target_after_auth_probe": true,
+    "restore_method": "Page.navigateToHistoryEntry",
+    "restore_entry": "previous_entry_from_Page.getNavigationHistory",
+    "goto_fallback": false,
+    "require_second_mutation_guard_before_restore": true,
+    "owner_active_after_click": "set_restore_pending_and_wait",
+    "success_condition": "same_target_original_url_and_auth_marker_restored"
+  },
+  "site_proof": {
+    "saramin": {
+      "all": ["account_or_logout_marker", "input.search_input", "#career_min", "#career_max"],
+      "none": ["login_only_without_logout"]
+    },
+    "jobkorea": {
+      "all": ["logout_marker", "company_or_account_marker", "/Corp/Person/Find surface"],
+      "none": ["login_only_without_logout"]
+    },
+    "linkedin": {
+      "all": ["/talent/ surface", "recruiter_account_marker"],
+      "none": ["/uas/login-cap", "authwall", "checkpoint", "enterprise-authentication/sessions"]
+    }
+  },
+  "legacy_unsafe": {
+    "tools.multi_position_sourcing.portal_login": [
+      "creates pages",
+      "closes pages or contexts",
+      "uses whole-browser connectOverCDP for LinkedIn",
+      "has finite human intervention timeout"
+    ]
+  }
+}
