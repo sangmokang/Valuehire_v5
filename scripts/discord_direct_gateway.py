@@ -649,6 +649,11 @@ class DirectGatewayClient(discord.Client):
         self._owner_user_ids = owner_user_ids
 
     async def setup_hook(self) -> None:  # pragma: no cover — 실 기동 전용
+        if os.environ.get("DISCORD_GATEWAY_SYNC_COMMANDS", "1").strip().casefold() in {
+            "0", "false", "no", "off",
+        }:
+            logger.info("discord_direct_gateway: command sync disabled for isolated text smoke")
+            return
         await self._sync_commands()
 
     async def _sync_commands(self) -> None:  # pragma: no cover — 실 네트워크 진입점
