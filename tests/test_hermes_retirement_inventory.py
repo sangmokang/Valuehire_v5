@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import os
 import plistlib
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,6 +15,7 @@ from tools.hermes_retirement.inventory import (
     InventoryVerificationError,
     RuntimeProbe,
     _probe_discord_commands,
+    _probe_launchd,
     build_inventory,
     verify_inventory,
 )
@@ -65,6 +69,12 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
     _write(v5 / "scripts/discord_command_listener.py", "# legacy listener\n")
     _write(v5 / "docs/engineering/hermes-history.md", "old Hermes design\n")
     _write(v5 / "tests/test_hermes_old.py", "# retirement coverage\n")
+    _write(v5 / ".hermes/plans/old-hermes-plan.md", "retired plan\n")
+    _write(v4 / ".omx/logs/hermes-run.json", "{}\n")
+    _write(
+        v4 / "data/outstanding-news-runs/hermes-20260722/texts/result.txt",
+        "historical output\n",
+    )
 
     _write(external_plugin / "__init__.py", "# enabled plugin\n")
     _write(external_plugin / "tests/test_plugin.py", "# historical test\n")
@@ -94,6 +104,14 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
             "EnvironmentVariables": {"DISCORD_BOT_TOKEN": FAKE_SECRET},
         },
     )
+    _plist(
+        launch_agents / "com.valuehire.outstanding-news.plist",
+        {
+            "Label": "com.valuehire.outstanding-news",
+            "ProgramArguments": ["/bin/sh", str(outstanding)],
+        },
+    )
+    legacy_gateway = tmp_path / "legacy/tools/hermes-agent/hermes-gateway.sh"
 
     config = InventoryConfig(
         v4_root=v4,
@@ -121,13 +139,22 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
                 "command_fingerprint": "a" * 64,
             },
         ),
-        launchd=({"label": "ai.hermes.gateway", "pid": 4242},),
+        launchd=(
+            {"label": "ai.hermes.gateway", "pid": 4242},
+            {"label": "com.valuehire.outstanding-news", "pid": 0},
+        ),
         cron=(
             {
                 "line": 3,
                 "fingerprint": "b" * 64,
                 "path_refs": [str(outstanding)],
                 "raw_for_scan_only": f"TOKEN={FAKE_SECRET} /bin/sh {outstanding}",
+            },
+            {
+                "line": 4,
+                "fingerprint": "c" * 64,
+                "path_refs": [str(legacy_gateway)],
+                "raw_for_scan_only": f"/bin/sh {legacy_gateway}",
             },
         ),
         discord_commands=(
@@ -176,16 +203,29 @@ def test_live_symlink_plugin_and_unrelated_cron_are_move_first(tmp_path: Path) -
         config.v5_root / "tools/multi_position_sourcing/hermes_fleet_bridge.py"
     )
     gateway_plist = str(config.launch_agents_dir / "ai.hermes.gateway.plist")
+    outstanding_plist = str(
+        config.launch_agents_dir / "com.valuehire.outstanding-news.plist"
+    )
+    legacy_gateway = str(
+        tmp_path / "legacy/tools/hermes-agent/hermes-gateway.sh"
+    )
 
     assert items[outstanding]["classification"] == "live caller"
     assert any("crontab:3" in caller for caller in items[outstanding]["callers"])
     assert items[external_plugin]["classification"] == "live caller"
     assert items[external_plugin]["move_first"] is True
     assert items[external_init]["classification"] == "live caller"
+    assert items[external_init]["callers"] == [f"plugin-symlink:{external_plugin}"]
     assert items[bridge]["classification"] == "live caller"
     assert items[gateway_plist]["classification"] == "live caller"
     assert items[gateway_plist]["move_first"] is True
     assert items[gateway_plist]["callers"] == ["launchd:ai.hermes.gateway"]
+    assert items[outstanding_plist]["callers"] == [
+        "launchd:com.valuehire.outstanding-news"
+    ]
+    assert items[legacy_gateway]["kind"] == "path-reference"
+    assert items[legacy_gateway]["classification"] == "live caller"
+    assert items[legacy_gateway]["callers"] == ["crontab:4"]
 
 
 def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) -> None:
@@ -196,10 +236,19 @@ def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) 
     old_test = str(config.v5_root / "tests/test_hermes_old.py")
     unused = str(config.v4_root / "tools/hermes-agent/unused-hermes-helper.sh")
     env_backup = str(config.hermes_home / ".env.bak")
+    repo_plan = str(config.v5_root / ".hermes/plans/old-hermes-plan.md")
+    omx_log = str(config.v4_root / ".omx/logs/hermes-run.json")
+    run_output = str(
+        config.v4_root
+        / "data/outstanding-news-runs/hermes-20260722/texts/result.txt"
+    )
 
     assert items[readme]["classification"] == "historical-only"
     assert items[old_test]["classification"] == "historical-only"
     assert items[env_backup]["classification"] == "historical-only"
+    assert items[repo_plan]["classification"] == "historical-only"
+    assert items[omx_log]["classification"] == "historical-only"
+    assert items[run_output]["classification"] == "historical-only"
     assert items[unused]["classification"] == "removable"
 
 
@@ -253,6 +302,75 @@ def test_verifier_rejects_unknown_missing_coverage_and_unmoved_live_caller(
         verify_inventory(inventory)
 
 
+def _recompute_summary(inventory: dict) -> None:
+    classifications = {
+        name: sum(item["classification"] == name for item in inventory["items"])
+        for name in ("historical-only", "live caller", "removable")
+    }
+    inventory["summary"].update(
+        {
+            "item_count": len(inventory["items"]),
+            "unknown_count": 0,
+            "classifications": classifications,
+            "move_first_count": sum(
+                item.get("move_first") is True for item in inventory["items"]
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "drop_v4_subtree",
+        "drop_reason_callers",
+        "drop_roots",
+        "drop_coverage",
+        "empty_live_runtime",
+        "invalid_cron_shape",
+        "drop_expected_paths",
+        "corrupt_summary",
+        "nested_secret_field",
+        "stale_scanner_sha",
+    ),
+)
+def test_verifier_rejects_material_inventory_omissions(
+    tmp_path: Path, mutation: str
+) -> None:
+    config, probe = _fixture(tmp_path)
+    inventory = copy.deepcopy(build_inventory(config, probe))
+
+    if mutation == "drop_v4_subtree":
+        prefix = f"{config.v4_root / 'tools/hermes-agent'}/"
+        inventory["items"] = [
+            item for item in inventory["items"] if not item["path"].startswith(prefix)
+        ]
+        _recompute_summary(inventory)
+    elif mutation == "drop_reason_callers":
+        inventory["items"][0].pop("reason")
+        inventory["items"][0].pop("callers")
+    elif mutation == "drop_roots":
+        inventory.pop("roots_scanned")
+    elif mutation == "drop_coverage":
+        inventory.pop("coverage")
+    elif mutation == "empty_live_runtime":
+        inventory["runtime"]["processes"] = []
+        inventory["runtime"]["launchd"] = []
+    elif mutation == "invalid_cron_shape":
+        inventory["runtime"]["cron"] = "not-an-array"
+    elif mutation == "drop_expected_paths":
+        inventory["expected_paths"] = inventory["expected_paths"][:1]
+    elif mutation == "corrupt_summary":
+        inventory["summary"]["classifications"]["removable"] += 1
+    elif mutation == "nested_secret_field":
+        inventory["runtime"]["discord_probe"]["raw_command"] = FAKE_SECRET
+    elif mutation == "stale_scanner_sha":
+        inventory["scanner_sha256"] = "0" * 64
+
+    with pytest.raises(InventoryVerificationError):
+        verify_inventory(inventory)
+
+
 def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
     config, probe = _fixture(tmp_path)
     inventory = build_inventory(config, probe)
@@ -268,6 +386,39 @@ def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
     }
     assert inventory["runtime"]["discord_probe"]["status"] == "ok"
     assert inventory["runtime"]["discord_commands"][0]["name"] == "aisearch"
+    assert inventory["runtime"]["probe_status"] == {
+        "cron": "ok",
+        "discord": "ok",
+        "launchd": "ok",
+        "processes": "ok",
+    }
+    assert inventory["scanner_sha256"] == hashlib.sha256(
+        Path("tools/hermes_retirement/inventory.py").read_bytes()
+    ).hexdigest()
+
+
+def test_launchd_probe_includes_loaded_unrelated_hermes_agent_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = subprocess.CompletedProcess(
+        args=["launchctl", "list"],
+        returncode=0,
+        stdout=(
+            "4242\t0\tai.hermes.gateway\n"
+            "-\t0\tcom.valuehire.outstanding-news\n"
+            "-\t0\tcom.example.unrelated\n"
+        ),
+        stderr="",
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: completed)
+
+    rows, status = _probe_launchd()
+
+    assert status == "ok"
+    assert rows == (
+        {"label": "ai.hermes.gateway", "pid": 4242},
+        {"label": "com.valuehire.outstanding-news", "pid": 0},
+    )
 
 
 def test_discord_probe_derives_application_id_when_env_has_only_bot_token(
@@ -284,8 +435,12 @@ def test_discord_probe_derives_application_id_when_env_has_only_bot_token(
         calls.append(url)
         if url.endswith("/oauth2/applications/@me"):
             return {"id": "999"}
+        if url.endswith("/users/@me/guilds"):
+            return [{"id": "777", "name": "must-not-be-retained"}]
         if url.endswith("/applications/999/commands"):
             return [{"id": "123", "name": "aisearch", "type": 1}]
+        if url.endswith("/applications/999/guilds/777/commands"):
+            return [{"id": "456", "name": "fleet-run", "type": 1}]
         raise AssertionError(url)
 
     monkeypatch.setattr(
@@ -294,11 +449,19 @@ def test_discord_probe_derives_application_id_when_env_has_only_bot_token(
 
     commands, status = _probe_discord_commands(config)
 
-    assert status == {"status": "ok", "bot_id": "999", "scope_count": 1}
+    assert status == {
+        "status": "ok",
+        "bot_id": "999",
+        "guild_count": 1,
+        "scope_count": 2,
+    }
     assert commands == (
         {"id": "123", "name": "aisearch", "type": 1, "scope": "global"},
+        {"id": "456", "name": "fleet-run", "type": 1, "scope": "guild:777"},
     )
     assert calls == [
         "https://discord.com/api/v10/oauth2/applications/@me",
+        "https://discord.com/api/v10/users/@me/guilds",
         "https://discord.com/api/v10/applications/999/commands",
+        "https://discord.com/api/v10/applications/999/guilds/777/commands",
     ]
