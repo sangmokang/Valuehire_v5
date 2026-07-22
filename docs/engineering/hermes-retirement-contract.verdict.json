@@ -1,0 +1,45 @@
+{
+  "claim_id": "hermes-retirement-contract",
+  "mode": "documentation-contract",
+  "risk": "L3",
+  "generator": {
+    "author": "Codex primary",
+    "claim": "SOT 33, the single-bot goal, and its execution prompt define one fail-closed Hermes retirement path split into HR-0 through HR-7, with live Claude/Codex proof, atomic rollback, recoverable quarantine, caller-safe code removal, secret rotation, hooks, and a machine receipt.",
+    "base": "aa1b9a0b379134b6c4ec256e635be1e31489c576",
+    "head_before_verdict": "09e420ea29167f4ec27b822b3f8470656cc4c155",
+    "red_evidence": [
+      "b94e42b: missing SOT 33 and retirement contract surfaces produced 7 failed tests",
+      "2a25fd3: independent review finding reproduced as 1 failed test for the stale AC-8 pointer"
+    ],
+    "green_evidence": [
+      "focused contract and latest gateway wiring: 17 passed",
+      "full verify after rebase: 2393 passed, 4 xfailed, 105 subtests passed; exit 0"
+    ],
+    "commands": [
+      "PYTHONSAFEPATH=1 PYTHONPATH=. /Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest -q tests/test_hermes_retirement_contract.py tests/test_gateway_nl_connect.py",
+      "PATH=/Volumes/SSD/valuehire_v5/.venv/bin:$PATH ./verify.sh"
+    ]
+  },
+  "v1": {
+    "author": "Codex primary adversarial contract tests",
+    "verdict": "pass",
+    "evidence": "Seven contract assertions cover all phases, minimum inventory paths, live transition and rollback evidence, recoverable quarantine, hooks, all receipt fields, and the fail-closed final claim. Unsafe tar/delete text and any prompt AC-8 pointer are negatively asserted."
+  },
+  "v2": {
+    "author": "Claude Code Opus fresh-context read-only review",
+    "initial_verdict": "fail",
+    "counterexample_accepted": "The AC-1 execution prompt still said Hermes must remain alive until deleted AC-8, even though AC-8 was replaced by HR-0 through HR-7.",
+    "sealing": "A RED assertion rejecting every AC-8 prompt reference was committed before replacing the pointer with SOT 33 HR-3.",
+    "final_verdict": "pass",
+    "final_evidence": "Fresh review found zero AC-8 or unsafe tar/delete instructions in the prompt surfaces and re-derived all HR phases, hooks, 21 receipt fields, and the final fail-closed definition."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "Initial contract revision",
+      "root_cause": "The retirement section was replaced, but one earlier AC-1 paragraph retained a historical milestone pointer.",
+      "next_change": "Expanded the negative regression test from the removed heading to every AC-8 occurrence in the execution prompt."
+    }
+  ],
+  "three_way_agree": true,
+  "status": "Contract complete; ready to ship before HR-0 implementation begins"
+}
