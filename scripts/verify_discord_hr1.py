@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from tools.multi_position_sourcing.discord_hr1 import Hr1ReceiptError, validate_hr1_receipt
@@ -18,7 +19,14 @@ def main(argv: list[str] | None = None) -> int:
     verifier_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     try:
         payload = json.loads(args.receipt.read_text(encoding="utf-8"))
-        validate_hr1_receipt(payload, expected_verifier_sha256=verifier_hash)
+        validate_hr1_receipt(
+            payload,
+            expected_verifier_sha256=verifier_hash,
+            forbidden_values=tuple(filter(None, (
+                os.environ.get("DISCORD_BOT_TOKEN", ""),
+                os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
+            ))),
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, Hr1ReceiptError) as exc:
         print(f"HR-1 RED: {exc}")
         return 1
