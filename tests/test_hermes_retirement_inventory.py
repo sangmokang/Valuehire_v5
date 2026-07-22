@@ -11,6 +11,7 @@ from tools.hermes_retirement.inventory import (
     InventoryConfig,
     InventoryVerificationError,
     RuntimeProbe,
+    _probe_discord_commands,
     build_inventory,
     verify_inventory,
 )
@@ -264,3 +265,36 @@ def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
     assert inventory["runtime"]["discord_probe"]["status"] == "ok"
     assert inventory["runtime"]["discord_commands"][0]["name"] == "aisearch"
 
+
+def test_discord_probe_derives_application_id_when_env_has_only_bot_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config, _probe = _fixture(tmp_path)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", FAKE_SECRET)
+    monkeypatch.delenv("DISCORD_CLIENT_ID", raising=False)
+    monkeypatch.delenv("DISCORD_GUILD_ID", raising=False)
+    calls: list[str] = []
+
+    def fake_get(url: str, token: str) -> object:
+        assert token == FAKE_SECRET
+        calls.append(url)
+        if url.endswith("/oauth2/applications/@me"):
+            return {"id": "999"}
+        if url.endswith("/applications/999/commands"):
+            return [{"id": "123", "name": "aisearch", "type": 1}]
+        raise AssertionError(url)
+
+    monkeypatch.setattr(
+        "tools.hermes_retirement.inventory._discord_get", fake_get
+    )
+
+    commands, status = _probe_discord_commands(config)
+
+    assert status == {"status": "ok", "bot_id": "999", "scope_count": 1}
+    assert commands == (
+        {"id": "123", "name": "aisearch", "type": 1, "scope": "global"},
+    )
+    assert calls == [
+        "https://discord.com/api/v10/oauth2/applications/@me",
+        "https://discord.com/api/v10/applications/999/commands",
+    ]
