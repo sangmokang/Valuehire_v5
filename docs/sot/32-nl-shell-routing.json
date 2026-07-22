@@ -1,0 +1,171 @@
+{
+  "sot_id": 32,
+  "name": "nl-shell-routing",
+  "title": "디스코드 자연어 셸 라우팅 계약",
+  "version": "1.0.0",
+  "established": "2026-07-22",
+  "goal_doc": "docs/prompts/discord-nl-shell-routing-goal-2026-07-22.md",
+  "parent_goal_doc": "docs/prompts/discord-single-bot-console-goal-2026-07-22.md",
+  "canonical_module": "tools/multi_position_sourcing/nl_shell.py",
+  "guard": ".claude/hooks/guards/nl-shell-routing.py",
+
+  "grammar": {
+    "shape": "<장소>에서 <대상> <동사>",
+    "required_elements": ["locus", "target", "verb"],
+    "on_incomplete": "reject",
+    "note": "3요소가 모두 잡히지 않으면 추측하지 않고 거부한다(CLAUDE.md 0.2 추측 실행 금지). 장소만 생략된 경우 최근 맥락의 기본값을 쓰고 그 선택을 1줄로 밝힌다(CLAUDE.md 0.16)."
+  },
+
+  "loci": {
+    "clickup": ["클릭업", "클릭업에서", "clickup", "칸반", "보드"],
+    "web": ["웹", "웹에서", "web", "인터넷", "공식", "공식채용페이지", "채용페이지"],
+    "saramin": ["사람인", "saramin"],
+    "jobkorea": ["잡코리아", "잡코", "jobkorea"],
+    "linkedin": ["링크드인", "linkedin", "rps", "리크루터"],
+    "queue": ["큐", "작업목록", "작업", "잡", "jobs", "queue"]
+  },
+
+  "verbs": {
+    "find": {
+      "aliases": ["찾아", "찾아줘", "찾기", "조회", "봐줘", "보여줘", "알려줘", "확인"],
+      "risk": "read",
+      "requires_confirmation": false
+    },
+    "search": {
+      "aliases": ["서치", "서치해", "서치해줘", "검색해", "후보찾아", "소싱"],
+      "risk": "execute",
+      "requires_confirmation": false
+    },
+    "register": {
+      "aliases": ["등록", "등록해", "등록해줘", "올려", "반영"],
+      "risk": "write",
+      "requires_confirmation": true
+    }
+  },
+
+  "routes": [
+    {
+      "locus": "clickup",
+      "verb": "find",
+      "resolver": "clickup_position_search",
+      "action": "reply_with_task_list",
+      "queue_skill": null,
+      "description": "ClickUp 에서 회사명+직무로 포지션 Task 를 찾아 작업 목록에 반영한다(요구 N2)."
+    },
+    {
+      "locus": "clickup",
+      "verb": "search",
+      "resolver": "clickup_position_search",
+      "action": "enqueue_fleet_run",
+      "queue_skill": "aisearch",
+      "description": "ClickUp 포지션을 해소한 뒤 기존 fleet-run aisearch 계약으로 환원한다."
+    },
+    {
+      "locus": "web",
+      "verb": "find",
+      "resolver": "web_official_careers_page",
+      "action": "enqueue_fleet_run",
+      "queue_skill": "jdintake",
+      "description": "웹 검색으로 공식 채용페이지를 찾아 JD 를 구조화 파악한다(요구 N3). jdintake 는 AC-N3 신규 스킬."
+    },
+    {
+      "locus": "saramin",
+      "verb": "search",
+      "resolver": "portal_search_url",
+      "action": "enqueue_fleet_run",
+      "queue_skill": "humansearch",
+      "description": "사람인 검색결과 URL 순회·채점(기존 경로)."
+    },
+    {
+      "locus": "jobkorea",
+      "verb": "search",
+      "resolver": "portal_search_url",
+      "action": "enqueue_fleet_run",
+      "queue_skill": "humansearch",
+      "description": "잡코리아 검색결과 URL 순회·채점(기존 경로)."
+    },
+    {
+      "locus": "linkedin",
+      "verb": "search",
+      "resolver": "portal_search_url",
+      "action": "enqueue_fleet_run",
+      "queue_skill": "url",
+      "description": "LinkedIn RPS 라이브 검색 사전 세팅(기존 url 스킬)."
+    },
+    {
+      "locus": "queue",
+      "verb": "find",
+      "resolver": "none",
+      "action": "reply_with_job_list",
+      "queue_skill": null,
+      "description": "최근 작업 상태 요약 + Fleet-job 탭 링크."
+    }
+  ],
+
+  "resolution_policy": {
+    "zero_hits": {
+      "action": "reply_not_found",
+      "may_execute": false,
+      "may_widen_locus": false,
+      "note": "E-NL2 — 사장님이 장소를 지정하셨으므로 다른 장소로 임의 확장하지 않는다."
+    },
+    "one_hit": {
+      "action": "proceed",
+      "may_execute": true,
+      "note": "무엇으로 이해했는지 1줄 표기 후 실행(상위 goal E1 ㉯)."
+    },
+    "many_hits": {
+      "action": "offer_choices",
+      "may_execute": false,
+      "max_choices": 4,
+      "note": "E-NL1 — '할까요?'가 아니라 '어느 것?' 형태의 갈림길 질문만 허용(CLAUDE.md 0.16)."
+    }
+  },
+
+  "forbidden": [
+    {
+      "id": "F-NL1",
+      "rule": "자연어 경로에서 제안·메일·InMail 발송(Send)에 도달하지 않는다",
+      "basis": "docs/sot/28-auto-send-policy.json, 상위 goal E3/E5"
+    },
+    {
+      "id": "F-NL2",
+      "rule": "자연어 경로에서 채용사이트를 raw CDP·즉석 스크립트로 직접 조작하지 않는다",
+      "basis": "docs/sot/25-jd-builder-single-channel-spec.md 0장(2026-07-09 지아이텍 사고)"
+    },
+    {
+      "id": "F-NL3",
+      "rule": "대상이 해소되지 않은 상태(URL 미확정)로 실행형 큐에 적재하지 않는다",
+      "basis": "CLAUDE.md 0.2 추측 실행 금지"
+    },
+    {
+      "id": "F-NL4",
+      "rule": "정본 모듈 밖에서 자연어 파서·라우팅을 즉석 구현하지 않는다",
+      "basis": "CLAUDE.md 0.2 새 러너 금지, docs/sot/27-harness-skill-guards.md"
+    },
+    {
+      "id": "F-NL5",
+      "rule": "위험 동사(발송·삭제·계산서 발행)는 자연어로 발동할 수 없다 — 슬래시 명령 전용",
+      "basis": "E-NL5, 상위 goal E2/E3"
+    }
+  ],
+
+  "reuse": {
+    "must_not_modify": [
+      "tools/multi_position_sourcing/fleet_args.py",
+      "tools/multi_position_sourcing/job_queue.py"
+    ],
+    "note": "해소층은 기존 파서 '앞'에 붙는다. 파서의 fail-closed(모호하면 거부)는 유지하며, 파서에는 항상 완성된 key:value 명령만 전달한다."
+  },
+
+  "open_decisions": [
+    {
+      "id": "E-NL4",
+      "question": "서버 채널 평문을 봇이 읽게 할 것인가(Discord Message Content 특권 인텐트)",
+      "current_state": "OFF — scripts/discord_direct_gateway.py:553 discord.Intents.default()",
+      "options": ["DM·멘션만 지원(설정 불필요)", "특권 인텐트 활성화(개발자 포털 1회 설정)"],
+      "decided": false,
+      "blocks": "AC-N4"
+    }
+  ]
+}

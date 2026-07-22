@@ -31,8 +31,9 @@ enqueue-only — 실행 능력은 handle_envelope 안 주입된 큐에만 있다
    호출해 실제로 배선한다(예전엔 함수만 있고 아무도 안 부르는 죽은 코드였음).
 6. **envelope 필드 보존**: 길드 인터랙션이면 guild_id/channel_id/role_ids 를 실제로
    채운다(기존 hermes_fleet_bridge 어댑터처럼 DM 고정 금지).
-7. **텍스트 명령 범위(goal §3)**: 기본은 owner DM + 봇 멘션만 — 인가된 일반 멤버의
-   자유 DM 은 처리하지 않는다(``handle_text_message`` 가 owner_user_ids 로 명시 필터).
+7. **텍스트 명령 범위(goal §3 확장)**: DM 텍스트 명령은 `docs/search-access.md`의
+   `Discord Contacts`에 등록된 사용자 전체가 쓸 수 있다. 길드 텍스트는 여전히 봇 멘션만
+   처리하고, 등록되지 않은 DM 사용자는 큐에 닿기 전에 무시한다.
 8. **fail-closed 침묵의 discord.py 요구사항 절충**: defer 로 1차 응답을 이미 보냈으므로
    discord API 는 그 인터랙션에 최종 응답을 요구한다. response=None(=침묵 대상,
    비인가/신원미상/미지원 전부 포함) 케이스는 사유와 무관하게 항상 동일한 무정보
@@ -63,6 +64,7 @@ import discord
 
 from tools.multi_position_sourcing.access import (
     DiscordAuthorizedUser,
+    is_authorized_discord_dm,
     load_authorized_discord_users,
 )
 from tools.multi_position_sourcing.direct_receiver import DiscordEnvelope, handle_envelope
@@ -484,15 +486,18 @@ async def handle_text_message(
 ) -> Optional[dict[str, Any]]:
     """봇 멘션/DM 텍스트 명령 1건 처리. 지원 명령이 아니면 None(네트워크 접촉 0).
 
-    goal §3 — 텍스트 명령 기본 범위는 owner DM + 봇 멘션만. 인가된 일반 멤버의 DM
-    자유텍스트는 여기서 걸러 큐에 닿지 않게 한다(길드 멘션은 route_discord_invocation
-    의 채널/역할 allowlist 가 이미 걸러주므로 이 함수에서 추가 제한하지 않는다).
+    DM 텍스트 명령은 ``docs/search-access.md`` 의 Discord Contacts 전체에 열어 둔다.
+    등록되지 않은 DM 사용자는 큐 생성 전 조용히 무시한다. 길드 텍스트는 명시적 봇 멘션만
+    이 함수에 도달한다(``message_to_envelope`` 의 파서가 일반 채널 자유텍스트를 무시).
     """
     envelope = message_to_envelope(message, bot_user_id=bot_user_id)
     if envelope is None:
         return None
-    if envelope.is_dm and str(envelope.user_id) not in set(str(u) for u in owner_user_ids):
-        return None
+    if envelope.is_dm:
+        owner_allowed = str(envelope.user_id) in set(str(u) for u in owner_user_ids)
+        contact_allowed = is_authorized_discord_dm(envelope.user_id, tuple(authorized_users))
+        if not (owner_allowed or contact_allowed):
+            return None
 
     try:
         resolved_queue = queue if queue is not None else queue_factory()  # type: ignore[misc]
