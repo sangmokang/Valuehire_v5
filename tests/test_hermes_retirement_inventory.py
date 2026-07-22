@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.hermes_retirement import inventory as inventory_module
 from tools.hermes_retirement.inventory import (
     InventoryConfig,
     InventoryVerificationError,
@@ -189,12 +190,31 @@ def _by_path(inventory: dict) -> dict[str, dict]:
     return {item["path"]: item for item in inventory["items"]}
 
 
-def test_inventory_classifies_every_related_item_without_unknown(tmp_path: Path) -> None:
+def _bind_fixture_verifier(
+    monkeypatch: pytest.MonkeyPatch, config: InventoryConfig, probe: RuntimeProbe
+) -> None:
+    monkeypatch.setattr(
+        inventory_module,
+        "_required_inventory_roots",
+        lambda: {
+            "hermes_home": str(config.hermes_home),
+            "launch_agents_dir": str(config.launch_agents_dir),
+            "v4_root": str(config.v4_root),
+            "v5_root": str(config.v5_root),
+        },
+    )
+    monkeypatch.setattr(inventory_module, "probe_runtime", lambda _config: probe)
+
+
+def test_inventory_classifies_every_related_item_without_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config, probe = _fixture(tmp_path)
+    _bind_fixture_verifier(monkeypatch, config, probe)
 
     inventory = build_inventory(config, probe)
 
-    verify_inventory(inventory, live_probe=probe)
+    verify_inventory(inventory)
     assert inventory["schema_version"] == "hermes-retirement-inventory/v1"
     assert inventory["summary"]["unknown_count"] == 0
     assert inventory["summary"]["item_count"] == len(inventory["items"])
@@ -305,25 +325,26 @@ def test_large_runtime_bundle_is_covered_by_inherited_classification(
 
 
 def test_verifier_rejects_unknown_missing_coverage_and_unmoved_live_caller(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     config, probe = _fixture(tmp_path)
+    _bind_fixture_verifier(monkeypatch, config, probe)
     inventory = build_inventory(config, probe)
 
     inventory["items"][0]["classification"] = "UNKNOWN"
     with pytest.raises(InventoryVerificationError, match="UNKNOWN"):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
     inventory = build_inventory(config, probe)
     inventory["items"][0]["classification"] = "live caller"
     inventory["items"][0]["move_first"] = False
     with pytest.raises(InventoryVerificationError, match="move_first"):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
     inventory = build_inventory(config, probe)
     inventory["expected_paths"][0]["status"] = "UNKNOWN"
     with pytest.raises(InventoryVerificationError, match="expected path"):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
 
 def _recompute_summary(inventory: dict) -> None:
@@ -374,9 +395,10 @@ def _recompute_scope_evidence(inventory: dict) -> None:
     ),
 )
 def test_verifier_rejects_material_inventory_omissions(
-    tmp_path: Path, mutation: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
 ) -> None:
     config, probe = _fixture(tmp_path)
+    _bind_fixture_verifier(monkeypatch, config, probe)
     inventory = copy.deepcopy(build_inventory(config, probe))
 
     if mutation == "drop_v4_subtree":
@@ -436,13 +458,14 @@ def test_verifier_rejects_material_inventory_omissions(
         inventory["coverage"]["repo_candidate_sha256"] = "0" * 64
 
     with pytest.raises(InventoryVerificationError):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
 
 def test_verifier_rejects_actual_known_secret_in_free_string_field(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     config, probe = _fixture(tmp_path)
+    _bind_fixture_verifier(monkeypatch, config, probe)
     inventory = build_inventory(config, probe)
     live_item = next(
         item for item in inventory["items"] if item["classification"] == "live caller"
@@ -450,7 +473,7 @@ def test_verifier_rejects_actual_known_secret_in_free_string_field(
     live_item["callers"].append(FAKE_SECRET)
 
     with pytest.raises(InventoryVerificationError, match="secret"):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
 
 @pytest.mark.parametrize(
@@ -464,9 +487,10 @@ def test_verifier_rejects_actual_known_secret_in_free_string_field(
     ),
 )
 def test_verifier_rejects_valid_shape_runtime_tampering(
-    tmp_path: Path, mutation: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
 ) -> None:
     config, probe = _fixture(tmp_path)
+    _bind_fixture_verifier(monkeypatch, config, probe)
     inventory = build_inventory(config, probe)
 
     if mutation == "process_fingerprint":
@@ -482,11 +506,14 @@ def test_verifier_rejects_valid_shape_runtime_tampering(
         inventory["runtime"]["cron"][0]["path_refs"] = []
 
     with pytest.raises(InventoryVerificationError, match="runtime"):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
 
-def test_verifier_rejects_live_plugin_classification_forgery(tmp_path: Path) -> None:
+def test_verifier_rejects_live_plugin_classification_forgery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     config, probe = _fixture(tmp_path)
+    _bind_fixture_verifier(monkeypatch, config, probe)
     inventory = build_inventory(config, probe)
     target = str(tmp_path / "live-plugin/valuehire/__init__.py")
     item = next(item for item in inventory["items"] if item["path"] == target)
@@ -501,7 +528,7 @@ def test_verifier_rejects_live_plugin_classification_forgery(tmp_path: Path) -> 
     _recompute_summary(inventory)
 
     with pytest.raises(InventoryVerificationError, match="classification"):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
 
 def test_production_verifier_has_no_runtime_probe_override() -> None:
@@ -513,7 +540,7 @@ def test_verifier_rejects_noncanonical_inventory_roots(tmp_path: Path) -> None:
     inventory = build_inventory(config, probe)
 
     with pytest.raises(InventoryVerificationError, match="roots_scanned"):
-        verify_inventory(inventory, live_probe=probe)
+        verify_inventory(inventory)
 
 
 def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
@@ -544,14 +571,15 @@ def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
 
 
 def test_dynamic_home_metadata_drift_does_not_invalidate_path_topology(
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     config, probe = _fixture(tmp_path)
+    _bind_fixture_verifier(monkeypatch, config, probe)
     inventory = build_inventory(config, probe)
 
     _write(config.hermes_home / "config.yaml", "model: changed-after-snapshot\n")
 
-    verify_inventory(inventory, live_probe=probe)
+    verify_inventory(inventory)
 
 
 def test_invalid_launch_agent_plist_fails_closed(tmp_path: Path) -> None:

@@ -159,6 +159,15 @@ def _absolute(path: Path | str) -> str:
     return os.path.abspath(os.fspath(path))
 
 
+def _required_inventory_roots() -> dict[str, str]:
+    return {
+        "hermes_home": _absolute(Path.home() / ".hermes"),
+        "launch_agents_dir": _absolute(Path.home() / "Library/LaunchAgents"),
+        "v4_root": "/Volumes/SSD/valuehire_v4",
+        "v5_root": "/Volumes/SSD/valuehire_v5",
+    }
+
+
 def _is_relative_to(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -1022,9 +1031,7 @@ def _semantic_item_snapshot(raw_items: object) -> dict[str, dict[str, object]]:
     return snapshot
 
 
-def verify_inventory(
-    inventory: Mapping[str, object], *, live_probe: RuntimeProbe | None = None
-) -> None:
+def verify_inventory(inventory: Mapping[str, object]) -> None:
     errors: list[str] = []
     top_keys = {
         "coverage",
@@ -1068,12 +1075,16 @@ def verify_inventory(
     roots = inventory.get("roots_scanned")
     root_keys = {"hermes_home", "launch_agents_dir", "v4_root", "v5_root"}
     if not isinstance(roots, Mapping) or set(roots) != root_keys:
-        errors.append("roots_scanned must contain the four exact HR-0 roots")
-        roots = {}
-    else:
-        for key, value in roots.items():
-            if not isinstance(value, str) or not os.path.isabs(value):
-                errors.append(f"root is not absolute: {key}")
+        raise InventoryVerificationError(
+            "roots_scanned must contain the four exact HR-0 roots"
+        )
+    for key, value in roots.items():
+        if not isinstance(value, str) or not os.path.isabs(value):
+            raise InventoryVerificationError(f"root is not absolute: {key}")
+    if dict(roots) != _required_inventory_roots():
+        raise InventoryVerificationError(
+            "roots_scanned does not match the canonical HR-0 roots"
+        )
 
     raw_items = inventory.get("items")
     if not isinstance(raw_items, list) or not raw_items:
@@ -1541,7 +1552,7 @@ def verify_inventory(
     if isinstance(roots, Mapping) and set(roots) == root_keys:
         try:
             live_config = _config_from_inventory_roots(roots)
-            observed_probe = live_probe or probe_runtime(live_config)
+            observed_probe = probe_runtime(live_config)
             observed_runtime = _sanitize_probe(observed_probe)
             if runtime != observed_runtime:
                 errors.append("runtime snapshot does not match live probes")
