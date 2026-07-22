@@ -1506,6 +1506,90 @@ class _HumanAuthStopRequested(RuntimeError):
     """Internal control flow: a read-only presentation wait was stopped."""
 
 
+def recover_orphan_login_badge(
+    site: Site,
+    *,
+    agent: str,
+    target_id: str,
+    stop_requested: Callable[[], bool] | None = None,
+    owner_snapshot: Callable[[], Any] | None = None,
+    mutation_sleep: Callable[[float], None] = time.sleep,
+    wait_sleep: Callable[[float], None] = time.sleep,
+    _lease_factory: Callable[[Site], Any] | None = None,
+    _target_resolver: Callable[..., BrowserTargetRef] | None = None,
+    _tab_attacher: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Remove only an exact failed HUMAN_AUTH badge from one existing target.
+
+    The recovery never focuses, navigates, types, clicks, restores an unknown title,
+    or closes browser state. It reacquires the normal profile lease and owner-idle
+    mutation gate, binds the exact custom element as a CDP object, removes that one
+    object, then disconnects only its WebSocket.
+    """
+    if site not in _SITE_DOMAINS:
+        raise ValueError(f"unsupported login site: {site!r}")
+    clean_agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-.")[:24]
+    if not clean_agent or not str(target_id).strip():
+        raise ValueError("agent and exact target_id are required")
+    if owner_snapshot is None:
+        from .owner_activity import detect_owner_activity_snapshot
+
+        owner_snapshot = detect_owner_activity_snapshot
+    from .portal_worker import assert_raw_browser_mutation_allowed
+
+    stop = stop_requested or (lambda: False)
+    lease = (_lease_factory or _default_login_lease)(site)
+    resolver = _target_resolver or resolve_existing_target
+    attacher = _tab_attacher or _attach_exact_ref
+    tab: Any | None = None
+    try:
+        if not _acquire_login_lease_read_only(
+            lease, stop_requested=stop, sleep=wait_sleep,
+        ):
+            return {"status": "orphan_badge_recovery_stopped", "site": site}
+        ref = resolver(site, target_id=target_id)
+        mutation_gate = lambda: assert_raw_browser_mutation_allowed(
+            lease, owner_snapshot=owner_snapshot, sleep=mutation_sleep,
+        )
+        if not _wait_for_initial_mutation_gate(
+            mutation_gate, stop_requested=stop, sleep=wait_sleep,
+        ):
+            return {"status": "orphan_badge_recovery_stopped", "site": site}
+        tab = attacher({
+            "id": ref.target_id,
+            "type": "page",
+            "url": ref.initial_url,
+            "webSocketDebuggerUrl": ref.websocket_url,
+        }, badge=False)
+        live_url = _tab_current_url(tab)
+        if (
+            live_url != ref.initial_url
+            or not _official_site_url(site, live_url)
+            or not _fresh_target_matches(tab, ref, live_url)
+        ):
+            return {"status": "orphan_badge_target_changed", "site": site}
+        marker, _suffix = _login_title_marker(clean_agent, site, ref.target_id)
+        mutation_gate()
+        if (
+            stop()
+            or _tab_current_url(tab) != live_url
+            or not _fresh_target_matches(tab, ref, live_url)
+        ):
+            return {"status": "orphan_badge_target_changed", "site": site}
+        binder = getattr(tab, "bind_exact_badge_for_cleanup", None)
+        clear = getattr(tab, "clear_busy", None)
+        if not callable(binder) or not callable(clear):
+            return {"status": "orphan_badge_cleanup_surface_missing", "site": site}
+        if binder(marker, expected_url=live_url) is not True:
+            return {"status": "orphan_badge_not_found", "site": site}
+        if clear(marker, expected_url=live_url) is not True:
+            return {"status": "orphan_badge_cleanup_unverified", "site": site}
+        return {"status": "orphan_badge_cleaned", "site": site}
+    finally:
+        _disconnect_websocket_only(tab)
+        lease.release()
+
+
 def run_human_auth_episode(
     site: Site,
     *,
@@ -2010,6 +2094,13 @@ def main(argv: list[str] | None = None) -> int:
     keepalive.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     keepalive.add_argument("--agent", required=True)
     keepalive.add_argument("--safe-target-json", required=True)
+    recovery = commands.add_parser(
+        "cleanup-orphan-badge",
+        help="guardedly remove one exact failed HUMAN_AUTH badge",
+    )
+    recovery.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
+    recovery.add_argument("--agent", required=True)
+    recovery.add_argument("--target-id", required=True)
     args = parser.parse_args(argv)
     site: Site = args.site
 
@@ -2020,9 +2111,12 @@ def main(argv: list[str] | None = None) -> int:
             target_id=args.target_id,
             locator_sink=lambda payload: print(json.dumps(payload, ensure_ascii=False)),
         )
-    else:
+    elif args.command == "keepalive":
         target = load_safe_keepalive_target(args.safe_target_json)
         result = run_safe_keepalive_episode(site, target, agent=args.agent)
+    else:
+        result = recover_orphan_login_badge(
+            site, agent=args.agent, target_id=args.target_id)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

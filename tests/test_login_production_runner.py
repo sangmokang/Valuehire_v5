@@ -143,6 +143,18 @@ def test_orphan_badge_recovery_uses_lease_owner_gate_and_disconnects_only() -> N
     lease = _Lease(trace)
 
     class RecoveryTab(_Tab):
+        def current_url(self) -> str:
+            return _ref().initial_url
+
+        def send(self, method: str, params: dict | None = None) -> dict:
+            if method == "Target.getTargetInfo":
+                return {"targetInfo": {
+                    "targetId": self.target_id,
+                    "type": "page",
+                    "url": _ref().initial_url,
+                }}
+            return super().send(method, params)
+
         def bind_exact_badge_for_cleanup(self, label: str, *, expected_url: str) -> bool:
             trace.append(f"bind:{label}:{expected_url}")
             return True

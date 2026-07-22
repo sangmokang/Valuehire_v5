@@ -568,6 +568,15 @@ class CDPTab:
                     return True
             except Exception:
                 return False
+            # Runtime.evaluate may have inserted the badge even when the stronger
+            # compositor proof failed. Bind that exact custom element as a CDP
+            # object and roll it back immediately; never leave a failed login
+            # presentation marker in the user's existing tab.
+            try:
+                if self.bind_exact_badge_for_cleanup(label, expected_url=expected_url):
+                    self.clear_busy(label, expected_url=expected_url or "")
+            except Exception:
+                pass
             return False
         self._badge_application_uncertain = False
         self._badge_bound_url = None
@@ -654,6 +663,59 @@ class CDPTab:
             return False
         remote = result.get("result")
         return isinstance(remote, dict) and remote.get("value") is True
+
+    def bind_exact_badge_for_cleanup(
+        self,
+        label: str,
+        *,
+        expected_url: str,
+    ) -> bool:
+        """Read-only bind of one exact badge object for guarded rollback.
+
+        This intentionally does not claim that the badge was visibly rendered.
+        It only gives ``clear_busy`` a browser-owned object whose immutable tag,
+        id, text and accessibility identity were revalidated immediately before
+        the removal mutation.
+        """
+        if not isinstance(label, str) or not label or not isinstance(expected_url, str):
+            return False
+        object_id: str | None = None
+        try:
+            if self.eval(f"location.href==={json.dumps(expected_url)}") is not True:
+                return False
+            self._release_badge_object()
+            document = self.send("DOM.getDocument", {"depth": 0})
+            root = document.get("root") if isinstance(document, dict) else None
+            root_node_id = root.get("nodeId") if isinstance(root, dict) else None
+            if isinstance(root_node_id, bool) or not isinstance(root_node_id, int):
+                return False
+            match = self.send("DOM.querySelector", {
+                "nodeId": root_node_id,
+                "selector": f"#{_BADGE_ID}",
+            })
+            node_id = match.get("nodeId") if isinstance(match, dict) else None
+            if isinstance(node_id, bool) or not isinstance(node_id, int) or node_id <= 0:
+                return False
+            resolved = self.send("DOM.resolveNode", {"nodeId": node_id})
+            remote = resolved.get("object") if isinstance(resolved, dict) else None
+            object_id = remote.get("objectId") if isinstance(remote, dict) else None
+            if not isinstance(object_id, str) or not object_id:
+                return False
+            if not self._resolved_badge_identity(object_id, label):
+                return False
+            self._badge_object_id = object_id
+            object_id = None
+            self._badge_label = label
+            self._badge_bound_url = expected_url
+            return True
+        except Exception:
+            return False
+        finally:
+            if object_id:
+                try:
+                    self.send("Runtime.releaseObject", {"objectId": object_id})
+                except Exception:
+                    pass
 
     def eval_if_badge_owned(
         self,
