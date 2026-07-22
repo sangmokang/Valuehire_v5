@@ -1,0 +1,97 @@
+{
+  "claim_id": "hermes-retirement-hr0-inventory",
+  "mode": "code-change",
+  "risk": "L3",
+  "goal": "SOT-33 HR-0: Hermes 의존성 전수조사와 UNKNOWN=0 분류",
+  "generator": {
+    "claim": "정본 v4/v5, ~/.hermes, LaunchAgents, 활성 플러그인 대상, process, launchd, crontab, Discord 명령을 읽기 전용으로 조사하고 모든 Hermes 관련 항목을 live caller, historical-only, removable 중 하나로 분류한다. 검증기는 정본 루트와 라이브 상태를 다시 읽어 누락, 분류 위조, runtime 증거 위조, 비밀 원문 유출을 fail-closed로 거부한다.",
+    "changed_files": [
+      "artifacts/discord-cutover/hermes-dependency-inventory.json",
+      "tests/test_hermes_retirement_inventory.py",
+      "tools/hermes_retirement/__init__.py",
+      "tools/hermes_retirement/inventory.py"
+    ],
+    "red_green_commits": [
+      "26d85fb RED: exhaustive HR-0 inventory",
+      "ee578bc RED: token-only Discord command probe",
+      "e6750e6 RED: launchd plist classification",
+      "695c036 GREEN: initial exhaustive scanner",
+      "9a24e49 RED: fail-closed evidence",
+      "f5ab8b1 GREEN: closed schema and evidence checks",
+      "b4cbc14 GREEN: live filesystem binding",
+      "e34e207 GREEN: stable topology and repo-wide candidate binding",
+      "eff7c01 RED: live-bound runtime/classification verification",
+      "2f188b9 GREEN: live reprobe and semantic recomputation",
+      "a2fe59f RED: canonical trust roots",
+      "161f711 GREEN: canonical roots and no probe override",
+      "8672820 RED: secret-named/non-text path inventory",
+      "4237dbe GREEN: all Hermes-named repository paths",
+      "003fb77 RED: retirement artifact self-classification",
+      "1e39789 GREEN: artifact path-only enumeration and self-reference"
+    ],
+    "runtime_mutation": "none; scanner and verifier performed read-only observation only"
+  },
+  "artifact_evidence": {
+    "path": "artifacts/discord-cutover/hermes-dependency-inventory.json",
+    "schema_version": "hermes-retirement-inventory/v1",
+    "item_count": 2909,
+    "unknown_count": 0,
+    "classifications": {
+      "historical-only": 2751,
+      "live caller": 153,
+      "removable": 5
+    },
+    "move_first_count": 153,
+    "inherited_descendant_count": 129517,
+    "repo_candidate_count": 2756,
+    "expected_scope_count": 10,
+    "runtime_counts": {
+      "processes": 1,
+      "launchd": 2,
+      "cron": 2,
+      "discord_commands": 56
+    },
+    "path_only_hermes_candidates_classified": 1192,
+    "canonical_self_artifact_count": 1,
+    "file_mode": "0600",
+    "probe_status": "processes/launchd/cron/discord all ok"
+  },
+  "independent_reviews": {
+    "failed_rounds": [
+      "Round 1: incomplete schema/caller evidence, stale scanner digest, launchd/cron/plugin and Discord scope gaps",
+      "Round 2: recomputed partial omission and allowed-field secret mutations accepted; unrelated cron paths promoted",
+      "Round 3: dynamic metadata invalidated the artifact; repo-wide candidates and unreadable traversal/plist errors were not fully bound",
+      "Round 4: known confidential value in a free string, well-shaped runtime tampering, and active-plugin classification forgery were accepted",
+      "Targeted path review: tracked retirement artifact itself was omitted from path completeness"
+    ],
+    "errored_rounds_excluded": "Two review attempts ended at the platform privacy filter before a verdict and are not counted as evidence.",
+    "final": {
+      "author": "fresh independent read-only reviewer",
+      "commit": "1e39789",
+      "verdict": "PASS",
+      "evidence": "38 focused tests passed; canonical self artifact appears exactly once; artifact/non-text/oversized/repository-symlink cases are covered; recomputed candidate omission is rejected; prior runtime, semantic, topology, privacy, and fail-closed properties remain intact."
+    }
+  },
+  "privacy_evidence": {
+    "known_secret_value_audit": "PASS; comparison occurred in memory and no value, length, or digest was emitted",
+    "raw_runtime_commands_emitted": false,
+    "plist_environment_values_emitted": false,
+    "artifact_mode": "0600"
+  },
+  "verify_evidence": {
+    "focused_command": "PYTHONDONTWRITEBYTECODE=1 PYTHONSAFEPATH=1 PYTHONPATH=. /Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest -q tests/test_hermes_retirement_inventory.py",
+    "focused_counts": "38 passed",
+    "full_command": "PATH=/Volumes/SSD/valuehire_v5/.venv/bin:$PATH make verify",
+    "full_counts": "2431 passed, 4 xfailed, 105 subtests passed",
+    "full_exit_code": 0,
+    "live_generation": "PASS; build plus independent live reprobe completed with items=2909, unknown=0, move_first=153",
+    "git_diff_check": "PASS"
+  },
+  "known_limitations": [
+    "This verdict completes HR-0 inventory only. Hermes remains running and no bootout, quarantine, deletion, token rotation, or direct-gateway cutover was performed.",
+    "Mutable size/mtime fingerprints are retained as snapshot evidence but are deliberately excluded from later semantic equality; stable topology, runtime observations, candidate paths, classifications, callers, and reasons are rebound live.",
+    "The final independent reviewer did not execute the production live probe or access confidential content; the generator executed the live build and reprobe, while the reviewer verified binding through source inspection and sanitized fixtures.",
+    "Harness Gate 0 still includes unrelated RED worktrees; only this HR-0 acceptance criterion is GREEN."
+  ],
+  "status": "GREEN: HR-0 inventory acceptance met at 1e39789; ready for PR/CI, not authorization for HR-1 or any Hermes shutdown/removal phase"
+}
