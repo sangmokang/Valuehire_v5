@@ -877,7 +877,7 @@ class MinimalPrivilegeQueueClient:
             "p_token_fingerprint": str(token_fingerprint),
             "p_holder_identity": str(holder_identity),
             "p_holder_pid": int(holder_pid),
-            "p_target_machine": str(machine),
+            "p_machine": str(machine),
             "p_ttl_seconds": int(ttl_seconds),
         })
         return self._one_rpc_row(rows, "discord_gateway_acquire_lease")
