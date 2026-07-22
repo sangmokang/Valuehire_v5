@@ -50,6 +50,31 @@ class OwnerExamples(unittest.TestCase):
         self.assertEqual(cmd.route["queue_skill"], "aisearch")
 
 
+class LocusWithoutParticle(unittest.TestCase):
+    """V1 적대검증(2026-07-22)에서 발견 — 계약에 있는 queue 경로가 도달 불가였다.
+
+    조사('에서')를 강제하면 `큐에서 보여줘` 같은 어색한 한국어만 통과한다.
+    실제로 쓰는 말은 `작업목록 보여줘` 이므로, **문장 맨 앞** 에 한해 조사 없이도
+    장소로 인정한다. 문장 중간의 같은 낱말은 대상 이름의 일부일 수 있으므로
+    계속 장소로 보지 않는다(오탐 방지).
+    """
+
+    def test_queue_route_is_reachable(self):
+        for raw in ("큐 보여줘", "작업목록 보여줘", "jobs 보여줘"):
+            cmd = nl_shell.parse(raw)
+            self.assertIsNotNone(cmd, f"queue 경로 도달 실패: {raw!r}")
+            self.assertEqual(cmd.locus, "queue")
+            self.assertEqual(cmd.verb, "find")
+
+    def test_midsentence_word_is_not_a_locus(self):
+        """'번개장터 잡 찾아' 의 '잡'은 장소가 아니라 대상의 일부다."""
+        self.assertIsNone(nl_shell.parse("번개장터 잡 찾아"))
+
+    def test_particle_form_still_works(self):
+        cmd = nl_shell.parse("클릭업에서 번개장터 PM 찾아")
+        self.assertEqual(cmd.locus, "clickup")
+
+
 class GrammarRejects(unittest.TestCase):
     """3요소가 안 잡히면 추측하지 않고 거부한다."""
 
@@ -82,6 +107,21 @@ class DangerousVerbsBlocked(unittest.TestCase):
             "클릭업에서 번개장터 PM 계산서 발행해",
         ):
             self.assertIsNone(nl_shell.parse(raw), f"위험 동사가 통과됨: {raw!r}")
+
+    def test_dangerous_word_blocks_even_with_valid_verb(self):
+        """뮤턴트 생존으로 발견(V1 2026-07-22) — 위 케이스들은 '발송해'가 동사 어휘에
+        없어서 걸러졌을 뿐, F-NL5 차단이 실제로 도는지는 증명하지 못했다(허수 테스트).
+
+        문장 **끝은 정상 동사**인데 안에 위험 낱말이 섞인 형태라야 차단을 증명한다.
+        설계 판단: 이런 문장은 통째로 거부한다 — 대상 이름에 '발송'이 들어간 정상
+        요청을 못 받는 손해보다, 자연어가 발송 경로로 새는 위험이 크다(fail-safe).
+        """
+        for raw in (
+            "클릭업에서 번개장터 PM 발송 목록 찾아",
+            "클릭업에서 삭제 예정 포지션 찾아",
+            "클릭업에서 계산서 담당자 찾아",
+        ):
+            self.assertIsNone(nl_shell.parse(raw), f"위험 낱말이 통과됨: {raw!r}")
 
 
 class ContractDriven(unittest.TestCase):
