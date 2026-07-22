@@ -147,6 +147,24 @@ class OwnerActivitySnapshotTests(unittest.TestCase):
         self.assertTrue(snapshot.owner_activity_detected)
         self.assertEqual(snapshot.detection_status, "detector_unavailable")
 
+    def test_combined_frontmost_query_failure_falls_back_to_two_read_only_queries(self) -> None:
+        def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            if argv[0] == "osascript":
+                script = " ".join(argv)
+                if "{name, unix id}" in script:
+                    return _completed("", returncode=1)
+                if "unix id" in script:
+                    return _completed("38999\n")
+                return _completed("Safari\n")
+            return _completed('    "HIDIdleTime" = 1000000000\n')
+
+        snapshot = detect_owner_activity_snapshot(
+            system_name="Darwin", run_command=fake_run)
+
+        self.assertEqual(snapshot.foreground_app, "Safari")
+        self.assertEqual(snapshot.detection_status, "ok")
+        self.assertFalse(snapshot.owner_activity_detected)
+
     def test_unsupported_platform_is_fail_closed(self) -> None:
         snapshot = detect_owner_activity_snapshot(system_name="Linux")
 
