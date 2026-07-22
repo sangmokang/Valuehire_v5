@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parents[2]
 # they are no longer an admission whitelist. Registered machine IDs are
 # dynamic and share this syntax with fleet_machines.machine_id in PostgreSQL.
 FLEET_MACHINES: tuple[str, ...] = ("macmini", "macbook", "winpc")
-FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url")
+FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url", "jdintake")
 OWNER_AGENT_SKILL = "agent"
 QUEUE_SKILLS: tuple[str, ...] = (*FLEET_SKILLS, OWNER_AGENT_SKILL)
 OWNER_AGENT_MAX_REQUEST_CHARS = 8_000

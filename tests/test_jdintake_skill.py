@@ -91,17 +91,31 @@ class SkillDocumentExists(unittest.TestCase):
         self.assertIn("공식", text)
         self.assertIn("출처", text)
 
-    def test_skill_md_forbids_sending(self):
-        """F-NL1 — JD 수집 스킬이 발송으로 새면 안 된다."""
-        text = SKILL_MD.read_text(encoding="utf-8")
-        self.assertTrue(re.search(r"발송.*(금지|안 |않)", text),
-                        "발송 금지 문구가 없다")
+    @staticmethod
+    def _prohibition_section() -> str:
+        """'절대 금지' 절만 잘라낸다.
 
-    def test_skill_md_forbids_fabricating_jd(self):
-        """수집 스킬의 최대 위험 = 못 찾았을 때 지어내기."""
+        왜 절을 특정하나(뮤턴트 생존으로 발견, 2026-07-22): 문서 전체를 정규식으로
+        훑으면 '어딘가에 그 낱말이 있다'만 증명된다 — 실제로 금지 조항을 통째로
+        지워도 다른 문장(표·정지조건)이 걸려 테스트가 통과했다. 규칙은 규칙 자리에
+        있어야 규칙이다.
+        """
         text = SKILL_MD.read_text(encoding="utf-8")
-        self.assertTrue(re.search(r"(지어내|날조|추측|없으면).*(금지|안 |않|미확인)", text),
-                        "JD 날조 금지 문구가 없다")
+        m = re.search(r"^##\s*1\.\s*절대 금지(.*?)^##\s", text, re.S | re.M)
+        assert m, "SKILL.md 에 '## 1. 절대 금지' 절이 없다"
+        return m.group(1)
+
+    def test_prohibition_section_forbids_sending(self):
+        """F-NL1 — JD 수집 스킬이 발송으로 새면 안 된다."""
+        self.assertRegex(self._prohibition_section(), r"발송[^\n]*(금지|않는다)")
+
+    def test_prohibition_section_forbids_fabricating_jd(self):
+        """수집 스킬의 최대 위험 = 못 찾았을 때 지어내기."""
+        self.assertRegex(self._prohibition_section(), r"날조[^\n]*금지")
+
+    def test_prohibition_section_forbids_raw_portal_automation(self):
+        """SOT-25 §0 — 즉석 CDP 로 채용사이트를 만지지 않는다."""
+        self.assertRegex(self._prohibition_section(), r"(raw|CDP)[^\n]*(금지|않는다)")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import os
 NAME = "discord-bot-skill-whitelist"
 
 # 허용 = 큐 화이트리스트 3종 + login(로그인 준비 스킬 — G4 영수증 갱신 경로).
-_ALLOWED_SKILLS = frozenset({"humansearch", "aisearch", "url", "login"})
+_ALLOWED_SKILLS = frozenset({"humansearch", "aisearch", "url", "login", "jdintake"})
 
 
 def _in_fleet_job() -> bool:
