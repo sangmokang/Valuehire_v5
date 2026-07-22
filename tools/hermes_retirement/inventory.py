@@ -314,6 +314,33 @@ def _iter_repo_text(root: Path) -> dict[Path, str]:
     return corpus
 
 
+def _repo_hermes_named_paths(root: Path) -> set[Path]:
+    paths: set[Path] = set()
+    if not root.is_dir():
+        return paths
+    for dirpath, dirnames, filenames in os.walk(
+        root, followlinks=False, onerror=_raise_walk_error
+    ):
+        current = Path(dirpath)
+        kept: list[str] = []
+        for name in sorted(dirnames):
+            child = current / name
+            if name in SKIP_REPO_DIRS:
+                continue
+            if child.is_symlink():
+                if "hermes" in _absolute(child).lower():
+                    paths.add(child)
+            else:
+                kept.append(name)
+        dirnames[:] = kept
+        paths.update(
+            current / name
+            for name in sorted(filenames)
+            if "hermes" in _absolute(current / name).lower()
+        )
+    return paths
+
+
 def _iter_files(root: Path) -> Iterable[Path]:
     if root.is_symlink() or root.is_file():
         yield root
@@ -735,6 +762,8 @@ def _repo_candidate_paths(
     candidates: set[Path] = set()
     for root in dedicated_roots:
         candidates.update(_iter_files(root))
+    candidates.update(_repo_hermes_named_paths(v4_root))
+    candidates.update(_repo_hermes_named_paths(v5_root))
     candidates.update(
         path for path in explicit_files if path.exists() or path.is_symlink()
     )
