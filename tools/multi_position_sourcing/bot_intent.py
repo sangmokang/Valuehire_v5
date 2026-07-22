@@ -58,6 +58,12 @@ _KPI_RE = re.compile(r"(kpi|지표|실적|매출\s*지표|주간\s*지표)", re.
 _JOBS_RE = re.compile(r"(작업\s*(상태|현황|목록)|잡\s*(상태|목록)|돌아가는\s*(작업|일)|큐\s*상태|진행\s*상황)", re.IGNORECASE)
 _URL_PREP_RE = re.compile(r"(rps|검색\s*url|서치\s*url|url\s*(세팅|준비|만들))", re.IGNORECASE)
 
+_MACHINE_MARKERS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?<!\w)(?:winpc|windows?|윈도우(?:pc)?)(?!\w)", re.IGNORECASE), "winpc"),
+    (re.compile(r"(?<!\w)(?:macmini|맥미니)(?!\w)", re.IGNORECASE), "macmini"),
+    (re.compile(r"(?<!\w)(?:macbook|맥북)(?!\w)", re.IGNORECASE), "macbook"),
+)
+
 
 class ClassifyOutcome(str, Enum):
     CONFIDENT = "confident"
@@ -94,6 +100,15 @@ def _is_search_url(url: str) -> bool:
     return False
 
 
+def _url_args(raw: str, url: str) -> dict[str, str]:
+    args = {"url": url}
+    for pattern, machine in _MACHINE_MARKERS:
+        if pattern.search(raw):
+            args["machine"] = machine
+            break
+    return args
+
+
 def classify_free_text(text: str) -> ClassifyResult:
     """자유 문장 1건을 허용 명령으로 사상(실패 시 실행 금지)."""
     raw = (text or "").strip()
@@ -120,18 +135,20 @@ def classify_free_text(text: str) -> ClassifyResult:
         has_search_verb = bool(_SEARCH_VERB_RE.search(raw))
         has_human_verb = bool(_HUMAN_VERB_RE.search(raw))
         if _URL_PREP_RE.search(raw):
-            return ClassifyResult(ClassifyOutcome.CONFIDENT, "url", {"url": url},
+            return ClassifyResult(ClassifyOutcome.CONFIDENT, "url", _url_args(raw, url),
                                   reason="RPS 검색 URL 준비로 이해")
         if search_url or has_human_verb:
             if has_search_verb or has_human_verb:
-                return ClassifyResult(ClassifyOutcome.CONFIDENT, "humansearch", {"url": url},
+                return ClassifyResult(
+                    ClassifyOutcome.CONFIDENT, "humansearch", _url_args(raw, url),
                                       reason="검색결과 순회·채점(humansearch)으로 이해")
             # 검색결과 URL 인데 동사 없음 — humansearch/aisearch 갈림.
             return ClassifyResult(ClassifyOutcome.AMBIGUOUS,
                                   candidates=("humansearch", "aisearch"),
                                   reason="검색결과 URL 이지만 무엇을 할지 불명확")
         if has_search_verb:
-            return ClassifyResult(ClassifyOutcome.CONFIDENT, "aisearch", {"url": url},
+            return ClassifyResult(
+                ClassifyOutcome.CONFIDENT, "aisearch", _url_args(raw, url),
                                   reason="포지션 AI Search 로 이해")
         # 포지션 URL 만 있고 동사 없음 — aisearch/humansearch/url 갈림.
         return ClassifyResult(ClassifyOutcome.AMBIGUOUS,

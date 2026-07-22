@@ -38,7 +38,8 @@ class Enqueues(unittest.TestCase):
             "클릭업에서 번개장터 PM 서치해",
             searcher=_searcher(("PM", CU + "86a")), message_id="42")
         self.assertEqual(plan.action, "enqueue")
-        self.assertIn("/fleet-run aisearch", plan.command_text)
+        self.assertIn("/fleet-run skill:aisearch", plan.command_text)
+        self.assertIn("url:https://app.clickup.com/t/86a", plan.command_text)
         self.assertIn(CU + "86a", plan.command_text)
         self.assertIn("discord:42", plan.command_text)
 

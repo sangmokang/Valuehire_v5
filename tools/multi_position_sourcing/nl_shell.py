@@ -376,7 +376,7 @@ def to_fleet_command(command: NlCommand, resolution: Resolution,
     if not url:
         return None  # may_execute 인데 URL 이 없는 모순 — 만들지 않는다
 
-    parts = ["/fleet-run", str(skill), shlex.quote(url)]
+    parts = ["/fleet-run", f"skill:{skill}", f"url:{shlex.quote(url)}"]
     if message_id:
         parts.append(f"idempotency:discord:{message_id}")
     return " ".join(parts)
@@ -514,7 +514,10 @@ def plan_from_text(message: str, *, searcher, message_id: str = "",
             args = getattr(result, "args", {}) or {}
             url = str(args.get("url") or "").strip() if isinstance(args, Mapping) else ""
             if command in {"aisearch", "humansearch", "url"} and url:
-                parts = ["/fleet-run", command, shlex.quote(url)]
+                parts = ["/fleet-run", f"skill:{command}", f"url:{shlex.quote(url)}"]
+                machine = str(args.get("machine") or "").strip()
+                if machine in {"macmini", "macbook", "winpc"}:
+                    parts.append(f"machine:{machine}")
                 if message_id:
                     parts.append(f"idempotency:discord:{message_id}")
                 return Plan(
