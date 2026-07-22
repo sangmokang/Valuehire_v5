@@ -27,6 +27,7 @@ import json
 import pathlib
 import re
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 _CONTRACT_REL = "docs/sot/32-nl-shell-routing.json"
@@ -272,6 +273,85 @@ def resolve(command: NlCommand, searcher) -> Resolution:
                       may_execute=bool(policy_for("many")["may_execute"]),
                       candidates=tuple(found[:cap]),
                       truncated=max(0, len(found) - cap))
+
+
+def _role_synonyms() -> dict[str, list[str]]:
+    return load_contract().get("role_synonyms", {})
+
+
+def _token_matches(token: str, haystack: str) -> bool:
+    """토큰 하나가 건초더미에 있는가. 역할 약어는 정식 명칭으로도 본다.
+
+    왜 필요한가(2026-07-22 실사례): 사장님은 'PM' 이라 부르시지만 ClickUp 제목은
+    'Product Manager(Core Product)' 라 글자가 하나도 안 겹친다. 이 확장이 없으면
+    해소가 0건이 되어 "못 찾았습니다"로 끝난다.
+    """
+    low = token.lower()
+    if low in haystack:
+        return True
+    syns = _role_synonyms()
+    # 약어 → 정식명칭
+    for full in syns.get(low, []) + syns.get(token, []):
+        if full.lower() in haystack:
+            return True
+    # 정식명칭 → 약어 (반대 방향도 인정: 'Product Manager' 로 물어도 'PM' 제목을 찾음)
+    for abbr, fulls in syns.items():
+        if any(low == f.lower() for f in fulls) and abbr.lower() in haystack:
+            return True
+    return False
+
+
+def _task_haystack(task: Any) -> str:
+    """Task 에서 매칭에 쓸 텍스트를 모은다 — 제목만으로는 회사명이 안 잡힌다.
+
+    ClickUp 은 회사를 리스트/폴더 이름으로 두는 경우가 많아(포지션 제목엔 직무만
+    있음), 제목 외에 list/folder/space 이름과 설명까지 훑는다.
+    """
+    if not isinstance(task, Mapping):
+        return ""
+    parts = [str(task.get("name") or ""), str(task.get("description") or "")]
+    for key in ("list", "folder", "space", "project"):
+        node = task.get(key)
+        if isinstance(node, Mapping):
+            parts.append(str(node.get("name") or ""))
+        elif node:
+            parts.append(str(node))
+    return " ".join(parts).lower()
+
+
+def _task_url(task: Mapping[str, Any]) -> str:
+    url = str(task.get("url") or "").strip()
+    if url:
+        return url
+    task_id = str(task.get("id") or "").strip()
+    return f"https://app.clickup.com/t/{task_id}" if task_id else ""
+
+
+def clickup_position_searcher(clickup_search_tasks, list_id: str):
+    """ClickUp 포지션 검색기를 만든다. resolve() 에 넘길 수 있는 모양으로 감싼다.
+
+    ``clickup_search_tasks`` 는 기존 계약(humansearch_register.ClickUpSearchTasks)과
+    같은 모양이다 — ``(list_id=, query=, parent=) -> Sequence[Mapping]``. 새 러너를
+    만들지 않고 이미 있는 어댑터 계약을 그대로 재사용한다(CLAUDE.md §0.2).
+
+    어댑터가 예외를 던지면 **삼키지 않고 그대로 올린다** — resolve() 가 error 분기로
+    받아 "못 찾았다"가 아니라 "못 물어봤다"로 보고하게 하기 위해서다.
+    """
+    def search(locus: str, target: str) -> list[Candidate]:
+        tasks = clickup_search_tasks(list_id=list_id, query=target, parent=None)
+        tokens = [t for t in target.split() if t]
+        out: list[Candidate] = []
+        for task in tasks or []:
+            haystack = _task_haystack(task)
+            if not haystack or not all(_token_matches(t, haystack) for t in tokens):
+                continue
+            url = _task_url(task)
+            if not url:
+                continue  # 링크를 만들 수 없는 항목은 후보로 내보내지 않는다
+            out.append(Candidate(name=str(task.get("name") or url), url=url))
+        return out
+
+    return search
 
 
 def badge_env(base: dict[str, str] | None = None) -> dict[str, str]:
