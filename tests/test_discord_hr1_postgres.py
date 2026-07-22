@@ -63,10 +63,11 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                 ).fetchone()[0]
                 for table in ("discord_gateway_leases", "discord_gateway_killswitches"):
                     for role in ("public", "anon", "authenticated"):
-                        assert not conn.execute(
-                            "select has_table_privilege(%s,%s,'SELECT')",
-                            (role, f"public.{table}"),
-                        ).fetchone()[0]
+                        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                            assert not conn.execute(
+                                "select has_table_privilege(%s,%s,%s)",
+                                (role, f"public.{table}", privilege),
+                            ).fetchone()[0]
 
                 signatures = (
                     "public.discord_gateway_readiness(text,text,integer)",
@@ -100,6 +101,10 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                     "select killswitch_engaged from public.discord_gateway_readiness(%s,'winpc',300)",
                     (fingerprint,),
                 ).fetchone()[0] is True
+                assert conn.execute(
+                    "select acquired from public.discord_gateway_acquire_lease(%s,'blocked',999,'winpc',90)",
+                    (fingerprint,),
+                ).fetchone()[0] is False
                 conn.execute(
                     "update public.discord_gateway_killswitches set engaged=false where token_fingerprint=%s",
                     (fingerprint,),
@@ -138,6 +143,46 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                     (fingerprint,),
                 ).fetchone()
                 assert reclaimed[0] is True and reclaimed[2] == generation + 1
+                conn.execute(
+                    """update public.discord_gateway_leases
+                          set renewed_at=now()-interval '2 minutes',
+                              expires_at=now()-interval '1 minute'
+                        where lease_id=%s""",
+                    (reclaimed[1],),
+                )
+                expired_reclaim = conn.execute(
+                    "select * from public.discord_gateway_acquire_lease(%s,'holder-d',1004,'winpc',90)",
+                    (fingerprint,),
+                ).fetchone()
+                assert expired_reclaim[0] is True
+                assert expired_reclaim[2] == reclaimed[2] + 1
+
+                conn.execute(
+                    "update public.machine_heartbeats set beat_at=now()-interval '10 minutes' where machine='winpc'"
+                )
+                stale_fingerprint = hashlib.sha256(b"stale-worker-token").hexdigest()
+                stale = conn.execute(
+                    "select * from public.discord_gateway_readiness(%s,'winpc',300)",
+                    (stale_fingerprint,),
+                ).fetchone()
+                assert stale[1] is False
+                assert conn.execute(
+                    "select acquired from public.discord_gateway_acquire_lease(%s,'stale',1005,'winpc',90)",
+                    (stale_fingerprint,),
+                ).fetchone()[0] is False
+                conn.execute(
+                    "update public.machine_heartbeats set beat_at=now() where machine='winpc'"
+                )
+
+                conn.execute("set role anon")
+                try:
+                    anon_ready = conn.execute(
+                        "select minimal_rpc,worker_ready,killswitch_engaged from public.discord_gateway_readiness(%s,'winpc',300)",
+                        (fingerprint,),
+                    ).fetchone()
+                    assert anon_ready == (True, True, False)
+                finally:
+                    conn.execute("reset role")
 
                 event_key = "discord:1529267252160927999"
                 params = psycopg.types.json.Jsonb({"idempotency_key": event_key})
