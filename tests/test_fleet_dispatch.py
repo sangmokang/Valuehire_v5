@@ -190,6 +190,31 @@ def test_dispatch_duplicate_event_suppresses_second_notification(monkeypatch):
     assert notified == []
 
 
+def test_direct_gateway_enqueue_uses_its_channel_reply_only(monkeypatch):
+    queue = FakeQueue()
+    notified = []
+    monkeypatch.setattr(
+        "tools.multi_position_sourcing.fleet_worker.discord_notify",
+        lambda *args: notified.append(args),
+    )
+    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={
+            "skill": "url",
+            "url": "https://app.clickup.com/t/x",
+            "machine": "winpc",
+            "params": {
+                "agent": "claude",
+                "idempotency_key": "discord:1529267252160927202",
+            },
+        }),
+        authorized_users=_users(), config=_config(), queue=queue,
+        owner_role_ids=(OWNER_ROLE,),
+    )
+    assert result["action"] == "enqueued"
+    assert notified == []
+
+
 def test_dispatch_unauthorized_user_blocked():
     q = FakeQueue()
     r = dispatch_fleet_command(
