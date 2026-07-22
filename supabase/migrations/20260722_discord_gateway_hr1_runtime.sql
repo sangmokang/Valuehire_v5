@@ -377,10 +377,52 @@ as $$
    where status in ('queued','running','paused_for_human');
 $$;
 
--- Reassert event-level idempotency in the same runtime migration.
-create unique index if not exists jobs_discord_idempotency_key_uidx
-  on public.jobs ((params->>'idempotency_key'))
-  where coalesce(params->>'idempotency_key', '') <> '';
+-- Existing production history contains pre-contract duplicate idempotency keys. Do
+-- not rewrite that history merely to start HR-1. Serialize each new Discord event
+-- inside this canonical RPC, return its existing job on replay, and require the
+-- snowflake-derived key on every call. The advisory lock is transaction-scoped.
+create or replace function public.discord_gateway_enqueue(
+  p_machine text, p_position_url text, p_requested_by text,
+  p_skill text default 'aisearch', p_params jsonb default '{}'::jsonb,
+  p_account_key text default ''
+) returns setof public.jobs
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  event_key text := coalesce(p_params->>'idempotency_key', '');
+begin
+  if p_skill not in ('humansearch', 'aisearch', 'url') then
+    raise exception 'minimal gateway skill is not allowed: %', p_skill;
+  end if;
+  if btrim(coalesce(p_requested_by, '')) = '' then
+    raise exception 'requested_by is required';
+  end if;
+  if event_key !~ '^discord:[0-9]{15,22}$' then
+    raise exception 'idempotency_key is required and must derive from a Discord event';
+  end if;
+
+  perform pg_advisory_xact_lock(pg_catalog.hashtextextended(event_key, 0));
+  return query
+    select existing.* from public.jobs as existing
+     where existing.params->>'idempotency_key' = event_key
+     order by existing.id
+     limit 1;
+  if found then
+    return;
+  end if;
+
+  return query
+    insert into public.jobs (
+      machine, skill, position_url, params, requested_by, role, account_key
+    ) values (
+      p_machine, p_skill, coalesce(p_position_url, ''), coalesce(p_params, '{}'::jsonb),
+      p_requested_by, 'member', coalesce(p_account_key, '')
+    )
+    returning *;
+end;
+$$;
 
 revoke all on function public.discord_gateway_readiness(text,text,integer)
   from public, anon, authenticated;
@@ -392,9 +434,12 @@ revoke all on function public.discord_gateway_release_lease(uuid,text,text,integ
   from public, anon, authenticated;
 revoke all on function public.discord_gateway_queue_nonterminal_count()
   from public, anon, authenticated;
+revoke all on function public.discord_gateway_enqueue(text,text,text,text,jsonb,text)
+  from public, anon, authenticated;
 
 grant execute on function public.discord_gateway_readiness(text,text,integer) to anon;
 grant execute on function public.discord_gateway_acquire_lease(text,text,integer,text,integer) to anon;
 grant execute on function public.discord_gateway_renew_lease(uuid,text,text,integer,bigint,integer) to anon;
 grant execute on function public.discord_gateway_release_lease(uuid,text,text,integer,bigint) to anon;
 grant execute on function public.discord_gateway_queue_nonterminal_count() to anon;
+grant execute on function public.discord_gateway_enqueue(text,text,text,text,jsonb,text) to anon;
