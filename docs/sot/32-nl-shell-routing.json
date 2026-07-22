@@ -43,6 +43,19 @@
     }
   },
 
+  "role_synonyms": {
+    "pm": ["Product Manager", "프로덕트 매니저", "프로덕트매니저", "제품 관리자"],
+    "po": ["Product Owner", "프로덕트 오너"],
+    "pmm": ["Product Marketing Manager", "프로덕트 마케팅 매니저"],
+    "백엔드": ["Backend Engineer", "Backend Developer", "서버 개발자", "백엔드 개발자"],
+    "프론트": ["Frontend Engineer", "Frontend Developer", "프론트엔드 개발자"],
+    "데이터": ["Data Engineer", "Data Scientist", "데이터 엔지니어", "데이터 사이언티스트"],
+    "디자이너": ["Product Designer", "UX Designer", "UI Designer"],
+    "cto": ["Chief Technology Officer", "기술이사"],
+    "hr": ["Human Resources", "People", "인사", "인사담당"]
+  },
+  "role_synonyms_note": "약어→정식명칭. 사장님은 'PM' 이라 부르지만 ClickUp 제목은 'Product Manager(Core Product)' 라 글자가 겹치지 않는다(2026-07-22 실사례). 이 사전이 없으면 해소가 0건이 되어 '못 찾았습니다'로 끝난다. 코드에 숨기지 말고 여기서만 늘린다.",
+
   "routes": [
     {
       "locus": "clickup",
