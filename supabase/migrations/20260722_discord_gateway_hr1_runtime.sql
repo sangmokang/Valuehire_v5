@@ -91,6 +91,50 @@ alter table public.discord_gateway_leases
   alter column holder_pid set not null,
   alter column target_machine set not null,
   alter column generation set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conrelid = 'public.discord_gateway_leases'::regclass
+      and conname = 'discord_gateway_leases_fingerprint_chk'
+  ) then
+    alter table public.discord_gateway_leases
+      add constraint discord_gateway_leases_fingerprint_chk
+      check (token_fingerprint ~ '^[0-9a-f]{64}$');
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conrelid = 'public.discord_gateway_leases'::regclass
+      and conname = 'discord_gateway_leases_holder_chk'
+  ) then
+    alter table public.discord_gateway_leases
+      add constraint discord_gateway_leases_holder_chk
+      check (btrim(holder_identity) <> '' and char_length(holder_identity) <= 160);
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conrelid = 'public.discord_gateway_leases'::regclass
+      and conname = 'discord_gateway_leases_pid_chk'
+  ) then
+    alter table public.discord_gateway_leases
+      add constraint discord_gateway_leases_pid_chk check (holder_pid > 0);
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conrelid = 'public.discord_gateway_leases'::regclass
+      and conname = 'discord_gateway_leases_machine_chk'
+  ) then
+    alter table public.discord_gateway_leases
+      add constraint discord_gateway_leases_machine_chk
+      check (target_machine in ('macmini','macbook','winpc'));
+  end if;
+  if not exists (
+    select 1 from pg_constraint where conrelid = 'public.discord_gateway_leases'::regclass
+      and conname = 'discord_gateway_leases_generation_chk'
+  ) then
+    alter table public.discord_gateway_leases
+      add constraint discord_gateway_leases_generation_chk check (generation > 0);
+  end if;
+end;
+$$;
+
 create unique index if not exists discord_gateway_leases_lease_id_key
   on public.discord_gateway_leases(lease_id);
 
