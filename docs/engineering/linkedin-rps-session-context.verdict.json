@@ -1,0 +1,54 @@
+{
+  "claim_id": "linkedin-rps-session-context",
+  "issue": 156,
+  "mode": "code-change",
+  "risk": "L3",
+  "generator": {
+    "author": "Codex primary",
+    "claim": "LinkedIn Recruiter 후보 이동은 검색 결과의 scoped navigation_url을 보존하고, canonical url은 저장·중복제거 식별자로만 사용한다. 세션 충돌은 추출·스크린샷·아카이브 전에 종단 중단하며 정확한 관리 target과 lease 없이는 실행하지 않는다.",
+    "head": "3f73375f748c5489a21d6316e2e36945a3a7201a",
+    "base": "f6f4491307b0cac20428f971555a8f25c1b44194",
+    "red_evidence": [
+      "2127edf test(humansearch): reproduce LinkedIn session-context regressions (#156)",
+      "6a74b81 test(humansearch): RED for persisted session context and Codex mirrors (#156) — 4 failed, 4 passed"
+    ],
+    "green_evidence": [
+      "focused: 45 passed in 13.22s",
+      "full: 2330 passed, 4 xfailed, 105 subtests passed in 88.89s; verify exit 0"
+    ],
+    "commands": [
+      "PYTHONSAFEPATH=1 PYTHONPATH=. /Volumes/SSD/valuehire_v5/.venv/bin/python -m pytest -q tests/test_linkedin_session_skill_contract.py tests/test_linkedin_rps_session_context.py tests/test_humansearch_session_context.py tests/test_humansearch_r4_wiring.py",
+      "PATH=/Volumes/SSD/valuehire_v5/.venv/bin:$PATH ./verify.sh"
+    ]
+  },
+  "v1": {
+    "author": "Codex CLI fresh read-only review",
+    "initial_verdict": "fail",
+    "counterexamples_accepted": [
+      "tracked .codex skill mirrors were stale and untested",
+      "process_profile/results.json dropped navigation_url and source_search_url",
+      "official humansearch instructions did not bind exact_target_id to target_id",
+      "tests did not inspect tracked .codex copies"
+    ],
+    "sealing": "6a74b81 RED first, then 3f73375 GREEN; focused 45 passed and full verify exit 0",
+    "final_verdict": "pass"
+  },
+  "v2": {
+    "author": "Claude Code Opus fresh-context read-only review",
+    "verdict": "pass",
+    "independent_evidence": "Tracked .codex mirrors and byte-identity tests, three-URL persistence, exact_target_id runtime wiring, pre-extraction terminal session-conflict ordering, lease/target fail-closed behavior, and the complete origin/main...HEAD diff were inspected. No reproducible acceptance-criterion gap was found.",
+    "non_blocking_observations": [
+      "One regression test accepts broad RuntimeError rather than a narrower target-resolution error.",
+      "One process_profile test creates the pre-existing default output directory before its intentional early exception."
+    ]
+  },
+  "failed_attempts": [
+    {
+      "attempt": "first independent Claude CLI review",
+      "result": "interrupted after prolonged no-output stall",
+      "resolution": "fresh Codex review found four concrete defects; all four were sealed by RED tests and implementation changes, then fresh Codex and Claude reviews passed"
+    }
+  ],
+  "three_way_agree": true,
+  "status": "Gate 4b passed; ready to update and merge PR #159"
+}
