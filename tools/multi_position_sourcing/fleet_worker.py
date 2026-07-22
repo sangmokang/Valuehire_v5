@@ -458,6 +458,34 @@ def _configured_agent_name(name: str, env: Mapping[str, str] | None = None) -> s
     return configured or name
 
 
+def probe_agent_cli(
+    name: str, *, env: Mapping[str, str] | None = None, timeout: int = 10,
+) -> bool:
+    """Return true only when the worker can execute one bounded CLI version probe.
+
+    Paths and command output are intentionally neither returned nor logged.  A probe failure must
+    remain visible through heartbeat capability booleans without killing the heartbeat thread.
+    """
+    if name not in ("claude", "codex"):
+        raise ValueError(f"unsupported agent CLI: {name!r}")
+    cmd, use_shell = _agent_argv(
+        _configured_agent_name(name, env), ["--version"],
+    )
+    try:
+        if use_shell:
+            _stdout, _stderr, exit_code = _run_via_shell(
+                cmd, "", timeout, str(REPO), env,
+            )
+            return exit_code == 0
+        proc = subprocess.run(
+            cmd, cwd=str(REPO), capture_output=True, text=True, encoding="utf-8",
+            timeout=timeout, env=dict(env) if env is not None else None,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _terminate_process_tree_windows(pid: int) -> None:
     """Codex Rescue V2 발견 — shell=True(cmd.exe) 경로에서 타임아웃 시 cmd.exe 프로세스만
     죽이면, cmd.exe 가 띄운 실제 에이전트 자식 프로세스는 고아로 남아 계속 돈다.
@@ -1109,16 +1137,29 @@ class FleetWorker:
         """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지).
 
         이슈 D: 로컬 포털 상태 파일에서 LinkedIn 로그인 여부를 읽어 동봉한다.
-        마이그레이션 전 DB(3인자 RPC 없음)면 기존 2인자 RPC 로 폴백 — 라우팅 정보는
-        못 실어도 심장박동 자체는 절대 끊기지 않는다.
+        Claude/Codex CLI 는 bounded --version 으로 실제 실행 가능성을 확인해 boolean 만
+        동봉한다. 마이그레이션 전 DB면 3인자, 다시 2인자 RPC 로 폴백 — 심장박동은
+        계속 남지만 새 readiness 마이그레이션이 없는 DB는 HR-1을 통과할 수 없다.
         """
         import os
         try:
             flag = read_linkedin_login_flag(REPO, now_epoch=int(time.time()))
         except Exception:  # noqa: BLE001 — 상태 파일 문제로 heartbeat 를 막지 않는다
             flag = False
+        claude_ready = probe_agent_cli("claude")
+        codex_ready = probe_agent_cli("codex")
         try:
             self.queue._call(  # noqa: SLF001 — 내부 RPC 재사용(재발명 금지)
+                "POST", "/rpc/record_heartbeat",
+                {"p_machine": self.machine, "p_worker_pid": os.getpid(),
+                 "p_linkedin_rps_logged_in": bool(flag),
+                 "p_claude_ready": claude_ready,
+                 "p_codex_ready": codex_ready})
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[fleet] heartbeat(5인자) 실패 — 레거시 폴백: {exc}", file=sys.stderr)
+        try:
+            self.queue._call(  # noqa: SLF001
                 "POST", "/rpc/record_heartbeat",
                 {"p_machine": self.machine, "p_worker_pid": os.getpid(),
                  "p_linkedin_rps_logged_in": bool(flag)})

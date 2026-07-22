@@ -25,6 +25,8 @@ BASE = (
     "20260719_discord_gateway_minimal_privilege_rpc.sql",
 )
 TARGET = MIGRATIONS / "20260722_discord_gateway_hr1_runtime.sql"
+CAPABILITY_TARGET = MIGRATIONS / "20260723_discord_gateway_agent_readiness.sql"
+GENERATION_TARGET = MIGRATIONS / "20260724_discord_gateway_worker_generation.sql"
 
 
 def _acquire(dsn: str, fingerprint: str, holder: str, pid: int, barrier) -> tuple:
@@ -45,6 +47,8 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                 for path in BASE:
                     _apply(conn, MIGRATIONS / path)
                 _apply(conn, TARGET)
+                _apply(conn, CAPABILITY_TARGET)
+                _apply(conn, GENERATION_TARGET)
 
                 columns = {
                     row[0] for row in conn.execute(
@@ -56,7 +60,7 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                 assert {
                     "token_fingerprint", "lease_id", "holder_identity", "holder_pid",
                     "target_machine", "generation", "acquired_at", "expires_at",
-                    "released_at",
+                    "released_at", "target_worker_pid",
                 } <= columns
                 assert conn.execute(
                     "select relrowsecurity from pg_class where oid='public.discord_gateway_leases'::regclass"
@@ -81,8 +85,9 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                     ).fetchone()[0]
 
                 conn.execute(
-                    """insert into public.machine_heartbeats(machine,beat_at,worker_pid)
-                       values ('winpc',now(),4242)"""
+                    """insert into public.machine_heartbeats(
+                         machine,beat_at,worker_pid,claude_ready,codex_ready)
+                       values ('winpc',now(),4242,true,true)"""
                 )
                 fingerprint = hashlib.sha256(b"isolated-test-token").hexdigest()
                 readiness = conn.execute(
@@ -90,6 +95,34 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                     (fingerprint,),
                 ).fetchone()
                 assert readiness[0:3] == (True, True, False)
+                assert readiness[5:8] == (4242, True, True)
+
+                conn.execute("select * from public.record_heartbeat('winpc',4242)")
+                legacy = conn.execute(
+                    "select claude_ready,codex_ready from public.machine_heartbeats where machine='winpc'"
+                ).fetchone()
+                assert legacy == (False, False)
+                conn.execute(
+                    "select * from public.record_heartbeat('winpc',4242,false,true,true)"
+                )
+
+                partial_fingerprint = hashlib.sha256(b"partial-worker-token").hexdigest()
+                conn.execute(
+                    "update public.machine_heartbeats set codex_ready=false where machine='winpc'"
+                )
+                partial = conn.execute(
+                    "select * from public.discord_gateway_readiness(%s,'winpc',300)",
+                    (partial_fingerprint,),
+                ).fetchone()
+                assert partial[1] is False and partial[5:8] == (4242, True, False)
+                with __import__("pytest").raises(psycopg.Error):
+                    conn.execute(
+                        "select * from public.discord_gateway_acquire_lease(%s,'partial',998,'winpc',90)",
+                        (partial_fingerprint,),
+                    ).fetchone()
+                conn.execute(
+                    "update public.machine_heartbeats set codex_ready=true where machine='winpc'"
+                )
 
                 conn.execute(
                     """insert into public.discord_gateway_killswitches
@@ -122,9 +155,33 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
 
             with psycopg.connect(dsn, autocommit=True) as conn:
                 held = conn.execute(
-                    "select holder_identity,holder_pid from public.discord_gateway_leases where lease_id=%s",
+                    "select holder_identity,holder_pid,target_worker_pid "
+                    "from public.discord_gateway_leases where lease_id=%s",
                     (lease_id,),
                 ).fetchone()
+                assert held[2] == 4242
+                conn.execute(
+                    "update public.machine_heartbeats set claude_ready=false where machine='winpc'"
+                )
+                with __import__("pytest").raises(psycopg.Error):
+                    conn.execute(
+                        "select * from public.discord_gateway_renew_lease(%s,%s,%s,%s,%s,%s)",
+                        (lease_id, fingerprint, held[0], held[1], generation, 90),
+                    ).fetchone()
+                conn.execute(
+                    "update public.machine_heartbeats set claude_ready=true where machine='winpc'"
+                )
+                conn.execute(
+                    "update public.machine_heartbeats set worker_pid=7777 where machine='winpc'"
+                )
+                with __import__("pytest").raises(psycopg.Error):
+                    conn.execute(
+                        "select * from public.discord_gateway_renew_lease(%s,%s,%s,%s,%s,%s)",
+                        (lease_id, fingerprint, held[0], held[1], generation, 90),
+                    ).fetchone()
+                conn.execute(
+                    "update public.machine_heartbeats set worker_pid=4242 where machine='winpc'"
+                )
                 renewed = conn.execute(
                     "select * from public.discord_gateway_renew_lease(%s,%s,%s,%s,%s,%s)",
                     (lease_id, fingerprint, held[0], held[1], generation, 90),
@@ -134,10 +191,17 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                     "select released from public.discord_gateway_release_lease(%s,%s,%s,%s,%s)",
                     (lease_id, fingerprint, "wrong-holder", held[1], generation),
                 ).fetchone()[0] is False
+                conn.execute(
+                    "update public.machine_heartbeats set claude_ready=false,codex_ready=false "
+                    "where machine='winpc'"
+                )
                 assert conn.execute(
                     "select released from public.discord_gateway_release_lease(%s,%s,%s,%s,%s)",
                     (lease_id, fingerprint, held[0], held[1], generation),
                 ).fetchone()[0] is True
+                conn.execute(
+                    "select * from public.record_heartbeat('winpc',4242,false,true,true)"
+                )
                 reclaimed = conn.execute(
                     "select * from public.discord_gateway_acquire_lease(%s,'holder-c',1003,'winpc',90)",
                     (fingerprint,),
@@ -170,6 +234,14 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
                     "select acquired from public.discord_gateway_acquire_lease(%s,'stale',1005,'winpc',90)",
                     (stale_fingerprint,),
                 ).fetchone()[0] is False
+                conn.execute(
+                    "update public.machine_heartbeats set beat_at=now()+interval '1 minute' where machine='winpc'"
+                )
+                future = conn.execute(
+                    "select worker_ready from public.discord_gateway_readiness(%s,'winpc',300)",
+                    (stale_fingerprint,),
+                ).fetchone()
+                assert future[0] is False
                 conn.execute(
                     "update public.machine_heartbeats set beat_at=now() where machine='winpc'"
                 )

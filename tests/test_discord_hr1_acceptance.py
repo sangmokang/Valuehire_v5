@@ -73,7 +73,21 @@ def _valid_receipt() -> dict:
         "readiness": {
             "minimal_rpc": True,
             "worker_machine": "winpc",
+            "worker_ready": True,
+            "worker_pid": 4242,
             "worker_heartbeat_age_seconds": 20,
+            "claude_ready": True,
+            "codex_ready": True,
+            "killswitch_engaged": False,
+        },
+        "readiness_after": {
+            "minimal_rpc": True,
+            "worker_machine": "winpc",
+            "worker_ready": True,
+            "worker_pid": 4242,
+            "worker_heartbeat_age_seconds": 5,
+            "claude_ready": True,
+            "codex_ready": True,
             "killswitch_engaged": False,
         },
         "duplicate_event": {
@@ -202,7 +216,12 @@ def test_hr1_client_replays_first_enqueued_delivery_without_second_response(tmp_
         lambda r: r.update(bot_identity_isolated=False),
         lambda r: r.update(gateway_stopped_after_test=False),
         lambda r: r["readiness"].update(worker_heartbeat_age_seconds=301),
+        lambda r: r["readiness"].update(worker_pid=0),
+        lambda r: r["readiness"].update(claude_ready=False),
+        lambda r: r["readiness"].pop("codex_ready"),
         lambda r: r["readiness"].update(killswitch_engaged=True),
+        lambda r: r["readiness_after"].update(codex_ready=False),
+        lambda r: r["readiness_after"].update(worker_pid=9999),
         lambda r: r.update(hermes_pids_after=[9999]),
         lambda r: r.update(queue_nonterminal_count=1),
         lambda r: r.update(rollback_tested=False),
@@ -221,9 +240,12 @@ def test_hr1_receipt_fails_closed(mutate) -> None:
 
 
 class _RuntimeQueue:
-    def __init__(self, *, ready: bool = True, killswitch: bool = False,
+    def __init__(self, *, ready: bool = True, claude_ready: bool = True,
+                 codex_ready: bool = True, killswitch: bool = False,
                  acquire: bool = True) -> None:
         self.ready = ready
+        self.claude_ready = claude_ready
+        self.codex_ready = codex_ready
         self.killswitch = killswitch
         self.acquire = acquire
         self.calls: list[tuple] = []
@@ -236,7 +258,10 @@ class _RuntimeQueue:
             "minimal_rpc": True,
             "worker_machine": machine,
             "worker_ready": self.ready,
+            "worker_pid": 4242,
             "worker_heartbeat_age_seconds": 10 if self.ready else 999,
+            "claude_ready": self.claude_ready,
+            "codex_ready": self.codex_ready,
             "killswitch_engaged": self.killswitch,
         }
 
@@ -299,6 +324,20 @@ def test_gateway_guard_never_acquires_when_worker_is_stale() -> None:
         hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
     )
     with pytest.raises(RuntimeError, match="heartbeat"):
+        guard.start()
+    assert [call[0] for call in queue.calls] == ["ready"]
+
+
+@pytest.mark.parametrize("missing", ("claude", "codex"))
+def test_gateway_guard_never_acquires_when_agent_cli_is_unready(missing: str) -> None:
+    queue = _RuntimeQueue(
+        claude_ready=missing != "claude", codex_ready=missing != "codex",
+    )
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
+    with pytest.raises(RuntimeError, match=missing):
         guard.start()
     assert [call[0] for call in queue.calls] == ["ready"]
 

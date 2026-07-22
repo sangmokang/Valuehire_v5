@@ -89,8 +89,11 @@ def test_build_receipt_requires_and_combines_live_evidence() -> None:
         "readiness": {
             "minimal_rpc": True,
             "worker_ready": True,
+            "worker_pid": 4242,
             "worker_machine": "winpc",
             "worker_heartbeat_age_seconds": 15,
+            "claude_ready": True,
+            "codex_ready": True,
             "killswitch_engaged": False,
         },
     }]
@@ -147,7 +150,18 @@ def test_build_receipt_requires_and_combines_live_evidence() -> None:
         git_sha_v5="b" * 40,
         verifier_sha256="e" * 64,
         gateway_exit_code=0,
+        final_readiness={
+            "minimal_rpc": True,
+            "worker_ready": True,
+            "killswitch_engaged": False,
+            "worker_heartbeat_age_seconds": 5,
+            "worker_machine": "winpc",
+            "worker_pid": 4242,
+            "claude_ready": True,
+            "codex_ready": True,
+        },
     )
     assert validate_hr1_receipt(receipt)["phase"] == "HR-1"
     assert receipt["duplicate_response_count"] == 0
     assert receipt["queue_nonterminal_count"] == 0
+    assert receipt["readiness_after"]["worker_pid"] == 4242

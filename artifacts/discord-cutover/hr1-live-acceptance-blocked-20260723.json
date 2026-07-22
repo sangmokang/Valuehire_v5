@@ -1,0 +1,55 @@
+{
+  "schema_version": "discord-hr1-blocked/v1",
+  "phase": "HR-1",
+  "status": "blocked_not_green",
+  "recorded_at": "2026-07-23T00:41:41+09:00",
+  "baseline_git_sha_v5": "c6395810122b99a22e87575b3bd6d0b457172f45",
+  "reason": "winpc_remote_management_unavailable_and_agent_clis_unready",
+  "hermes": {
+    "launchctl_state": "running",
+    "launchctl_runs": 2,
+    "pid": 22367,
+    "unchanged": true
+  },
+  "direct_gateway_process_count": 0,
+  "winpc": {
+    "worker_pid": 14080,
+    "heartbeat_at": "2026-07-22T15:40:56.254017+00:00",
+    "heartbeat_age_seconds_at_readback": 26,
+    "claude_ready": false,
+    "codex_ready": false,
+    "worker_ready": false,
+    "management_path_reachable": false
+  },
+  "gateway_preconditions": {
+    "minimal_rpc": true,
+    "killswitch_engaged": false,
+    "queue_nonterminal_count": 0,
+    "shared_lease_attempted": false
+  },
+  "discord_live_attempt": {
+    "started": false,
+    "messages_sent": 0,
+    "reason": "readiness_failed_before_gateway_connect"
+  },
+  "production_migrations": [
+    {
+      "version": "20260723",
+      "sha256": "e58d3083f7b45175417709fa3ab33efdca936129c8ada41218dfb84a7f1702c0"
+    },
+    {
+      "version": "20260724",
+      "sha256": "ce20b82e9f8c540b127b70cd44d8d403f464325cb48e1583ae7dcfee5f04c79c"
+    }
+  ],
+  "verification": {
+    "focused_tests_passed": 150,
+    "full_tests_passed": 2495,
+    "full_tests_xfailed": 4,
+    "full_node_subtests_passed": 105,
+    "independent_local_safeguards": "PASS",
+    "independent_hr1_live": "RED",
+    "independent_blocking_findings": 0
+  },
+  "resume_condition": "Reach WinPC through an existing managed path, resolve Get-Command claude and codex, configure VALUEHIRE_CLAUDE_BIN and VALUEHIRE_CODEX_BIN in the worker environment, restart only the worker, and observe a new PID with both readiness flags true."
+}

@@ -195,11 +195,40 @@ def validate_hr1_receipt(
     _require(readiness.get("minimal_rpc") is True, "minimal privilege RPC was not proven")
     _require(readiness.get("worker_machine") == "winpc",
              "HR-1 requires the winpc worker")
+    _require(readiness.get("worker_ready") is True, "winpc worker was not ready")
+    _require(_positive_int(readiness.get("worker_pid")),
+             "winpc worker PID was not proven")
+    _require(readiness.get("claude_ready") is True, "winpc Claude CLI was not ready")
+    _require(readiness.get("codex_ready") is True, "winpc Codex CLI was not ready")
     _require(readiness.get("killswitch_engaged") is False,
              "gateway killswitch is engaged")
     age = readiness.get("worker_heartbeat_age_seconds")
     _require(isinstance(age, int) and not isinstance(age, bool) and 0 <= age <= 300,
              "worker heartbeat is stale")
+
+    readiness_after = payload.get("readiness_after")
+    _require(isinstance(readiness_after, Mapping),
+             "final readiness evidence is missing")
+    _require(readiness_after.get("minimal_rpc") is True,
+             "final minimal privilege RPC was not proven")
+    _require(readiness_after.get("worker_machine") == readiness.get("worker_machine"),
+             "worker machine changed during HR-1")
+    _require(readiness_after.get("worker_pid") == readiness.get("worker_pid"),
+             "worker process changed during HR-1")
+    _require(readiness_after.get("worker_ready") is True,
+             "winpc worker was not ready after HR-1")
+    _require(readiness_after.get("claude_ready") is True,
+             "winpc Claude CLI was not ready after HR-1")
+    _require(readiness_after.get("codex_ready") is True,
+             "winpc Codex CLI was not ready after HR-1")
+    _require(readiness_after.get("killswitch_engaged") is False,
+             "gateway killswitch was engaged after HR-1")
+    final_age = readiness_after.get("worker_heartbeat_age_seconds")
+    _require(
+        isinstance(final_age, int) and not isinstance(final_age, bool)
+        and 0 <= final_age <= 300,
+        "worker heartbeat was stale after HR-1",
+    )
 
     duplicate = payload.get("duplicate_event")
     _require(isinstance(duplicate, Mapping), "duplicate event evidence is missing")
@@ -333,6 +362,12 @@ class GatewayLeaseGuard:
             raise RuntimeError("minimal privilege RPC readiness failed")
         if readiness.get("worker_ready") is not True:
             raise RuntimeError("worker heartbeat is missing or stale")
+        if not _positive_int(readiness.get("worker_pid")):
+            raise RuntimeError("worker PID is missing from readiness")
+        if readiness.get("claude_ready") is not True:
+            raise RuntimeError("worker claude CLI is not ready")
+        if readiness.get("codex_ready") is not True:
+            raise RuntimeError("worker codex CLI is not ready")
         if readiness.get("worker_machine") != self.machine:
             raise RuntimeError("worker readiness returned a different machine")
         if readiness.get("killswitch_engaged") is not False:

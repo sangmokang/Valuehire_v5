@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -1055,6 +1056,81 @@ def test_run_claude_uses_configured_binary_when_worker_path_is_missing(monkeypat
     assert captured["cmd"][0] == r'"C:\\Claude\\claude.cmd"'
 
 
+@pytest.mark.parametrize(
+    ("agent", "env_key", "configured"),
+    (
+        ("claude", "VALUEHIRE_CLAUDE_BIN", r"C:\\Claude\\claude.cmd"),
+        ("codex", "VALUEHIRE_CODEX_BIN", r"C:\\Codex\\codex.bat"),
+    ),
+)
+def test_agent_cli_probe_runs_bounded_version_on_windows_cmd(
+    monkeypatch, agent, env_key, configured,
+):
+    """Readiness must prove the configured shim executes, not merely that PATH exists."""
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+
+    def fake_shell(cmd, prompt, timeout, cwd, env):
+        captured.update(cmd=cmd, prompt=prompt, timeout=timeout, env=env)
+        return (f"{agent} 1.2.3", "", 0)
+
+    monkeypatch.setattr(fw, "_run_via_shell", fake_shell)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(fw.shutil, "which", lambda name: None)
+    env = {env_key: configured}
+    assert fw.probe_agent_cli(agent, env=env, timeout=7) is True
+    assert captured["cmd"] == [f'"{configured}"', "--version"]
+    assert captured["prompt"] == ""
+    assert captured["timeout"] == 7
+
+
+def test_agent_cli_probe_executes_path_resolution_and_fails_on_path_miss(monkeypatch):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    calls = []
+
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(fw.shutil, "which", lambda name: rf"C:\\Tools\\{name}.exe")
+
+    def success(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(stdout="version", stderr="", returncode=0)
+
+    monkeypatch.setattr(fw.subprocess, "run", success)
+    assert fw.probe_agent_cli("codex", env={}, timeout=4) is True
+    assert calls[0][0] == [r"C:\\Tools\\codex.exe", "--version"]
+
+    monkeypatch.setattr(fw.shutil, "which", lambda name: None)
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(fw.subprocess, "run", missing)
+    assert fw.probe_agent_cli("claude", env={}, timeout=4) is False
+
+
+def test_agent_cli_probe_fails_closed_on_nonzero_and_timeout(monkeypatch):
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+
+    monkeypatch.setattr(fw.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        fw.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(stdout="", stderr="missing auth", returncode=1),
+    )
+    assert fw.probe_agent_cli(
+        "codex", env={"VALUEHIRE_CODEX_BIN": "/opt/bin/codex"}, timeout=3,
+    ) is False
+
+    def timed_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(fw.subprocess, "run", timed_out)
+    assert fw.probe_agent_cli(
+        "claude", env={"VALUEHIRE_CLAUDE_BIN": "/opt/bin/claude"}, timeout=3,
+    ) is False
+
+
 def test_run_claude_no_shell_change_on_macos(monkeypatch):
     """비-윈도우(맥/리눅스)에서는 기존 동작 그대로 — shell 미지정(False 취급)."""
     from types import SimpleNamespace
@@ -1078,6 +1154,7 @@ def test_run_claude_no_shell_change_on_macos(monkeypatch):
 def test_record_heartbeat_sends_linkedin_flag(monkeypatch):
     from tools.multi_position_sourcing import fleet_worker as fw
     monkeypatch.setattr(fw, "read_linkedin_login_flag", lambda *a, **k: True)
+    monkeypatch.setattr(fw, "probe_agent_cli", lambda name: name == "claude")
     calls = []
     class Q:
         def _call(self, method, path, payload=None):
@@ -1089,17 +1166,20 @@ def test_record_heartbeat_sends_linkedin_flag(monkeypatch):
     w.record_heartbeat()
     assert calls and calls[0][1] == "/rpc/record_heartbeat"
     assert calls[0][2]["p_linkedin_rps_logged_in"] is True
+    assert calls[0][2]["p_claude_ready"] is True
+    assert calls[0][2]["p_codex_ready"] is False
 
 
 def test_record_heartbeat_falls_back_to_legacy_rpc(monkeypatch):
-    """마이그레이션 전 DB(3인자 RPC 없음)에서도 심장박동은 계속 뛰어야 한다."""
+    """Capability RPC 전 DB에는 heartbeat만 남기되 HR-1 readiness는 false여야 한다."""
     from tools.multi_position_sourcing import fleet_worker as fw
     monkeypatch.setattr(fw, "read_linkedin_login_flag", lambda *a, **k: False)
+    monkeypatch.setattr(fw, "probe_agent_cli", lambda name: True)
     calls = []
     class Q:
         def _call(self, method, path, payload=None):
             calls.append(payload)
-            if "p_linkedin_rps_logged_in" in (payload or {}):
+            if "p_claude_ready" in (payload or {}):
                 raise RuntimeError("PGRST202 function not found")
             return []
         def claim_next(self, machine):
@@ -1107,7 +1187,32 @@ def test_record_heartbeat_falls_back_to_legacy_rpc(monkeypatch):
     w = FleetWorker(machine="macmini", queue=Q(), notifier=lambda j, t: None)
     w.record_heartbeat()  # 예외 전파 없이
     assert len(calls) == 2
-    assert "p_linkedin_rps_logged_in" not in calls[1]
+    assert calls[1]["p_linkedin_rps_logged_in"] is False
+    assert "p_claude_ready" not in calls[1]
+
+
+def test_record_heartbeat_falls_back_through_three_arg_to_two_arg_rpc(monkeypatch):
+    """가장 오래된 DB에서도 heartbeat는 남기되 capability GREEN은 만들지 않는다."""
+    from tools.multi_position_sourcing import fleet_worker as fw
+    monkeypatch.setattr(fw, "read_linkedin_login_flag", lambda *a, **k: False)
+    monkeypatch.setattr(fw, "probe_agent_cli", lambda name: True)
+    calls = []
+
+    class Q:
+        def _call(self, method, path, payload=None):
+            calls.append(payload)
+            if "p_claude_ready" in (payload or {}):
+                raise RuntimeError("PGRST202 five arg missing")
+            if "p_linkedin_rps_logged_in" in (payload or {}):
+                raise RuntimeError("PGRST202 three arg missing")
+            return []
+
+        def claim_next(self, machine):
+            return None
+
+    FleetWorker(machine="macmini", queue=Q(), notifier=lambda j, t: None).record_heartbeat()
+    assert len(calls) == 3
+    assert calls[-1] == {"p_machine": "macmini", "p_worker_pid": os.getpid()}
 
 
 def test_followup_uses_own_skill_account_key_not_parents_seat_lock():
