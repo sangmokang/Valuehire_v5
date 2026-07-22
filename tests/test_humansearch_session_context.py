@@ -108,7 +108,7 @@ def test_profile_open_prefers_exact_result_href_over_bare_profile_url(
         _archive_receipt,
     )
 
-    runner.process_profile(
+    result = runner.process_profile(
         tab,
         {
             "url": "https://www.linkedin.com/talent/profile/AAA",
@@ -120,6 +120,9 @@ def test_profile_open_prefers_exact_result_href_over_bare_profile_url(
     )
 
     assert tab.navigated == [navigation_url]
+    assert result["url"] == "https://www.linkedin.com/talent/profile/AAA"
+    assert result["navigation_url"] == navigation_url
+    assert result["source_search_url"] == SOURCE_SEARCH_URL
 
 
 def test_session_conflict_stops_before_extract_screenshot_or_archive(

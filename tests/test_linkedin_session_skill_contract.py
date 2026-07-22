@@ -14,11 +14,15 @@ def test_codex_and_claude_entry_skills_share_session_context_rule() -> None:
     skill_paths = (
         "skills/login/SKILL.md",
         ".claude/skills/login/SKILL.md",
+        ".codex/skills/login/SKILL.md",
         "skills/humansearch/SKILL.md",
         ".claude/skills/humansearch/SKILL.md",
+        ".codex/skills/humansearch/SKILL.md",
         "skills/ai-search/SKILL.md",
         ".claude/skills/aisearch/SKILL.md",
+        ".codex/skills/ai-search/SKILL.md",
         ".claude/skills/url/SKILL.md",
+        ".codex/skills/url/SKILL.md",
     )
     for relative in skill_paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
@@ -31,6 +35,7 @@ def test_login_contract_separates_session_conflict_from_auth_lost() -> None:
     contract_paths = (
         "skills/login/browser-control-contract.json",
         ".claude/skills/login/browser-control-contract.json",
+        ".codex/skills/login/browser-control-contract.json",
     )
     payloads = [
         json.loads((ROOT / relative).read_text(encoding="utf-8"))
@@ -93,3 +98,20 @@ def test_login_skill_mirrors_are_byte_identical() -> None:
     assert (ROOT / "skills/login/browser-control-contract.json").read_bytes() == (
         ROOT / ".claude/skills/login/browser-control-contract.json"
     ).read_bytes()
+    assert (ROOT / "skills/login/SKILL.md").read_bytes() == (
+        ROOT / ".codex/skills/login/SKILL.md"
+    ).read_bytes()
+    assert (ROOT / "skills/login/browser-control-contract.json").read_bytes() == (
+        ROOT / ".codex/skills/login/browser-control-contract.json"
+    ).read_bytes()
+
+
+def test_humansearch_operational_skills_pass_the_exact_recruiter_target() -> None:
+    for relative in (
+        "skills/humansearch/SKILL.md",
+        ".claude/skills/humansearch/SKILL.md",
+        ".codex/skills/humansearch/SKILL.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "exact_target_id" in text, relative
+        assert "target_id=exact_target_id" in text, relative
