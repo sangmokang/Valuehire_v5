@@ -436,10 +436,26 @@ def _agent_argv(name: str, base_args: list[str]) -> tuple[list[str], bool]:
         return [name, *base_args], False
     resolved = shutil.which(name)
     exe = resolved or name
-    needs_shell = bool(resolved) and exe.lower().endswith((".cmd", ".bat"))
+    needs_shell = exe.lower().endswith((".cmd", ".bat"))
     if needs_shell:
         exe = _quote_for_cmd_exe(exe)
     return [exe, *base_args], needs_shell
+
+
+def _configured_agent_name(name: str, env: Mapping[str, str] | None = None) -> str:
+    """Resolve an explicitly configured CLI before falling back to PATH.
+
+    Windows scheduled tasks often do not inherit the interactive user's npm PATH.
+    The worker may therefore receive VALUEHIRE_CLAUDE_BIN (or CODEX_BIN) through
+    its task environment/.env.local without weakening the fail-closed subprocess
+    boundary.
+    """
+    source = env or os.environ
+    key = "VALUEHIRE_CLAUDE_BIN" if name == "claude" else "VALUEHIRE_CODEX_BIN"
+    configured = str(source.get(key) or "").strip()
+    if not configured:
+        configured = _load_env_line(key)
+    return configured or name
 
 
 def _terminate_process_tree_windows(pid: int) -> None:
@@ -510,7 +526,7 @@ def _run_claude(prompt: str, timeout: int,
             raise ValueError(f"unsupported Claude execution mode: {raw_mode!r}")
         base_args.extend(["--permission-mode", permission_mode])
     base_args.append("-p")
-    cmd, use_shell = _agent_argv("claude", base_args)
+    cmd, use_shell = _agent_argv(_configured_agent_name("claude", env), base_args)
     if use_shell:
         return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
     if owner_agent:
@@ -561,7 +577,7 @@ def _run_codex(prompt: str, timeout: int,
     이슈 F: 윈도우 .cmd shim 경로는 `codex exec -`(stdin 소스 명시) + input=prompt.
     """
     import ntpath
-    codex_name = str((env or {}).get("VALUEHIRE_CODEX_BIN") or "codex").strip()
+    codex_name = _configured_agent_name("codex", env)
     basename = ntpath.basename(codex_name).lower()
     if basename not in ("codex", "codex.exe", "codex.cmd", "codex.bat"):
         raise ValueError(f"Codex 실행파일이 아닙니다: {codex_name!r}")

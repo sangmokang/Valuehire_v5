@@ -1038,6 +1038,23 @@ def test_run_claude_falls_back_to_bare_name_when_which_finds_nothing(monkeypatch
     assert not captured["shell"], "실행파일 못 찾으면 shell=True 로 무리하게 돌리지 않는다"
 
 
+def test_run_claude_uses_configured_binary_when_worker_path_is_missing(monkeypatch):
+    """Scheduled-task PATH may omit the interactive Claude CLI installation."""
+    from types import SimpleNamespace
+    from tools.multi_position_sourcing import fleet_worker as fw
+    captured = {}
+
+    def fake_shell(cmd, prompt, timeout, cwd, env):
+        captured["cmd"] = cmd
+        return ("ok", "", 0)
+
+    monkeypatch.setattr(fw, "_run_via_shell", fake_shell)
+    monkeypatch.setattr(fw.sys, "platform", "win32")
+    monkeypatch.setattr(fw.shutil, "which", lambda name: None)
+    fw._run_claude("hello", timeout=10, env={"VALUEHIRE_CLAUDE_BIN": r"C:\\Claude\\claude.cmd"})
+    assert captured["cmd"][0] == r'"C:\\Claude\\claude.cmd"'
+
+
 def test_run_claude_no_shell_change_on_macos(monkeypatch):
     """비-윈도우(맥/리눅스)에서는 기존 동작 그대로 — shell 미지정(False 취급)."""
     from types import SimpleNamespace

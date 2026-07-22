@@ -6,6 +6,16 @@
 
 ## Current-state evidence and root cause
 
+Live attempt 2026-07-22 produced jobs 65-67 on `winpc`; all failed with the same
+secret-free error fingerprint `3621eeed6e313ec2afcfc5b7a458d52f581abcaa748142df13dbff1cab1b2ebf`,
+which matches `[WinError 2] 지정된 파일을 찾을 수 없습니다`. The worker heartbeat was fresh,
+but its scheduled-task environment did not expose the Claude/Codex executable. This is a
+worker executable-resolution failure, not a gateway lease, RPC, deduplication, or Hermes failure.
+
+The worker now accepts an explicit `VALUEHIRE_CLAUDE_BIN`/`VALUEHIRE_CODEX_BIN` path from its
+task environment or `.env.local`, including Windows `.cmd`/`.bat` shims. The WinPC worker must
+be restarted with the installed CLI path before the next live attempt.
+
 - SOT 33 requires the startup path to prove minimal RPC access, the target worker heartbeat,
   killswitch state, and one shared lease before Discord connect (`docs/sot/33-hermes-retirement.md`).
 - The inherited first implementation checks readiness and acquires a lease before `client.run`, but
