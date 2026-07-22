@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import ast
 import hashlib
+import json
 from pathlib import Path
 import threading
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,6 +16,7 @@ from tests.test_discord_direct_gateway import FakeMessage
 from tools.multi_position_sourcing.access import DiscordAuthorizedUser
 from tools.multi_position_sourcing.discord_hr1 import (
     GatewayLeaseGuard,
+    Hr1EvidenceRecorder,
     Hr1ReceiptError,
     validate_hr1_receipt,
 )
@@ -96,6 +100,92 @@ def _valid_receipt() -> dict:
 
 def test_hr1_receipt_requires_complete_live_evidence() -> None:
     assert validate_hr1_receipt(_valid_receipt())["phase"] == "HR-1"
+
+
+def test_hr1_evidence_recorder_creates_secret_free_jsonl(tmp_path: Path) -> None:
+    path = tmp_path / "hr1.jsonl"
+    recorder = Hr1EvidenceRecorder(path)
+    recorder.record(
+        "discord_delivery",
+        event_id="1529267252160927202",
+        action="enqueued",
+        job_id=202,
+        response_id="1529267252160927302",
+    )
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows[0]["kind"] == "discord_delivery"
+    assert rows[0]["event_id"] == "1529267252160927202"
+    assert rows[0]["recorded_at"].endswith("+00:00")
+
+    with pytest.raises(Hr1ReceiptError, match="secret"):
+        recorder.record("bad", bot_token=TOKEN)
+
+
+def test_hr1_evidence_recorder_refuses_to_mix_existing_runs(tmp_path: Path) -> None:
+    path = tmp_path / "hr1.jsonl"
+    path.write_text("stale\n")
+    with pytest.raises(FileExistsError):
+        Hr1EvidenceRecorder(path)
+
+
+def test_text_delivery_returns_discord_response_and_job_ids(monkeypatch) -> None:
+    class Queue:
+        def enqueue(self, payload):
+            return {"id": 202, "machine": "winpc", "skill": payload["skill"]}
+
+    message = FakeMessage(
+        message_id="1529267252160927202",
+        author_id=OWNER,
+        content=f"/fleet-run url {POSITION} winpc agent:claude",
+    )
+    message.channel.send = AsyncMock(
+        return_value=SimpleNamespace(id=1529267252160927302))
+    result = asyncio.run(gateway.handle_text_message(
+        message,
+        bot_user_id=BOT,
+        queue=Queue(),
+        authorized_users=(DiscordAuthorizedUser(
+            name="owner", alias="owner", email="owner@example.com", discord_id=OWNER),),
+        config=DiscordAccessConfig(allow_dm=True),
+    ))
+    assert result is not None
+    assert result["action"] == "enqueued"
+    assert result["job_id"] == 202
+    assert result["response_id"] == "1529267252160927302"
+
+
+def test_hr1_client_replays_first_enqueued_delivery_without_second_response(tmp_path) -> None:
+    recorder = Hr1EvidenceRecorder(tmp_path / "events.jsonl")
+    client = gateway.DirectGatewayClient(
+        authorized_users=(),
+        config=DiscordAccessConfig(allow_dm=True),
+        queue_factory=lambda: object(),
+        hr1_evidence_recorder=recorder,
+        hr1_replay_first_enqueued=True,
+    )
+    message = FakeMessage(
+        message_id="1529267252160927202",
+        author_id=OWNER,
+        content=f"/fleet-run url {POSITION} winpc agent:claude",
+    )
+    message.author.bot = False
+    first = {
+        "action": "enqueued",
+        "job_id": 202,
+        "response_id": "1529267252160927302",
+    }
+    replay = {"action": "duplicate", "job_id": 202}
+    with pytest.MonkeyPatch.context() as patcher:
+        handler = AsyncMock(side_effect=(first, replay))
+        patcher.setattr(gateway, "handle_text_message", handler)
+        asyncio.run(client.on_message(message))
+    assert handler.await_count == 2
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert [row["delivery"] for row in rows] == ["original", "replay"]
+    assert [row["action"] for row in rows] == ["enqueued", "duplicate"]
+    assert rows[0]["response_id"] == "1529267252160927302"
+    assert "response_id" not in rows[1]
+    assert rows[0]["content_fingerprint"] == rows[1]["content_fingerprint"]
 
 
 @pytest.mark.parametrize(
