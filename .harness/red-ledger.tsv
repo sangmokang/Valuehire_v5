@@ -103,3 +103,4 @@ nl-gateway-wiring	GREEN	-	PR#176 merged 2026-07-22(28f7ccc) — AC-N4 plan_from_
 nl-gateway-connect	RED	-	worktree ../Valuehire_v5-nl-gateway-connect (branch task/nl-gateway-connect)
 hermes-retirement-contract	RED	-	worktree ../Valuehire_v5-hermes-retirement-contract (branch task/hermes-retirement-contract)
 nl-shell-ac-n2-n4	GREEN	-	PR#171~177 merged 2026-07-22 — U1 해소3분기·U2 ClickUp어댑터+동의어·U3 fleet환원·U4 단일진입점·U5 jdintake스킬·U6 plan_from_text·U7 게이트웨이배선. 각 단위 RED→GREEN+뮤턴트 kill. verify 2386 passed exit 0. 잔여: ClickUp 라이브 HTTP 어댑터, badge_env 워커 주입, E-NL4 인텐트 결정. SHIPPED.
+hermes-retirement-hr0-inventory	GREEN	-	PR#181 merged 2026-07-22(598764f) — HR-0 전수조사 2,909항목·UNKNOWN 0·live caller 선이사 153·비밀원문 0. focused 38 passed, 전체 2431 passed+4 xfailed+105 subtests, CI 2건·독립 최종 PASS. Hermes runtime 변경 0. SHIPPED.
