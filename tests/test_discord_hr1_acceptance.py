@@ -4,6 +4,7 @@ import asyncio
 import ast
 import hashlib
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -64,9 +65,9 @@ def _valid_receipt() -> dict:
             "killswitch_engaged": False,
         },
         "duplicate_event": {
-            "event_id": "1529267252160927201",
-            "first_job_id": 201,
-            "replay_job_id": 201,
+            "event_id": "1529267252160927202",
+            "first_job_id": 202,
+            "replay_job_id": 202,
             "row_count": 1,
         },
         "jobs": [
@@ -80,8 +81,12 @@ def _valid_receipt() -> dict:
         "duplicate_response_count": 0,
         "queue_nonterminal_count": 0,
         "rollback_tested": True,
-        "event_id": "1529267252160927201",
-        "job_id": 201,
+        "claude_job_id": 202,
+        "claude_response_id": "1529267252160927302",
+        "codex_job_id": 203,
+        "codex_response_id": "1529267252160927303",
+        "event_id": "1529267252160927202",
+        "job_id": 202,
         "agent": "claude",
         "state_transitions": ["queued", "running", "done"],
         "verified_at": "2026-07-22T12:00:00+00:00",
@@ -103,6 +108,7 @@ def test_hr1_receipt_requires_complete_live_evidence() -> None:
         lambda r: r.update(hermes_pids_after=[9999]),
         lambda r: r.update(queue_nonterminal_count=1),
         lambda r: r.update(rollback_tested=False),
+        lambda r: r.update(claude_job_id=999),
         lambda r: r["jobs"][0].update(transitions=["queued", "done"]),
         lambda r: r["jobs"][1].update(response_count=2),
         lambda r: r["duplicate_event"].update(replay_job_id=999),
@@ -225,6 +231,27 @@ def test_gateway_guard_blocks_second_holder_before_connect() -> None:
     with pytest.raises(RuntimeError, match="already held"):
         guard.start()
     assert [call[0] for call in queue.calls] == ["ready", "acquire"]
+
+
+def test_gateway_guard_disconnects_after_consecutive_renew_failures() -> None:
+    class RenewFailureQueue(_RuntimeQueue):
+        def renew_gateway_lease(self, *args) -> dict:
+            self.calls.append(("renew", *args))
+            return {"renewed": False}
+
+    queue = RenewFailureQueue()
+    lost = threading.Event()
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+        renew_interval_seconds=0.01, max_consecutive_renew_failures=2,
+        on_lease_lost=lambda _exc: lost.set(),
+    )
+    guard.start()
+    assert lost.wait(0.5)
+    guard.stop()
+    assert [call[0] for call in queue.calls].count("renew") == 2
+    assert [call[0] for call in queue.calls][-1] == "release"
 
 
 def test_main_never_connects_when_killswitch_is_engaged(monkeypatch) -> None:
