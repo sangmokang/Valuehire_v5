@@ -167,6 +167,29 @@ def test_dispatch_fleet_run_enqueues():
     assert q.resumed == [] and q.cancelled == []
 
 
+def test_dispatch_duplicate_event_suppresses_second_notification(monkeypatch):
+    class DuplicateQueue:
+        def enqueue(self, payload):
+            return {**payload, "id": 42, "_discord_duplicate": True}
+
+    notified = []
+    monkeypatch.setattr(
+        "tools.multi_position_sourcing.fleet_worker.discord_notify",
+        lambda *args: notified.append(args),
+    )
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={
+            "skill": "aisearch", "url": "https://app.clickup.com/t/x",
+            "machine": "winpc",
+            "params": {"idempotency_key": "discord:1529267252160927999"},
+        }),
+        authorized_users=_users(), config=_config(), queue=DuplicateQueue(),
+        owner_role_ids=(OWNER_ROLE,),
+    )
+    assert result["action"] == "duplicate"
+    assert notified == []
+
+
 def test_dispatch_unauthorized_user_blocked():
     q = FakeQueue()
     r = dispatch_fleet_command(

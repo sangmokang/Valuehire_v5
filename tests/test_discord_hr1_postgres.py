@@ -186,17 +186,17 @@ def test_hr1_migration_is_atomic_minimal_and_reclaimable() -> None:
 
                 event_key = "discord:1529267252160927999"
                 params = psycopg.types.json.Jsonb({"idempotency_key": event_key})
-                conn.execute(
+                first_enqueue = conn.execute(
                     "select * from public.discord_gateway_enqueue('winpc','https://example.com/job','owner','aisearch',%s,'portal:winpc')",
                     (params,),
-                )
-                try:
-                    conn.execute(
-                        "select * from public.discord_gateway_enqueue('winpc','https://example.com/job','owner','aisearch',%s,'portal:winpc')",
-                        (params,),
-                    )
-                except psycopg.errors.UniqueViolation:
-                    pass
+                ).fetchone()
+                replay_enqueue = conn.execute(
+                    "select * from public.discord_gateway_enqueue('winpc','https://example.com/job','owner','aisearch',%s,'portal:winpc')",
+                    (params,),
+                ).fetchone()
+                assert first_enqueue[-1] is True
+                assert replay_enqueue[-1] is False
+                assert first_enqueue[0] == replay_enqueue[0]
                 assert conn.execute(
                     "select count(*) from public.jobs where params->>'idempotency_key'=%s",
                     (event_key,),

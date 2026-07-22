@@ -920,6 +920,37 @@ class MinimalPrivilegeQueueClientRpcOnlyTests(unittest.TestCase):
         self.assertIn("/rest/v1/rpc/discord_gateway_enqueue", urls[0])
         self.assertNotIn("/rest/v1/jobs", urls[0])
 
+    def test_enqueue_marks_rpc_replay_for_response_suppression(self) -> None:
+        client, urls, _fake_urlopen = self._client_with_recorder()
+
+        class FakeHTTPResponse:
+            def read(self) -> bytes:
+                return b'[{"id":1,"machine":"winpc","skill":"aisearch","status":"queued","created":false}]'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def replay_response(req, timeout=30):
+            urls.append(req.full_url)
+            return FakeHTTPResponse()
+
+        with patch("urllib.request.urlopen", side_effect=replay_response), patch(
+            "tools.multi_position_sourcing.job_queue.url_host_resolves_public",
+            return_value=True,
+        ):
+            row = client.enqueue({
+                "machine": "winpc", "skill": "aisearch",
+                "position_url": "https://app.clickup.com/t/x",
+                "requested_by": "owner:owner", "role": "owner",
+                "params": {"idempotency_key": "discord:1529267252160927999"},
+                "status": "queued",
+            })
+        self.assertTrue(row["_discord_duplicate"])
+        self.assertEqual(len(urls), 1)
+
     def test_enqueue_rejects_agent_skill_before_network(self) -> None:
         """v2 보안 경계 — skill='agent' 는 owner 전용(fragment E, 이 조각 범위 밖)이라
         이 최소권한 경로에서 절대 등록되면 안 된다. 파이썬 레벨에서 먼저 거부해
