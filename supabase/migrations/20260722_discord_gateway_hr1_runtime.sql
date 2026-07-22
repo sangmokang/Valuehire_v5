@@ -381,11 +381,19 @@ $$;
 -- not rewrite that history merely to start HR-1. Serialize each new Discord event
 -- inside this canonical RPC, return its existing job on replay, and require the
 -- snowflake-derived key on every call. The advisory lock is transaction-scoped.
-create or replace function public.discord_gateway_enqueue(
+drop function if exists public.discord_gateway_enqueue(text,text,text,text,jsonb,text);
+create function public.discord_gateway_enqueue(
   p_machine text, p_position_url text, p_requested_by text,
   p_skill text default 'aisearch', p_params jsonb default '{}'::jsonb,
   p_account_key text default ''
-) returns setof public.jobs
+) returns table (
+  id bigint,
+  machine text,
+  skill text,
+  status text,
+  created_at timestamptz,
+  created boolean
+)
 language plpgsql
 security definer
 set search_path = ''
@@ -405,7 +413,9 @@ begin
 
   perform pg_advisory_xact_lock(pg_catalog.hashtextextended(event_key, 0));
   return query
-    select existing.* from public.jobs as existing
+    select existing.id, existing.machine, existing.skill, existing.status,
+           existing.created_at, false
+      from public.jobs as existing
      where existing.params->>'idempotency_key' = event_key
      order by existing.id
      limit 1;
@@ -414,13 +424,19 @@ begin
   end if;
 
   return query
-    insert into public.jobs (
-      machine, skill, position_url, params, requested_by, role, account_key
-    ) values (
-      p_machine, p_skill, coalesce(p_position_url, ''), coalesce(p_params, '{}'::jsonb),
-      p_requested_by, 'member', coalesce(p_account_key, '')
+    with inserted as (
+      insert into public.jobs (
+        machine, skill, position_url, params, requested_by, role, account_key
+      ) values (
+        p_machine, p_skill, coalesce(p_position_url, ''), coalesce(p_params, '{}'::jsonb),
+        p_requested_by, 'member', coalesce(p_account_key, '')
+      )
+      returning public.jobs.id, public.jobs.machine, public.jobs.skill,
+                public.jobs.status, public.jobs.created_at
     )
-    returning *;
+    select inserted.id, inserted.machine, inserted.skill, inserted.status,
+           inserted.created_at, true
+      from inserted;
 end;
 $$;
 

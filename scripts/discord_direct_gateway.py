@@ -848,7 +848,11 @@ class MinimalPrivilegeQueueClient:
                 if existing is not None:
                     return existing
             raise JobQueueConflictError(f"enqueue 실패(HTTP {exc.code})") from None
-        return rows[0] if isinstance(rows, list) and rows else rows
+        row = rows[0] if isinstance(rows, list) and rows else rows
+        if isinstance(row, dict) and isinstance(row.get("created"), bool):
+            row = dict(row)
+            row["_discord_duplicate"] = row.pop("created") is False
+        return row
 
     def job_by_idempotency_key(self, key: str) -> Optional[dict[str, Any]]:
         rows = self._rpc("discord_gateway_job_by_idempotency_key", {"p_key": str(key)})

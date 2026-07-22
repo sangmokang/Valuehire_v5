@@ -157,6 +157,8 @@ def dispatch_fleet_command(
         if payload is None:
             return {"action": "error", "reason": "잡 페이로드 무효(스킬/URL/머신 확인)"}
         job = q.enqueue(payload)
+        if isinstance(job, Mapping) and job.get("_discord_duplicate") is True:
+            return {"action": "duplicate", "job": job}
         try:
             from .fleet_worker import discord_notify
             discord_notify(
