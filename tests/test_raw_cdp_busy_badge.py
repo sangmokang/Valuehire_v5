@@ -402,6 +402,47 @@ class MarkBusyTests(unittest.TestCase):
         self.assertFalse(tab.mark_busy("Codex", expected_url="https://example.test/search"))
         self.assertTrue(tab.badge_application_uncertain)
 
+    def test_failed_visual_proof_rolls_back_the_exact_injected_badge(self):
+        class RollbackTab(_RecTab):
+            def prove_badge_rendered(self, **_kwargs):
+                return False
+
+            def bind_exact_badge_for_cleanup(self, label, *, expected_url):
+                self.sends.append(("bind-cleanup", {"label": label, "url": expected_url}))
+                self._badge_label = label
+                self._badge_bound_url = expected_url
+                self._badge_object_id = "exact-badge"
+                return True
+
+            def clear_busy(self, label, *, expected_url, badge_bound_url=None):
+                self.sends.append(("clear-exact", {"label": label, "url": expected_url}))
+                return True
+
+        tab = RollbackTab(eval_result=raw_cdp._BADGE_ID)
+        self.assertFalse(tab.mark_busy("Codex", expected_url="https://example.test/search"))
+        self.assertEqual([method for method, _ in tab.sends], ["bind-cleanup", "clear-exact"])
+
+    def test_cleanup_binding_requires_the_exact_resolved_badge_identity(self):
+        class BindTab(_RecTab):
+            def send(self, method, params=None, timeout=30.0):
+                self.sends.append((method, params))
+                if method == "DOM.getDocument":
+                    return {"root": {"nodeId": 7}}
+                if method == "DOM.querySelector":
+                    return {"nodeId": 11}
+                if method == "DOM.resolveNode":
+                    return {"object": {"objectId": "exact-badge"}}
+                if method == "Runtime.callFunctionOn":
+                    return {"result": {"type": "boolean", "value": True}}
+                return {}
+
+        tab = BindTab(eval_result=True)
+        label = "[LOGIN HERE][Codex][jobkorea][891471BFF020]"
+        self.assertTrue(tab.bind_exact_badge_for_cleanup(
+            label, expected_url="https://www.jobkorea.co.kr/Corp/Person/Find"))
+        self.assertEqual(tab._badge_object_id, "exact-badge")
+        self.assertEqual(tab._badge_label, label)
+
     def test_render_proof_uses_browser_owned_overlay_and_full_viewport_screenshot(self):
         challenge = (17, 203, 91)
         screenshot = _png_rgba(100, 50, (*challenge, 255))
