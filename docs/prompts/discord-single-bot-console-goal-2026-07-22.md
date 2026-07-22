@@ -2,6 +2,7 @@
 
 > 이 문서는 **작업 지시서(goal prompt)** 다. 구현자는 이 문서를 SOT로 삼는다.
 > 규율: `docs/sot/30-strict-mode-contract.md`(strict) + `docs/harness.md` 게이트 + `CLAUDE.md` SOT 불변식.
+> Hermes 전환·폐기 정본: `docs/sot/33-hermes-retirement.md`(SOT 33). 이 문서의 §10보다 상세하며 충돌 시 SOT 33을 따른다.
 > 등급: **L3**(운영 경로 신설 + 기존 통제면 폐기 + 웹 화면 추가). 단계마다 RED→GREEN + `./verify.sh` + 배선 증명 + V1(자체 적대검증) + V2(Codex Rescue) 필수.
 
 ---
@@ -333,24 +334,54 @@
 
 ---
 
-## 10. 헤르메스 폐기 절차 (R1)
+## 10. Hermes 완전 폐기 실행 계약 (R1, SOT 33)
 
-**순서를 지킨다. 새 봇이 초록이 되기 전에는 헤르메스를 죽이지 않는다** — 죽이면 그동안 디스코드가 먹통이 된다.
+정본 경로는 다음 하나다.
 
-| 단계 | 행위 | 되돌리기 |
+```text
+Discord 입력 → 단일 direct gateway → 자연어/슬래시 해석 → 영속 큐
+→ fleet worker → Claude Code 또는 Codex → 원 요청자에게 결과 회신
+```
+
+새 직결 봇 실증 전에 Hermes를 중단하거나 삭제하지 않는다. Hermes와 직결 gateway가 같은
+이벤트를 동시에 받지 않으며, 봇 토큰당 활성 gateway는 정확히 1개다. 폐기 전에는
+`queued/running/paused_for_human`이 0이고 Claude/Codex 실작업이 각각 `done` 및 Discord
+회신까지 끝나야 한다. Hook만 믿지 않고 생산 코드의 기동 게이트와 이중으로 막는다.
+
+넓은 경로를 `rm -rf`로 지우지 않는다. `~/.hermes`와 plist·플러그인은 먼저 권한 0700의
+명시적 quarantine으로 옮겨 복구 가능하게 보존한다. v4 `tools/hermes-agent`는 unrelated
+cron 호출자 0을 증명하거나 중립 경로로 이사하기 전에는 폴더 전체를 제거하지 않는다.
+
+| 단계 | 한 작업방의 인수 기준 | 다음 단계 진입 증거 |
 |---|---|---|
-| D1 | 새 봇 GREEN + 실채널 왕복 확인 | — |
-| D2 | 헤르메스 플러그인만 비활성(`~/.hermes/plugins/valuehire_fleet` 이동) — 봇 두 개가 같은 명령에 이중 응답하는 것 방지 | 폴더 되돌리기 |
-| D3 | `launchctl bootout` + `ai.hermes.gateway.plist` 제거 | plist 백업본 복구 |
-| D4 | `~/.hermes` 전체를 백업 후 삭제 (로그 19MB 포함) | 백업 tar |
-| D5 | 레포 코드 제거: `ops/hermes-plugin/`, `hermes_fleet_bridge.py`, `hermes_position_context.py`, 관련 테스트 3종. `direct_receiver.py` 가 쓰는 파싱 함수는 **먼저 새 모듈로 이사**한 뒤 삭제 | git revert |
-| D6 | 문서 40여 개에서 헤르메스 언급 정리 — 이력 문서는 남기고 "폐기됨(2026-07-22)" 표기 | — |
+| HR-0 | PID·launchd·plist·플러그인·config·세션·cron·Discord 명령·양 레포 import/caller 전수조사 | 모든 항목이 `live caller`/`historical-only`/`removable`, UNKNOWN 0인 JSON |
+| HR-1 | 공유 lease·최소권한 RPC·worker heartbeat·event 멱등 확인 후 Claude/Codex/자연어 라이브 왕복 | 두 엔진 `queued → running → done`, 각 Discord response_id, 중복 응답 0 |
+| HR-2 | direct gateway는 멈춘 상태로 Hermes 신규 접수만 동결하고 기존 큐를 정리 | 관찰 전후 신규 행 0, 미종료 잡 0 |
+| HR-3 | Discord payload 백업 → Hermes bootout/PID 0 → direct gateway lease 1 → 명령 등록·왕복 | direct 1, Hermes 0, 응답 1; 중간 실패 자동 rollback 영수증 |
+| HR-4 | plist·플러그인·`~/.hermes`를 quarantine하고 재부팅/launchd 재평가 후 24시간 단독 운영 | Hermes PID 0, 중복 0, lease 위반 0이 24시간 유지 |
+| HR-5 | caller 0 또는 move-first 뒤 v4/v5 Hermes runtime 코드 제거, 역사 문서는 RETIRED | 생산 import/call graph runtime 참조 0 |
+| HR-6 | owner 승인 후 Discord bot token 회전, 새 비밀 저장소 한 곳만 사용 | 새 토큰 direct 1, 옛 Hermes 재접속 실패, 영수증에는 SHA-256 지문만 |
+| HR-7 | 보존기간·최종 승인 뒤 격리본을 휴지통 등 복구 가능한 방식으로 제거하고 운영 문서 정리 | 프로세스·launchd·심링크·비밀 사본·runtime caller 0 |
 
-**D5 주의**: `direct_receiver.py:38` 이 `hermes_fleet_bridge` 를 import 한다. 먼저 옮기지 않고 지우면 새 봇이 기동 불가.
+필수 Hook은 `.claude/hooks/guards/discord-e2e-cutover.py`와
+`.claude/hooks/guards/hermes-retirement.py`다. Stop Hook은 PID/launchd/플러그인/미종료 큐 0,
+direct gateway lease 1, Claude/Codex 라이브 성공, 원 요청자 response_id, 전체 verify exit 0,
+reboot 후 유령 재기동 0, rollback 검증 결과가 없으면 완료 보고를 막는다.
+
+기계 영수증 정본은 `artifacts/discord-cutover/hermes-retirement-receipt.json`이다. 필수 필드는
+`schema_version`, `git_sha_v4`, `git_sha_v5`, `phase`, `discord_bot_id`,
+`command_fingerprint`, `direct_gateway_pid`, `direct_gateway_lease_id`, `hermes_pid_count`,
+`hermes_launchctl_count`, `queue_nonterminal_count`, `claude_job_id`, `claude_response_id`,
+`codex_job_id`, `codex_response_id`, `duplicate_response_count`, `quarantine_paths`,
+`remaining_runtime_references`, `rollback_tested`, `verified_at`, `verifier_sha256`다.
+
+토큰·쿠키·비밀번호 원문은 코드·로그·영수증·Git에 남기지 않는다. Supabase service-role 키를
+direct gateway에 제공하지 않는다. 위 증거가 하나라도 없으면 `Hermes 완전 폐기 완료`라고
+보고하지 않는다.
 
 ---
 
-## 11. 작업 사다리 (인수 기준 = 워크트리 1개)
+## 11. 작업 사다리 (인수 기준 = 작업방 1개)
 
 각 단계는 독립 워크트리 + RED 먼저 + `./verify.sh` GREEN + V1/V2 적대검증.
 
@@ -365,7 +396,19 @@
 | AC-5 | 자유 문장 의도 분류기 | 사상 성공·애매·실패 3종 테스트 |
 | AC-6 | 조회형 명령(T2·T6·T7·T9 읽기) + `/api/bot/*` 조회 라우트 완성 | 각 명령 실데이터 응답 (T8 은 E22·E25 결정 전까지 제외) |
 | AC-7 | 쓰기형 명령(T1·T3·T9 쓰기) + 확인 게이트 | 확인 없이는 미실행 테스트 (T5 는 E22 결정 전까지 제외) |
-| AC-8 | 헤르메스 폐기 D1~D6 | 헤르메스 프로세스 0개, verify GREEN |
+
+Hermes retirement는 위 제품 AC와 합치지 않고 SOT 33의 별도 사다리로 실행한다.
+
+| HR | 내용 | 완료 판정 |
+|---|---|---|
+| HR-0 | 의존성 전수조사 | UNKNOWN 0인 machine-readable inventory |
+| HR-1 | 직결 라이브 인수 | Claude/Codex done + Discord response_id + lease_id |
+| HR-2 | 신규 Hermes 접수 동결·큐 drain | 신규 행 0 + 미종료 잡 0 |
+| HR-3 | 원자적 수신기 전환·rollback | direct 1 + Hermes 0 + 왕복 1 |
+| HR-4 | 복구 가능한 격리·24시간 soak | PID/중복/lease 위반 0 |
+| HR-5 | caller 증명 후 저장소 runtime 제거 | 생산 import/call graph 참조 0 |
+| HR-6 | 토큰 회전·유령 재접속 봉쇄 | 새 token direct 1 + old token Hermes 실패 |
+| HR-7 | 보존기간 뒤 최종 폐기·문서 정리 | SOT 33 §6의 최종 조건 전부 참 |
 
 ---
 
@@ -375,4 +418,6 @@
 - 배선 증명: 각 AC 마다 "실제로 그 경로를 탄다"는 라이브 증거 1건(잡 번호·로그·스크린샷)
 - V1: 구현자 자체 적대검증(빈 값·중복·권한 없는 사용자·엔진 미지정·큐 장애)
 - V2: Codex Rescue 독립 재검증 — verdict 파일을 `docs/engineering/` 에 남김
+- HR-0~HR-7은 한 작업방에 하나만 두고, 각 단계의 SOT 33 완료 단언을 기계 증거로 판정한다.
+- HR-4의 기본 24시간 관찰을 줄이거나 코드 삭제와 병행하지 않는다.
 - 완료 보고는 CLAUDE.md 0번 규칙대로 **쉬운 한국어**로.

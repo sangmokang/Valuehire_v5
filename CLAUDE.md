@@ -69,3 +69,5 @@
 - 무엇이든 끝났다고 말하기 전에 **실제로 검사를 돌려보고** 결과를 보고한다.
 - 전체 코드를 다시 훑어볼 때는 `docs/prompts/goal-full-codebase-review.md`(Goal 프롬프트)를 쓴다.
 - 3대 머신(맥미니·맥북·윈도우) 함대 운영·Discord 명령·계정↔머신 바인딩은 `docs/sot/29-fleet-control.md`(+`.json`)를 SOT 로 따른다.
+- Discord 단일 direct gateway 전환과 Hermes 격리·코드 제거·비밀 회전·최종 폐기는
+  `docs/sot/33-hermes-retirement.md`를 SOT 로 따른다. HR-0~HR-7을 한 작업방에 합치지 않는다.
