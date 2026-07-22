@@ -859,39 +859,63 @@ class MinimalPrivilegeQueueClient:
             raise RuntimeError(f"{name} RPC returned an invalid shape")
         return rows[0]
 
-    def gateway_readiness(self, machine: str, max_age_seconds: int = 300) -> dict[str, Any]:
+    def gateway_readiness(
+        self, token_fingerprint: str, machine: str, max_age_seconds: int = 300,
+    ) -> dict[str, Any]:
         rows = self._rpc("discord_gateway_readiness", {
+            "p_token_fingerprint": str(token_fingerprint),
             "p_machine": str(machine),
             "p_max_age_seconds": int(max_age_seconds),
         })
         return self._one_rpc_row(rows, "discord_gateway_readiness")
 
     def acquire_gateway_lease(
-        self, bot_id: str, instance_id: str, ttl_seconds: int = 90,
+        self, token_fingerprint: str, holder_identity: str, holder_pid: int,
+        machine: str, ttl_seconds: int = 90,
     ) -> dict[str, Any]:
         rows = self._rpc("discord_gateway_acquire_lease", {
-            "p_bot_id": str(bot_id),
-            "p_instance_id": str(instance_id),
+            "p_token_fingerprint": str(token_fingerprint),
+            "p_holder_identity": str(holder_identity),
+            "p_holder_pid": int(holder_pid),
+            "p_target_machine": str(machine),
             "p_ttl_seconds": int(ttl_seconds),
         })
         return self._one_rpc_row(rows, "discord_gateway_acquire_lease")
 
     def renew_gateway_lease(
-        self, lease_id: str, instance_id: str, ttl_seconds: int = 90,
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        holder_pid: int, generation: int, ttl_seconds: int = 90,
     ) -> dict[str, Any]:
         rows = self._rpc("discord_gateway_renew_lease", {
             "p_lease_id": str(lease_id),
-            "p_instance_id": str(instance_id),
+            "p_token_fingerprint": str(token_fingerprint),
+            "p_holder_identity": str(holder_identity),
+            "p_holder_pid": int(holder_pid),
+            "p_generation": int(generation),
             "p_ttl_seconds": int(ttl_seconds),
         })
         return self._one_rpc_row(rows, "discord_gateway_renew_lease")
 
-    def release_gateway_lease(self, lease_id: str, instance_id: str) -> dict[str, Any]:
+    def release_gateway_lease(
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        holder_pid: int, generation: int,
+    ) -> dict[str, Any]:
         rows = self._rpc("discord_gateway_release_lease", {
             "p_lease_id": str(lease_id),
-            "p_instance_id": str(instance_id),
+            "p_token_fingerprint": str(token_fingerprint),
+            "p_holder_identity": str(holder_identity),
+            "p_holder_pid": int(holder_pid),
+            "p_generation": int(generation),
         })
         return self._one_rpc_row(rows, "discord_gateway_release_lease")
+
+    def gateway_queue_nonterminal_count(self) -> int:
+        rows = self._rpc("discord_gateway_queue_nonterminal_count", {})
+        if isinstance(rows, int) and not isinstance(rows, bool):
+            return rows
+        if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], int):
+            return rows[0]
+        raise RuntimeError("discord_gateway_queue_nonterminal_count RPC returned an invalid shape")
 
     def resume(self, job_id: int) -> Any:
         """v2 보안 경계: 이 최소권한 경로는 resume 을 지원하지 않는다(클래스 docstring
@@ -975,20 +999,34 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
     bot_id = os.environ.get("DISCORD_CLIENT_ID", "").strip()
     if not bot_id:
         raise SystemExit("DISCORD_CLIENT_ID 환경변수가 필요합니다")
-    worker_machine = os.environ.get("DISCORD_GATEWAY_WORKER_MACHINE", "macmini").strip()
+    hermes_bot_id = os.environ.get("HERMES_DISCORD_BOT_ID", "").strip()
+    if not hermes_bot_id:
+        raise SystemExit("HERMES_DISCORD_BOT_ID 환경변수가 필요합니다")
+    worker_machine = os.environ.get("DISCORD_GATEWAY_WORKER_MACHINE", "").strip()
+    if not worker_machine:
+        raise SystemExit("DISCORD_GATEWAY_WORKER_MACHINE 환경변수가 필요합니다")
+    from tools.multi_position_sourcing.discord_hr1 import (
+        GatewayLeaseGuard,
+        gateway_token_fingerprint,
+    )
+
+    token_fingerprint = gateway_token_fingerprint(token)
     queue = _minimal_privilege_queue_factory()()
     client = _build_client(queue_factory=lambda: queue)
-    from tools.multi_position_sourcing.discord_hr1 import GatewayLeaseGuard
 
     guard = GatewayLeaseGuard(
         queue,
+        token_fingerprint=token_fingerprint,
         bot_id=bot_id,
+        hermes_bot_id=hermes_bot_id,
         machine=worker_machine,
         pid=os.getpid(),
         renew_interval_seconds=30,
+        max_consecutive_renew_failures=2,
         on_lease_lost=client.stop_after_lease_loss,
     )
     with guard:
+        os.environ["VALUEHIRE_DIRECT_GATEWAY_PROCESS"] = "1"
         logger.info("discord_direct_gateway: startup gates passed lease_id=%s", guard.lease_id)
         client.run(token)
 
