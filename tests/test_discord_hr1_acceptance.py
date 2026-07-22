@@ -6,6 +6,8 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -431,6 +433,22 @@ def test_gateway_module_has_no_direct_engine_execution() -> None:
             if rendered in {"subprocess.run", "subprocess.Popen", "os.system", "os.execv"}:
                 forbidden.append(rendered)
     assert forbidden == []
+
+
+def test_canonical_gateway_entrypoint_reaches_configuration_gate() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/discord_direct_gateway.py"],
+        cwd=ROOT,
+        env={"PATH": str(Path(sys.executable).parent)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "DISCORD_BOT_TOKEN" in output
+    assert "No module named 'tools'" not in output
 
 
 def test_receipt_rejects_raw_secret_values() -> None:
