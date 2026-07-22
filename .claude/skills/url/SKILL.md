@@ -45,6 +45,10 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 - **캡차·봇차단·2FA·checkpoint·멀티세션락 감지 시 즉시 STOP.** retry 금지(RPS 계정 잠금 위험).
 - 단순 로그아웃 화면(예: /uas/login-cap)은 위 STOP 대상이 아니다 — SOT26/SOT 불변식 1에 따라 시크릿 저장소 자동 로그인을 1회 시도한다(아래 세션 규칙과 동일, 2026-07-15 #107 정합화).
 - **로그인된 RPS 크롬 kill/stop 금지.** 세션 유지(`keep-logged-in-browser-alive`).
+- **LinkedIn 세션 문맥 보존(`SESSION_CONTEXT_PRESERVATION`, #156).** 이미 인증된 exact target 하나만
+  재사용한다. 다른 Chrome 프로필의 RPS 세션 신호·target/profile/endpoint 불일치는 `AUTH_CONFLICT`로
+  중단하며, 새 탭·두 번째 로그인·Continue/Confirm·반복 navigation은 0회다. 후속 `/humansearch`가
+  후보를 열 때는 결과 카드의 query 포함 `navigation_url`을 보존하고 canonical `profile_url`은 저장에만 쓴다.
 - 행동 전 **DOM 덤프로 셀렉터 확인**(SOT23 evidence-first). 추측 셀렉터 금지.
 - 보고는 **짧고 쉬운 한국어**(CLAUDE.md 0번 규칙).
 
@@ -53,7 +57,9 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 - **검색어 입력·필터 클릭·"Start a keyword search" 실행 = claude-in-chrome 확장 실제입력**(합성입력 안 먹음).
 - **결과 URL·DOM 수확 = raw CDP 단일탭 OK**(`tools/multi_position_sourcing/raw_cdp.py`, `suppress_origin=True`). 수확 직전 `Page.bringToFront`.
 - **🔴 점유 배지**: raw CDP 로 붙기 전에 `export VH_BUSY_TASK=/url`(Codex 면 `VH_BUSY_AGENT=Codex`). `raw_cdp.attach()` 하면 화면에 "🤖 …자동화 사용중 · /url" 배지가 자동으로 뜬다(사장님이 점유 인지, SOT 투명성). 상세 규약은 humansearch SKILL "브라우저 드라이버" 절.
-- 사장님 :9222 세션에 우선 붙고, 로그아웃이면 `docs/search-access.md`/SOT26 기준으로 LinkedIn RPS도 시크릿 저장소 자동 로그인을 1회 시도한다. 캡차·2FA·checkpoint·멀티세션 락 우회만 금지.
+- 포트 숫자를 우선하지 않는다. `/login`이 증명한 exact target/profile/endpoint를 그대로 쓴다. 같은
+  target의 일반 로그아웃이고 다른 RPS 세션 신호가 없을 때만 정식 로그인 실행기가 1회 복구할 수 있다.
+  `enterprise-authentication/sessions`는 일반 로그아웃이 아니므로 자동 로그인·사람 재호출 없이 중단한다.
 
 ---
 

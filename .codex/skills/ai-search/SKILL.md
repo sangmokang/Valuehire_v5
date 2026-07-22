@@ -65,7 +65,14 @@ Do not start from `skills/search/SKILL.md` alone. That file is a legacy/fresh-lo
 - Follow `docs/sot/25-ai-search-execution-process.json` stage order unless the user explicitly limits the scope.
 - Before portal actions, classify each channel as `READY`, `OCCUPIED`, or `BLOCKED`.
 - If the owner is using Chrome, perform zero automation actions and resume only after it is clear.
-- Auto-login all three protected portals from the configured secret store when logged out. Stop the affected channel only on a real captcha, 2FA, bot block, checkpoint, or LinkedIn multi-session lock. Do not bypass or repeatedly retry.
+- Apply the `login` skill before all live portal work. Reuse an already-authenticated exact target; do not create a
+  second browser/profile session. Auto-login is allowed only for a proven ordinary logout on that same exact target
+  with no other Recruiter session signal.
+- LinkedIn `enterprise-authentication/sessions`, `multiple sign-ins`, and `Only one session` are terminal
+  `AUTH_CONFLICT`, not ordinary logout. Never auto-login, click Continue/Confirm, create a tab, or retry navigation.
+- `SESSION_CONTEXT_PRESERVATION` (#156): keep each Recruiter card's exact query-bearing `navigation_url`; use the bare
+  canonical `profile_url` only for storage/dedup. Run the block preflight immediately after navigation and before
+  extraction, screenshot, archive, or scoring.
 - Do not split channels by job type. Saramin, Jobkorea, and LinkedIn RPS are all considered for every role when live portal search is in scope.
 - Do not auto-send proposals, email, InMail, or any Send/보내기 action.
 - Do not report a candidate unless the output contract is satisfied: `profile_url`, `score`, `why_fit`, `profile_summary`.

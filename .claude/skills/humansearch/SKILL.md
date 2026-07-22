@@ -20,6 +20,8 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
 ## 실행 경로 (재사용 — 새 러너 금지)
 - 순회·채점: `tools/multi_position_sourcing/humansearch_cdp_run.py` 를 **스크래치패드 드라이버에서
   모듈 전역 오버라이드**(`R.SEARCH_URL_BASE`·`R.POSITION`·`R.OUT_DIR`·`R.LOG`)로 재사용.
+  `/login`이 증명한 기존 target id를 `exact_target_id`로 고정해
+  `R.main(..., target_id=exact_target_id)`로 반드시 전달한다. 없거나 바뀌면 추측 없이 STOP.
   포지션이 복수면 1차 채점 후 raw 필드로 `score_humansearch` 재채점(재오픈 금지).
 - 프리플라이트(fail-closed): `assert_live_or_abort` — 카드 0/로그인/캡차/세션충돌이면 즉시 STOP.
   수확 전 `Page.bringToFront` + `Emulation.setFocusEmulationEnabled` 필수.
@@ -28,6 +30,15 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
   ⚠️ 814…800 은 유저 ID지 채널 아님). DM 불가 시 `VALUEHIRE_SEARCH_LIST_DISCORD_WEBHOOK_URL` 폴백.
 - 저장: results.json + `~/.vh-data/ai-search-candidates.db` `ai_search_candidates`
   (url,position_id) upsert — 열어본 프로필 전원, 점수 무관.
+
+## LinkedIn RPS 세션 문맥 보존 (`SESSION_CONTEXT_PRESERVATION`, #156)
+
+- 이미 인증된 정확한 RPS target 하나만 재사용한다. 다른 Chrome 프로필의 RPS 세션 신호나
+  target/profile/endpoint 불일치는 `AUTH_CONFLICT`이며 새 탭·두 번째 로그인 없이 중단한다.
+- 수확 JSON은 canonical `profile_url`과 query 포함 원본 `navigation_url`을 둘 다 보존한다. 이동은
+  `navigation_url`, 저장·중복제거는 `profile_url`만 사용한다.
+- 이동 직후 차단 검사를 추출·스크린샷·DB 저장·채점보다 먼저 한다. 세션 충돌은 terminal이며
+  Continue/Confirm·자동 로그인·재네비게이션·두 번째 사람 인계를 하지 않는다.
 
 ## 등록 직전 3중 게이트 (순서 고정)
 1. 영문 학교명→한글 신호 보정 재채점 (SKY·성균관 저평가 방지)

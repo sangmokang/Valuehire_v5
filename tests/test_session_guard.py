@@ -11,11 +11,13 @@ import pytest
 
 from tools.multi_position_sourcing import session_guard
 from tools.multi_position_sourcing.session_guard import (
+    AuthObservation,
     KEEPALIVE_INTERVAL_SECONDS,
     PROBE_URLS,
     load_safe_keepalive_target,
     keepalive_due,
     read_auth_observation,
+    wait_for_human_auth,
 )
 
 
@@ -98,6 +100,61 @@ def test_linkedin_talent_projects_account_marker_is_authenticated_without_search
 
     assert observation.authenticated is True
     assert observation.proof_names == ("talent_surface", "recruiter_account")
+
+
+@pytest.mark.parametrize(
+    ("url", "multiple_signins"),
+    [
+        (
+            "https://www.linkedin.com/enterprise-authentication/sessions",
+            False,
+        ),
+        ("https://www.linkedin.com/talent/home", True),
+    ],
+)
+def test_linkedin_multiple_signin_is_terminal_auth_conflict_not_human_challenge(
+    url: str,
+    multiple_signins: bool,
+) -> None:
+    class Tab:
+        def eval(self, _script: str):
+            return {
+                "url": url,
+                "hasChallenge": False,
+                "hasSessionConflict": multiple_signins or "enterprise-authentication/sessions" in url,
+                "hasLogout": False,
+                "hasValueConnect": False,
+                "saraminSearch": False,
+                "jobkoreaSearch": False,
+                "linkedinSearch": False,
+                "linkedinAccount": False,
+            }
+
+    observation = read_auth_observation(Tab(), "linkedin_rps")
+
+    assert observation.auth_conflict is True
+    assert observation.challenge is False
+    assert observation.authenticated is False
+    assert observation.proof_names == ("session_conflict",)
+
+
+def test_human_auth_wait_returns_session_conflict_without_owner_poll_or_sleep() -> None:
+    observation = AuthObservation(
+        authenticated=False,
+        challenge=False,
+        url="https://www.linkedin.com/enterprise-authentication/sessions",
+        proof_names=("session_conflict",),
+        auth_conflict=True,
+    )
+
+    result = wait_for_human_auth(
+        auth_probe=lambda: observation,
+        owner_snapshot=lambda: pytest.fail("terminal conflict must not poll owner state"),
+        sleep=lambda _seconds: pytest.fail("terminal conflict must not wait or retry"),
+        stop_requested=lambda: False,
+    )
+
+    assert result is observation
 
 
 def test_linkedin_authwall_is_an_allowed_existing_challenge_surface() -> None:
