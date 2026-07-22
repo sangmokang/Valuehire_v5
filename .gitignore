@@ -29,6 +29,8 @@ node_modules/
 nohup.out
 scratchpad/
 _codex_mutant_run_rps_manual_switch/
+supabase/.temp/
+.harness/discord-hr1-startup-blocked-*.jsonl
 
 # git worktree 작업방 (커밋 금지)
 worktrees/
