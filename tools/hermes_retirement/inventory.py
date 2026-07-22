@@ -107,6 +107,9 @@ OPAQUE_HOME_DIRS = frozenset({"hermes-agent", "lsp", "skills"})
 SECRET_NAME_RE = re.compile(
     r"(^\.env(?:\.|$)|auth|cookie|credential|password|secret|token)", re.IGNORECASE
 )
+SECRET_KEY_RE = re.compile(
+    r"(?:api[_-]?key|credential|password|secret|token)", re.IGNORECASE
+)
 HISTORICAL_NAME_RE = re.compile(
     r"(\.bak(?:\.|$)|\.log$|history|snapshot|cache|\.pyc$)", re.IGNORECASE
 )
@@ -973,7 +976,55 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
     return payload
 
 
-def verify_inventory(inventory: Mapping[str, object]) -> None:
+def _config_from_inventory_roots(roots: Mapping[str, object]) -> InventoryConfig:
+    v4_root = Path(str(roots["v4_root"]))
+    v5_root = Path(str(roots["v5_root"]))
+    hermes_home = Path(str(roots["hermes_home"]))
+    launch_agents = Path(str(roots["launch_agents_dir"]))
+    return InventoryConfig(
+        v4_root=v4_root,
+        v5_root=v5_root,
+        hermes_home=hermes_home,
+        launch_agents_dir=launch_agents,
+        expected_paths=(
+            v4_root / "tools/hermes-agent",
+            v5_root / "ops/hermes-plugin",
+            v5_root / "tools/multi_position_sourcing/hermes_fleet_bridge.py",
+            v5_root / "tools/multi_position_sourcing/hermes_position_context.py",
+            v5_root / "scripts/discord_command_listener.py",
+            hermes_home,
+            hermes_home / "plugins",
+            launch_agents / "ai.hermes.gateway.plist",
+        ),
+    )
+
+
+def _semantic_item_snapshot(raw_items: object) -> dict[str, dict[str, object]]:
+    if not isinstance(raw_items, list):
+        return {}
+    mutable_evidence = {
+        "metadata_sha256",
+        "reference_sha256",
+        "tree_metadata_sha256",
+    }
+    snapshot: dict[str, dict[str, object]] = {}
+    for raw_item in raw_items:
+        if not isinstance(raw_item, Mapping):
+            continue
+        path = raw_item.get("path")
+        if not isinstance(path, str):
+            continue
+        snapshot[path] = {
+            key: value
+            for key, value in raw_item.items()
+            if key not in mutable_evidence
+        }
+    return snapshot
+
+
+def verify_inventory(
+    inventory: Mapping[str, object], *, live_probe: RuntimeProbe | None = None
+) -> None:
     errors: list[str] = []
     top_keys = {
         "coverage",
@@ -1487,7 +1538,35 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
         if runtime_counts != expected_runtime_counts:
             errors.append("summary runtime_counts mismatch")
 
+    if isinstance(roots, Mapping) and set(roots) == root_keys:
+        try:
+            live_config = _config_from_inventory_roots(roots)
+            observed_probe = live_probe or probe_runtime(live_config)
+            observed_runtime = _sanitize_probe(observed_probe)
+            if runtime != observed_runtime:
+                errors.append("runtime snapshot does not match live probes")
+            observed_inventory = build_inventory(live_config, observed_probe)
+            if _semantic_item_snapshot(raw_items) != _semantic_item_snapshot(
+                observed_inventory.get("items")
+            ):
+                errors.append("classification/caller snapshot does not match live scan")
+        except (OSError, InventoryVerificationError) as error:
+            errors.append(
+                f"live inventory binding failed: {type(error).__name__}"
+            )
+
     serialized = json.dumps(inventory, ensure_ascii=False)
+    if isinstance(roots, Mapping) and set(roots) == root_keys:
+        try:
+            known_secrets = _known_secret_values(
+                Path(str(roots["hermes_home"])),
+                Path(str(roots["launch_agents_dir"])),
+            )
+        except (OSError, InventoryVerificationError) as error:
+            errors.append(f"secret audit failed: {type(error).__name__}")
+        else:
+            if any(secret in serialized for secret in known_secrets):
+                errors.append("known secret value present in inventory")
     for marker in (
         "Authorization: Bot ",
         "DISCORD_BOT_TOKEN=",
@@ -1653,6 +1732,74 @@ def _load_discord_credentials(hermes_home: Path) -> dict[str, str]:
             key = key.strip()
             if key in wanted and key not in values:
                 values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _secret_assignment_values(text: str) -> set[str]:
+    values: set[str] = set()
+    for line in text.splitlines():
+        candidate = line.strip()
+        if not candidate or candidate.startswith("#"):
+            continue
+        delimiter = "=" if "=" in candidate else ":" if ":" in candidate else ""
+        if not delimiter:
+            continue
+        key, value = candidate.split(delimiter, 1)
+        key = key.removeprefix("export ").strip().strip('"').strip("'")
+        if not SECRET_KEY_RE.search(key):
+            continue
+        cleaned = value.strip().rstrip(",").strip().strip('"').strip("'")
+        if len(cleaned) >= 8:
+            values.add(cleaned)
+    return values
+
+
+def _known_secret_values(
+    hermes_home: Path, launch_agents_dir: Path
+) -> set[str]:
+    """Load comparison-only secret values without returning them to the artifact."""
+    values = {
+        value
+        for key, value in os.environ.items()
+        if SECRET_KEY_RE.search(key) and len(value) >= 8
+    }
+    config_paths = {
+        *hermes_home.glob(".env*"),
+        hermes_home / "config.json",
+        hermes_home / "config.yaml",
+        hermes_home / "config.yml",
+    }
+    for path in sorted(config_paths):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as error:
+            raise InventoryVerificationError(
+                f"secret source scan failed: {type(error).__name__}"
+            ) from error
+        values.update(_secret_assignment_values(text))
+
+    if launch_agents_dir.is_dir():
+        for path in sorted(launch_agents_dir.glob("*.plist")):
+            try:
+                payload = plistlib.loads(path.read_bytes())
+            except (OSError, plistlib.InvalidFileException) as error:
+                raise InventoryVerificationError(
+                    f"secret plist scan failed: {type(error).__name__}"
+                ) from error
+            if not isinstance(payload, Mapping):
+                continue
+            environment = payload.get("EnvironmentVariables")
+            if not isinstance(environment, Mapping):
+                continue
+            for key, value in environment.items():
+                if (
+                    SECRET_KEY_RE.search(str(key))
+                    and isinstance(value, str)
+                    and len(value) >= 8
+                ):
+                    values.add(value)
     return values
 
 

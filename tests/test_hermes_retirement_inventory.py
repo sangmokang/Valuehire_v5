@@ -193,7 +193,7 @@ def test_inventory_classifies_every_related_item_without_unknown(tmp_path: Path)
 
     inventory = build_inventory(config, probe)
 
-    verify_inventory(inventory)
+    verify_inventory(inventory, live_probe=probe)
     assert inventory["schema_version"] == "hermes-retirement-inventory/v1"
     assert inventory["summary"]["unknown_count"] == 0
     assert inventory["summary"]["item_count"] == len(inventory["items"])
@@ -311,18 +311,18 @@ def test_verifier_rejects_unknown_missing_coverage_and_unmoved_live_caller(
 
     inventory["items"][0]["classification"] = "UNKNOWN"
     with pytest.raises(InventoryVerificationError, match="UNKNOWN"):
-        verify_inventory(inventory)
+        verify_inventory(inventory, live_probe=probe)
 
     inventory = build_inventory(config, probe)
     inventory["items"][0]["classification"] = "live caller"
     inventory["items"][0]["move_first"] = False
     with pytest.raises(InventoryVerificationError, match="move_first"):
-        verify_inventory(inventory)
+        verify_inventory(inventory, live_probe=probe)
 
     inventory = build_inventory(config, probe)
     inventory["expected_paths"][0]["status"] = "UNKNOWN"
     with pytest.raises(InventoryVerificationError, match="expected path"):
-        verify_inventory(inventory)
+        verify_inventory(inventory, live_probe=probe)
 
 
 def _recompute_summary(inventory: dict) -> None:
@@ -435,7 +435,7 @@ def test_verifier_rejects_material_inventory_omissions(
         inventory["coverage"]["repo_candidate_sha256"] = "0" * 64
 
     with pytest.raises(InventoryVerificationError):
-        verify_inventory(inventory)
+        verify_inventory(inventory, live_probe=probe)
 
 
 def test_verifier_rejects_actual_known_secret_in_free_string_field(
@@ -449,7 +449,7 @@ def test_verifier_rejects_actual_known_secret_in_free_string_field(
     live_item["callers"].append(FAKE_SECRET)
 
     with pytest.raises(InventoryVerificationError, match="secret"):
-        verify_inventory(inventory)
+        verify_inventory(inventory, live_probe=probe)
 
 
 @pytest.mark.parametrize(
@@ -481,7 +481,7 @@ def test_verifier_rejects_valid_shape_runtime_tampering(
         inventory["runtime"]["cron"][0]["path_refs"] = []
 
     with pytest.raises(InventoryVerificationError, match="runtime"):
-        verify_inventory(inventory)
+        verify_inventory(inventory, live_probe=probe)
 
 
 def test_verifier_rejects_live_plugin_classification_forgery(tmp_path: Path) -> None:
@@ -500,7 +500,7 @@ def test_verifier_rejects_live_plugin_classification_forgery(tmp_path: Path) -> 
     _recompute_summary(inventory)
 
     with pytest.raises(InventoryVerificationError, match="classification"):
-        verify_inventory(inventory)
+        verify_inventory(inventory, live_probe=probe)
 
 
 def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
@@ -538,7 +538,7 @@ def test_dynamic_home_metadata_drift_does_not_invalidate_path_topology(
 
     _write(config.hermes_home / "config.yaml", "model: changed-after-snapshot\n")
 
-    verify_inventory(inventory)
+    verify_inventory(inventory, live_probe=probe)
 
 
 def test_invalid_launch_agent_plist_fails_closed(tmp_path: Path) -> None:

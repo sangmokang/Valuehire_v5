@@ -109,7 +109,7 @@
       "status": "present"
     }
   ],
-  "generated_at": "2026-07-22T08:02:15.370079+00:00",
+  "generated_at": "2026-07-22T08:18:46.793366+00:00",
   "git_sha_v4": "a4b4fc37a6414859736fa7209ad32057c6b2db42",
   "git_sha_v5": "e697dc38ad203b9e932f6bf3b910c5da11847b6b",
   "items": [
@@ -279,7 +279,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "3372ff0f87b51d385234b94c1da52ec0ff77d2cbf11072c04260aa49084a3440",
+      "metadata_sha256": "5db41a5bb70d4f9ff4835c824414eda297acbb34a962b95fae3c64ae98799a85",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/channel_directory.json",
       "reason": "active Hermes gateway may read this runtime state",
@@ -343,7 +343,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "76488fb34e098a5cbe619192da0254cc572005ff67196d0a02b964cbdb32e8ab",
+      "metadata_sha256": "7b0c22a2c5f54f2f4bd3d8794613f8a283ad84cef6c9b18289ef8c934d400a4e",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/cron/.tick.lock",
       "reason": "active Hermes gateway may read this runtime state",
@@ -1819,7 +1819,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "9a3a5594d3cbb75de58b9edd7d3f990dedcf00906b246b4560d0d73dbd1ff51d",
+      "metadata_sha256": "80fd15ce13460e75574c7c3a02c8c830dfefa738186b1bb7f37c842c365bc42f",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/valuehire_fleet_context.sqlite3",
       "reason": "active Hermes gateway may read this runtime state",
@@ -18577,7 +18577,7 @@
       }
     ]
   },
-  "scanner_sha256": "ea1f3209fad7d613057df1b42d8dcd0bcf7087448cc759ae320459dbe23c8ae9",
+  "scanner_sha256": "cde87dcfa62adf767e8d42565a40265d68163bbb440b1005e0aacb0d56ddbc29",
   "schema_version": "hermes-retirement-inventory/v1",
   "summary": {
     "classifications": {
