@@ -51,7 +51,7 @@ class FakeQueue:
 def _run(msg, queue, searcher):
     return asyncio.run(handle_text_message(
         msg, bot_user_id="123456789012345678", queue=queue,
-        authorized_users=(DiscordAuthorizedUser(discord_user_id=OWNER, name="owner"),),
+        authorized_users=(DiscordAuthorizedUser(name="owner", alias="owner", email="o@v.kr", discord_id=OWNER),),
         config=DiscordAccessConfig(allow_dm=True),
         nl_searcher_factory=lambda: searcher,
     ))
@@ -67,15 +67,15 @@ class FreeTextReachesQueue(unittest.TestCase):
         _run(msg, queue, _searcher(("PM(Core Product)", CU + "86exwz89j")))
         self.assertEqual(len(queue.enqueued), 1,
                          "평문이 큐에 도달하지 못했다 — 배선이 끊겨 있다")
-        self.assertEqual(queue.enqueued[0]["p_skill"], "aisearch")
-        self.assertEqual(queue.enqueued[0]["p_position_url"], CU + "86exwz89j")
+        self.assertEqual(queue.enqueued[0]["skill"], "aisearch")
+        self.assertEqual(queue.enqueued[0]["position_url"], CU + "86exwz89j")
 
     def test_idempotency_uses_discord_event_id(self):
         queue = FakeQueue()
         msg = FakeMessage(message_id="1529267252160927272", author_id=OWNER,
                           content="클릭업에서 번개장터 PM 서치해")
         _run(msg, queue, _searcher(("PM", CU + "86a")))
-        params = queue.enqueued[0]["p_params"]
+        params = queue.enqueued[0]["params"]
         self.assertIn("1529267252160927272", params.get("idempotency_key", ""))
 
 
@@ -84,7 +84,7 @@ class NotQueuedButAnswered(unittest.TestCase):
 
     def test_many_candidates_answers_without_queueing(self):
         queue = FakeQueue()
-        msg = FakeMessage(message_id="1", author_id=OWNER,
+        msg = FakeMessage(message_id="1529267252160927001", author_id=OWNER,
                           content="클릭업에서 번개장터 PM 서치해")
         _run(msg, queue, _searcher(("PM(Core)", CU + "86a"), ("PM(BD)", CU + "86b")))
         self.assertEqual(queue.enqueued, [], "고르기 전에 실행했다")
@@ -92,7 +92,7 @@ class NotQueuedButAnswered(unittest.TestCase):
 
     def test_zero_hits_answers_without_queueing(self):
         queue = FakeQueue()
-        msg = FakeMessage(message_id="2", author_id=OWNER,
+        msg = FakeMessage(message_id="1529267252160927002", author_id=OWNER,
                           content="클릭업에서 없는회사 PM 서치해")
         _run(msg, queue, _searcher())
         self.assertEqual(queue.enqueued, [])
@@ -104,21 +104,21 @@ class ExistingBehaviourUnchanged(unittest.TestCase):
 
     def test_slash_style_command_still_works(self):
         queue = FakeQueue()
-        msg = FakeMessage(message_id="3", author_id=OWNER,
+        msg = FakeMessage(message_id="1529267252160927003", author_id=OWNER,
                           content=f"/fleet-run aisearch {CU}86zzz")
         _run(msg, queue, _searcher())
         self.assertEqual(len(queue.enqueued), 1)
 
     def test_plain_chat_is_still_ignored(self):
         queue = FakeQueue()
-        msg = FakeMessage(message_id="4", author_id=OWNER, content="고마워요")
+        msg = FakeMessage(message_id="1529267252160927004", author_id=OWNER, content="고마워요")
         _run(msg, queue, _searcher())
         self.assertEqual(queue.enqueued, [])
         self.assertNotIn("channel.send", msg.calls, "잡담에 답해 소음을 만들었다")
 
     def test_unauthorized_dm_still_ignored(self):
         queue = FakeQueue()
-        msg = FakeMessage(message_id="5", author_id="999999999999999999",
+        msg = FakeMessage(message_id="1529267252160927005", author_id="999999999999999999",
                           content="클릭업에서 번개장터 PM 서치해")
         asyncio.run(handle_text_message(
             msg, bot_user_id="123456789012345678", queue=queue,
@@ -126,6 +126,26 @@ class ExistingBehaviourUnchanged(unittest.TestCase):
             nl_searcher_factory=lambda: _searcher(("PM", CU + "86a")),
         ))
         self.assertEqual(queue.enqueued, [], "미인가 사용자의 자연어가 실행됐다")
+
+    def test_unauthorized_dm_gets_no_reply_either(self):
+        """뮤턴트 생존으로 발견(2026-07-22) — 큐만 검사해서, 인가 검사를 통째로 지워도
+        테스트가 통과했다. 실행이 안 되는 것과 **아무 응답도 안 하는 것**은 다르다.
+
+        미인가 사용자에게 '못 찾았습니다' 같은 답을 돌려주면, 봇이 무엇을 알아듣는지·
+        어떤 대상이 있는지 알려주는 정보 노출이 된다. 인가 전에는 침묵해야 한다.
+        """
+        queue = FakeQueue()
+        msg = FakeMessage(message_id="1529267252160927006",
+                          author_id="999999999999999999",
+                          content="클릭업에서 없는회사 PM 서치해")
+        asyncio.run(handle_text_message(
+            msg, bot_user_id="123456789012345678", queue=queue,
+            authorized_users=(), config=DiscordAccessConfig(allow_dm=True),
+            nl_searcher_factory=lambda: _searcher(),
+        ))
+        self.assertEqual(queue.enqueued, [])
+        self.assertNotIn("channel.send", msg.calls,
+                         "미인가 사용자에게 응답해 봇 동작을 노출했다")
 
 
 class PlanHelperIsExposed(unittest.TestCase):
@@ -137,7 +157,7 @@ class PlanHelperIsExposed(unittest.TestCase):
 
     def test_envelope_still_none_for_free_text(self):
         """message_to_envelope 는 순수 변환으로 남는다 — 자연어 판단을 섞지 않는다."""
-        msg = FakeMessage(message_id="8", author_id=OWNER,
+        msg = FakeMessage(message_id="1529267252160927008", author_id=OWNER,
                           content="클릭업에서 번개장터 PM 서치해")
         self.assertIsNone(message_to_envelope(msg, bot_user_id="123456789012345678"))
 

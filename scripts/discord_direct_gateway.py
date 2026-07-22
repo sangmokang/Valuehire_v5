@@ -472,6 +472,78 @@ async def handle_slash_interaction(
     return result
 
 
+def nl_plan_for_text(content: str, *, searcher, message_id: str = ""):
+    """평문 한 줄 → 자연어 셸 행동 결정(SOT-32). 정본 판단은 nl_shell 이 한다.
+
+    게이트웨이는 판단을 직접 하지 않는다 — 파서를 둘로 갈라놓지 않기 위해서다(F-NL4).
+    """
+    from tools.multi_position_sourcing import nl_shell
+
+    return nl_shell.plan_from_text(content, searcher=searcher, message_id=message_id)
+
+
+def _text_identity_allowed(message: Any, *, authorized_users, owner_user_ids) -> bool:
+    """자연어 경로의 신원 검사. 봉투가 없는 단계라 메시지에서 직접 본다.
+
+    길드(서버) 메시지는 봇 멘션만 이 함수에 도달하므로 기존 채널 정책을 따르고,
+    DM 은 owner 또는 등록된 연락처만 허용한다(기존 봉투 경로와 같은 기준).
+    """
+    guild = getattr(message, "guild", None)
+    if guild is not None:
+        return True
+    author = getattr(message, "author", None)
+    user_id = str(getattr(author, "id", "")) if author is not None else ""
+    if not user_id:
+        return False
+    if user_id in {str(u) for u in owner_user_ids}:
+        return True
+    return is_authorized_discord_dm(user_id, tuple(authorized_users))
+
+
+def _nl_envelope(message: Any, *, bot_user_id: str, searcher_factory):
+    """평문 → (봉투 or None, Plan or None).
+
+    핵심 배선: 자연어를 새 실행 경로에 태우지 않는다. ``plan_from_text`` 가 만든
+    ``/fleet-run …`` 문자열을 **기존 파서(message_to_envelope)에 다시 태워**, 기존
+    인증·멱등·명령 처리를 그대로 통과시킨다(SOT-32 §3 원칙 3).
+    """
+    if searcher_factory is None:
+        return None, None
+    content = getattr(message, "content", "") or ""
+    try:
+        searcher = searcher_factory()
+        plan = nl_plan_for_text(content, searcher=searcher,
+                                message_id=str(getattr(message, "id", "")))
+    except Exception:  # noqa: BLE001 — 자연어 해석 실패가 기존 명령 경로를 죽이면 안 된다
+        logger.warning("discord_direct_gateway: nl_shell 해석 실패", exc_info=True)
+        return None, None
+    if plan.action != "enqueue" or not plan.command_text:
+        return None, plan
+    shim = _CommandTextShim(message, plan.command_text)
+    return message_to_envelope(shim, bot_user_id=bot_user_id), plan
+
+
+class _CommandTextShim:
+    """원 메시지의 신원·채널·이벤트ID 는 그대로 두고 본문만 바꿔치기한 얇은 래퍼.
+
+    자연어가 만든 명령을 기존 파서에 태우기 위한 것 — 신원을 바꾸지 않는 것이 핵심이다.
+    """
+
+    def __init__(self, origin: Any, content: str) -> None:
+        self._origin = origin
+        self.content = content
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._origin, name)
+
+
+async def _send_text(message: Any, text: str) -> None:
+    try:
+        await message.channel.send(text[:_RESPONSE_CHAR_LIMIT])
+    except Exception:  # noqa: BLE001
+        logger.warning("discord_direct_gateway: channel.send 실패(nl)")
+
+
 async def handle_text_message(
     message: Any,
     *,
@@ -483,6 +555,7 @@ async def handle_text_message(
     audit: Optional[Callable[[dict[str, Any]], Any]] = None,
     clock: Optional[Callable[[], float]] = None,
     owner_user_ids: Sequence[str] = OWNER_USER_IDS,
+    nl_searcher_factory: Optional[Callable[[], Any]] = None,
 ) -> Optional[dict[str, Any]]:
     """봇 멘션/DM 텍스트 명령 1건 처리. 지원 명령이 아니면 None(네트워크 접촉 0).
 
@@ -491,8 +564,24 @@ async def handle_text_message(
     이 함수에 도달한다(``message_to_envelope`` 의 파서가 일반 채널 자유텍스트를 무시).
     """
     envelope = message_to_envelope(message, bot_user_id=bot_user_id)
+    nl_plan = None
     if envelope is None:
-        return None
+        # 자연어 셸(AC-N4, SOT-32) — 정형 명령이 아니면 평문으로 해석해 본다.
+        # 여기가 없으면 U1~U6 전부 죽은 코드다(이 저장소에서 이미 두 번 난 함정).
+        #
+        # 인가를 **먼저** 본다. 미인가 사용자에게는 실행은 물론 답변도 하지 않는다 —
+        # 답변 자체가 "이 봇이 무엇을 알아듣는지" 알려주는 정보 노출이다.
+        if not _text_identity_allowed(message, authorized_users=authorized_users,
+                                      owner_user_ids=owner_user_ids):
+            return None
+        envelope, nl_plan = _nl_envelope(
+            message, bot_user_id=bot_user_id, searcher_factory=nl_searcher_factory)
+        if envelope is None:
+            if nl_plan is not None and nl_plan.reply:
+                # 실행하지 않아도 반드시 답한다 — 조용히 삼키면 먹힌 줄 모른다.
+                await _send_text(message, nl_plan.reply)
+                return {"handled": True, "action": f"nl_{nl_plan.action}", "response": None}
+            return None
     if envelope.is_dm:
         owner_allowed = str(envelope.user_id) in set(str(u) for u in owner_user_ids)
         contact_allowed = is_authorized_discord_dm(envelope.user_id, tuple(authorized_users))
