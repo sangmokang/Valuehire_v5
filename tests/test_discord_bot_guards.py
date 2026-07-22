@@ -153,6 +153,11 @@ class DiscordE2ECutoverHookTests(unittest.TestCase):
         ), fleet=False)
         self.assertEqual(code, 2)
         self.assertIn("event_id", err)
+        code, err = _dispatch(_tool(
+            "exec_command", cmd=["python3", "tool.py", "discord_gateway_enqueue"],
+        ), fleet=False)
+        self.assertEqual(code, 2)
+        self.assertIn("event_id", err)
 
     def test_blocks_direct_engine_execution_inside_gateway_context(self) -> None:
         code, err = _dispatch(
