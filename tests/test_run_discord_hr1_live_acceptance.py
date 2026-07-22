@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import subprocess
+import sys
 
 from scripts.run_discord_hr1_live_acceptance import (
     build_hr1_receipt,
@@ -15,6 +17,7 @@ OWNER = "814353841088757800"
 BOT = "946740848018735114"
 HERMES = "1512101118543397056"
 POSITION = "https://app.clickup.com/t/9018789656/86eycec3a"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _fingerprint(value: str) -> str:
@@ -28,6 +31,18 @@ def test_expected_messages_are_exact_three_paths_on_winpc() -> None:
     assert messages[1].startswith("/url ") and "engine:codex" in messages[1]
     assert not messages[2].startswith("/")
     assert all(POSITION in message and "winpc" in message for message in messages)
+
+
+def test_runner_is_directly_executable_from_repo_root() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/run_discord_hr1_live_acceptance.py", "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_gateway_child_gets_minimal_key_but_no_service_role(tmp_path: Path) -> None:
