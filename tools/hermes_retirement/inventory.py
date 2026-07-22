@@ -101,6 +101,7 @@ SKIP_REPO_DIRS = frozenset(
         "node_modules",
     }
 )
+PATH_SCAN_SKIP_REPO_DIRS = SKIP_REPO_DIRS - {"artifacts"}
 
 OPAQUE_HOME_DIRS = frozenset({"hermes-agent", "lsp", "skills"})
 
@@ -267,6 +268,7 @@ def _is_historical_repo_path(path: Path) -> bool:
             "/.claude/worktrees/",
             "/.hermes/plans/",
             "/.omx/logs/",
+            "/artifacts/",
             "/data/outstanding-news-runs/",
             "/worktrees/",
         )
@@ -325,7 +327,7 @@ def _repo_hermes_named_paths(root: Path) -> set[Path]:
         kept: list[str] = []
         for name in sorted(dirnames):
             child = current / name
-            if name in SKIP_REPO_DIRS:
+            if name in PATH_SCAN_SKIP_REPO_DIRS:
                 continue
             if child.is_symlink():
                 if "hermes" in _absolute(child).lower():
@@ -664,6 +666,22 @@ def _path_reference_item(
     }
 
 
+def _retirement_artifact_item(path: Path) -> dict[str, object]:
+    absolute = _absolute(path)
+    return {
+        "path": absolute,
+        "kind": "path-reference",
+        "classification": "historical-only",
+        "move_first": False,
+        "callers": [],
+        "reason": "documentation, test, cache, or historical evidence",
+        "sensitive": False,
+        "reference_sha256": hashlib.sha256(
+            absolute.encode("utf-8", "surrogateescape")
+        ).hexdigest(),
+    }
+
+
 def _evidence_digest(records: Iterable[str]) -> str:
     return hashlib.sha256(
         "\n".join(sorted(records)).encode("utf-8", "surrogateescape")
@@ -767,6 +785,9 @@ def _repo_candidate_paths(
     candidates.update(
         path for path in explicit_files if path.exists() or path.is_symlink()
     )
+    candidates.add(
+        v5_root / "artifacts/discord-cutover/hermes-dependency-inventory.json"
+    )
     for path, text in corpus.items():
         if "hermes" in _absolute(path).lower() or any(
             term.lower() in text.lower() for term in REFERENCE_TERMS
@@ -822,9 +843,17 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
     candidate_paths = _repo_candidate_paths(
         v4_root, v5_root, active_plugin_roots, corpus
     )
+    retirement_artifact = (
+        v5_root / "artifacts/discord-cutover/hermes-dependency-inventory.json"
+    )
+    candidate_paths.add(retirement_artifact)
 
     items: dict[str, dict[str, object]] = {}
     for path in sorted(candidate_paths, key=_absolute):
+        if path == retirement_artifact:
+            item = _retirement_artifact_item(path)
+            items[item["path"]] = item
+            continue
         try:
             callers = _find_callers(path, caller_corpus, roots, probe.cron)
             item = _repo_item(

@@ -1,11 +1,11 @@
 {
   "coverage": {
     "expected_scope_count": 10,
-    "explicit_items": 2908,
+    "explicit_items": 2909,
     "inherited_items": 129517,
     "opaque_directories": 3,
-    "repo_candidate_count": 2755,
-    "repo_candidate_sha256": "0d65da0db94ec0110943759a24964d2b62a0616335b8816fb61a3b976ff1d563"
+    "repo_candidate_count": 2756,
+    "repo_candidate_sha256": "dbc209e74010f33a127c1190adfba55c03b3fa285f32f80dd77ce3bb725e3f92"
   },
   "expected_paths": [
     {
@@ -109,7 +109,7 @@
       "status": "present"
     }
   ],
-  "generated_at": "2026-07-22T08:49:25.520079+00:00",
+  "generated_at": "2026-07-22T08:59:46.303371+00:00",
   "git_sha_v4": "a4b4fc37a6414859736fa7209ad32057c6b2db42",
   "git_sha_v5": "e697dc38ad203b9e932f6bf3b910c5da11847b6b",
   "items": [
@@ -279,7 +279,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "eb930b5523335d5600b6ba695481a535194a087f75e12ee251889ca51889529c",
+      "metadata_sha256": "37bec168e7f0626dfde0e05d8f8c71c264b673abe73292bb8b6290452f5b6cd8",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/channel_directory.json",
       "reason": "active Hermes gateway may read this runtime state",
@@ -343,7 +343,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "0ab6deafdd5ff85bb203905c12dfb7d6b09d89526044e3de915cdcc8b882d927",
+      "metadata_sha256": "10ea7461a6cfd6d16f8a11eeb04d61ba27480849b4a44825a7aae6cde3e80772",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/cron/.tick.lock",
       "reason": "active Hermes gateway may read this runtime state",
@@ -1819,7 +1819,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "6aec3401adbc63634e35e64efe91d5500f1de9d24715f21e52c5dfc337789c2c",
+      "metadata_sha256": "696ed5dedc0458028ad2bb3102ff6c987b51593be4a465f56d69ec52b57b3f91",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/valuehire_fleet_context.sqlite3",
       "reason": "active Hermes gateway may read this runtime state",
@@ -28683,6 +28683,16 @@
     {
       "callers": [],
       "classification": "historical-only",
+      "kind": "path-reference",
+      "move_first": false,
+      "path": "/Volumes/SSD/valuehire_v5/artifacts/discord-cutover/hermes-dependency-inventory.json",
+      "reason": "documentation, test, cache, or historical evidence",
+      "reference_sha256": "bfd886b34ceea84a81a36ff9b205949fb0b88fce5a4d2a4014e80d9b54b33ee4",
+      "sensitive": false
+    },
+    {
+      "callers": [],
+      "classification": "historical-only",
       "kind": "file",
       "metadata_sha256": "877433f05289595d83ccd5142aa2de4e1f8f71ef059412a1706a6b07175a8ec3",
       "move_first": false,
@@ -30257,15 +30267,15 @@
       }
     ]
   },
-  "scanner_sha256": "854023bb7d672a2e596123aa0575d6db7105942ea769a6e1d9a658181d822d20",
+  "scanner_sha256": "1b9746b61d0ad869ab9f5af086ea8faacdc6d9e1383b028c6dd4dc2a67c78f34",
   "schema_version": "hermes-retirement-inventory/v1",
   "summary": {
     "classifications": {
-      "historical-only": 2750,
+      "historical-only": 2751,
       "live caller": 153,
       "removable": 5
     },
-    "item_count": 2908,
+    "item_count": 2909,
     "move_first_count": 153,
     "runtime_counts": {
       "cron": 2,
