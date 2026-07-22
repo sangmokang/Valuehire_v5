@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import inspect
 import json
 import os
 import plistlib
@@ -500,6 +501,18 @@ def test_verifier_rejects_live_plugin_classification_forgery(tmp_path: Path) -> 
     _recompute_summary(inventory)
 
     with pytest.raises(InventoryVerificationError, match="classification"):
+        verify_inventory(inventory, live_probe=probe)
+
+
+def test_production_verifier_has_no_runtime_probe_override() -> None:
+    assert "live_probe" not in inspect.signature(verify_inventory).parameters
+
+
+def test_verifier_rejects_noncanonical_inventory_roots(tmp_path: Path) -> None:
+    config, probe = _fixture(tmp_path)
+    inventory = build_inventory(config, probe)
+
+    with pytest.raises(InventoryVerificationError, match="roots_scanned"):
         verify_inventory(inventory, live_probe=probe)
 
 
