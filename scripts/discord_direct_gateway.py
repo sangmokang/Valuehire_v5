@@ -111,6 +111,20 @@ QUEUE_URL_ENV = "DISCORD_GATEWAY_SUPABASE_URL"
 QUEUE_KEY_ENV = "DISCORD_GATEWAY_SUPABASE_KEY"
 
 
+def _hr1_startup_block_reason(exc: Exception) -> str:
+    """Map startup failures to secret-free evidence codes; never persist raw errors."""
+    message = str(exc).casefold()
+    if "heartbeat" in message:
+        return "worker_heartbeat_stale"
+    if "killswitch" in message:
+        return "killswitch_engaged"
+    if "lease" in message or "already held" in message:
+        return "gateway_lease_unavailable"
+    if "readiness" in message or "rpc" in message or "http" in message:
+        return "minimal_rpc_unavailable"
+    return "startup_gate_error"
+
+
 def backup_current_discord_commands(
     *, application_id: str, bot_token: str, guild_id: str = "",
     backup_dir: str = ".harness/discord-command-backups",
@@ -1111,7 +1125,16 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
         max_consecutive_renew_failures=2,
         on_lease_lost=client.stop_after_lease_loss,
     )
-    guard.start()
+    try:
+        guard.start()
+    except Exception as exc:
+        if recorder is not None:
+            recorder.record(
+                "gateway_startup_blocked",
+                reason_code=_hr1_startup_block_reason(exc),
+                error_type=type(exc).__name__,
+            )
+        raise
     lease_id = guard.lease_id
     generation = guard.generation
     if recorder is not None:
