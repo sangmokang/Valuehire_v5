@@ -132,7 +132,7 @@ The production RPC readback and live Discord checks run only after the local com
 - [x] Read v5 `AGENTS.md`, `CLAUDE.md`, `docs/harness.md`, SOT 29/30/31/33, existing direct-gateway
   goals, migration, gateway entrypoint, receiver, queue, worker, and tests.
 - [x] Reuse the existing HR-1 worktree and RED commit rather than creating a duplicate runner.
-- [ ] Focused RED additions prove every missing boundary.
-- [ ] Local unit/database integration and full verification pass before production migration.
+- [x] Focused RED additions prove every missing boundary.
+- [x] Local unit/database integration and full verification pass before production migration.
 - [ ] Production safe readback, isolated live round trips, receipt, rollback stop, and independent
   verification pass before HR-1 is called GREEN.
