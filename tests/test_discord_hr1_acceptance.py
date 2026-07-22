@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import ast
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,8 @@ OWNER = "814353841088757800"
 BOT = "946740848018735114"
 HERMES_BOT = "1512101118543397056"
 POSITION = "https://app.clickup.com/t/9018789656/86eycec3a"
+TOKEN = "isolated-test-token.not-a-live-secret"
+TOKEN_FINGERPRINT = hashlib.sha256(TOKEN.encode()).hexdigest()
 
 
 def _job(agent: str, event_id: str, job_id: int, response_id: str) -> dict:
@@ -47,11 +51,17 @@ def _valid_receipt() -> dict:
         "command_fingerprint": "c" * 64,
         "direct_gateway_pid": 1234,
         "direct_gateway_lease_id": "11111111-1111-4111-8111-111111111111",
+        "direct_gateway_generation": 7,
         "gateway_stopped_after_test": True,
+        "hermes_pid_count": 1,
+        "hermes_launchctl_count": 1,
+        "hermes_pids_before": [4321],
+        "hermes_pids_after": [4321],
         "readiness": {
             "minimal_rpc": True,
-            "worker_machine": "macbook",
+            "worker_machine": "winpc",
             "worker_heartbeat_age_seconds": 20,
+            "killswitch_engaged": False,
         },
         "duplicate_event": {
             "event_id": "1529267252160927201",
@@ -68,6 +78,12 @@ def _valid_receipt() -> dict:
             "text_fingerprint": "d" * 64,
         },
         "duplicate_response_count": 0,
+        "queue_nonterminal_count": 0,
+        "rollback_tested": True,
+        "event_id": "1529267252160927201",
+        "job_id": 201,
+        "agent": "claude",
+        "state_transitions": ["queued", "running", "done"],
         "verified_at": "2026-07-22T12:00:00+00:00",
         "verifier_sha256": "e" * 64,
     }
@@ -83,6 +99,10 @@ def test_hr1_receipt_requires_complete_live_evidence() -> None:
         lambda r: r.update(bot_identity_isolated=False),
         lambda r: r.update(gateway_stopped_after_test=False),
         lambda r: r["readiness"].update(worker_heartbeat_age_seconds=301),
+        lambda r: r["readiness"].update(killswitch_engaged=True),
+        lambda r: r.update(hermes_pids_after=[9999]),
+        lambda r: r.update(queue_nonterminal_count=1),
+        lambda r: r.update(rollback_tested=False),
         lambda r: r["jobs"][0].update(transitions=["queued", "done"]),
         lambda r: r["jobs"][1].update(response_count=2),
         lambda r: r["duplicate_event"].update(replay_job_id=999),
@@ -97,41 +117,156 @@ def test_hr1_receipt_fails_closed(mutate) -> None:
 
 
 class _RuntimeQueue:
-    def __init__(self, *, ready: bool = True) -> None:
+    def __init__(self, *, ready: bool = True, killswitch: bool = False,
+                 acquire: bool = True) -> None:
         self.ready = ready
+        self.killswitch = killswitch
+        self.acquire = acquire
         self.calls: list[tuple] = []
 
-    def gateway_readiness(self, machine: str, max_age_seconds: int) -> dict:
-        self.calls.append(("ready", machine, max_age_seconds))
-        return {"minimal_rpc": True, "worker_ready": self.ready}
+    def gateway_readiness(
+        self, token_fingerprint: str, machine: str, max_age_seconds: int,
+    ) -> dict:
+        self.calls.append(("ready", token_fingerprint, machine, max_age_seconds))
+        return {
+            "minimal_rpc": True,
+            "worker_machine": machine,
+            "worker_ready": self.ready,
+            "worker_heartbeat_age_seconds": 10 if self.ready else 999,
+            "killswitch_engaged": self.killswitch,
+        }
 
-    def acquire_gateway_lease(self, bot_id: str, instance_id: str, ttl_seconds: int) -> dict:
-        self.calls.append(("acquire", bot_id, instance_id, ttl_seconds))
-        return {"lease_id": "11111111-1111-4111-8111-111111111111"}
+    def acquire_gateway_lease(
+        self, token_fingerprint: str, holder_identity: str, pid: int,
+        machine: str, ttl_seconds: int,
+    ) -> dict:
+        self.calls.append((
+            "acquire", token_fingerprint, holder_identity, pid, machine, ttl_seconds,
+        ))
+        return {
+            "acquired": self.acquire,
+            "lease_id": (
+                "11111111-1111-4111-8111-111111111111" if self.acquire else None
+            ),
+            "generation": 7 if self.acquire else None,
+        }
 
-    def renew_gateway_lease(self, lease_id: str, instance_id: str, ttl_seconds: int) -> dict:
-        self.calls.append(("renew", lease_id, instance_id, ttl_seconds))
-        return {"lease_id": lease_id}
+    def renew_gateway_lease(
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        pid: int, generation: int, ttl_seconds: int,
+    ) -> dict:
+        self.calls.append((
+            "renew", lease_id, token_fingerprint, holder_identity, pid,
+            generation, ttl_seconds,
+        ))
+        return {"renewed": True, "lease_id": lease_id, "generation": generation}
 
-    def release_gateway_lease(self, lease_id: str, instance_id: str) -> dict:
-        self.calls.append(("release", lease_id, instance_id))
+    def release_gateway_lease(
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        pid: int, generation: int,
+    ) -> dict:
+        self.calls.append((
+            "release", lease_id, token_fingerprint, holder_identity, pid, generation,
+        ))
         return {"released": True}
 
 
 def test_gateway_guard_checks_readiness_acquires_and_releases() -> None:
     queue = _RuntimeQueue()
-    guard = GatewayLeaseGuard(queue, bot_id=BOT, machine="macbook", pid=1234)
+    guard = GatewayLeaseGuard(
+        queue,
+        token_fingerprint=TOKEN_FINGERPRINT,
+        bot_id=BOT,
+        hermes_bot_id=HERMES_BOT,
+        machine="winpc",
+        pid=1234,
+    )
     with guard:
-        assert guard.lease_id
+        assert guard.lease_id and guard.generation == 7
     assert [call[0] for call in queue.calls] == ["ready", "acquire", "release"]
+    assert queue.calls[0][1] == TOKEN_FINGERPRINT
+    assert TOKEN not in repr(queue.calls)
 
 
 def test_gateway_guard_never_acquires_when_worker_is_stale() -> None:
     queue = _RuntimeQueue(ready=False)
-    guard = GatewayLeaseGuard(queue, bot_id=BOT, machine="macbook", pid=1234)
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
     with pytest.raises(RuntimeError, match="heartbeat"):
         guard.start()
     assert [call[0] for call in queue.calls] == ["ready"]
+
+
+def test_gateway_guard_blocks_killswitch_and_same_hermes_identity() -> None:
+    queue = _RuntimeQueue(killswitch=True)
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
+    with pytest.raises(RuntimeError, match="killswitch"):
+        guard.start()
+    assert [call[0] for call in queue.calls] == ["ready"]
+
+    with pytest.raises(ValueError, match="Hermes"):
+        GatewayLeaseGuard(
+            _RuntimeQueue(), token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+            hermes_bot_id=BOT, machine="winpc", pid=1234,
+        )
+
+
+def test_gateway_guard_blocks_second_holder_before_connect() -> None:
+    queue = _RuntimeQueue(acquire=False)
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
+    with pytest.raises(RuntimeError, match="already held"):
+        guard.start()
+    assert [call[0] for call in queue.calls] == ["ready", "acquire"]
+
+
+def test_main_never_connects_when_killswitch_is_engaged(monkeypatch) -> None:
+    queue = _RuntimeQueue(killswitch=True)
+
+    class Client:
+        run_calls: list[str] = []
+
+        def run(self, token: str) -> None:
+            self.run_calls.append(token)
+
+        def stop_after_lease_loss(self, exc: Exception) -> None:
+            raise AssertionError(f"unexpected lease loss: {exc}")
+
+    client = Client()
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", lambda: lambda: queue)
+    monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: client)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+    with pytest.raises(RuntimeError, match="killswitch"):
+        gateway.main()
+    assert client.run_calls == []
+
+
+def test_gateway_module_has_no_direct_engine_execution() -> None:
+    tree = ast.parse((ROOT / "scripts/discord_direct_gateway.py").read_text())
+    forbidden = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            rendered = ast.unparse(node.func)
+            if rendered in {"subprocess.run", "subprocess.Popen", "os.system", "os.execv"}:
+                forbidden.append(rendered)
+    assert forbidden == []
+
+
+def test_receipt_rejects_raw_secret_values() -> None:
+    receipt = _valid_receipt()
+    receipt["diagnostic"] = TOKEN
+    with pytest.raises(Hr1ReceiptError, match="secret"):
+        validate_hr1_receipt(receipt, forbidden_values=(TOKEN, "service-role-test-value"))
 
 
 def test_minimal_privilege_sql_defines_hr1_runtime_rpcs() -> None:
@@ -141,6 +276,12 @@ def test_minimal_privilege_sql_defines_hr1_runtime_rpcs() -> None:
         "discord_gateway_acquire_lease",
         "discord_gateway_renew_lease",
         "discord_gateway_release_lease",
+        "discord_gateway_killswitches",
+        "token_fingerprint",
+        "holder_identity",
+        "holder_pid",
+        "generation",
+        "released_at",
         "grant execute",
         "to anon",
     ):

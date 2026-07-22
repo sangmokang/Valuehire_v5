@@ -27,11 +27,14 @@ STOP_GATE = ROOT / ".claude/hooks/stop-evidence-gate.py"
 FLEET_ENV = {"VH_BUSY_TASK": "fleet #7 (humansearch)", "VH_BUSY_AGENT": "claude"}
 
 
-def _dispatch(payload: dict, *, fleet: bool = True, project_dir: pathlib.Path | None = None):
+def _dispatch(payload: dict, *, fleet: bool = True, project_dir: pathlib.Path | None = None,
+              extra_env: dict[str, str] | None = None):
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir or ROOT))
     env.pop("VH_BUSY_TASK", None)
     if fleet:
         env.update(FLEET_ENV)
+    if extra_env:
+        env.update(extra_env)
     p = subprocess.run(["python3", str(DISPATCH)], input=json.dumps(payload),
                        capture_output=True, text=True, env=env, cwd=str(ROOT))
     return p.returncode, p.stderr
@@ -127,6 +130,45 @@ class SendHookTests(unittest.TestCase):
     def test_draft_creation_not_blocked(self) -> None:
         code, _ = _dispatch(_tool("mcp__claude_ai_Gmail__create_draft", to="x"))
         self.assertEqual(code, 0)
+
+
+class DiscordE2ECutoverHookTests(unittest.TestCase):
+    def test_blocks_gateway_bypass_without_canonical_startup_gate(self) -> None:
+        code, err = _dispatch(_tool(
+            "Bash",
+            command="python3 -c 'from scripts.discord_direct_gateway import _build_client; _build_client().run(\"x\")'",
+        ), fleet=False)
+        self.assertEqual(code, 2)
+        self.assertIn("discord-e2e-cutover", err)
+
+    def test_allows_canonical_fail_closed_gateway_entrypoint(self) -> None:
+        code, _ = _dispatch(_tool(
+            "Bash", command="python3 scripts/discord_direct_gateway.py",
+        ), fleet=False)
+        self.assertEqual(code, 0)
+
+    def test_blocks_discord_enqueue_without_event_id(self) -> None:
+        code, err = _dispatch(_tool(
+            "Bash", command="python3 tool.py discord_gateway_enqueue p_skill=aisearch",
+        ), fleet=False)
+        self.assertEqual(code, 2)
+        self.assertIn("event_id", err)
+
+    def test_blocks_direct_engine_execution_inside_gateway_context(self) -> None:
+        code, err = _dispatch(
+            _tool("Bash", command="codex exec 'do work'"), fleet=False,
+            extra_env={"VALUEHIRE_DIRECT_GATEWAY_PROCESS": "1"},
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("discord-e2e-cutover", err)
+
+    def test_blocks_unsigned_agent_enqueue(self) -> None:
+        code, err = _dispatch(_tool(
+            "Bash",
+            command="python3 enqueue.py skill:agent agent:codex event_id:1529267252160927999",
+        ), fleet=False)
+        self.assertEqual(code, 2)
+        self.assertIn("owner", err)
 
 
 class StopEvidenceFleetTests(unittest.TestCase):
