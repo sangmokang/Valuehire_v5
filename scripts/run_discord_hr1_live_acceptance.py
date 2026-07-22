@@ -79,6 +79,11 @@ def gateway_subprocess_env(
     return child
 
 
+def gateway_subprocess_argv(executable: str) -> list[str]:
+    """Start from the repository import boundary, not a script-local sys.path."""
+    return [str(executable), "-m", "scripts.discord_direct_gateway"]
+
+
 def _one(rows: Sequence[Mapping[str, Any]], kind: str) -> Mapping[str, Any]:
     matching = [row for row in rows if row.get("kind") == kind]
     _require(len(matching) == 1, f"expected one {kind} evidence row")
@@ -482,7 +487,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     os.chmod(log_path, 0o600)
     child_env = gateway_subprocess_env(os.environ, evidence_path)
     process = subprocess.Popen(
-        [sys.executable, str(ROOT / "scripts/discord_direct_gateway.py")],
+        gateway_subprocess_argv(sys.executable),
         cwd=str(ROOT),
         env=child_env,
         stdout=log_handle,
