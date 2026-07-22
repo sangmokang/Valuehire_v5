@@ -175,6 +175,7 @@ def test_live_symlink_plugin_and_unrelated_cron_are_move_first(tmp_path: Path) -
     bridge = str(
         config.v5_root / "tools/multi_position_sourcing/hermes_fleet_bridge.py"
     )
+    gateway_plist = str(config.launch_agents_dir / "ai.hermes.gateway.plist")
 
     assert items[outstanding]["classification"] == "live caller"
     assert any("crontab:3" in caller for caller in items[outstanding]["callers"])
@@ -182,6 +183,9 @@ def test_live_symlink_plugin_and_unrelated_cron_are_move_first(tmp_path: Path) -
     assert items[external_plugin]["move_first"] is True
     assert items[external_init]["classification"] == "live caller"
     assert items[bridge]["classification"] == "live caller"
+    assert items[gateway_plist]["classification"] == "live caller"
+    assert items[gateway_plist]["move_first"] is True
+    assert items[gateway_plist]["callers"] == ["launchd:ai.hermes.gateway"]
 
 
 def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) -> None:
