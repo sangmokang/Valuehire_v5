@@ -388,6 +388,40 @@ def test_main_rejects_token_identity_disguised_by_different_client_id(monkeypatc
         gateway.main()
 
 
+def test_main_records_safe_startup_block_reason(tmp_path: Path, monkeypatch) -> None:
+    queue = _RuntimeQueue(ready=False)
+
+    class Client:
+        run_calls: list[str] = []
+
+        def run(self, token: str) -> None:
+            self.run_calls.append(token)
+
+        def stop_after_lease_loss(self, exc: Exception) -> None:
+            raise AssertionError(f"unexpected lease loss: {exc}")
+
+    client = Client()
+    evidence = tmp_path / "blocked.jsonl"
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", lambda: lambda: queue)
+    monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: client)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", _bot_token(BOT))
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+    monkeypatch.setenv("DISCORD_GATEWAY_SYNC_COMMANDS", "0")
+    monkeypatch.setenv("DISCORD_HR1_EVIDENCE_PATH", str(evidence))
+
+    with pytest.raises(RuntimeError, match="heartbeat"):
+        gateway.main()
+
+    rows = [json.loads(line) for line in evidence.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "gateway_startup_blocked"
+    assert rows[0]["reason_code"] == "worker_heartbeat_stale"
+    assert _bot_token(BOT) not in evidence.read_text()
+    assert client.run_calls == []
+
+
 def test_gateway_module_has_no_direct_engine_execution() -> None:
     tree = ast.parse((ROOT / "scripts/discord_direct_gateway.py").read_text())
     forbidden = []
