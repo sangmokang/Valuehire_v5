@@ -14,6 +14,7 @@ from tools.hermes_retirement.inventory import (
     InventoryConfig,
     InventoryVerificationError,
     RuntimeProbe,
+    _classified_scope_evidence,
     _known_path_refs,
     _probe_discord_commands,
     _probe_launchd,
@@ -335,6 +336,16 @@ def _recompute_summary(inventory: dict) -> None:
     )
 
 
+def _recompute_scope_evidence(inventory: dict) -> None:
+    items = {item["path"]: item for item in inventory["items"]}
+    for row in inventory["expected_paths"]:
+        count, digest = _classified_scope_evidence(Path(row["path"]), items)
+        row["classified_descendant_count"] = count
+        row["observed_descendant_count"] = count
+        row["classified_path_sha256"] = digest
+        row["observed_tree_sha256"] = digest
+
+
 @pytest.mark.parametrize(
     "mutation",
     (
@@ -348,6 +359,10 @@ def _recompute_summary(inventory: dict) -> None:
         "corrupt_summary",
         "nested_secret_field",
         "stale_scanner_sha",
+        "drop_one_and_recompute_scope",
+        "secret_discord_id",
+        "secret_reason",
+        "secret_executable",
     ),
 )
 def test_verifier_rejects_material_inventory_omissions(
@@ -382,6 +397,26 @@ def test_verifier_rejects_material_inventory_omissions(
         inventory["runtime"]["discord_probe"]["raw_command"] = FAKE_SECRET
     elif mutation == "stale_scanner_sha":
         inventory["scanner_sha256"] = "0" * 64
+    elif mutation == "drop_one_and_recompute_scope":
+        target = str(
+            config.v4_root
+            / "tools/hermes-agent/valuehire-outstanding-news.sh"
+        )
+        inventory["items"] = [
+            item for item in inventory["items"] if item["path"] != target
+        ]
+        _recompute_summary(inventory)
+        _recompute_scope_evidence(inventory)
+    elif mutation == "secret_discord_id":
+        inventory["runtime"]["discord_commands"][0]["id"] = (
+            "synthetic-raw-secret-token-value"
+        )
+    elif mutation == "secret_reason":
+        inventory["items"][0]["reason"] = "synthetic-raw-secret-token-value"
+    elif mutation == "secret_executable":
+        inventory["runtime"]["processes"][0]["executable"] = (
+            "synthetic-raw-secret-token-value"
+        )
 
     with pytest.raises(InventoryVerificationError):
         verify_inventory(inventory)
@@ -394,6 +429,7 @@ def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
     assert inventory["runtime"]["processes"][0]["pid"] == 4242
     assert inventory["runtime"]["launchd"][0]["label"] == "ai.hermes.gateway"
     assert inventory["runtime"]["cron"][0] == {
+        "reference_mode": "path",
         "line": 3,
         "fingerprint": "b" * 64,
         "path_refs": [
@@ -450,7 +486,7 @@ def test_cron_path_parser_keeps_real_paths_without_path_environment_blob(
     refs = _known_path_refs(command, (root,))
 
     assert "/usr/local/bin:/usr/bin" not in refs
-    assert "/usr/bin/env" in refs
+    assert "/usr/bin/env" not in refs
     assert str(root) in refs
     assert f"{root}/tools/hermes-agent/hermes gateway.sh" in refs
     assert "/tmp/hermes-gateway.log" in refs

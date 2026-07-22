@@ -39,6 +39,22 @@ STATIC_EXPECTED_ROLES = (
     "hermes_gateway_plist",
 )
 PROBE_NAMES = frozenset({"cron", "discord", "launchd", "processes"})
+ITEM_REASONS = frozenset(
+    {
+        "active Hermes gateway may read this runtime state",
+        "active process references this path",
+        "active runtime configuration references this path",
+        "active crontab references this path",
+        "dedicated Hermes item has no non-historical caller",
+        "documentation, test, cache, or historical evidence",
+        "enabled ~/.hermes plugin symlink resolves into this runtime tree",
+        "Hermes log, backup, cache, or historical state",
+        "Hermes runtime state with no active gateway caller",
+        "installed launchd activation surface can restart on login",
+        "launchd label is currently loaded",
+        "production code, launchd, or cron still references this item",
+    }
+)
 
 REFERENCE_TERMS = (
     "hermes_fleet_bridge",
@@ -101,6 +117,12 @@ class InventoryVerificationError(RuntimeError):
     """Raised when an HR-0 inventory cannot prove complete classification."""
 
 
+def _raise_walk_error(error: OSError) -> None:
+    raise InventoryVerificationError(
+        f"filesystem walk failed: {type(error).__name__}"
+    ) from error
+
+
 @dataclass(frozen=True)
 class InventoryConfig:
     v4_root: Path
@@ -159,7 +181,9 @@ def _metadata_fingerprint(path: Path) -> str:
 def _tree_metadata(path: Path) -> tuple[int, str]:
     rows: list[str] = []
     count = 0
-    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(
+        path, followlinks=False, onerror=_raise_walk_error
+    ):
         dirnames.sort()
         filenames.sort()
         current = Path(dirpath)
@@ -168,8 +192,9 @@ def _tree_metadata(path: Path) -> tuple[int, str]:
             try:
                 info = entry.lstat()
             except OSError as error:
-                rows.append(f"{entry.relative_to(path)}\0ERROR:{type(error).__name__}")
-                continue
+                raise InventoryVerificationError(
+                    f"metadata scan failed: {type(error).__name__}"
+                ) from error
             count += 1
             rows.append(
                 "\0".join(
@@ -235,8 +260,10 @@ def _iter_repo_text(root: Path) -> dict[Path, str]:
                 if path.lstat().st_size > 2_000_000:
                     continue
                 corpus[path] = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
+            except OSError as error:
+                raise InventoryVerificationError(
+                    f"repository scan failed: {type(error).__name__}"
+                ) from error
     return corpus
 
 
@@ -246,7 +273,9 @@ def _iter_files(root: Path) -> Iterable[Path]:
         return
     if not root.is_dir():
         return
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(
+        root, followlinks=False, onerror=_raise_walk_error
+    ):
         current = Path(dirpath)
         kept: list[str] = []
         for name in sorted(dirnames):
@@ -264,7 +293,9 @@ def _iter_home_items(root: Path) -> Iterable[tuple[Path, bool]]:
     """Yield (path, opaque_directory) without following symlinks."""
     if not root.is_dir():
         return
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(
+        root, followlinks=False, onerror=_raise_walk_error
+    ):
         current = Path(dirpath)
         kept: list[str] = []
         for name in sorted(dirnames):
@@ -491,6 +522,12 @@ def _sanitize_probe(probe: RuntimeProbe) -> dict[str, object]:
             "line": int(row.get("line", 0)),
             "fingerprint": str(row.get("fingerprint", "")),
             "path_refs": [str(value) for value in row.get("path_refs", [])],
+            "reference_mode": str(
+                row.get(
+                    "reference_mode",
+                    "path" if row.get("path_refs") else "text-only",
+                )
+            ),
         }
         for row in probe.cron
     ]
@@ -551,19 +588,81 @@ def _path_reference_item(
     }
 
 
-def _classified_scope_count(
+def _evidence_digest(records: Iterable[str]) -> str:
+    return hashlib.sha256(
+        "\n".join(sorted(records)).encode("utf-8", "surrogateescape")
+    ).hexdigest()
+
+
+def _path_evidence_record(path: Path, *, opaque: bool = False) -> tuple[int, str]:
+    kind = "opaque-directory" if opaque else ("symlink" if path.is_symlink() else "file")
+    descendant_count = 0
+    tree_sha = ""
+    if opaque:
+        descendant_count, tree_sha = _tree_metadata(path)
+    symlink_target = _absolute(path.resolve(strict=False)) if path.is_symlink() else ""
+    record = "\0".join(
+        (
+            _absolute(path),
+            kind,
+            _metadata_fingerprint(path),
+            str(descendant_count),
+            tree_sha,
+            symlink_target,
+        )
+    )
+    return 1 + descendant_count, record
+
+
+def _observed_scope_evidence(role: str, root: Path) -> tuple[int, str]:
+    candidate = Path(root).absolute()
+    if not candidate.exists() and not candidate.is_symlink():
+        return 0, _evidence_digest(())
+    records: list[str] = []
+    count = 0
+    if candidate.is_file() or candidate.is_symlink():
+        increment, record = _path_evidence_record(candidate)
+        return increment, _evidence_digest((record,))
+    entries: Iterable[tuple[Path, bool]]
+    if role == "hermes_home":
+        entries = _iter_home_items(candidate)
+    else:
+        entries = ((path, False) for path in _iter_files(candidate))
+    for path, opaque in entries:
+        increment, record = _path_evidence_record(path, opaque=opaque)
+        count += increment
+        records.append(record)
+    return count, _evidence_digest(records)
+
+
+def _classified_scope_evidence(
     root: Path, items: Mapping[str, Mapping[str, object]]
-) -> int:
+) -> tuple[int, str]:
     root_text = _absolute(root)
     total = 0
+    records: list[str] = []
     for item in items.values():
         path_text = str(item.get("path", ""))
         if path_text != root_text and not path_text.startswith(f"{root_text}{os.sep}"):
             continue
+        if item.get("kind") == "path-reference":
+            continue
         total += 1
         if item.get("kind") == "opaque-directory":
             total += int(item.get("descendant_count", 0))
-    return total
+        records.append(
+            "\0".join(
+                (
+                    path_text,
+                    str(item.get("kind", "")),
+                    str(item.get("metadata_sha256", "")),
+                    str(item.get("descendant_count", 0)),
+                    str(item.get("tree_metadata_sha256", "")),
+                    str(item.get("symlink_target", "")),
+                )
+            )
+        )
+    return total, _evidence_digest(records)
 
 
 def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, object]:
@@ -635,8 +734,10 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
                 dedicated_roots=dedicated_roots,
                 hermes_home=hermes_home,
             )
-        except OSError:
-            continue
+        except OSError as error:
+            raise InventoryVerificationError(
+                f"candidate metadata scan failed: {type(error).__name__}"
+            ) from error
         items[item["path"]] = item
 
     for row in runtime["cron"]:
@@ -680,8 +781,10 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
                     process_callers=process_callers,
                     hermes_home=hermes_home,
                 )
-            except OSError:
-                continue
+            except OSError as error:
+                raise InventoryVerificationError(
+                    f"Hermes home scan failed: {type(error).__name__}"
+                ) from error
             if opaque:
                 inherited_count += int(item.get("descendant_count", 0))
             items[item["path"]] = item
@@ -694,8 +797,10 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
                 label=label,
                 loaded_labels=loaded_labels,
             )
-        except OSError:
-            continue
+        except OSError as error:
+            raise InventoryVerificationError(
+                f"launch agent scan failed: {type(error).__name__}"
+            ) from error
         items[item["path"]] = item
 
     # Enabled plugin symlink targets are first-class live runtime trees even when
@@ -715,8 +820,10 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
                     dedicated_roots=dedicated_roots,
                     hermes_home=hermes_home,
                 )
-            except OSError:
-                continue
+            except OSError as error:
+                raise InventoryVerificationError(
+                    f"active plugin scan failed: {type(error).__name__}"
+                ) from error
             items[key] = item
 
     if len(config.expected_paths) != len(STATIC_EXPECTED_ROLES):
@@ -740,15 +847,18 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
         else:
             status_value = "missing"
             kind_value = "missing"
-        classified_count = _classified_scope_count(candidate, items)
+        observed_count, observed_sha = _observed_scope_evidence(role, candidate)
+        classified_count, classified_sha = _classified_scope_evidence(candidate, items)
         expected_paths.append(
             {
                 "role": role,
                 "path": _absolute(candidate),
                 "status": status_value,
                 "kind": kind_value,
-                "observed_descendant_count": classified_count,
+                "observed_descendant_count": observed_count,
                 "classified_descendant_count": classified_count,
+                "observed_tree_sha256": observed_sha,
+                "classified_path_sha256": classified_sha,
             }
         )
 
@@ -912,7 +1022,7 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
             callers = []
         if classification == "live caller" and not callers:
             errors.append(f"live caller has no caller evidence: {path}")
-        if not isinstance(raw_item.get("reason"), str) or not raw_item.get("reason"):
+        if raw_item.get("reason") not in ITEM_REASONS:
             errors.append(f"classification reason missing: {path}")
         if not isinstance(raw_item.get("sensitive"), bool):
             errors.append(f"sensitive marker missing: {path}")
@@ -982,9 +1092,11 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
     else:
         expected_roles: set[str] = set()
         expected_row_keys = {
+            "classified_path_sha256",
             "classified_descendant_count",
             "kind",
             "observed_descendant_count",
+            "observed_tree_sha256",
             "path",
             "role",
             "status",
@@ -1010,12 +1122,31 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
             classified = row.get("classified_descendant_count")
             if not isinstance(observed, int) or observed < 1:
                 errors.append(f"expected scope has no observed items: {role}")
-            recalculated = _classified_scope_count(Path(path), {
-                str(item.get("path", "")): item
-                for item in raw_items
-                if isinstance(item, Mapping)
-            })
-            if classified != recalculated or observed != classified:
+            classified_count, classified_sha = _classified_scope_evidence(
+                Path(path),
+                {
+                    str(item.get("path", "")): item
+                    for item in raw_items
+                    if isinstance(item, Mapping)
+                },
+            )
+            try:
+                observed_count, observed_sha = _observed_scope_evidence(
+                    role, Path(path)
+                )
+            except (OSError, InventoryVerificationError) as error:
+                errors.append(
+                    f"filesystem observation failed for {role}: {type(error).__name__}"
+                )
+                observed_count, observed_sha = -1, ""
+            if (
+                classified != classified_count
+                or observed != observed_count
+                or observed != classified
+                or row.get("classified_path_sha256") != classified_sha
+                or row.get("observed_tree_sha256") != observed_sha
+                or classified_sha != observed_sha
+            ):
                 errors.append(f"expected scope coverage mismatch: {role}")
             if row.get("kind") in {"file", "symlink"} and path not in paths:
                 errors.append(f"expected file lacks classification: {row.get('path')}")
@@ -1105,7 +1236,7 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
                 "ppid",
             },
             "launchd": {"label", "pid"},
-            "cron": {"fingerprint", "line", "path_refs"},
+            "cron": {"fingerprint", "line", "path_refs", "reference_mode"},
             "discord_commands": {"id", "name", "scope", "type"},
         }
         for key, keys in list_schemas.items():
@@ -1118,13 +1249,19 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
                     errors.append(f"runtime {key}[{index}] schema mismatch")
                     continue
                 if key == "processes":
+                    executable = row.get("executable")
                     if (
                         not isinstance(row.get("pid"), int)
                         or row.get("pid", 0) < 1
                         or not isinstance(row.get("ppid"), int)
                         or row.get("ppid", -1) < 0
-                        or not isinstance(row.get("executable"), str)
-                        or not row.get("executable")
+                        or not isinstance(executable, str)
+                        or not re.fullmatch(r"[A-Za-z0-9._+-]+", str(executable))
+                        or re.search(
+                            r"token|secret|password|credential|api[_-]?key",
+                            str(executable),
+                            re.IGNORECASE,
+                        )
                         or not re.fullmatch(
                             r"[0-9a-f]{64}", str(row.get("command_fingerprint", ""))
                         )
@@ -1145,19 +1282,23 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
                         or not re.fullmatch(
                             r"[0-9a-f]{64}", str(row.get("fingerprint", ""))
                         )
+                        or row.get("reference_mode") not in {"path", "text-only"}
                     ):
                         errors.append(f"runtime cron[{index}] value invalid")
                 elif key == "discord_commands":
+                    command_id = row.get("id")
+                    command_name = row.get("name")
+                    command_scope = row.get("scope")
                     if (
-                        not isinstance(row.get("id"), str)
-                        or not row.get("id")
-                        or not isinstance(row.get("name"), str)
-                        or not row.get("name")
+                        not isinstance(command_id, str)
+                        or not command_id.isdigit()
+                        or not isinstance(command_name, str)
+                        or not re.fullmatch(r"[a-z0-9_-]{1,32}", command_name)
                         or not isinstance(row.get("type"), int)
-                        or not isinstance(row.get("scope"), str)
+                        or not isinstance(command_scope, str)
                         or not (
-                            row.get("scope") == "global"
-                            or str(row.get("scope")).startswith("guild:")
+                            command_scope == "global"
+                            or re.fullmatch(r"guild:[0-9]+", command_scope)
                         )
                     ):
                         errors.append(f"runtime discord_commands[{index}] value invalid")
@@ -1230,7 +1371,14 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
                     continue
                 line = row.get("line")
                 refs = row.get("path_refs")
-                if not isinstance(line, int) or line < 1 or not isinstance(refs, list) or not refs:
+                mode = row.get("reference_mode")
+                if (
+                    not isinstance(line, int)
+                    or line < 1
+                    or not isinstance(refs, list)
+                    or (mode == "path" and not refs)
+                    or (mode == "text-only" and refs)
+                ):
                     errors.append("cron row lacks line/path_refs evidence")
                     continue
                 for reference in refs:
@@ -1285,7 +1433,12 @@ def _known_path_refs(command: str, roots: Sequence[Path]) -> list[str]:
         cleaned = cleaned.strip('"\'')
         if not cleaned.startswith("/"):
             continue
-        refs.add(cleaned)
+        if any(
+            cleaned == _absolute(root)
+            or cleaned.startswith(f"{_absolute(root)}{os.sep}")
+            for root in roots
+        ) or any(marker in cleaned.lower() for marker in ("hermes", "outstanding")):
+            refs.add(cleaned)
     return sorted(refs)
 
 
@@ -1379,11 +1532,13 @@ def _probe_cron(
     for line_number, line in enumerate(result.stdout.splitlines(), 1):
         if not re.search(r"(hermes|outstanding)", line, re.IGNORECASE):
             continue
+        path_refs = _known_path_refs(line, roots)
         rows.append(
             {
                 "line": line_number,
                 "fingerprint": _command_fingerprint(line),
-                "path_refs": _known_path_refs(line, roots),
+                "path_refs": path_refs,
+                "reference_mode": "path" if path_refs else "text-only",
                 "raw_for_scan_only": line,
             }
         )

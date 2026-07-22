@@ -1,93 +1,113 @@
 {
   "coverage": {
     "expected_scope_count": 10,
-    "explicit_items": 1743,
+    "explicit_items": 1740,
     "inherited_items": 129517,
     "opaque_directories": 3
   },
   "expected_paths": [
     {
       "classified_descendant_count": 49,
+      "classified_path_sha256": "bcf0eb8bd2cc426555d7703178f428397649ce3d2a483851b418ba4c2cc95396",
       "kind": "directory",
       "observed_descendant_count": 49,
+      "observed_tree_sha256": "bcf0eb8bd2cc426555d7703178f428397649ce3d2a483851b418ba4c2cc95396",
       "path": "/Volumes/SSD/valuehire_v4/tools/hermes-agent",
       "role": "v4_hermes_agent",
       "status": "present"
     },
     {
       "classified_descendant_count": 4,
+      "classified_path_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
       "kind": "directory",
       "observed_descendant_count": 4,
+      "observed_tree_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
       "path": "/Volumes/SSD/valuehire_v5/ops/hermes-plugin",
       "role": "v5_hermes_plugin",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
+      "classified_path_sha256": "5f7ad1668316164757048216748c728a19f8e75b9729bb7c40d7ea2843924ba0",
       "kind": "file",
       "observed_descendant_count": 1,
+      "observed_tree_sha256": "5f7ad1668316164757048216748c728a19f8e75b9729bb7c40d7ea2843924ba0",
       "path": "/Volumes/SSD/valuehire_v5/tools/multi_position_sourcing/hermes_fleet_bridge.py",
       "role": "hermes_fleet_bridge",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
+      "classified_path_sha256": "ef81f814a7289aacc76232ed2bd57635c6b8ea995ba4e515ed09c35e8382ae0b",
       "kind": "file",
       "observed_descendant_count": 1,
+      "observed_tree_sha256": "ef81f814a7289aacc76232ed2bd57635c6b8ea995ba4e515ed09c35e8382ae0b",
       "path": "/Volumes/SSD/valuehire_v5/tools/multi_position_sourcing/hermes_position_context.py",
       "role": "hermes_position_context",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
+      "classified_path_sha256": "8012b1044cb990e4bc8e393258746ae409c1d572df7184f3f27e7ae44591b0c0",
       "kind": "file",
       "observed_descendant_count": 1,
+      "observed_tree_sha256": "8012b1044cb990e4bc8e393258746ae409c1d572df7184f3f27e7ae44591b0c0",
       "path": "/Volumes/SSD/valuehire_v5/scripts/discord_command_listener.py",
       "role": "discord_command_listener",
       "status": "present"
     },
     {
-      "classified_descendant_count": 129666,
+      "classified_descendant_count": 129664,
+      "classified_path_sha256": "d5c4709b703a23a5d1f93457599752002b9a2b9a733fba1d767ec0a7f8b0f7d4",
       "kind": "directory",
-      "observed_descendant_count": 129666,
+      "observed_descendant_count": 129664,
+      "observed_tree_sha256": "d5c4709b703a23a5d1f93457599752002b9a2b9a733fba1d767ec0a7f8b0f7d4",
       "path": "/Users/kangsangmo/.hermes",
       "role": "hermes_home",
       "status": "present"
     },
     {
       "classified_descendant_count": 2,
+      "classified_path_sha256": "c205504bd7a903d0d6da8e756cd4c990f6dcacaa2e36ba7cd014624b2e1d12fd",
       "kind": "directory",
       "observed_descendant_count": 2,
+      "observed_tree_sha256": "c205504bd7a903d0d6da8e756cd4c990f6dcacaa2e36ba7cd014624b2e1d12fd",
       "path": "/Users/kangsangmo/.hermes/plugins",
       "role": "hermes_plugins",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
+      "classified_path_sha256": "ec78484ae09aa33dd6cf5ceb257b74d6c3932e82a7231872a1476505b5351181",
       "kind": "file",
       "observed_descendant_count": 1,
+      "observed_tree_sha256": "ec78484ae09aa33dd6cf5ceb257b74d6c3932e82a7231872a1476505b5351181",
       "path": "/Users/kangsangmo/Library/LaunchAgents/ai.hermes.gateway.plist",
       "role": "hermes_gateway_plist",
       "status": "present"
     },
     {
       "classified_descendant_count": 4,
+      "classified_path_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
       "kind": "directory",
       "observed_descendant_count": 4,
+      "observed_tree_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
       "path": "/Volumes/SSD/valuehire_v5/ops/hermes-plugin/valuehire_fleet",
       "role": "active_plugin_target:46af47d24029",
       "status": "present"
     },
     {
       "classified_descendant_count": 31,
+      "classified_path_sha256": "6dd9c7fc0b9efc9eb25f1b9391547827076d4e55ad54c2f668909dde4189e23e",
       "kind": "directory",
       "observed_descendant_count": 31,
+      "observed_tree_sha256": "6dd9c7fc0b9efc9eb25f1b9391547827076d4e55ad54c2f668909dde4189e23e",
       "path": "/Volumes/SSD/wt/504-discord-codex-primary/tools/hermes-agent/valuehire",
       "role": "active_plugin_target:f55f077a7344",
       "status": "present"
     }
   ],
-  "generated_at": "2026-07-22T07:37:54.749444+00:00",
+  "generated_at": "2026-07-22T07:49:22.248198+00:00",
   "git_sha_v4": "a4b4fc37a6414859736fa7209ad32057c6b2db42",
   "git_sha_v5": "e697dc38ad203b9e932f6bf3b910c5da11847b6b",
   "items": [
@@ -257,7 +277,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "2a54566729a1ff07e79b98387c5b200255261feb9b8f14d17941c74c3faf9b55",
+      "metadata_sha256": "ea2a8fd4b538f6f94d7bf08299e9c4584d714dc749910cc1e4d7f068511bcb73",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/channel_directory.json",
       "reason": "active Hermes gateway may read this runtime state",
@@ -321,7 +341,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "04a894cbcdeae94f4ae0821b61d42dad4066fd389bb46ae532b68dc8c5ab8f01",
+      "metadata_sha256": "142ccfb6a04f9f6bf19e608a83f6135ce4ae9b335553b172f322023a025917c2",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/cron/.tick.lock",
       "reason": "active Hermes gateway may read this runtime state",
@@ -1037,7 +1057,7 @@
       "callers": [],
       "classification": "historical-only",
       "kind": "file",
-      "metadata_sha256": "42dd842a740a95de35ecb9820a5a75f2f95e2144c1bc4c03d4e0b00078213535",
+      "metadata_sha256": "46e146cbcdd165237ed6c5642b8ec87308f065f7fdb2e3520b00d0a92aa7c12c",
       "move_first": false,
       "path": "/Users/kangsangmo/.hermes/logs/agent.log",
       "reason": "Hermes log, backup, cache, or historical state",
@@ -1797,35 +1817,11 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "44c3db8070496a50c9995a45c7af8848301059e1dbce1f3251382ba86efad532",
+      "metadata_sha256": "856d388dc2ea20642b57ae854a5c474a4108c387f51d53da9e279ceb1dde1e2e",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/valuehire_fleet_context.sqlite3",
       "reason": "active Hermes gateway may read this runtime state",
       "sensitive": true
-    },
-    {
-      "callers": [
-        "crontab:4"
-      ],
-      "classification": "live caller",
-      "kind": "path-reference",
-      "move_first": true,
-      "path": "/Users/kangsangmo/.local/bin/codex",
-      "reason": "active runtime configuration references this path",
-      "reference_sha256": "421e1b0f35ff2bdfbc9ee93ab51399229f064bafe4f5f91ea5d70209e16acb17",
-      "sensitive": false
-    },
-    {
-      "callers": [
-        "crontab:4"
-      ],
-      "classification": "live caller",
-      "kind": "path-reference",
-      "move_first": true,
-      "path": "/Users/kangsangmo/Desktop/valuehire_v4",
-      "reason": "active runtime configuration references this path",
-      "reference_sha256": "610027d65287dae320f1ebac616ecf3d8a64f007112da256f4fcfcd7dd03895a",
-      "sensitive": false
     },
     {
       "callers": [
@@ -18180,18 +18176,6 @@
       "path": "/Volumes/SSD/wt/504-discord-codex-primary/tools/hermes-agent/valuehire/vh-codex-dispatch.mjs",
       "reason": "enabled ~/.hermes plugin symlink resolves into this runtime tree",
       "sensitive": false
-    },
-    {
-      "callers": [
-        "crontab:4"
-      ],
-      "classification": "live caller",
-      "kind": "path-reference",
-      "move_first": true,
-      "path": "/tmp/valuehire-codex-cron-liveness.log",
-      "reason": "active runtime configuration references this path",
-      "reference_sha256": "e9a0a8838fbcaf7cb565d8f0a881324cc4d67527ffcef434a4054e78e88ca906",
-      "sensitive": false
     }
   ],
   "roots_scanned": {
@@ -18208,16 +18192,14 @@
         "path_refs": [
           "/Users/kangsangmo/Desktop/valuehire_v4/tools/hermes-agent/hermes-gateway.log",
           "/Users/kangsangmo/Desktop/valuehire_v4/tools/hermes-agent/hermes-gateway.sh"
-        ]
+        ],
+        "reference_mode": "path"
       },
       {
         "fingerprint": "bee13109b4cd115ef40b0b8235a8a7ca63602ecd7aea15f8cba06fa52c4b90ed",
         "line": 4,
-        "path_refs": [
-          "/Users/kangsangmo/.local/bin/codex",
-          "/Users/kangsangmo/Desktop/valuehire_v4",
-          "/tmp/valuehire-codex-cron-liveness.log"
-        ]
+        "path_refs": [],
+        "reference_mode": "text-only"
       }
     ],
     "discord_commands": [
@@ -18593,16 +18575,16 @@
       }
     ]
   },
-  "scanner_sha256": "20915776d2ec3159d7504776c9cc439968b2be8ee698fa31ee2c04c5a4374eec",
+  "scanner_sha256": "93493bd90cc9371adad26d1e1f82cff0e6804cc4fa16d088f44f786560915bc5",
   "schema_version": "hermes-retirement-inventory/v1",
   "summary": {
     "classifications": {
       "historical-only": 1582,
-      "live caller": 156,
+      "live caller": 153,
       "removable": 5
     },
-    "item_count": 1743,
-    "move_first_count": 156,
+    "item_count": 1740,
+    "move_first_count": 153,
     "runtime_counts": {
       "cron": 2,
       "discord_commands": 56,
