@@ -15,9 +15,11 @@ from tools.hermes_retirement.inventory import (
     InventoryVerificationError,
     RuntimeProbe,
     _classified_scope_evidence,
+    _iter_repo_text,
     _known_path_refs,
     _probe_discord_commands,
     _probe_launchd,
+    _relevant_launch_agents,
     build_inventory,
     verify_inventory,
 )
@@ -72,6 +74,10 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
     _write(v5 / "docs/engineering/hermes-history.md", "old Hermes design\n")
     _write(v5 / "tests/test_hermes_old.py", "# retirement coverage\n")
     _write(v5 / ".hermes/plans/old-hermes-plan.md", "retired plan\n")
+    _write(
+        v5 / ".codex/skills/vhskill/SKILL.md",
+        "production caller uses hermes_fleet_bridge\n",
+    )
     _write(v4 / ".omx/logs/hermes-run.json", "{}\n")
     _write(
         v4 / "worktrees/stale/tools/hermes-agent/valuehire/plugin.yaml",
@@ -363,6 +369,7 @@ def _recompute_scope_evidence(inventory: dict) -> None:
         "secret_discord_id",
         "secret_reason",
         "secret_executable",
+        "drop_repo_wide_caller",
     ),
 )
 def test_verifier_rejects_material_inventory_omissions(
@@ -417,6 +424,15 @@ def test_verifier_rejects_material_inventory_omissions(
         inventory["runtime"]["processes"][0]["executable"] = (
             "synthetic-raw-secret-token-value"
         )
+    elif mutation == "drop_repo_wide_caller":
+        target = str(config.v5_root / ".codex/skills/vhskill/SKILL.md")
+        inventory["items"] = [
+            item for item in inventory["items"] if item["path"] != target
+        ]
+        _recompute_summary(inventory)
+        inventory["coverage"]["explicit_items"] = len(inventory["items"])
+        inventory["coverage"]["repo_candidate_count"] -= 1
+        inventory["coverage"]["repo_candidate_sha256"] = "0" * 64
 
     with pytest.raises(InventoryVerificationError):
         verify_inventory(inventory)
@@ -447,6 +463,43 @@ def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
     assert inventory["scanner_sha256"] == hashlib.sha256(
         Path("tools/hermes_retirement/inventory.py").read_bytes()
     ).hexdigest()
+
+
+def test_dynamic_home_metadata_drift_does_not_invalidate_path_topology(
+    tmp_path: Path,
+) -> None:
+    config, probe = _fixture(tmp_path)
+    inventory = build_inventory(config, probe)
+
+    _write(config.hermes_home / "config.yaml", "model: changed-after-snapshot\n")
+
+    verify_inventory(inventory)
+
+
+def test_invalid_launch_agent_plist_fails_closed(tmp_path: Path) -> None:
+    launch_agents = tmp_path / "Library/LaunchAgents"
+    _write(launch_agents / "broken-hermes.plist", "not a plist")
+
+    with pytest.raises(InventoryVerificationError, match="launch agent"):
+        list(_relevant_launch_agents(launch_agents))
+
+
+def test_repo_walk_error_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "v5"
+    root.mkdir()
+
+    def failing_walk(*args, **kwargs):
+        callback = kwargs.get("onerror")
+        assert callback is not None
+        callback(PermissionError("synthetic unreadable subtree"))
+        return []
+
+    monkeypatch.setattr(os, "walk", failing_walk)
+
+    with pytest.raises(InventoryVerificationError, match="filesystem walk"):
+        _iter_repo_text(root)
 
 
 def test_launchd_probe_includes_loaded_unrelated_hermes_agent_jobs(

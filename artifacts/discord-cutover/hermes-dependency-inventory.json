@@ -3,111 +3,113 @@
     "expected_scope_count": 10,
     "explicit_items": 1740,
     "inherited_items": 129517,
-    "opaque_directories": 3
+    "opaque_directories": 3,
+    "repo_candidate_count": 1587,
+    "repo_candidate_sha256": "5c1027f7fe6997e8d03c99103136636c4cf78a61a2d51f07e84f09c4a9bfe699"
   },
   "expected_paths": [
     {
       "classified_descendant_count": 49,
-      "classified_path_sha256": "bcf0eb8bd2cc426555d7703178f428397649ce3d2a483851b418ba4c2cc95396",
+      "classified_path_sha256": "52519fa10c9f0b2b4af97d44bcf142c9ac49e0d92aba0ce574fc2d5899eb333c",
       "kind": "directory",
       "observed_descendant_count": 49,
-      "observed_tree_sha256": "bcf0eb8bd2cc426555d7703178f428397649ce3d2a483851b418ba4c2cc95396",
+      "observed_tree_sha256": "52519fa10c9f0b2b4af97d44bcf142c9ac49e0d92aba0ce574fc2d5899eb333c",
       "path": "/Volumes/SSD/valuehire_v4/tools/hermes-agent",
       "role": "v4_hermes_agent",
       "status": "present"
     },
     {
       "classified_descendant_count": 4,
-      "classified_path_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
+      "classified_path_sha256": "f43640a0c61e24033f223fd97886771d806aacfd37380882bd08c59940f6ec1e",
       "kind": "directory",
       "observed_descendant_count": 4,
-      "observed_tree_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
+      "observed_tree_sha256": "f43640a0c61e24033f223fd97886771d806aacfd37380882bd08c59940f6ec1e",
       "path": "/Volumes/SSD/valuehire_v5/ops/hermes-plugin",
       "role": "v5_hermes_plugin",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
-      "classified_path_sha256": "5f7ad1668316164757048216748c728a19f8e75b9729bb7c40d7ea2843924ba0",
+      "classified_path_sha256": "b41e5fbebc4de462afe5590568ecbab6c3fa0ae626c6b5f609a5c3f466b14dd0",
       "kind": "file",
       "observed_descendant_count": 1,
-      "observed_tree_sha256": "5f7ad1668316164757048216748c728a19f8e75b9729bb7c40d7ea2843924ba0",
+      "observed_tree_sha256": "b41e5fbebc4de462afe5590568ecbab6c3fa0ae626c6b5f609a5c3f466b14dd0",
       "path": "/Volumes/SSD/valuehire_v5/tools/multi_position_sourcing/hermes_fleet_bridge.py",
       "role": "hermes_fleet_bridge",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
-      "classified_path_sha256": "ef81f814a7289aacc76232ed2bd57635c6b8ea995ba4e515ed09c35e8382ae0b",
+      "classified_path_sha256": "e4d5909d240971800e50cdd2014052e0474af577442b4820e1a5fc7a7366d72b",
       "kind": "file",
       "observed_descendant_count": 1,
-      "observed_tree_sha256": "ef81f814a7289aacc76232ed2bd57635c6b8ea995ba4e515ed09c35e8382ae0b",
+      "observed_tree_sha256": "e4d5909d240971800e50cdd2014052e0474af577442b4820e1a5fc7a7366d72b",
       "path": "/Volumes/SSD/valuehire_v5/tools/multi_position_sourcing/hermes_position_context.py",
       "role": "hermes_position_context",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
-      "classified_path_sha256": "8012b1044cb990e4bc8e393258746ae409c1d572df7184f3f27e7ae44591b0c0",
+      "classified_path_sha256": "a87dacbbfad682c77d3e63f50237f59ea596c39537fdc28d3aff5a435577424f",
       "kind": "file",
       "observed_descendant_count": 1,
-      "observed_tree_sha256": "8012b1044cb990e4bc8e393258746ae409c1d572df7184f3f27e7ae44591b0c0",
+      "observed_tree_sha256": "a87dacbbfad682c77d3e63f50237f59ea596c39537fdc28d3aff5a435577424f",
       "path": "/Volumes/SSD/valuehire_v5/scripts/discord_command_listener.py",
       "role": "discord_command_listener",
       "status": "present"
     },
     {
       "classified_descendant_count": 129664,
-      "classified_path_sha256": "d5c4709b703a23a5d1f93457599752002b9a2b9a733fba1d767ec0a7f8b0f7d4",
+      "classified_path_sha256": "6a0b8570c7f433bca56b7d6cec46fbbc576d9b58f7089f92750c62001e5d4295",
       "kind": "directory",
       "observed_descendant_count": 129664,
-      "observed_tree_sha256": "d5c4709b703a23a5d1f93457599752002b9a2b9a733fba1d767ec0a7f8b0f7d4",
+      "observed_tree_sha256": "6a0b8570c7f433bca56b7d6cec46fbbc576d9b58f7089f92750c62001e5d4295",
       "path": "/Users/kangsangmo/.hermes",
       "role": "hermes_home",
       "status": "present"
     },
     {
       "classified_descendant_count": 2,
-      "classified_path_sha256": "c205504bd7a903d0d6da8e756cd4c990f6dcacaa2e36ba7cd014624b2e1d12fd",
+      "classified_path_sha256": "da64dcf151eba107cc2359f92c03fd79b04883d1718247b3120290341f8e0dd2",
       "kind": "directory",
       "observed_descendant_count": 2,
-      "observed_tree_sha256": "c205504bd7a903d0d6da8e756cd4c990f6dcacaa2e36ba7cd014624b2e1d12fd",
+      "observed_tree_sha256": "da64dcf151eba107cc2359f92c03fd79b04883d1718247b3120290341f8e0dd2",
       "path": "/Users/kangsangmo/.hermes/plugins",
       "role": "hermes_plugins",
       "status": "present"
     },
     {
       "classified_descendant_count": 1,
-      "classified_path_sha256": "ec78484ae09aa33dd6cf5ceb257b74d6c3932e82a7231872a1476505b5351181",
+      "classified_path_sha256": "e9bf2a0157208089519d404783b46e597fbc78eede8af3a6af5cefe8238a91dc",
       "kind": "file",
       "observed_descendant_count": 1,
-      "observed_tree_sha256": "ec78484ae09aa33dd6cf5ceb257b74d6c3932e82a7231872a1476505b5351181",
+      "observed_tree_sha256": "e9bf2a0157208089519d404783b46e597fbc78eede8af3a6af5cefe8238a91dc",
       "path": "/Users/kangsangmo/Library/LaunchAgents/ai.hermes.gateway.plist",
       "role": "hermes_gateway_plist",
       "status": "present"
     },
     {
       "classified_descendant_count": 4,
-      "classified_path_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
+      "classified_path_sha256": "f43640a0c61e24033f223fd97886771d806aacfd37380882bd08c59940f6ec1e",
       "kind": "directory",
       "observed_descendant_count": 4,
-      "observed_tree_sha256": "79b4a17be732dc7f9c59529c7f358385d23cc7da357ebf354f4829620611cfc5",
+      "observed_tree_sha256": "f43640a0c61e24033f223fd97886771d806aacfd37380882bd08c59940f6ec1e",
       "path": "/Volumes/SSD/valuehire_v5/ops/hermes-plugin/valuehire_fleet",
       "role": "active_plugin_target:46af47d24029",
       "status": "present"
     },
     {
       "classified_descendant_count": 31,
-      "classified_path_sha256": "6dd9c7fc0b9efc9eb25f1b9391547827076d4e55ad54c2f668909dde4189e23e",
+      "classified_path_sha256": "4db2c4e47df65703077161dea66cad1dc1ea84bbc138d2c2c08d4332485ba86e",
       "kind": "directory",
       "observed_descendant_count": 31,
-      "observed_tree_sha256": "6dd9c7fc0b9efc9eb25f1b9391547827076d4e55ad54c2f668909dde4189e23e",
+      "observed_tree_sha256": "4db2c4e47df65703077161dea66cad1dc1ea84bbc138d2c2c08d4332485ba86e",
       "path": "/Volumes/SSD/wt/504-discord-codex-primary/tools/hermes-agent/valuehire",
       "role": "active_plugin_target:f55f077a7344",
       "status": "present"
     }
   ],
-  "generated_at": "2026-07-22T07:49:22.248198+00:00",
+  "generated_at": "2026-07-22T08:02:15.370079+00:00",
   "git_sha_v4": "a4b4fc37a6414859736fa7209ad32057c6b2db42",
   "git_sha_v5": "e697dc38ad203b9e932f6bf3b910c5da11847b6b",
   "items": [
@@ -277,7 +279,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "ea2a8fd4b538f6f94d7bf08299e9c4584d714dc749910cc1e4d7f068511bcb73",
+      "metadata_sha256": "3372ff0f87b51d385234b94c1da52ec0ff77d2cbf11072c04260aa49084a3440",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/channel_directory.json",
       "reason": "active Hermes gateway may read this runtime state",
@@ -341,7 +343,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "142ccfb6a04f9f6bf19e608a83f6135ce4ae9b335553b172f322023a025917c2",
+      "metadata_sha256": "76488fb34e098a5cbe619192da0254cc572005ff67196d0a02b964cbdb32e8ab",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/cron/.tick.lock",
       "reason": "active Hermes gateway may read this runtime state",
@@ -1057,7 +1059,7 @@
       "callers": [],
       "classification": "historical-only",
       "kind": "file",
-      "metadata_sha256": "46e146cbcdd165237ed6c5642b8ec87308f065f7fdb2e3520b00d0a92aa7c12c",
+      "metadata_sha256": "6ac9b54b34ea0c505dfccde6d576a990903124078bc8ded6cfbe348113407463",
       "move_first": false,
       "path": "/Users/kangsangmo/.hermes/logs/agent.log",
       "reason": "Hermes log, backup, cache, or historical state",
@@ -1277,7 +1279,7 @@
       "callers": [],
       "classification": "historical-only",
       "kind": "file",
-      "metadata_sha256": "82f800f986092219c2f18cd57a9f789d07e43d6f5656ac7095849932d106e7f7",
+      "metadata_sha256": "649b89e2d881565775ea8cb0262e1c9cd845862b929c15d740281811089012a2",
       "move_first": false,
       "path": "/Users/kangsangmo/.hermes/logs/gateway.log",
       "reason": "Hermes log, backup, cache, or historical state",
@@ -1768,12 +1770,12 @@
       "classification": "live caller",
       "descendant_count": 767,
       "kind": "opaque-directory",
-      "metadata_sha256": "6b4b5e6afefe754d159ca1b224c050668ef292869fe38817bdbc0ad6f68a1dc8",
+      "metadata_sha256": "15de44a7632845a49ad5057987f752b07b556c908a2398ee31ee77b6889d3609",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/skills",
       "reason": "active Hermes gateway may read this runtime state",
       "sensitive": true,
-      "tree_metadata_sha256": "b868911d6707a223dd9949b4c6063df09106feb1ee1cc54312130679484b64d2"
+      "tree_metadata_sha256": "3e2b19794a3bbc5fbccba312d64ab2494bf61367cc3c1aa2b23a5c0d326c1d96"
     },
     {
       "callers": [
@@ -1817,7 +1819,7 @@
       ],
       "classification": "live caller",
       "kind": "file",
-      "metadata_sha256": "856d388dc2ea20642b57ae854a5c474a4108c387f51d53da9e279ceb1dde1e2e",
+      "metadata_sha256": "9a3a5594d3cbb75de58b9edd7d3f990dedcf00906b246b4560d0d73dbd1ff51d",
       "move_first": true,
       "path": "/Users/kangsangmo/.hermes/valuehire_fleet_context.sqlite3",
       "reason": "active Hermes gateway may read this runtime state",
@@ -18575,7 +18577,7 @@
       }
     ]
   },
-  "scanner_sha256": "93493bd90cc9371adad26d1e1f82cff0e6804cc4fa16d088f44f786560915bc5",
+  "scanner_sha256": "ea1f3209fad7d613057df1b42d8dcd0bcf7087448cc759ae320459dbe23c8ae9",
   "schema_version": "hermes-retirement-inventory/v1",
   "summary": {
     "classifications": {

@@ -210,6 +210,39 @@ def _tree_metadata(path: Path) -> tuple[int, str]:
     return count, digest.hexdigest()
 
 
+def _tree_identity(path: Path) -> tuple[int, str]:
+    rows: list[str] = []
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(
+        path, followlinks=False, onerror=_raise_walk_error
+    ):
+        dirnames.sort()
+        filenames.sort()
+        current = Path(dirpath)
+        for name in [*dirnames, *filenames]:
+            entry = current / name
+            try:
+                info = entry.lstat()
+            except OSError as error:
+                raise InventoryVerificationError(
+                    f"identity scan failed: {type(error).__name__}"
+                ) from error
+            count += 1
+            target = (
+                _absolute(entry.resolve(strict=False)) if entry.is_symlink() else ""
+            )
+            rows.append(
+                "\0".join(
+                    (
+                        os.fspath(entry.relative_to(path)),
+                        str(stat.S_IFMT(info.st_mode)),
+                        target,
+                    )
+                )
+            )
+    return count, _evidence_digest(rows)
+
+
 def _is_historical_repo_path(path: Path) -> bool:
     lowered = tuple(part.lower() for part in path.parts)
     parts = set(lowered)
@@ -248,7 +281,9 @@ def _iter_repo_text(root: Path) -> dict[Path, str]:
     corpus: dict[Path, str] = {}
     if not root.is_dir():
         return corpus
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(
+        root, followlinks=False, onerror=_raise_walk_error
+    ):
         dirnames[:] = sorted(name for name in dirnames if name not in SKIP_REPO_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
@@ -459,8 +494,10 @@ def _relevant_launch_agents(directory: Path) -> Iterable[tuple[Path, str]]:
     for path in sorted(directory.glob("*.plist")):
         try:
             payload = plistlib.loads(path.read_bytes())
-        except (OSError, plistlib.InvalidFileException):
-            continue
+        except (OSError, plistlib.InvalidFileException) as error:
+            raise InventoryVerificationError(
+                f"launch agent plist scan failed: {type(error).__name__}"
+            ) from error
         if not isinstance(payload, Mapping):
             continue
         label = str(payload.get("Label", ""))
@@ -599,13 +636,12 @@ def _path_evidence_record(path: Path, *, opaque: bool = False) -> tuple[int, str
     descendant_count = 0
     tree_sha = ""
     if opaque:
-        descendant_count, tree_sha = _tree_metadata(path)
+        descendant_count, tree_sha = _tree_identity(path)
     symlink_target = _absolute(path.resolve(strict=False)) if path.is_symlink() else ""
     record = "\0".join(
         (
             _absolute(path),
             kind,
-            _metadata_fingerprint(path),
             str(descendant_count),
             tree_sha,
             symlink_target,
@@ -651,18 +687,57 @@ def _classified_scope_evidence(
         if item.get("kind") == "opaque-directory":
             total += int(item.get("descendant_count", 0))
         records.append(
+            # Scope binding uses stable topology, not mutable size/mtime.
             "\0".join(
                 (
                     path_text,
                     str(item.get("kind", "")),
-                    str(item.get("metadata_sha256", "")),
                     str(item.get("descendant_count", 0)),
-                    str(item.get("tree_metadata_sha256", "")),
+                    (
+                        _tree_identity(Path(path_text))[1]
+                        if item.get("kind") == "opaque-directory"
+                        else ""
+                    ),
                     str(item.get("symlink_target", "")),
                 )
             )
         )
     return total, _evidence_digest(records)
+
+
+def _repo_candidate_paths(
+    v4_root: Path,
+    v5_root: Path,
+    active_plugin_roots: Sequence[Path],
+    corpus: Mapping[Path, str],
+) -> set[Path]:
+    dedicated_roots = (
+        v4_root / "tools/hermes-agent",
+        v5_root / "ops/hermes-plugin",
+    )
+    explicit_files = (
+        v5_root / "tools/multi_position_sourcing/hermes_fleet_bridge.py",
+        v5_root / "tools/multi_position_sourcing/hermes_position_context.py",
+        v5_root / "scripts/discord_command_listener.py",
+    )
+    candidates: set[Path] = set()
+    for root in dedicated_roots:
+        candidates.update(_iter_files(root))
+    candidates.update(
+        path for path in explicit_files if path.exists() or path.is_symlink()
+    )
+    for path, text in corpus.items():
+        if "hermes" in _absolute(path).lower() or any(
+            term.lower() in text.lower() for term in REFERENCE_TERMS
+        ):
+            candidates.add(path)
+    for root in active_plugin_roots:
+        candidates.update(_iter_files(root))
+    return candidates
+
+
+def _path_set_digest(paths: Iterable[Path | str]) -> str:
+    return _evidence_digest(_absolute(path) for path in paths)
 
 
 def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, object]:
@@ -703,23 +778,9 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
         v4_root / "tools/hermes-agent",
         v5_root / "ops/hermes-plugin",
     )
-    explicit_files = (
-        v5_root / "tools/multi_position_sourcing/hermes_fleet_bridge.py",
-        v5_root / "tools/multi_position_sourcing/hermes_position_context.py",
-        v5_root / "scripts/discord_command_listener.py",
+    candidate_paths = _repo_candidate_paths(
+        v4_root, v5_root, active_plugin_roots, corpus
     )
-
-    candidate_paths: set[Path] = set()
-    for root in dedicated_roots:
-        candidate_paths.update(_iter_files(root))
-    candidate_paths.update(path for path in explicit_files if path.exists() or path.is_symlink())
-    for path, text in corpus.items():
-        if "hermes" in _absolute(path).lower() or any(
-            term.lower() in text.lower() for term in REFERENCE_TERMS
-        ):
-            candidate_paths.add(path)
-    for root in active_plugin_roots:
-        candidate_paths.update(_iter_files(root))
 
     items: dict[str, dict[str, object]] = {}
     for path in sorted(candidate_paths, key=_absolute):
@@ -893,6 +954,8 @@ def build_inventory(config: InventoryConfig, probe: RuntimeProbe) -> dict[str, o
                 1 for item in items.values() if item.get("kind") == "opaque-directory"
             ),
             "expected_scope_count": len(expected_paths),
+            "repo_candidate_count": len(candidate_paths),
+            "repo_candidate_sha256": _path_set_digest(candidate_paths),
         },
         "summary": {
             "item_count": len(items),
@@ -1086,6 +1149,7 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
 
     expected = inventory.get("expected_paths")
     expected_by_role: dict[str, Mapping[str, object]] = {}
+    active_target_paths: set[str] = set()
     if not isinstance(expected, list) or not expected:
         errors.append("expected paths missing")
         expected = []
@@ -1202,6 +1266,8 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
         "explicit_items",
         "inherited_items",
         "opaque_directories",
+        "repo_candidate_count",
+        "repo_candidate_sha256",
     }
     if not isinstance(coverage, Mapping) or set(coverage) != coverage_keys:
         errors.append("coverage schema missing or invalid")
@@ -1214,6 +1280,32 @@ def verify_inventory(inventory: Mapping[str, object]) -> None:
             errors.append("coverage opaque_directories mismatch")
         if coverage.get("expected_scope_count") != len(expected):
             errors.append("coverage expected_scope_count mismatch")
+        if isinstance(roots, Mapping) and roots and active_target_paths:
+            try:
+                v4_root = Path(str(roots["v4_root"]))
+                v5_root = Path(str(roots["v5_root"]))
+                repo_corpus = {
+                    **_iter_repo_text(v4_root),
+                    **_iter_repo_text(v5_root),
+                }
+                repo_candidates = _repo_candidate_paths(
+                    v4_root,
+                    v5_root,
+                    tuple(Path(path) for path in sorted(active_target_paths)),
+                    repo_corpus,
+                )
+            except (OSError, InventoryVerificationError) as error:
+                errors.append(
+                    f"repository candidate verification failed: {type(error).__name__}"
+                )
+                repo_candidates = set()
+            if (
+                coverage.get("repo_candidate_count") != len(repo_candidates)
+                or coverage.get("repo_candidate_sha256")
+                != _path_set_digest(repo_candidates)
+                or not {_absolute(path) for path in repo_candidates} <= paths
+            ):
+                errors.append("repository candidate coverage mismatch")
 
     runtime = inventory.get("runtime")
     runtime_keys = {
