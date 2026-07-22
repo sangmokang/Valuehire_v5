@@ -1123,6 +1123,17 @@ class CommandBackupTests(unittest.TestCase):
 class SyncCommandsBackupOrderingTests(unittest.IsolatedAsyncioTestCase):
     """_sync_commands() 운영 배선 레벨 — 백업 없이는 PUT(재등록)이 절대 안 나가야 한다."""
 
+    async def test_setup_hook_skips_command_mutation_for_hr1_text_smoke(self) -> None:
+        client = gw.DirectGatewayClient(
+            authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
+            queue_factory=lambda: FakeQueue(),
+        )
+        with patch.object(client, "_sync_commands") as sync, patch.dict(
+            os.environ, {"DISCORD_GATEWAY_SYNC_COMMANDS": "0"}, clear=False,
+        ):
+            await client.setup_hook()
+        sync.assert_not_awaited()
+
     async def test_register_skipped_when_backup_fails(self) -> None:
         client = gw.DirectGatewayClient(
             authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
