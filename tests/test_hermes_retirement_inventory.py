@@ -89,6 +89,14 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
         v4 / "data/outstanding-news-runs/hermes-20260722/texts/result.txt",
         "historical output\n",
     )
+    _write(
+        v4 / "data/outstanding-news-runs/hermes-20260722/texts/token-cache.txt",
+        "opaque historical value\n",
+    )
+    _write(
+        v4 / "data/outstanding-news-runs/hermes-20260722/payload.bin",
+        "opaque historical payload\n",
+    )
 
     _write(external_plugin / "__init__.py", "# enabled plugin\n")
     _write(external_plugin / "tests/test_plugin.py", "# historical test\n")
@@ -285,6 +293,14 @@ def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) 
         config.v4_root
         / "data/outstanding-news-runs/hermes-20260722/texts/result.txt"
     )
+    secret_named_output = str(
+        config.v4_root
+        / "data/outstanding-news-runs/hermes-20260722/texts/token-cache.txt"
+    )
+    binary_output = str(
+        config.v4_root
+        / "data/outstanding-news-runs/hermes-20260722/payload.bin"
+    )
 
     assert items[readme]["classification"] == "historical-only"
     assert items[old_test]["classification"] == "historical-only"
@@ -293,6 +309,8 @@ def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) 
     assert items[omx_log]["classification"] == "historical-only"
     assert items[stale_worktree]["classification"] == "historical-only"
     assert items[run_output]["classification"] == "historical-only"
+    assert items[secret_named_output]["classification"] == "historical-only"
+    assert items[binary_output]["classification"] == "historical-only"
     assert items[unused]["classification"] == "removable"
 
 
