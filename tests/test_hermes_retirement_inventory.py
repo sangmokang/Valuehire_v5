@@ -438,6 +438,71 @@ def test_verifier_rejects_material_inventory_omissions(
         verify_inventory(inventory)
 
 
+def test_verifier_rejects_actual_known_secret_in_free_string_field(
+    tmp_path: Path,
+) -> None:
+    config, probe = _fixture(tmp_path)
+    inventory = build_inventory(config, probe)
+    live_item = next(
+        item for item in inventory["items"] if item["classification"] == "live caller"
+    )
+    live_item["callers"].append(FAKE_SECRET)
+
+    with pytest.raises(InventoryVerificationError, match="secret"):
+        verify_inventory(inventory)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "process_fingerprint",
+        "cron_fingerprint",
+        "launchd_pid",
+        "discord_command_id",
+        "cron_path_downgrade",
+    ),
+)
+def test_verifier_rejects_valid_shape_runtime_tampering(
+    tmp_path: Path, mutation: str
+) -> None:
+    config, probe = _fixture(tmp_path)
+    inventory = build_inventory(config, probe)
+
+    if mutation == "process_fingerprint":
+        inventory["runtime"]["processes"][0]["command_fingerprint"] = "f" * 64
+    elif mutation == "cron_fingerprint":
+        inventory["runtime"]["cron"][0]["fingerprint"] = "f" * 64
+    elif mutation == "launchd_pid":
+        inventory["runtime"]["launchd"][1]["pid"] = 9999
+    elif mutation == "discord_command_id":
+        inventory["runtime"]["discord_commands"][0]["id"] = "456"
+    elif mutation == "cron_path_downgrade":
+        inventory["runtime"]["cron"][0]["reference_mode"] = "text-only"
+        inventory["runtime"]["cron"][0]["path_refs"] = []
+
+    with pytest.raises(InventoryVerificationError, match="runtime"):
+        verify_inventory(inventory)
+
+
+def test_verifier_rejects_live_plugin_classification_forgery(tmp_path: Path) -> None:
+    config, probe = _fixture(tmp_path)
+    inventory = build_inventory(config, probe)
+    target = str(tmp_path / "live-plugin/valuehire/__init__.py")
+    item = next(item for item in inventory["items"] if item["path"] == target)
+    item.update(
+        {
+            "classification": "removable",
+            "move_first": False,
+            "callers": [],
+            "reason": "dedicated Hermes item has no non-historical caller",
+        }
+    )
+    _recompute_summary(inventory)
+
+    with pytest.raises(InventoryVerificationError, match="classification"):
+        verify_inventory(inventory)
+
+
 def test_runtime_sections_are_present_and_secret_free(tmp_path: Path) -> None:
     config, probe = _fixture(tmp_path)
     inventory = build_inventory(config, probe)
