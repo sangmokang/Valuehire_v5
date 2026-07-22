@@ -26,6 +26,7 @@ import functools
 import json
 import pathlib
 import re
+import shlex
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
@@ -352,6 +353,33 @@ def clickup_position_searcher(clickup_search_tasks, list_id: str):
         return out
 
     return search
+
+
+def to_fleet_command(command: NlCommand, resolution: Resolution,
+                     message_id: str = "") -> str | None:
+    """해소가 끝난 명령을 기존 ``/fleet-run`` 문자열로 되돌린다. 아니면 None.
+
+    SOT-32 §3 원칙 3 — 새 러너를 만들지 않는다. 여기서 만든 문자열은 기존
+    ``fleet_args.parse_fleet_args()`` 가 그대로 받아, 기존 큐·워커·스킬을 탄다.
+    파서의 fail-closed 는 손대지 않았고, 우리는 **완성된 명령만** 건네준다.
+
+    None 을 돌려주는 경우(전부 "아직 실행하면 안 된다"는 뜻):
+      - 해소 미완료 — 0건·N건·검색실패, 또는 플래그만 켜지고 URL 이 빈 모순 상태(F-NL3)
+      - 큐에 넣지 않는 경로 — 조회형(clickup find, queue)은 즉답이지 잡이 아니다
+    """
+    if not resolution.may_execute:
+        return None
+    skill = command.route.get("queue_skill")
+    if not skill:
+        return None  # 조회형 — 큐에 넣지 않는다
+    url = (resolution.url or "").strip()
+    if not url:
+        return None  # may_execute 인데 URL 이 없는 모순 — 만들지 않는다
+
+    parts = ["/fleet-run", str(skill), shlex.quote(url)]
+    if message_id:
+        parts.append(f"idempotency:discord:{message_id}")
+    return " ".join(parts)
 
 
 def badge_env(base: dict[str, str] | None = None) -> dict[str, str]:

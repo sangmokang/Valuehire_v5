@@ -79,6 +79,25 @@ class RefusesUnresolved(unittest.TestCase):
         r = nl_shell.Resolution(status="error", may_execute=False, error="clickup down")
         self.assertIsNone(nl_shell.to_fleet_command(_cmd("클릭업에서 번개장터 PM 서치해"), r))
 
+    def test_url_present_but_not_permitted_still_makes_no_command(self):
+        """뮤턴트 생존으로 발견(2026-07-22) — 위 세 케이스는 URL 이 비어 있어서
+        `not url` 검사에 걸렸을 뿐, **may_execute 게이트는 한 번도 안 탔다**(허수).
+
+        진짜 위험한 상태는 이것이다: 후보가 여럿이라 정책상 실행 금지인데, 편의상
+        첫 후보 URL 이 채워져 있는 경우. 여기서 명령이 만들어지면 사장님이 고르기도
+        전에 몇 시간짜리 검색이 돈다 — F-NL3 의 본체.
+        """
+        r = nl_shell.Resolution(
+            status="many", may_execute=False, url=CU,
+            candidates=(nl_shell.Candidate("PM(Core)", CU),
+                        nl_shell.Candidate("PM(BD)", CU + "x")))
+        self.assertIsNone(nl_shell.to_fleet_command(_cmd("클릭업에서 번개장터 PM 서치해"), r))
+
+    def test_error_with_stale_url_makes_no_command(self):
+        r = nl_shell.Resolution(status="error", may_execute=False, url=CU,
+                                error="clickup 500")
+        self.assertIsNone(nl_shell.to_fleet_command(_cmd("클릭업에서 번개장터 PM 서치해"), r))
+
     def test_may_execute_but_empty_url_makes_no_command(self):
         """플래그만 켜져 있고 URL 이 비면 만들지 않는다(모순 상태 방어)."""
         r = nl_shell.Resolution(status="one", may_execute=True, url="")
@@ -104,7 +123,9 @@ class Idempotency(unittest.TestCase):
             _cmd("클릭업에서 번개장터 PM 서치해"), _one(), message_id="1529267252")
         command, _, raw_args = text.lstrip("/").partition(" ")
         parsed = parse_fleet_args(command, raw_args)
-        self.assertEqual(parsed["idempotency"], "discord:1529267252")
+        # 기존 파서는 idempotency 를 params.idempotency_key 로 옮긴다
+        # (fleet_args.py:167-171). 우리 쪽 추측이 아니라 실제 계약에 맞춘다.
+        self.assertEqual(parsed["params"]["idempotency_key"], "discord:1529267252")
 
     def test_same_input_yields_same_command(self):
         a = nl_shell.to_fleet_command(_cmd("클릭업에서 번개장터 PM 서치해"), _one(), message_id="7")
