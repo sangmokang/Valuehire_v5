@@ -47,7 +47,7 @@ def test_sot33_and_prompts_define_eight_separate_retirement_phases() -> None:
 
     exec_text = _read(EXEC)
     assert "한 작업방에는 인수 기준 하나만" in exec_text
-    assert "AC-8 — 헤르메스 폐기" not in exec_text
+    assert "AC-8" not in exec_text
 
 
 def test_retirement_contract_preserves_direct_gateway_before_destructive_work() -> None:
@@ -156,4 +156,3 @@ def test_final_claim_is_fail_closed_until_every_proof_exists() -> None:
         "Hermes 완전 폐기 완료",
     ):
         assert marker in text, marker
-
