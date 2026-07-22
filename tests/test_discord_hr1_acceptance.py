@@ -313,6 +313,9 @@ def test_minimal_privilege_sql_defines_hr1_runtime_rpcs() -> None:
         "to anon",
     ):
         assert marker in sql
+    assert "pg_advisory_xact_lock" in sql
+    assert "idempotency_key is required" in sql
+    assert "create unique index if not exists jobs_discord_idempotency_key_uidx" not in sql
 
 
 def test_plain_natural_url_reaches_queue_without_clickup_searcher() -> None:
