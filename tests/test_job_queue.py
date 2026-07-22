@@ -202,7 +202,11 @@ def test_release_payload_terminal_or_pause_only():
 # ── 발송 게이트: 큐 계층에 발송성 스킬이 존재할 수 없다(SOT28) ───────
 
 def test_fleet_skills_contain_no_send_capability():
-    assert set(FLEET_SKILLS) == {"humansearch", "aisearch", "url"}
+    # 이 정확일치 단언은 트립와이어다 — 스킬을 늘리려면 반드시 여기 와서 검토하게 만든다.
+    # 2026-07-22(AC-N3): jdintake 추가. 웹 공고를 '읽어서' JD 를 수집하는 스킬이고,
+    # skills/jdintake/SKILL.md §1 이 발송·포지션등록·포털 raw 조작을 명시 금지한다
+    # (tests/test_jdintake_skill.py 가 그 금지 조항의 존재를 검사).
+    assert set(FLEET_SKILLS) == {"humansearch", "aisearch", "url", "jdintake"}
     for banned in ("send", "outreach", "inmail", "mail"):
         assert all(banned not in s for s in FLEET_SKILLS)
 
@@ -455,7 +459,10 @@ def test_agent_skill_is_owner_only_and_contract_is_tamper_evident():
 
 
 def test_search_allowlist_stays_separate_from_owner_agent_lane():
-    assert set(FLEET_SKILLS) == {"humansearch", "aisearch", "url"}
+    # 지키는 불변식은 '레인 분리'다 — agent(자유 실행) 레인이 fleet(정해진 스킬) 레인에
+    # 섞이지 않는 것. 2026-07-22 jdintake 추가는 fleet 레인 안에서의 확장이라 이 불변식을
+    # 건드리지 않는다(아래 두 단언이 그대로 유효).
+    assert set(FLEET_SKILLS) == {"humansearch", "aisearch", "url", "jdintake"}
     assert set(QUEUE_SKILLS) == {*FLEET_SKILLS, OWNER_AGENT_SKILL}
     assert OWNER_AGENT_SKILL not in FLEET_SKILLS
     member = new_job_payload(**_ok_kwargs(role="member"))
