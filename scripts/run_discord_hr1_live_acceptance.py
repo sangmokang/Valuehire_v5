@@ -25,10 +25,13 @@ import urllib.parse
 import urllib.request
 import uuid
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from tools.multi_position_sourcing.discord_hr1 import validate_hr1_receipt
 
 
-ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RECEIPT = ROOT / "artifacts/discord-cutover/hermes-retirement-receipt.json"
 DEFAULT_OWNER_ID = "814353841088757800"
 _TERMINAL = {"done", "failed", "cancelled"}
