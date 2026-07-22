@@ -612,7 +612,11 @@ async def handle_text_message(
     response = result.get("response")
     if response:
         try:
-            await message.channel.send(response[:_RESPONSE_CHAR_LIMIT])
+            sent = await message.channel.send(response[:_RESPONSE_CHAR_LIMIT])
+            response_id = str(getattr(sent, "id", "") or "")
+            if _SNOWFLAKE_RE.fullmatch(response_id):
+                result = dict(result)
+                result["response_id"] = response_id
         except Exception:  # noqa: BLE001
             logger.warning(
                 "discord_direct_gateway: channel.send 실패 event_id=%s", envelope.event_id)
@@ -640,13 +644,42 @@ class DirectGatewayClient(discord.Client):
         queue_factory: Callable[[], Any],
         audit: Optional[Callable[[dict[str, Any]], Any]] = None,
         owner_user_ids: Sequence[str] = OWNER_USER_IDS,
+        hr1_evidence_recorder: Any = None,
+        hr1_replay_first_enqueued: bool = False,
     ) -> None:
+        if hr1_replay_first_enqueued and hr1_evidence_recorder is None:
+            raise ValueError("HR-1 replay requires an evidence recorder")
         super().__init__(intents=discord.Intents.default())
         self._authorized_users = authorized_users
         self._config = config
         self._queue_factory = queue_factory
         self._audit = audit if audit is not None else _default_audit
         self._owner_user_ids = owner_user_ids
+        self._hr1_evidence_recorder = hr1_evidence_recorder
+        self._hr1_replay_first_enqueued = bool(hr1_replay_first_enqueued)
+        self._hr1_replayed = False
+
+    def _record_hr1_delivery(
+        self, message: Any, result: Optional[Mapping[str, Any]], *, delivery: str,
+    ) -> None:
+        recorder = self._hr1_evidence_recorder
+        if recorder is None or not isinstance(result, Mapping):
+            return
+        from tools.multi_position_sourcing.discord_hr1 import gateway_token_fingerprint
+
+        fields: dict[str, Any] = {
+            "delivery": delivery,
+            "event_id": str(getattr(message, "id", "") or ""),
+            "requester_id": str(getattr(getattr(message, "author", None), "id", "") or ""),
+            "action": str(result.get("action") or ""),
+            "content_fingerprint": gateway_token_fingerprint(
+                str(getattr(message, "content", "") or "")),
+        }
+        for name in ("job_id", "response_id"):
+            value = result.get(name)
+            if value not in (None, ""):
+                fields[name] = value
+        recorder.record("discord_delivery", **fields)
 
     async def setup_hook(self) -> None:  # pragma: no cover — 실 기동 전용
         if os.environ.get("DISCORD_GATEWAY_SYNC_COMMANDS", "1").strip().casefold() in {
@@ -705,11 +738,25 @@ class DirectGatewayClient(discord.Client):
             return
         bot_user = self.user
         bot_user_id = str(bot_user.id) if bot_user is not None else ""
-        await handle_text_message(
+        result = await handle_text_message(
             message, bot_user_id=bot_user_id, queue_factory=self._queue_factory,
             authorized_users=self._authorized_users, config=self._config, audit=self._audit,
             owner_user_ids=self._owner_user_ids,
         )
+        self._record_hr1_delivery(message, result, delivery="original")
+        if (
+            self._hr1_replay_first_enqueued
+            and not self._hr1_replayed
+            and isinstance(result, Mapping)
+            and result.get("action") == "enqueued"
+        ):
+            self._hr1_replayed = True
+            replay = await handle_text_message(
+                message, bot_user_id=bot_user_id, queue_factory=self._queue_factory,
+                authorized_users=self._authorized_users, config=self._config, audit=self._audit,
+                owner_user_ids=self._owner_user_ids,
+            )
+            self._record_hr1_delivery(message, replay, delivery="replay")
 
     def stop_after_lease_loss(self, exc: Exception) -> None:  # pragma: no cover - live lifecycle
         """A failed renewal must disconnect this client before the lease expires."""
@@ -979,6 +1026,8 @@ def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover
 
 def _build_client(
     *, queue_factory: Optional[Callable[[], Any]] = None,
+    hr1_evidence_recorder: Any = None,
+    hr1_replay_first_enqueued: bool = False,
 ) -> DirectGatewayClient:  # pragma: no cover — 실 기동 조립부
     config = load_discord_access_config()
     authorized_users = load_authorized_discord_users()
@@ -998,6 +1047,8 @@ def _build_client(
         queue_factory=queue_factory or _minimal_privilege_queue_factory(),
         audit=_default_audit,
         owner_user_ids=OWNER_USER_IDS,
+        hr1_evidence_recorder=hr1_evidence_recorder,
+        hr1_replay_first_enqueued=hr1_replay_first_enqueued,
     )
 
 
@@ -1016,12 +1067,28 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
         raise SystemExit("DISCORD_GATEWAY_WORKER_MACHINE 환경변수가 필요합니다")
     from tools.multi_position_sourcing.discord_hr1 import (
         GatewayLeaseGuard,
+        Hr1EvidenceRecorder,
         gateway_token_fingerprint,
     )
 
+    evidence_path = os.environ.get("DISCORD_HR1_EVIDENCE_PATH", "").strip()
+    replay_first = os.environ.get(
+        "DISCORD_HR1_REPLAY_FIRST_ENQUEUED", "",
+    ).strip().casefold() in {"1", "true", "yes", "on"}
+    if replay_first and not evidence_path:
+        raise SystemExit("DISCORD_HR1_REPLAY_FIRST_ENQUEUED requires evidence path")
+    if evidence_path and os.environ.get(
+        "DISCORD_GATEWAY_SYNC_COMMANDS", "1",
+    ).strip().casefold() not in {"0", "false", "no", "off"}:
+        raise SystemExit("HR-1 isolated evidence mode requires command sync disabled")
+    recorder = Hr1EvidenceRecorder(evidence_path) if evidence_path else None
     token_fingerprint = gateway_token_fingerprint(token)
     queue = _minimal_privilege_queue_factory()()
-    client = _build_client(queue_factory=lambda: queue)
+    client = _build_client(
+        queue_factory=lambda: queue,
+        hr1_evidence_recorder=recorder,
+        hr1_replay_first_enqueued=replay_first,
+    )
 
     guard = GatewayLeaseGuard(
         queue,
@@ -1034,10 +1101,37 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
         max_consecutive_renew_failures=2,
         on_lease_lost=client.stop_after_lease_loss,
     )
-    with guard:
+    guard.start()
+    lease_id = guard.lease_id
+    generation = guard.generation
+    if recorder is not None:
+        recorder.record(
+            "gateway_started",
+            discord_bot_id=bot_id,
+            hermes_bot_id=hermes_bot_id,
+            direct_gateway_pid=os.getpid(),
+            direct_gateway_lease_id=lease_id,
+            direct_gateway_generation=generation,
+            readiness=guard.readiness,
+        )
+    released = False
+    try:
         os.environ["VALUEHIRE_DIRECT_GATEWAY_PROCESS"] = "1"
         logger.info("discord_direct_gateway: startup gates passed lease_id=%s", guard.lease_id)
         client.run(token)
+    finally:
+        try:
+            guard.stop()
+            released = True
+        finally:
+            if recorder is not None:
+                recorder.record(
+                    "gateway_stopped",
+                    direct_gateway_pid=os.getpid(),
+                    direct_gateway_lease_id=lease_id,
+                    direct_gateway_generation=generation,
+                    released=released,
+                )
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
 import threading
 import uuid
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -60,6 +63,47 @@ def _secret_free(
             not any(secret and secret in value for secret in forbidden_values),
             f"secret value is forbidden: {path}",
         )
+
+
+class Hr1EvidenceRecorder:
+    """Append-only, secret-free JSONL evidence for one isolated HR-1 run.
+
+    A run must use a fresh path.  Refusing an existing file prevents evidence from
+    two attempts being combined into a receipt that neither attempt earned.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(
+            self.path,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o600,
+        )
+        os.close(descriptor)
+        self._lock = threading.Lock()
+
+    def record(self, kind: str, **fields: Any) -> dict[str, Any]:
+        if not isinstance(kind, str) or not kind.strip():
+            raise Hr1ReceiptError("evidence kind is required")
+        payload = {
+            "kind": kind.strip(),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            **fields,
+        }
+        _secret_free(payload)
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with self._lock:
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(encoded + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        return payload
 
 
 def _validate_job(value: Any, *, expected_agent: str | None = None) -> Mapping[str, Any]:

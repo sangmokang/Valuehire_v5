@@ -220,4 +220,10 @@ def handle_envelope(
         return _silent("denied", str(result.get("reason") or ""))
 
     _audit(action, str(result.get("reason") or ""))
-    return _result(action, _render_response(result), str(result.get("reason") or ""))
+    rendered = _result(action, _render_response(result), str(result.get("reason") or ""))
+    job = result.get("job")
+    if isinstance(job, Mapping):
+        job_id = job.get("id")
+        if isinstance(job_id, int) and not isinstance(job_id, bool) and job_id > 0:
+            rendered["job_id"] = job_id
+    return rendered
