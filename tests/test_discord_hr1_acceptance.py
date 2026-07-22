@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -30,6 +31,11 @@ HERMES_BOT = "1512101118543397056"
 POSITION = "https://app.clickup.com/t/9018789656/86eycec3a"
 TOKEN = "isolated-test-token.not-a-live-secret"
 TOKEN_FINGERPRINT = hashlib.sha256(TOKEN.encode()).hexdigest()
+
+
+def _bot_token(bot_id: str) -> str:
+    encoded = base64.urlsafe_b64encode(bot_id.encode()).decode().rstrip("=")
+    return f"{encoded}.fixture.signature"
 
 
 def _job(agent: str, event_id: str, job_id: int, response_id: str) -> dict:
@@ -359,13 +365,27 @@ def test_main_never_connects_when_killswitch_is_engaged(monkeypatch) -> None:
     client = Client()
     monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", lambda: lambda: queue)
     monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: client)
-    monkeypatch.setenv("DISCORD_BOT_TOKEN", TOKEN)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", _bot_token(BOT))
     monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
     monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
     monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
     with pytest.raises(RuntimeError, match="killswitch"):
         gateway.main()
     assert client.run_calls == []
+
+
+def test_main_rejects_token_identity_disguised_by_different_client_id(monkeypatch) -> None:
+    def unexpected_queue_factory():
+        raise AssertionError("identity mismatch must stop before readiness")
+
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", unexpected_queue_factory)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", _bot_token(HERMES_BOT))
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+
+    with pytest.raises(SystemExit, match="identity"):
+        gateway.main()
 
 
 def test_gateway_module_has_no_direct_engine_execution() -> None:
