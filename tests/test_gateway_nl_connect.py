@@ -78,6 +78,18 @@ class FreeTextReachesQueue(unittest.TestCase):
         params = queue.enqueued[0]["params"]
         self.assertIn("1529267252160927272", params.get("idempotency_key", ""))
 
+    def test_explicit_winpc_survives_natural_language_routing(self):
+        queue = FakeQueue()
+        msg = FakeMessage(
+            message_id="1529267252160927273",
+            author_id=OWNER,
+            content=f"이 포지션으로 LinkedIn 검색 URL 만들어줘 {CU}86eycec3a winpc",
+        )
+        _run(msg, queue, _searcher())
+        self.assertEqual(len(queue.enqueued), 1)
+        self.assertEqual(queue.enqueued[0]["skill"], "url")
+        self.assertEqual(queue.enqueued[0]["machine"], "winpc")
+
 
 class NotQueuedButAnswered(unittest.TestCase):
     """실행 안 하는 경우에도 **반드시 답한다** — 조용히 삼키면 먹힌 줄 모른다."""
