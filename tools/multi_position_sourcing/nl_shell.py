@@ -382,6 +382,60 @@ def to_fleet_command(command: NlCommand, resolution: Resolution,
     return " ".join(parts)
 
 
+@dataclass(frozen=True)
+class Interpretation:
+    """자유 문장 1건의 해석 결과 — 게이트웨이가 보는 유일한 창구 산출물.
+
+    ``source`` 는 누가 답했는지다(nl_shell | bot_intent | none). 두 해석기를 합류시킨
+    이상, 어느 쪽이 답했는지 안 밝히면 나중에 디버깅이 불가능해진다.
+    """
+
+    source: str
+    command: NlCommand | None = None   # source == nl_shell 일 때
+    intent: Any = None                 # source == bot_intent 일 때 ClassifyResult
+    may_execute: bool = False
+
+
+def _default_classifier(text: str):
+    # 지연 import — bot_intent 를 쓰지 않는 호출자에게 의존성을 강요하지 않는다.
+    from .bot_intent import classify_free_text
+
+    return classify_free_text(text)
+
+
+def interpret(message: str, _classifier=None) -> Interpretation:
+    """자유 문장을 해석하는 **단일 진입점**. 게이트웨이는 이 함수만 부른다.
+
+    합류 순서(SOT-32 F-NL4 — 파서를 둘로 갈라놓지 않는다):
+      1. ``parse()``  — URL 없이 이름만 준 문장. 이번 작업의 존재 이유이고
+                        bot_intent 는 이 경우를 다루지 못한다. 그래서 먼저 본다.
+      2. ``bot_intent.classify_free_text()`` — URL 이 딸린 기존 문장. 이미 잘 도는
+                        구현이 있으므로 다시 만들지 않는다.
+      3. 둘 다 실패 → 실행 금지. 추측하지 않는다(CLAUDE.md §0.2).
+
+    1이 잡으면 2는 **호출하지 않는다** — 같은 문장을 두 해석기가 다르게 읽는 일이
+    애초에 생기지 않게 한다.
+    """
+    command = parse(message)
+    if command is not None:
+        # 여기서 may_execute 는 "문장을 알아들었다"까지다. 실제 실행 가부는
+        # 대상 해소(resolve) 뒤에 정해진다 — F-NL3.
+        return Interpretation(source="nl_shell", command=command, may_execute=True)
+
+    classifier = _classifier or _default_classifier
+    result = classifier(message)
+    if result is None:
+        return Interpretation(source="none", may_execute=False)
+
+    from .bot_intent import ClassifyOutcome
+
+    confident = getattr(result, "outcome", None) is ClassifyOutcome.CONFIDENT
+    if not confident:
+        # 애매·모름·거부는 전부 실행 금지. 호출부가 후보를 보여주거나 거절 사유를 알린다.
+        return Interpretation(source="bot_intent", intent=result, may_execute=False)
+    return Interpretation(source="bot_intent", intent=result, may_execute=True)
+
+
 def badge_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """자연어 셸 컨텍스트 표식을 붙인 env 사본.
 

@@ -76,6 +76,19 @@ class NeitherExecutes(unittest.TestCase):
         self.assertFalse(r.may_execute)
         self.assertIsNone(r.command)
 
+    def test_refused_path_still_names_its_real_source(self):
+        """뮤턴트 생존으로 발견(2026-07-22) — 실행 금지 분기의 source 를 아무도
+        검사하지 않아, 'bot_intent 가 거절했는데 nl_shell 이 답했다'고 거짓 보고해도
+        전부 통과했다. 거짓 출처는 디버깅을 불가능하게 만든다.
+        """
+        r = nl_shell.interpret("번개장터 PM 후보한테 제안 메일 보내줘")
+        self.assertEqual(r.source, "bot_intent")
+        self.assertIsNotNone(r.intent, "거절한 분류기 결과를 버리면 사유를 못 알린다")
+
+    def test_unknown_path_names_bot_intent_too(self):
+        r = nl_shell.interpret("오늘 날씨 어때")
+        self.assertEqual(r.source, "bot_intent")
+
 
 class OrderIsContractual(unittest.TestCase):
     """합류 순서가 규칙이다 — nl_shell 우선. 뒤집히면 이름 문장이 죽는다."""
