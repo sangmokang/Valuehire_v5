@@ -1068,8 +1068,18 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
     from tools.multi_position_sourcing.discord_hr1 import (
         GatewayLeaseGuard,
         Hr1EvidenceRecorder,
+        discord_bot_id_from_token,
         gateway_token_fingerprint,
     )
+
+    try:
+        token_bot_id = discord_bot_id_from_token(token)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    if token_bot_id != bot_id:
+        raise SystemExit(
+            "Discord token identity does not match DISCORD_CLIENT_ID"
+        )
 
     evidence_path = os.environ.get("DISCORD_HR1_EVIDENCE_PATH", "").strip()
     replay_first = os.environ.get(

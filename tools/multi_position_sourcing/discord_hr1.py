@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -30,6 +31,21 @@ def gateway_token_fingerprint(token: str) -> str:
     if not isinstance(token, str) or not token:
         raise ValueError("gateway token is required")
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def discord_bot_id_from_token(token: str) -> str:
+    """Recover the public bot snowflake locally without logging the token."""
+    if not isinstance(token, str) or not token:
+        raise ValueError("gateway token is required")
+    encoded = token.split(".", 1)[0]
+    try:
+        padding = "=" * ((4 - len(encoded) % 4) % 4)
+        bot_id = base64.urlsafe_b64decode(encoded + padding).decode("ascii")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ValueError("Discord token identity is invalid") from exc
+    if _SNOWFLAKE.fullmatch(bot_id) is None:
+        raise ValueError("Discord token identity is invalid")
+    return bot_id
 
 
 def _require(condition: bool, message: str) -> None:
