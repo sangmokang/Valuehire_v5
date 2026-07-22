@@ -16,6 +16,7 @@ JD를 "단어 카운트"로만 보고 고정 표를 뱉는다. 이 모듈은 그
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -75,6 +76,27 @@ def _build_prompt(position, channel: Channel) -> str:
     )
 
 
+# 같은 줄 안에서 문자열 뒤에 콤마 없이 바로 다음 문자열이 이어지는 흔한 LLM 포맷팅 실수
+# (예: "React" "React.js") 를 교정하는 정규식 — 닫는 따옴표 뒤 공백만 있고 다음이 여는
+# 따옴표인 경우에만 콤마를 삽입한다(키:값 사이 콜론이 있는 경우는 건드리지 않음).
+_MISSING_COMMA_RE = re.compile(r'"\s+"')
+# 배열/객체 닫기 직전의 트레일링 콤마(흔한 LLM 실수)를 제거.
+_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
+
+
+def _repair_json_text(text: str) -> str:
+    """관대한 1회 복구 — 콤마 누락·트레일링 콤마·마크다운 펜스만 교정한다.
+
+    구조 자체가 깨진 응답(잘림·자유 텍스트 혼입)은 여기서 고치지 않고 그대로 다시
+    ``json.loads`` 에 넘겨 실패시킨다 — 이 경우는 LLM 재호출(재시도)로 넘어간다.
+    """
+    repaired = re.sub(r"^```(?:json)?", "", text.strip())
+    repaired = re.sub(r"```$", "", repaired.strip()).strip()
+    repaired = _MISSING_COMMA_RE.sub('", "', repaired)
+    repaired = _TRAILING_COMMA_RE.sub(r"\1", repaired)
+    return repaired
+
+
 def _extract_json_object(raw: str) -> dict:
     text = (raw or "").strip()
     if not text:
@@ -83,13 +105,32 @@ def _extract_json_object(raw: str) -> dict:
     end = text.rfind("}")
     if start == -1 or end == -1 or end < start:
         raise KeywordGenerationError(f"LLM 응답에서 JSON을 찾지 못했습니다: {text[:120]!r}")
+    candidate = text[start : end + 1]
     try:
-        parsed = json.loads(text[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise KeywordGenerationError(f"LLM JSON 파싱 실패: {exc}") from exc
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError as first_exc:
+        # 관대한 1회 복구(콤마 누락·트레일링 콤마) 후 재시도 — 여기서도 실패하면
+        # 호출측(generate_keyword_plan 등)이 LLM 을 1회 더 호출하도록 예외를 전파한다.
+        try:
+            parsed = json.loads(_repair_json_text(candidate))
+        except json.JSONDecodeError:
+            raise KeywordGenerationError(f"LLM JSON 파싱 실패: {first_exc}") from first_exc
     if not isinstance(parsed, dict):
         raise KeywordGenerationError("LLM JSON 최상위가 객체가 아닙니다.")
     return parsed
+
+
+def _extract_json_object_with_retry(prompt: str, llm_client: LLMClient) -> dict:
+    """1차 응답 파싱 실패 시 LLM을 1회만 더 호출(재시도)한 뒤에도 실패하면 전파한다.
+
+    재시도는 완전히 새 응답을 받는 것이라 매 회 관대한 복구(``_extract_json_object``
+    내부의 콤마·트레일링 콤마 보정)를 다시 거친다. 재시도까지 실패하면 그제야
+    ``KeywordGenerationError`` 를 던진다(fail-closed 유지, 무한 재시도 금지).
+    """
+    try:
+        return _extract_json_object(llm_client(prompt))
+    except KeywordGenerationError:
+        return _extract_json_object(llm_client(prompt))
 
 
 def _clean_keywords(raw_keywords) -> tuple[str, ...]:
@@ -116,8 +157,7 @@ def generate_keyword_plan(position, channel: Channel, *, llm_client: LLMClient) 
     실패(빈 응답·파싱 실패·빈 키워드)는 조용히 넘기지 않고 ``KeywordGenerationError``.
     """
     prompt = _build_prompt(position, channel)
-    raw = llm_client(prompt)
-    parsed = _extract_json_object(raw)
+    parsed = _extract_json_object_with_retry(prompt, llm_client)
     keywords = _clean_keywords(parsed.get("keywords"))
     boolean_query = ""
     if channel in _BOOLEAN_CHANNELS:
@@ -212,7 +252,7 @@ def generate_saramin_search(position, *, llm_client: LLMClient) -> dict[str, lis
     - ``not`` = ``DEFAULT_SARAMIN_EXCLUDE`` 를 코드가 강제(LLM 판단에 안 맡김).
     빈 응답·파싱 실패·유효 키워드 0개는 ``KeywordGenerationError`` 로 전파(0건 검색 방지).
     """
-    parsed = _extract_json_object(llm_client(_build_saramin_prompt(position)))
+    parsed = _extract_json_object_with_retry(_build_saramin_prompt(position), llm_client)
     or_raw = parsed.get("or")
     or_source = or_raw if isinstance(or_raw, list) and or_raw else parsed.get("keywords")
     or_terms = list(_clean_keywords(or_source))

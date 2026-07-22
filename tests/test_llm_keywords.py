@@ -96,6 +96,48 @@ class TestLLMKeywordGeneration(unittest.TestCase):
         with self.assertRaises(KeywordGenerationError):
             generate_keyword_plan(_POSITION, "saramin", llm_client=_client_returning('{"keywords": [], "boolean_query": ""}'))
 
+    def test_missing_comma_between_adjacent_strings_is_repaired(self) -> None:
+        # 실제 로그(logs/valuehire-search-runner.err.log)에서 반복된 패턴:
+        # 배열 안에서 "React" "React.js" 처럼 문자열 사이 콤마 누락.
+        payload = (
+            '{"keywords": ["AI 엔지니어" "AI Engineer", "RAG"], "boolean_query": ""}'
+        )
+        plan = generate_keyword_plan(_POSITION, "saramin", llm_client=_client_returning(payload))
+        self.assertEqual(plan.keywords, ("AI 엔지니어", "AI Engineer", "RAG"))
+
+    def test_trailing_comma_before_closing_bracket_is_repaired(self) -> None:
+        payload = '{"keywords": ["AI 엔지니어", "RAG",], "boolean_query": "",}'
+        plan = generate_keyword_plan(_POSITION, "saramin", llm_client=_client_returning(payload))
+        self.assertEqual(plan.keywords, ("AI 엔지니어", "RAG"))
+
+    def test_markdown_code_fence_is_stripped(self) -> None:
+        payload = "```json\n" + _GOOD_JSON + "\n```"
+        plan = generate_keyword_plan(_POSITION, "linkedin_rps", llm_client=_client_returning(payload))
+        self.assertEqual(
+            plan.keywords,
+            ("AI 엔지니어", "Machine Learning Engineer", "LLM", "RAG"),
+        )
+
+    def test_retries_llm_once_after_unrecoverable_parse_failure(self) -> None:
+        # 첫 응답이 완전히 깨졌으면(재현: char 15 근처에서 잘린 응답) 관대한 복구로도
+        # 못 고치므로, 두번째 호출(재시도)에서 정상 JSON을 주면 성공해야 한다.
+        responses = iter(["죄송합니다 잘 모르겠", _GOOD_JSON])
+
+        def _flaky_client(prompt: str) -> str:
+            return next(responses)
+
+        plan = generate_keyword_plan(_POSITION, "linkedin_rps", llm_client=_flaky_client)
+        self.assertEqual(
+            plan.keywords,
+            ("AI 엔지니어", "Machine Learning Engineer", "LLM", "RAG"),
+        )
+
+    def test_raises_after_retry_also_fails(self) -> None:
+        with self.assertRaises(KeywordGenerationError):
+            generate_keyword_plan(
+                _POSITION, "saramin", llm_client=_client_returning("죄송합니다 모르겠어요")
+            )
+
 
 class TestBuildLLMKeywordSessions(unittest.TestCase):
     def test_one_session_per_keyword_for_single_channel(self) -> None:

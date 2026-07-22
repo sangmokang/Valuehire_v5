@@ -1,0 +1,32 @@
+{
+  "keywords": [
+    "Sales Manager",
+    "Account Executive",
+    "AE",
+    "Enterprise Sales Manager",
+    "B2B Sales Manager",
+    "SaaS Sales Manager",
+    "Account Manager",
+    "Salesforce",
+    "CRM",
+    "Pipeline Management",
+    "Sales Pipeline",
+    "Customer Discovery",
+    "SaaS",
+    "Enterprise Sales",
+    "Renewal",
+    "Expansion",
+    "영업 관리자",
+    "영업관리자",
+    "기업 영업",
+    "기업영업",
+    "SaaS 영업",
+    "SaaS영업",
+    "고객관계관리",
+    "씨알엠",
+    "파이프라인",
+    "재계약",
+    "확대 영업"
+  ],
+  "boolean_query": "(Sales Manager OR Account Executive OR AE OR Enterprise Sales) AND (Salesforce OR CRM OR Pipeline Management) AND (SaaS OR Enterprise OR Renewal)"
+}
