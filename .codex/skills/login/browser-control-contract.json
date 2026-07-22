@@ -1,8 +1,9 @@
 {
-  "schema_version": "1.3.0",
+  "schema_version": "1.4.0",
   "skill": "login",
   "supported_agents": ["claude", "codex", "hermes"],
   "platform": "macos",
+  "supported_platform_modes": ["macos", "windows_explicit_owner_delegation_only"],
   "source_priority": [
     "browser-control-contract.json",
     "SKILL.md",
@@ -12,7 +13,7 @@
   "state_machine": {
     "DISCOVER": {
       "allowed_actions": ["read_processes", "read_cdp_endpoints", "read_targets", "read_owner_idle"],
-      "next": ["HUMAN_ACTIVE", "AI_ATTACHED"]
+      "next": ["HUMAN_ACTIVE", "AI_ATTACHED", "AUTH_CONFLICT"]
     },
     "HUMAN_ACTIVE": {
       "allowed_actions": ["read_owner_idle", "wait"],
@@ -21,7 +22,7 @@
     },
     "AI_ATTACHED": {
       "allowed_actions": ["attach_one_raw_cdp_target", "install_badge", "present_exact_login_window_once", "read_state"],
-      "next": ["HUMAN_AUTH", "AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
+      "next": ["HUMAN_AUTH", "AUTHENTICATED", "AUTH_LOST", "AUTH_CONFLICT", "HANDOFF"]
     },
     "HUMAN_AUTH": {
       "allowed_actions": ["read_state", "wait"],
@@ -29,19 +30,31 @@
       "poll_interval_seconds": 5,
       "quiet_after_success_seconds": 15,
       "timeout_seconds": null,
-      "next": ["AUTHENTICATED", "HANDOFF"]
+      "next": ["AUTHENTICATED", "AUTH_CONFLICT", "HANDOFF"]
     },
     "AUTHENTICATED": {
       "allowed_actions": ["record_non_secret_proof", "start_requested_task"],
-      "next": ["KEEPALIVE", "AUTH_LOST", "HANDOFF"]
+      "next": ["KEEPALIVE", "AUTH_LOST", "AUTH_CONFLICT", "HANDOFF"]
     },
     "KEEPALIVE": {
       "allowed_actions": ["read_state", "skip", "click_allowlisted_same_origin_get", "read_navigation_history", "restore_previous_history_entry"],
-      "next": ["AUTHENTICATED", "AUTH_LOST", "HANDOFF"]
+      "next": ["AUTHENTICATED", "AUTH_LOST", "AUTH_CONFLICT", "HANDOFF"]
     },
     "AUTH_LOST": {
       "allowed_actions": ["one_safe_autologin_attempt", "handoff_on_challenge"],
-      "next": ["AUTHENTICATED", "HUMAN_AUTH", "HANDOFF"]
+      "next": ["AUTHENTICATED", "HUMAN_AUTH", "AUTH_CONFLICT", "HANDOFF"]
+    },
+    "AUTH_CONFLICT": {
+      "allowed_actions": ["read_state", "record_non_secret_proof", "report_non_secret_state", "close_cdp_websocket"],
+      "forbidden_actions": [
+        "navigate", "reload", "back", "click", "type", "submit", "popup_close",
+        "close", "focus", "focus_again", "new_page", "autologin", "confirm_session_choice"
+      ],
+      "reason_markers": [
+        "enterprise-authentication/sessions", "multiple sign-ins", "Only one session"
+      ],
+      "repeat_handoff": false,
+      "terminal": true
     },
     "HANDOFF": {
       "allowed_actions": ["guarded_restore_original_title", "guarded_remove_badge", "close_cdp_websocket", "report_non_secret_state"],
@@ -204,6 +217,22 @@
     "linkedin": {
       "all": ["/talent/ surface", "recruiter_account_marker"],
       "none": ["/uas/login-cap", "authwall", "checkpoint", "enterprise-authentication/sessions"]
+    }
+  },
+  "multi_device": {
+    "sot": "SKILL.md section 11 declaration table",
+    "cross_machine_coordination": "owner_declaration_only_not_file_lock",
+    "session_metadata_requires_host_field": true,
+    "prefer_host_with_live_session_before_new_login": true,
+    "linkedin_handover": {
+      "requires_owner_explicit_delegation_current_turn": true,
+      "session_takeover_click_allowed_only_if_takeover_declared": false,
+      "max_takeover_clicks_per_delegation": 0,
+      "security_challenges_always_human": true
+    },
+    "windows_rules": {
+      "idle_based_auto_resume": false,
+      "operation_window": "owner_declared_delegation_only"
     }
   },
   "legacy_unsafe": {

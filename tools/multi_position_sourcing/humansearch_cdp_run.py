@@ -380,7 +380,7 @@ def _profile_context_error(reason: str) -> PreflightError:
     )
 
 
-def _validate_profile_card_context(card: dict) -> tuple[str, str, str]:
+def _validate_profile_card_context(card: dict) -> tuple[str, str, str, str]:
     profile_url = str(card.get("url") or "").strip()
     navigation_url = str(card.get("navigation_url") or "").strip()
     source_search_url = str(card.get("source_search_url") or "").strip()
@@ -441,7 +441,7 @@ def _validate_profile_card_context(card: dict) -> tuple[str, str, str]:
         ):
             raise _profile_context_error("profile navigation search scope does not match harvest")
         raise _profile_context_error("profile URL is not an exact scoped LinkedIn Recruiter link")
-    return profile_url, navigation_url, expected_name
+    return profile_url, navigation_url, source_search_url, expected_name
 
 
 def _assert_current_profile_identity(tab, profile_url: str) -> None:
@@ -576,7 +576,9 @@ def process_profile(
     badge_guard=None,
 ) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    profile_url, navigation_url, expected_name = _validate_profile_card_context(card)
+    profile_url, navigation_url, source_search_url, expected_name = (
+        _validate_profile_card_context(card)
+    )
     guard = live_check or assert_not_blocked_or_abort
     _run_mutation_guard(mutation_guard)
     tab.navigate(navigation_url, wait_ms=8000)
@@ -638,6 +640,8 @@ def process_profile(
         "idx": idx,
         "name": name,
         "url": profile_url,
+        "navigation_url": navigation_url,
+        "source_search_url": source_search_url,
         # 러너면 하드제외(PC-C3a): 캡처 직후 적용 — 프리랜서·단기이직·전문대면 results.json 제외.
         "hard_exclude": hard_exclude,
         "otw": info.get("otw", False),

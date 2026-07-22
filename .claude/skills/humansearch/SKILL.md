@@ -20,6 +20,8 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
 ## 실행 경로 (재사용 — 새 러너 금지)
 - 순회·채점: `tools/multi_position_sourcing/humansearch_cdp_run.py` 를 **스크래치패드 드라이버에서
   모듈 전역 오버라이드**(`R.SEARCH_URL_BASE`·`R.POSITION`·`R.OUT_DIR`·`R.LOG`)로 재사용.
+  `/login`이 증명한 기존 target id를 `exact_target_id`로 고정해
+  `R.main(..., target_id=exact_target_id)`로 반드시 전달한다. 없거나 바뀌면 추측 없이 STOP.
   포지션이 복수면 1차 채점 후 raw 필드로 `score_humansearch` 재채점(재오픈 금지).
 - 프리플라이트(fail-closed): `assert_live_or_abort` — 카드 0/로그인/캡차/세션충돌이면 즉시 STOP.
   수확 전 `Page.bringToFront` + `Emulation.setFocusEmulationEnabled` 필수.
