@@ -844,6 +844,29 @@ class MinimalPrivilegeQueueClientRpcOnlyTests(unittest.TestCase):
         self.assertIn("/rest/v1/rpc/discord_gateway_recent_jobs", urls[0])
         self.assertNotIn("/rest/v1/jobs", urls[0])
 
+    def test_acquire_lease_uses_deployed_rpc_parameter_name(self) -> None:
+        client, _, _ = self._client_with_recorder()
+        with patch.object(
+            client,
+            "_rpc",
+            return_value=[{
+                "acquired": True,
+                "lease_id": "11111111-1111-4111-8111-111111111111",
+                "generation": 1,
+            }],
+        ) as rpc:
+            client.acquire_gateway_lease(
+                "a" * 64, "holder", 1234, "winpc", 90,
+            )
+
+        rpc.assert_called_once_with("discord_gateway_acquire_lease", {
+            "p_token_fingerprint": "a" * 64,
+            "p_holder_identity": "holder",
+            "p_holder_pid": 1234,
+            "p_machine": "winpc",
+            "p_ttl_seconds": 90,
+        })
+
     def test_resume_not_supported_no_network(self) -> None:
         """v2 보안 경계(Codex 5차 재검증 CRITICAL) — resume/cancel 을 anon RPC 로 노출하면
         신원 검증 없이 임의 잡 재개/취소가 가능해져(anon 키 보유자가 recent_jobs 로 id 를
