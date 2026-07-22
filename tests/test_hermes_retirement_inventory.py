@@ -314,6 +314,36 @@ def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) 
     assert items[unused]["classification"] == "removable"
 
 
+def test_path_inventory_covers_artifacts_oversized_files_and_repo_symlinks(
+    tmp_path: Path,
+) -> None:
+    config, probe = _fixture(tmp_path)
+    artifact = _write(
+        config.v5_root / "artifacts/retired/hermes-debug.bin",
+        "historical artifact\n",
+    )
+    oversized = _write(
+        config.v5_root / "data/hermes-large-snapshot.json",
+        "x" * 2_000_001,
+    )
+    target = _write(config.v5_root / "legacy/current-plugin", "plugin\n")
+    symlink = config.v5_root / "legacy/hermes-current"
+    symlink.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(target, symlink)
+
+    items = _by_path(build_inventory(config, probe))
+    self_artifact = str(
+        config.v5_root
+        / "artifacts/discord-cutover/hermes-dependency-inventory.json"
+    )
+
+    assert items[str(artifact)]["classification"] == "historical-only"
+    assert items[str(oversized)]["classification"] == "historical-only"
+    assert items[str(symlink)]["kind"] == "symlink"
+    assert items[self_artifact]["classification"] == "historical-only"
+    assert items[self_artifact]["kind"] == "path-reference"
+
+
 def test_secret_values_and_raw_commands_never_enter_inventory(tmp_path: Path) -> None:
     config, probe = _fixture(tmp_path)
 
