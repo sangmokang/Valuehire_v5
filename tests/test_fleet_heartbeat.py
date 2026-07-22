@@ -185,9 +185,14 @@ def test_beat_loop_survives_beat_exception():
               FakeStop(), interval=1)  # 예외 전파되면 실패
 
 
-def test_worker_loop_beats_via_thread():
+def test_worker_loop_beats_via_thread(monkeypatch):
     # 배선(R4): worker.loop 이 beat_loop 스레드를 띄워 record_heartbeat 를 반복 호출
+    from tools.multi_position_sourcing import fleet_worker as fw
     from tools.multi_position_sourcing.fleet_worker import FleetWorker
+
+    # 이 검사는 스레드 배선만 재며, 실제 Claude/Codex 프로세스 기동 시간은 별도
+    # test_fleet_worker capability probe 검사에서 다룬다.
+    monkeypatch.setattr(fw, "probe_agent_cli", lambda name: True)
 
     beats = {"n": 0}
 

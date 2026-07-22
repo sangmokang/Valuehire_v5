@@ -103,6 +103,7 @@ def build_hr1_receipt(
     git_sha_v5: str,
     verifier_sha256: str,
     gateway_exit_code: int,
+    final_readiness: Mapping[str, Any],
 ) -> dict[str, Any]:
     _require(len(expected_messages) == 3, "HR-1 requires exactly three messages")
     started = _one(evidence, "gateway_started")
@@ -211,6 +212,7 @@ def build_hr1_receipt(
         "hermes_pids_before": before_pids,
         "hermes_pids_after": after_pids,
         "readiness": readiness,
+        "readiness_after": dict(final_readiness),
         "duplicate_event": {
             "event_id": str(first.get("event_id") or ""),
             "first_job_id": first.get("job_id"),
@@ -281,6 +283,27 @@ def _supabase_rows(
     )
     _require(isinstance(rows, list), "Supabase returned an invalid row shape")
     return [dict(row) for row in rows if isinstance(row, Mapping)]
+
+
+def _gateway_readiness(
+    supabase_url: str, minimal_key: str, token_fingerprint: str,
+) -> dict[str, Any]:
+    """Re-read readiness through the same minimal RPC boundary as the gateway."""
+    rows = _json_request(
+        f"{supabase_url.rstrip('/')}/rest/v1/rpc/discord_gateway_readiness",
+        method="POST",
+        payload={
+            "p_token_fingerprint": token_fingerprint,
+            "p_machine": "winpc",
+            "p_max_age_seconds": 300,
+        },
+        headers={"apikey": minimal_key, "Authorization": f"Bearer {minimal_key}"},
+    )
+    _require(
+        isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], Mapping),
+        "final gateway readiness RPC returned an invalid shape",
+    )
+    return dict(rows[0])
 
 
 def _read_evidence(path: Path) -> list[dict[str, Any]]:
@@ -550,6 +573,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "params->>idempotency_key": f"eq.discord:{first_event}",
     })
     duplicate_rows = _supabase_rows(supabase_url, service_key, f"jobs?{duplicate_filter}")
+    final_readiness = _gateway_readiness(
+        supabase_url, minimal_key, _sha256(token),
+    )
     v4_root = Path(os.environ.get("VALUEHIRE_V4_REPO", "/Volumes/SSD/valuehire_v4"))
     verifier = ROOT / "scripts/verify_discord_hr1.py"
     receipt = build_hr1_receipt(
@@ -564,6 +590,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         git_sha_v5=_git_sha(ROOT),
         verifier_sha256=_sha256(verifier.read_bytes()),
         gateway_exit_code=gateway_exit_code,
+        final_readiness=final_readiness,
     )
     validate_hr1_receipt(
         receipt,
