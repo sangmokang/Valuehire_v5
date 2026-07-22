@@ -8,6 +8,7 @@ import sys
 from scripts.run_discord_hr1_live_acceptance import (
     build_hr1_receipt,
     expected_hr1_messages,
+    gateway_subprocess_argv,
     gateway_subprocess_env,
 )
 from tools.multi_position_sourcing.discord_hr1 import validate_hr1_receipt
@@ -57,6 +58,12 @@ def test_gateway_child_gets_minimal_key_but_no_service_role(tmp_path: Path) -> N
     assert child["DISCORD_HR1_REPLAY_FIRST_ENQUEUED"] == "1"
     assert "SUPABASE_SERVICE_ROLE_KEY" not in child
     assert "SERVICE_ROLE_KEY" not in child
+
+
+def test_gateway_child_starts_as_repo_module() -> None:
+    assert gateway_subprocess_argv("/venv/bin/python") == [
+        "/venv/bin/python", "-m", "scripts.discord_direct_gateway",
+    ]
 
 
 def test_build_receipt_requires_and_combines_live_evidence() -> None:
