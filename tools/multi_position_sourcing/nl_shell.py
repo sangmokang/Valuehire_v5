@@ -436,6 +436,96 @@ def interpret(message: str, _classifier=None) -> Interpretation:
     return Interpretation(source="bot_intent", intent=result, may_execute=True)
 
 
+@dataclass(frozen=True)
+class Plan:
+    """자유 문장 1건에 대해 무엇을 할지. 게이트웨이는 이것만 보고 움직인다.
+
+    action:
+      enqueue — ``command_text`` 를 기존 명령 경로로 흘린다
+      choices — 대상이 여럿. ``choices`` 를 보여주고 **실행하지 않는다**
+      reply   — 즉답만(조회 결과·못 찾음·검색실패·거절). 큐에 안 넣는다
+      ignore  — 우리 소관이 아님(다른 처리기로)
+    """
+
+    action: str
+    reply: str = ""
+    command_text: str = ""
+    choices: tuple[Candidate, ...] = ()
+    source: str = ""
+
+
+def _format_candidates(candidates, truncated: int = 0) -> str:
+    lines = [f"{i}. {c.name} — {c.url}" for i, c in enumerate(candidates, 1)]
+    if truncated:
+        lines.append(f"(외 {truncated}건 더 있음 — 검색어를 좁혀 주세요)")
+    return "\n".join(lines)
+
+
+def plan_from_text(message: str, *, searcher, message_id: str = "",
+                   _classifier=None) -> Plan:
+    """자유 문장 한 줄 → 다음 행동 하나. 순수 함수(부작용 0).
+
+    ``searcher(locus, target) -> list[Candidate]`` 를 주입받는다 — ClickUp·웹 검색
+    수단은 호출부가 정한다(U2 ``clickup_position_searcher`` 등).
+
+    설계 원칙: **아무 말 없이 안 하는 경우를 만들지 않는다.** 0건·여러 건·검색 실패·
+    거절 어느 쪽이든 사장님께 돌려줄 문장을 채운다. 2026-07-22 에 명령이 조용히
+    버려져 "왜 아무것도 안 하지"가 됐던 것이 이 작업의 출발점이다.
+    """
+    interpretation = interpret(message, _classifier=_classifier)
+
+    if interpretation.source == "nl_shell" and interpretation.command is not None:
+        command = interpretation.command
+        resolution = resolve(command, searcher)
+
+        if resolution.status == "error":
+            return Plan(action="reply", source="nl_shell",
+                        reply=f"검색을 하지 못했습니다(대상을 못 찾은 게 아니라 조회 자체가 "
+                              f"실패했습니다): {resolution.error}")
+        if resolution.status == "zero":
+            return Plan(action="reply", source="nl_shell",
+                        reply=f"'{command.target}' 을(를) {command.locus} 에서 찾지 "
+                              f"못했습니다. 다른 장소로 임의 확장하지 않았습니다.")
+        if resolution.status == "many":
+            return Plan(action="choices", source="nl_shell",
+                        choices=resolution.candidates,
+                        reply=f"'{command.target}' 에 해당하는 대상이 "
+                              f"{len(resolution.candidates)}건입니다. 어느 것으로 할까요?\n"
+                              + _format_candidates(resolution.candidates,
+                                                   resolution.truncated))
+
+        text = to_fleet_command(command, resolution, message_id=message_id)
+        if text:
+            return Plan(action="enqueue", source="nl_shell", command_text=text,
+                        reply=f"'{command.raw}' 을(를) {command.route['queue_skill']} "
+                              f"작업으로 접수합니다.")
+        # 큐에 넣지 않는 경로(조회형) — 즉답한다.
+        body = _format_candidates(resolution.candidates) or "결과가 없습니다."
+        return Plan(action="reply", source="nl_shell", reply=body)
+
+    if interpretation.source == "bot_intent" and interpretation.intent is not None:
+        result = interpretation.intent
+        if interpretation.may_execute:
+            # 기존 분류기가 확신한 명령은 기존 경로가 처리한다 — 여기서 가로채지 않는다.
+            return Plan(action="ignore", source="bot_intent")
+        from .bot_intent import ClassifyOutcome
+
+        outcome = getattr(result, "outcome", None)
+        reason = str(getattr(result, "reason", "") or "").strip()
+        candidates = getattr(result, "candidates", ()) or ()
+
+        if outcome is ClassifyOutcome.AMBIGUOUS and candidates:
+            return Plan(action="reply", source="bot_intent",
+                        reply="무엇을 원하시는지 갈립니다: " + ", ".join(candidates))
+        if outcome is ClassifyOutcome.REFUSED:
+            # 거절은 반드시 소리 내어 알린다 — 조용히 무시하면 먹힌 줄 모른다.
+            return Plan(action="reply", source="bot_intent",
+                        reply=reason or "요청하신 동작은 이 경로로 실행할 수 없습니다.")
+        # UNKNOWN(빈 입력·잡담)은 조용히 흘린다 — 모든 대화에 답하면 소음이 된다.
+
+    return Plan(action="ignore", source=interpretation.source)
+
+
 def badge_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """자연어 셸 컨텍스트 표식을 붙인 env 사본.
 
