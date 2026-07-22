@@ -506,7 +506,23 @@ def plan_from_text(message: str, *, searcher, message_id: str = "",
     if interpretation.source == "bot_intent" and interpretation.intent is not None:
         result = interpretation.intent
         if interpretation.may_execute:
-            # 기존 분류기가 확신한 명령은 기존 경로가 처리한다 — 여기서 가로채지 않는다.
+            # 평문 DM 은 message_to_envelope 가 먼저 None 으로 버리므로 "기존 경로"가
+            # 따로 처리해 주지 않는다. URL 기반 검색 의도만 완성된 fleet-run 문자열로
+            # 되돌려 동일 파서·인가·멱등 경로에 태운다. 조회/login 계열은 여기서 새
+            # 실행 분기를 만들지 않고 기존 명령 표면에 남긴다.
+            command = str(getattr(result, "command", "") or "")
+            args = getattr(result, "args", {}) or {}
+            url = str(args.get("url") or "").strip() if isinstance(args, Mapping) else ""
+            if command in {"aisearch", "humansearch", "url"} and url:
+                parts = ["/fleet-run", command, shlex.quote(url)]
+                if message_id:
+                    parts.append(f"idempotency:discord:{message_id}")
+                return Plan(
+                    action="enqueue",
+                    source="bot_intent",
+                    command_text=" ".join(parts),
+                    reply=f"자연어 요청을 {command} 작업으로 접수합니다.",
+                )
             return Plan(action="ignore", source="bot_intent")
         from .bot_intent import ClassifyOutcome
 
