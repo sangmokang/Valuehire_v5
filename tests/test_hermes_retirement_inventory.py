@@ -14,6 +14,7 @@ from tools.hermes_retirement.inventory import (
     InventoryConfig,
     InventoryVerificationError,
     RuntimeProbe,
+    _known_path_refs,
     _probe_discord_commands,
     _probe_launchd,
     build_inventory,
@@ -72,6 +73,10 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
     _write(v5 / ".hermes/plans/old-hermes-plan.md", "retired plan\n")
     _write(v4 / ".omx/logs/hermes-run.json", "{}\n")
     _write(
+        v4 / "worktrees/stale/tools/hermes-agent/valuehire/plugin.yaml",
+        "historical worktree copy\n",
+    )
+    _write(
         v4 / "data/outstanding-news-runs/hermes-20260722/texts/result.txt",
         "historical output\n",
     )
@@ -124,6 +129,7 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
             v5 / "tools/multi_position_sourcing/hermes_fleet_bridge.py",
             v5 / "tools/multi_position_sourcing/hermes_position_context.py",
             v5 / "scripts/discord_command_listener.py",
+            hermes_home,
             plugin_dir,
             gateway_plist,
         ),
@@ -160,7 +166,12 @@ def _fixture(tmp_path: Path) -> tuple[InventoryConfig, RuntimeProbe]:
         discord_commands=(
             {"id": "123", "name": "aisearch", "type": 1, "scope": "global"},
         ),
-        discord_probe={"status": "ok", "bot_id": "999"},
+        discord_probe={
+            "status": "ok",
+            "bot_id": "999",
+            "guild_count": 0,
+            "scope_count": 1,
+        },
     )
     assert plugin_init.exists()
     return config, probe
@@ -238,6 +249,10 @@ def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) 
     env_backup = str(config.hermes_home / ".env.bak")
     repo_plan = str(config.v5_root / ".hermes/plans/old-hermes-plan.md")
     omx_log = str(config.v4_root / ".omx/logs/hermes-run.json")
+    stale_worktree = str(
+        config.v4_root
+        / "worktrees/stale/tools/hermes-agent/valuehire/plugin.yaml"
+    )
     run_output = str(
         config.v4_root
         / "data/outstanding-news-runs/hermes-20260722/texts/result.txt"
@@ -248,6 +263,7 @@ def test_history_tests_and_uncalled_helper_are_not_live_callers(tmp_path: Path) 
     assert items[env_backup]["classification"] == "historical-only"
     assert items[repo_plan]["classification"] == "historical-only"
     assert items[omx_log]["classification"] == "historical-only"
+    assert items[stale_worktree]["classification"] == "historical-only"
     assert items[run_output]["classification"] == "historical-only"
     assert items[unused]["classification"] == "removable"
 
@@ -419,6 +435,25 @@ def test_launchd_probe_includes_loaded_unrelated_hermes_agent_jobs(
         {"label": "ai.hermes.gateway", "pid": 4242},
         {"label": "com.valuehire.outstanding-news", "pid": 0},
     )
+
+
+def test_cron_path_parser_keeps_real_paths_without_path_environment_blob(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "valuehire_v4"
+    command = (
+        "PATH=/usr/local/bin:/usr/bin /usr/bin/env "
+        f"'{root}/tools/hermes-agent/hermes gateway.sh' "
+        ">> /tmp/hermes-gateway.log"
+    )
+
+    refs = _known_path_refs(command, (root,))
+
+    assert "/usr/local/bin:/usr/bin" not in refs
+    assert "/usr/bin/env" in refs
+    assert str(root) in refs
+    assert f"{root}/tools/hermes-agent/hermes gateway.sh" in refs
+    assert "/tmp/hermes-gateway.log" in refs
 
 
 def test_discord_probe_derives_application_id_when_env_has_only_bot_token(
