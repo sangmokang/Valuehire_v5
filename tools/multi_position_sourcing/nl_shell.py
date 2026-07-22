@@ -209,6 +209,71 @@ def parse(message: str) -> NlCommand | None:
     return NlCommand(locus=locus, target=target, verb=verb, route=route, raw=raw)
 
 
+@dataclass(frozen=True)
+class Candidate:
+    """해소 후보 하나 — 사람이 고를 이름 + 실제 대상 URL."""
+
+    name: str
+    url: str
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """해소 결과. `may_execute` 가 False 면 호출부는 **절대** 실행하면 안 된다."""
+
+    status: str  # zero | one | many | error
+    may_execute: bool
+    url: str = ""
+    candidates: tuple[Candidate, ...] = ()
+    truncated: int = 0  # 상한을 넘어 잘라낸 후보 수 — 숨기지 않는다
+    error: str = ""
+
+
+def policy_for(status: str) -> dict[str, Any]:
+    """계약의 resolution_policy 를 status 이름으로 읽는다(숫자·플래그 하드코딩 금지)."""
+    key = {"zero": "zero_hits", "one": "one_hit", "many": "many_hits"}[status]
+    return load_contract()["resolution_policy"][key]
+
+
+def resolve(command: NlCommand, searcher) -> Resolution:
+    """대상 이름을 실제 URL 로 해소한다. 정책은 전부 계약(SOT-32 §4)에서 읽는다.
+
+    ``searcher(locus, target) -> list[Candidate]`` 를 주입받는다 — 이 함수는 검색
+    수단을 모른다(ClickUp API·웹검색은 호출부 소관). 그래서 정책만 순수하게 시험된다.
+
+    핵심 불변식:
+      - 0건 → 실행 금지. **다른 장소로 임의 확장하지 않는다**(E-NL2). 검색은 지정된
+        locus 로 딱 한 번만 호출한다.
+      - N건 → 실행 금지. 고를 수 있게 후보를 돌려주고, 상한을 넘겨 잘랐다면 그 수를
+        `truncated` 로 드러낸다(조용한 절삭 금지).
+      - 검색기 예외 → `error`. **0건으로 둔갑시키지 않는다** — "못 찾았다"와 "못 물어봤다"는
+        전혀 다른 사실이고, 후자를 전자로 보고하면 사장님이 헛물을 켠다.
+    """
+    # 해소가 필요 없는 경로(queue 조회 등) — 검색기를 아예 부르지 않는다.
+    if command.route.get("resolver") == "none":
+        return Resolution(status="one", may_execute=True)
+
+    try:
+        found = list(searcher(command.locus, command.target))
+    except Exception as exc:  # 검색 실패를 성공(0건)으로 위장하지 않는다
+        return Resolution(status="error", may_execute=False, error=str(exc))
+
+    if not found:
+        return Resolution(status="zero",
+                          may_execute=bool(policy_for("zero")["may_execute"]))
+    if len(found) == 1:
+        return Resolution(status="one",
+                          may_execute=bool(policy_for("one")["may_execute"]),
+                          url=found[0].url,
+                          candidates=(found[0],))
+
+    cap = int(policy_for("many")["max_choices"])
+    return Resolution(status="many",
+                      may_execute=bool(policy_for("many")["may_execute"]),
+                      candidates=tuple(found[:cap]),
+                      truncated=max(0, len(found) - cap))
+
+
 def badge_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """자연어 셸 컨텍스트 표식을 붙인 env 사본.
 
