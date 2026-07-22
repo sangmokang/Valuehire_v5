@@ -15,6 +15,7 @@ from tools.multi_position_sourcing.session_guard import (
     LoginWindowLocator,
     SafeKeepaliveTarget,
     main,
+    recover_orphan_login_badge,
     run_human_auth_episode,
     run_safe_keepalive_episode,
 )
@@ -135,6 +136,39 @@ def _authenticated(_tab: object, _site: str) -> AuthObservation:
         url="https://www.linkedin.com/talent/home",
         proof_names=("talent_surface", "recruiter_account"),
     )
+
+
+def test_orphan_badge_recovery_uses_lease_owner_gate_and_disconnects_only() -> None:
+    trace: list[str] = []
+    lease = _Lease(trace)
+
+    class RecoveryTab(_Tab):
+        def bind_exact_badge_for_cleanup(self, label: str, *, expected_url: str) -> bool:
+            trace.append(f"bind:{label}:{expected_url}")
+            return True
+
+        def clear_busy(self, label: str, *, expected_url: str) -> bool:
+            trace.append(f"clear:{label}:{expected_url}")
+            return True
+
+    tab = RecoveryTab(trace)
+    result = recover_orphan_login_badge(
+        "linkedin_rps",
+        agent="Codex",
+        target_id="target-exact",
+        owner_snapshot=_increasing_owner(trace),
+        mutation_sleep=lambda _seconds: trace.append("mutation.sleep"),
+        wait_sleep=lambda _seconds: pytest.fail("owner-idle recovery must not wait"),
+        _lease_factory=lambda _site: lease,
+        _target_resolver=lambda *_args, **_kwargs: _ref(),
+        _tab_attacher=lambda *_args, **_kwargs: tab,
+    )
+
+    assert result == {"status": "orphan_badge_cleaned", "site": "linkedin_rps"}
+    assert trace[0] == "lease.acquire"
+    assert any(item.startswith("bind:[LOGIN HERE][Codex][linkedin]") for item in trace)
+    assert any(item.startswith("clear:[LOGIN HERE][Codex][linkedin]") for item in trace)
+    assert trace[-2:] == ["tab.disconnect", "lease.release"]
 
 
 def test_human_auth_runner_holds_lease_emits_locator_and_disconnects_only() -> None:
