@@ -102,15 +102,39 @@ def _macos_frontmost_app_and_pid(
         ],
         run_command,
     )
-    if result.returncode != 0:
+    if result.returncode == 0:
+        raw = (result.stdout or "").strip()
+        if raw:
+            name, _, tail = raw.rpartition(", ")
+            if name and tail.isdigit():
+                return name, int(tail)
+            return raw, None
+
+    # Some macOS/System Events combinations reject the record expression above
+    # (-1728) while the two scalar, read-only queries both work.  Falling back to
+    # those queries preserves the same signals without inspecting page content or
+    # weakening the fail-closed rule: either missing name still returns unknown,
+    # and a missing PID merely disables PID-bound CDP inspection.
+    name_result = _run_text(
+        [
+            "osascript",
+            "-e",
+            'tell application "System Events" to get name of first application process whose frontmost is true',
+        ],
+        run_command,
+    )
+    if name_result.returncode != 0 or not (name_result.stdout or "").strip():
         return None, None
-    raw = (result.stdout or "").strip()
-    if not raw:
-        return None, None
-    name, _, tail = raw.rpartition(", ")
-    if name and tail.isdigit():
-        return name, int(tail)
-    return raw, None
+    pid_result = _run_text(
+        [
+            "osascript",
+            "-e",
+            'tell application "System Events" to get unix id of first application process whose frontmost is true',
+        ],
+        run_command,
+    )
+    pid_raw = (pid_result.stdout or "").strip() if pid_result.returncode == 0 else ""
+    return (name_result.stdout or "").strip(), int(pid_raw) if pid_raw.isdigit() else None
 
 
 def _macos_frontmost_app(run_command: RunCommand = subprocess.run) -> str | None:
