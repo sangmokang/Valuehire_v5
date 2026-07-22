@@ -703,6 +703,14 @@ class DirectGatewayClient(discord.Client):
             return
         await self._sync_commands()
 
+    async def on_ready(self) -> None:  # pragma: no cover — live lifecycle evidence
+        recorder = self._hr1_evidence_recorder
+        if recorder is not None:
+            recorder.record(
+                "gateway_connected",
+                discord_bot_id=str(getattr(self.user, "id", "") or ""),
+            )
+
     async def _sync_commands(self) -> None:  # pragma: no cover — 실 네트워크 진입점
         """명령 소유권 일치(goal §3) — FLEET_COMMANDS 교집합만 실제로 등록한다.
 
