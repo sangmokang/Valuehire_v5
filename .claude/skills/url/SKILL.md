@@ -142,3 +142,18 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 - InMail/JD 템플릿 작성 (= `linkedin-rps-jd-set-builder`).
 - 캡차·2FA·봇차단 우회 (감지 시 STOP).
 - ClickUp Task 임의 생성 (포지션 Task 없으면 보고만).
+
+
+## 익스텐션 독립 완료 화면 자동 저장
+
+- 최종 라이브 검색을 정밀·OTW 상태로 남긴 직후, ClickUp 댓글을 쓰기 전에 exact Recruiter target의 현재 화면·본문을 정식 실행기로 저장한다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence \
+  --site linkedin_rps --agent <Claude|Codex> --task url --mode evidence \
+  --target-id <exact-target-id>
+```
+
+- exit 0 JSON의 `capture_status=saved`, `screenshot_path`, `text_path`, `manifest_path`, 두 SHA-256을 댓글 근거와 완료 보고에 포함한다.
+- 저장 실패·캡차·세션 충돌·로그인 소실·사람 사용 중이면 URL 준비 완료나 ClickUp 등록으로 보고하지 않는다. 익스텐션 성공 여부는 대체 증거가 아니다.
+- 새 창·새 탭·navigate·focus·close는 0회이며 기존 RPS 탭과 세션을 그대로 보존한다.

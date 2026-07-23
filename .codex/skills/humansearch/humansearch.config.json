@@ -114,7 +114,7 @@
     "parent_dedup": "부모 Task 를 먼저 검색해 없으면 생성, 있으면 재사용",
     "candidate_dedup": "부모 Task 아래 후보 profile_url 로 기존 Subtask 를 먼저 검색하고, 있으면 새 Subtask 생성 금지",
     "profile_save_evidence_required": true,
-    "profile_save_evidence_fields": ["screenshot", "screenshot_path", "evidence_paths", "archive_path", "saved_profile_path", "profile_archive_id", "sourcing_result_id", "db_row_id", "supabase_profile_archive_id"],
+    "profile_save_evidence_fields": ["evidence"],
     "priority_signals": [
       "학력: 서울권 대학·해외 우수대·지방 국공립(단국대 이상)",
       "직무 적합성",

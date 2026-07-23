@@ -234,9 +234,10 @@ def _group_job(**over):
 
 
 def _worker(queue):
+    done = '후보 3명 저장 완료\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}'
     return FleetWorker(
         machine="macmini", queue=queue,
-        runner=lambda prompt, timeout: ("후보 3명 저장 완료", 0),
+        runner=lambda prompt, timeout: (done, 0),
         notifier=lambda job, text: None)
 
 
@@ -282,7 +283,8 @@ def test_paused_for_human_yields_1min_not_permanent():
     w = FleetWorker(
         machine="macmini", queue=q,
         runner=lambda prompt, timeout: (
-            ("후보 3명 저장 완료", 0) if "잡 #7" in prompt
+            ('후보 3명 저장 완료\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}', 0)
+            if "잡 #7" in prompt
             else ("PAUSED_FOR_HUMAN: 캡차", 0)),
         notifier=lambda job, text: None)
     assert w.run_once() == "done"            # 잡7 → backlog 적재

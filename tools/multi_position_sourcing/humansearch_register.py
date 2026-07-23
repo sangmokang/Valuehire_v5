@@ -26,23 +26,14 @@ from tools.multi_position_sourcing.humansearch import (
     hard_exclude_reason,
     is_valid_profile_url,
 )
+from tools.multi_position_sourcing.browser_evidence import complete_evidence_payload
 from tools.multi_position_sourcing.models import CapturedProfile, Channel, EmploymentTenure
 
 POSITION_ID = "86ey2cdfj"
 POSITION_NAME = "[뤼튼테크놀로지스 AX CIC] AX Sales Team Lead (AI Account Executive 리드)"
 FY26_AI_SEARCH_LIST_ID = "901818680208"
 FY26_AI_SEARCH_LIST_URL = "https://app.clickup.com/9018789656/v/li/901818680208"
-PROFILE_SAVE_EVIDENCE_FIELDS = (
-    "screenshot",
-    "screenshot_path",
-    "evidence_paths",
-    "archive_path",
-    "saved_profile_path",
-    "profile_archive_id",
-    "sourcing_result_id",
-    "db_row_id",
-    "supabase_profile_archive_id",
-)
+PROFILE_SAVE_EVIDENCE_FIELDS = ("evidence",)
 REQUIRED_CANDIDATE_OUTPUT_FIELDS = ("profile_url", "score", "why_fit", "profile_summary")
 CANDIDATE_SPEC_MARKER = "VALUEHIRE_CANDIDATE_SPEC_V1:"
 _CANDIDATE_SPEC_RE = re.compile(
@@ -206,25 +197,26 @@ def _present(value: object) -> bool:
     return bool(value)
 
 
-def has_saved_profile_evidence(result: object) -> bool:
-    """프로필 저장 증거가 있는지 검사한다.
-
-    ClickUp FY26AI_Search 등록은 "찾았다"가 아니라 "프로필을 저장했다"는 증거가 있어야 한다.
-    스크린샷/아카이브/DB·Supabase id/evidence_paths 중 하나도 없으면 등록 경계에서 fail-closed.
-    """
+def has_saved_profile_evidence(
+    result: object, *, channel: Channel, position_id: str
+) -> bool:
+    """실제 파일·manifest·SQLite에 결합된 공용 캡처 영수증만 인정한다."""
     if not isinstance(result, dict):
         return False
-
-    direct_keys = tuple(key for key in PROFILE_SAVE_EVIDENCE_FIELDS if key != "evidence_paths")
-    if any(_present(result.get(key)) for key in direct_keys):
-        return True
-
-    evidence = result.get("evidence_paths")
-    if isinstance(evidence, str):
-        return _present(evidence)
-    if isinstance(evidence, (list, tuple, set)):
-        return any(_present(item) for item in evidence)
-    return False
+    evidence = result.get("evidence")
+    candidate_url = str(result.get("url") or result.get("profile_url") or "").strip()
+    expected_position = str(position_id or "").strip()
+    return bool(
+        isinstance(evidence, dict)
+        and candidate_url
+        and expected_position
+        and evidence.get("profile_url") == candidate_url
+        and evidence.get("site") == channel
+        and evidence.get("position_id") == expected_position
+        and evidence.get("task") == "humansearch"
+        and evidence.get("mode") == "profile"
+        and complete_evidence_payload(evidence)
+    )
 
 
 def _has_profile_summary(result: Mapping[str, object]) -> bool:
@@ -256,7 +248,9 @@ def has_required_candidate_output_fields(result: object) -> bool:
     )
 
 
-def clickup_registration_eligible(results: list[dict], channel: Channel) -> list[dict]:
+def clickup_registration_eligible(
+    results: list[dict], channel: Channel, *, position_id: str
+) -> list[dict]:
     """FY26AI_Search Task/Subtask 등록 대상 후보.
 
     기존 eligible(score>=70, URL 무결성, 하드제외) 위에 후보 출력 4필드와 프로필 저장 증거를 추가로 요구한다.
@@ -264,7 +258,8 @@ def clickup_registration_eligible(results: list[dict], channel: Channel) -> list
     return [
         r
         for r in eligible(results, channel)
-        if has_required_candidate_output_fields(r) and has_saved_profile_evidence(r)
+        if has_required_candidate_output_fields(r)
+        and has_saved_profile_evidence(r, channel=channel, position_id=position_id)
     ]
 
 
@@ -318,24 +313,12 @@ def _create_clickup_task(
 
 
 def _saved_profile_evidence_text(result: Mapping[str, object]) -> str:
-    for key in (
-        "screenshot",
-        "screenshot_path",
-        "archive_path",
-        "saved_profile_path",
-        "profile_archive_id",
-        "supabase_profile_archive_id",
-    ):
-        value = result.get(key)
-        if _present(value):
-            return f"{key}: {value}"
-    evidence = result.get("evidence_paths")
-    if isinstance(evidence, str) and _present(evidence):
-        return f"evidence_paths: {evidence}"
-    if isinstance(evidence, (list, tuple, set)):
-        first = next((str(item) for item in evidence if _present(item)), "")
-        if first:
-            return f"evidence_paths: {first}"
+    evidence = result.get("evidence")
+    if isinstance(evidence, Mapping):
+        manifest = str(evidence.get("manifest_path") or "").strip()
+        digest = str(evidence.get("screenshot_sha256") or "").strip()
+        if manifest and digest:
+            return f"manifest: {manifest} | screenshot_sha256: {digest}"
     return "missing"
 
 
@@ -709,7 +692,9 @@ def register_clickup_fy26_ai_search(
             raise RuntimeError("parent_task_id_required: ClickUp parent Task creation returned no id")
 
     candidates: list[ClickUpCandidateRegistration] = []
-    for result in clickup_registration_eligible(passers, channel):
+    for result in clickup_registration_eligible(
+        passers, channel, position_id=position_id
+    ):
         if not parent_task_id:
             raise RuntimeError("parent_task_id_required: cannot register candidate Subtasks without parent id")
         profile_url = str(result["url"])

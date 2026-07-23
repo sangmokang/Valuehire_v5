@@ -20,6 +20,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .browser_evidence import complete_evidence_payload
+
 from tools.codex_skill_sync.sync import (
     default_dest as default_skill_dest,
     default_sources as default_skill_sources,
@@ -116,6 +118,8 @@ POLL_SECONDS = 30
 _SUMMARY_LIMIT = 800
 _PAUSE_MARKER = "PAUSED_FOR_HUMAN:"
 _SEARCH_RECEIPT_MARKER = "FLEET_SEARCH_RECEIPT:"
+_HUMANSEARCH_RECEIPT_MARKER = "HUMANSEARCH_EVIDENCE_RECEIPT:"
+_URL_RECEIPT_MARKER = "URL_EVIDENCE_RECEIPT:"
 _NETWORK_CONFIG_FLAG = "sandbox_workspace_write.network_access=true"
 
 # 기본 보고 채널 = 사장님 DM 채널(scripts/discord_command_listener.py 와 동일)
@@ -280,10 +284,11 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
     url_login_rule = ""
+    capture_rule = ""
     if skill == "url":
         assigned_machine = str(job.get("machine") or "(미상)")
         url_login_rule = (
-            "19. LinkedIn RPS 실행 순서: 함대가 macmini/macbook/winpc 중 heartbeat의 "
+            "20. LinkedIn RPS 실행 순서: 함대가 macmini/macbook/winpc 중 heartbeat의 "
             "linkedin_rps_logged_in=true인 머신을 먼저 찾아 이 잡에 배정한다. 현재 배정 머신은 "
             f"{assigned_machine}이다. 이 머신의 영속 크롬 프로필에서 브라우저를 직접 탐색하고, "
             "로그인된 브라우저와 RPS 세션을 실제 URL·DOM으로 검증할 것. 검증 전에는 검색을 "
@@ -293,6 +298,27 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             "linkedin_ready로 재배정할 수 있도록 다음 형식의 문장을 마지막 줄에 남기고 즉시 "
             f"종료할 것: '{_PAUSE_MARKER} portal=linkedin_rps machine={assigned_machine} "
             f"job={job_id} current_url=<현재 URL> action=linkedin_ready 확인 후 로그인 머신 재배정'.\n")
+    if skill == "aisearch":
+        capture_rule = (
+            "19. 상세 화면을 연 뒤 다음 화면으로 이동하기 전에 exact target id로 정식 "
+            "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence를 "
+            "--task ai-search --mode profile로 실행할 것. 채널별 모든 "
+            "저장 영수증을 profile_evidence에 넣고 후보 evidence와 동일 영수증으로 결합할 것.\n"
+        )
+    elif skill == "humansearch":
+        capture_rule = (
+            f"19. 정식 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard "
+            f"capture-evidence --task humansearch --mode profile 저장을 "
+            f"사용하고, 완료 마지막 줄에 {_HUMANSEARCH_RECEIPT_MARKER} 뒤 JSON으로 "
+            "opened_profiles와 profile_evidence를 출력할 것.\n"
+        )
+    elif skill == "url":
+        capture_rule = (
+            f"19. 검색 결과 화면을 남긴 뒤 exact target id로 PYTHONPATH=. python3 -m "
+            f"tools.multi_position_sourcing.session_guard capture-evidence --task url "
+            f"--mode evidence를 실행하고, 완료 마지막 줄에 {_URL_RECEIPT_MARKER} 뒤로 그 "
+            "saved JSON 영수증을 그대로 출력할 것.\n"
+        )
     return (
         f"[Valuehire 잡 #{job_id}] {skill} 스킬을 발동해 아래 작업을 수행해줘.\n"
         f"- 포지션 URL: {url}\n"
@@ -335,6 +361,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"17. 후보 결과는 사람인/잡코리아를 구분하고 후보자명, 전체 profile_url, 채널, 점수, "
         f"why_fit, profile_summary, 주요 근거, hard exclude=false, 저장 완료=true를 포함할 것.\n"
         f"18. 후보 제안·InMail·이메일 Send/보내기는 절대 클릭하지 말 것.\n"
+        + capture_rule
         + url_login_rule
     )
 
@@ -367,6 +394,26 @@ def validate_aisearch_receipt(stdout: str, params: Mapping[str, Any]) -> dict[st
         opened, saved = evidence.get("opened_profiles"), evidence.get("saved_receipts")
         if not isinstance(opened, int) or isinstance(opened, bool) or opened < 0 or saved != opened:
             raise ValueError(f"{channel} opened/saved count mismatch")
+        profile_evidence = evidence.get("profile_evidence") or []
+        if not isinstance(profile_evidence, list) or len(profile_evidence) != opened:
+            raise ValueError(f"{channel} per-profile evidence count mismatch")
+        expected_site = "linkedin_rps" if channel in {"linkedin", "linkedin_rps"} else channel
+        position_id = receipt.get("position_id")
+        seen_profiles: set[str] = set()
+        for item in profile_evidence:
+            if not complete_evidence_payload(item):
+                raise ValueError(f"{channel} profile evidence incomplete")
+            if (
+                item.get("site") != expected_site
+                or item.get("task") != "ai-search"
+                or item.get("mode") != "profile"
+                or not isinstance(position_id, str)
+                or not position_id
+                or item.get("position_id") != position_id
+                or item.get("profile_url") in seen_profiles
+            ):
+                raise ValueError(f"{channel} profile evidence identity mismatch")
+            seen_profiles.add(item["profile_url"])
         candidates = evidence.get("candidates") or []
         if not isinstance(candidates, list):
             raise ValueError(f"{channel} candidates invalid")
@@ -379,6 +426,68 @@ def validate_aisearch_receipt(stdout: str, params: Mapping[str, Any]) -> dict[st
                 raise ValueError(f"{channel} candidate URL/hard-exclude gate failed")
             if candidate.get("saved") is not True:
                 raise ValueError(f"{channel} candidate save gate failed")
+            candidate_evidence = candidate.get("evidence")
+            if (
+                candidate.get("channel") != channel
+                or not complete_evidence_payload(candidate_evidence)
+                or candidate_evidence.get("profile_url") != candidate.get("profile_url")
+                or candidate_evidence.get("site") != expected_site
+                or candidate_evidence.get("task") != "ai-search"
+                or candidate_evidence.get("mode") != "profile"
+                or candidate_evidence.get("manifest_path")
+                not in {item.get("manifest_path") for item in profile_evidence}
+            ):
+                raise ValueError(f"{channel} candidate browser evidence incomplete")
+    return receipt
+
+
+def _marked_json(stdout: str, marker: str) -> dict[str, Any]:
+    line = next(
+        (line for line in reversed((stdout or "").splitlines()) if line.startswith(marker)),
+        "",
+    )
+    if not line:
+        raise ValueError(f"{marker.rstrip(':')} completion receipt missing")
+    try:
+        value = json.loads(line[len(marker):].strip())
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{marker.rstrip(':')} completion receipt invalid") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{marker.rstrip(':')} completion receipt invalid")
+    return value
+
+
+def validate_humansearch_receipt(stdout: str) -> dict[str, Any]:
+    receipt = _marked_json(stdout, _HUMANSEARCH_RECEIPT_MARKER)
+    opened = receipt.get("opened_profiles")
+    items = receipt.get("profile_evidence")
+    if (
+        not isinstance(opened, int)
+        or isinstance(opened, bool)
+        or opened < 0
+        or not isinstance(items, list)
+        or len(items) != opened
+    ):
+        raise ValueError("humansearch per-profile evidence count mismatch")
+    if any(
+        not complete_evidence_payload(item)
+        or item.get("task") != "humansearch"
+        or item.get("mode") != "profile"
+        for item in items
+    ):
+        raise ValueError("humansearch profile evidence incomplete")
+    return receipt
+
+
+def validate_url_receipt(stdout: str) -> dict[str, Any]:
+    receipt = _marked_json(stdout, _URL_RECEIPT_MARKER)
+    if (
+        not complete_evidence_payload(receipt)
+        or receipt.get("site") != "linkedin_rps"
+        or receipt.get("task") != "url"
+        or receipt.get("mode") != "evidence"
+    ):
+        raise ValueError("url browser evidence incomplete")
     return receipt
 
 
@@ -970,6 +1079,20 @@ class FleetWorker:
         if job.get("skill") == "aisearch":
             try:
                 validate_aisearch_receipt(stdout, job.get("params") or {})
+            except ValueError as exc:
+                self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
+                self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")
+                return "failed"
+        elif job.get("skill") == "humansearch":
+            try:
+                validate_humansearch_receipt(stdout)
+            except ValueError as exc:
+                self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
+                self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")
+                return "failed"
+        elif job.get("skill") == "url":
+            try:
+                validate_url_receipt(stdout)
             except ValueError as exc:
                 self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
                 self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")

@@ -340,3 +340,18 @@ python3 -m tools.install_login_skill
 | AI Search 실행기 | Macmini, MacBook Pro, WinPC | live session host 우선, 없으면 표 순서 |
 | LinkedIn 주간 | Macmini(주력 PC) | 기존 RPS 세션 우선 |
 | LinkedIn 야간 | MacBook Pro 또는 WinPC | 현재 턴 owner 위임이 있을 때만 |
+
+
+## 익스텐션 독립 로그인 화면 증거 자동 저장
+
+- 정식 `session_guard human-auth`는 사이트별 fresh 로그인 마커로 `AUTHENTICATED`를 증명한 뒤, 성공을 반환하기 전에 현재 exact target의 화면·본문 영수증까지 자동 저장해 결과의 `evidence`에 포함한다. 보안 챌린지·세션 충돌 화면이나 증거 없는 인증은 성공으로 반환하지 않는다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence \
+  --site <saramin|jobkorea|linkedin_rps> --agent <Claude|Codex|Hermes> \
+  --task login --mode evidence --target-id <exact-target-id>
+```
+
+- 별도 명령은 이미 인증된 화면을 다시 증명할 때 쓰는 공용 진입점이다. `human-auth`와 별도 명령 모두 exit 0 JSON에서 `capture_status=saved`, `screenshot_path`, `text_path`, `manifest_path`, 두 SHA-256을 확인한다. 실패하면 로그인 완료라고 보고하거나 검색을 시작하지 않는다.
+- 실행기는 site lease와 60초 사람 사용 감지를 자체 확인한다. 호출자가 만든 `AUTHENTICATED` 문자열이나 외부 payload를 안전 증명으로 받지 않는다.
+- 새 창·새 탭·navigate·focus·close는 0회다. 브라우저는 보존하고 CDP WebSocket만 해제한다.

@@ -71,6 +71,17 @@ def test_login_contract_separates_session_conflict_from_auth_lost() -> None:
     assert "confirm_session_choice" in conflict["forbidden_actions"]
     assert "enterprise-authentication/sessions" in conflict["reason_markers"]
     assert "AUTH_CONFLICT" in payloads[0]["state_machine"]["DISCOVER"]["next"]
+    evidence = payloads[0]["browser_evidence_capture"]
+    assert evidence["runner"].endswith("session_guard capture-evidence")
+    assert evidence["requires_exact_target"] is True
+    assert evidence["caller_safety_strings_accepted"] is False
+    assert set(evidence["success_fields"]) >= {
+        "screenshot_path",
+        "text_path",
+        "manifest_path",
+        "screenshot_sha256",
+        "visible_text_sha256",
+    }
 
 
 def test_login_skill_has_one_terminal_session_conflict_instruction() -> None:

@@ -10,12 +10,15 @@ from tools.multi_position_sourcing import humansearch_cdp_run as hcr
 from tools.multi_position_sourcing.harvest_policy import worker_should_yield
 from tools.multi_position_sourcing.humansearch_preflight import PreflightError
 from tools.multi_position_sourcing.owner_activity import compute_yield_decision
+from tools.multi_position_sourcing.portal_worker import ProfileLockError
 
 
 @dataclass(frozen=True)
 class Snapshot:
     owner_activity_detected: bool
     detection_status: str = "ok"
+    idle_seconds: float = 120.0
+    portal_site_active: bool = False
 
 
 class FakeTab:
@@ -54,6 +57,7 @@ def _row(card: dict, idx: int) -> dict:
         "score": 70,
         "otw": False,
         "education": "",
+        "evidence": {"status": "saved", "manifest_path": f"/fixture/{idx}.json"},
     }
 
 
@@ -84,14 +88,13 @@ def test_owner_activity_before_first_profile_opens_zero(monkeypatch, tmp_path: P
         lambda _tab, card, _idx, **_kwargs: opened.append(card["url"]) or _row(card, 1),
     )
 
-    rows = hcr.process_cards_with_r4(
-        FakeTab(),
-        _cards(3),
-        owner_snapshot=lambda: Snapshot(True),
-        live_check=lambda _tab: {"ok": True},
-    )
-
-    assert rows == []
+    with pytest.raises(ProfileLockError, match="owner activity"):
+        hcr.process_cards_with_r4(
+            FakeTab(),
+            _cards(3),
+            owner_snapshot=lambda: Snapshot(True),
+            live_check=lambda _tab: {"ok": True},
+        )
     assert opened == []
     assert not (tmp_path / "results.json").exists()
 
@@ -109,14 +112,13 @@ def test_owner_activity_after_one_profile_preserves_partial_results(monkeypatch,
 
     monkeypatch.setattr(hcr, "process_profile", fake_process)
 
-    rows = hcr.process_cards_with_r4(
-        FakeTab(),
-        _cards(3),
-        owner_snapshot=lambda: next(snapshots),
-        live_check=lambda _tab: {"ok": True},
-    )
-
-    assert [row["url"] for row in rows] == ["https://www.linkedin.com/talent/profile/000"]
+    with pytest.raises(ProfileLockError, match="owner activity"):
+        hcr.process_cards_with_r4(
+            FakeTab(),
+            _cards(3),
+            owner_snapshot=lambda: next(snapshots),
+            live_check=lambda _tab: {"ok": True},
+        )
     assert opened == ["https://www.linkedin.com/talent/profile/000"]
     saved = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
     assert [row["url"] for row in saved] == ["https://www.linkedin.com/talent/profile/000"]
@@ -189,7 +191,7 @@ def test_mid_run_preflight_error_stops_without_opening_remaining(monkeypatch, tm
 def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) -> None:
     tab = FakeTab()
     calls: list[object] = []
-    sentinel = object()
+    sentinel = lambda: Snapshot(False)
 
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
@@ -218,7 +220,7 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
 
     monkeypatch.setattr(hcr, "process_cards_with_r4", fake_process_cards)
 
-    hcr.main(owner_snapshot=sentinel)
+    hcr.main(owner_snapshot=sentinel, mutation_sleep=lambda _seconds: None)
 
     assert calls == [sentinel]
     assert tab.closed is True

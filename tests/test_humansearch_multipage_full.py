@@ -161,15 +161,28 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
             "url": card["url"],
             "hard_exclude": None,
             "score": 70,
-            "otw": False,
-            "education": "",
+                "otw": False,
+                "education": "",
+                "evidence": {"status": "saved", "manifest_path": f"/fixture/{idx}.json"},
         }
 
     monkeypatch.setattr(hcr, "iter_planned_cards", fake_iter, raising=False)
     monkeypatch.setattr(hcr, "process_profile", fake_process)
     monkeypatch.setattr(hcr, "human_delay", lambda: None)
 
-    hcr.main(owner_snapshot=lambda: type("Snapshot", (), {"owner_activity_detected": False})())
+    hcr.main(
+        owner_snapshot=lambda: type(
+            "Snapshot",
+            (),
+            {
+                "owner_activity_detected": False,
+                "detection_status": "ok",
+                "idle_seconds": 120.0,
+                "portal_site_active": False,
+            },
+        )(),
+        mutation_sleep=lambda _seconds: None,
+    )
 
     assert calls
     assert calls[0]["result_count"] == 60

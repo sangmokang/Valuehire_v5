@@ -384,7 +384,8 @@ class TestPausedMarkerNotDrownedByStderr:
 
 class TestReleaseRetry:
     def _worker(self, q, notes):
-        return FleetWorker("macmini", queue=q, runner=lambda p, t: ("요약 텍스트", 0),
+        done = '요약 텍스트\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}'
+        return FleetWorker("macmini", queue=q, runner=lambda p, t: (done, 0),
                            notifier=lambda j, t: notes.append(t))
 
     def test_일시_장애는_재시도로_흡수(self, monkeypatch):
@@ -457,5 +458,6 @@ class TestRunnerShapeGuard:
 
     def test_정상_3튜플과_2튜플은_그대로_동작(self):
         rel: list[str] = []
-        assert self._worker(lambda p, t: ("요약", "", 0), rel).run_once() == "done"
-        assert self._worker(lambda p, t: ("요약", 0), rel).run_once() == "done"
+        done = '요약\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}'
+        assert self._worker(lambda p, t: (done, "", 0), rel).run_once() == "done"
+        assert self._worker(lambda p, t: (done, 0), rel).run_once() == "done"

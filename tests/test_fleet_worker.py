@@ -24,6 +24,8 @@ from tools.multi_position_sourcing.fleet_worker import (
     parse_worker_output,
     sync_owner_agent_skills,
     validate_aisearch_receipt,
+    validate_humansearch_receipt,
+    validate_url_receipt,
 )
 
 
@@ -127,6 +129,32 @@ def test_url_prompt_has_executable_login_machine_and_pause_contract():
     assert "최대 1회" not in non_linkedin
 
 
+def test_capture_prompt_is_specific_to_each_skill() -> None:
+    aisearch = build_job_prompt(_job(skill="aisearch"))
+    humansearch = build_job_prompt(_job(skill="humansearch"))
+    url = build_job_prompt(_job(skill="url", account_key="portal:linkedin_rps"))
+    jdintake = build_job_prompt(_job(skill="jdintake"))
+
+    assert "--task ai-search --mode profile" in aisearch
+    assert "--task humansearch --mode profile" in humansearch
+    assert "--task url --mode evidence" in url
+    assert "--task ai-search" not in humansearch + url + jdintake
+    assert "capture-evidence" not in jdintake
+
+
+def test_claude_aisearch_contract_requires_structured_evidence() -> None:
+    import json
+
+    contract = json.loads(
+        (Path(__file__).resolve().parents[1]
+         / ".claude/skills/aisearch/candidate-output-contract.json").read_text(encoding="utf-8")
+    )
+    evidence = contract["schema"]["candidates"][0]["evidence"]
+    assert isinstance(evidence, dict)
+    assert evidence["task"] == "ai-search"
+    assert "evidence" in contract["required_fields"]
+
+
 def test_url_skill_keeps_one_login_attempt_and_security_stop_contract():
     skill = (Path(__file__).resolve().parents[1]
              / ".claude/skills/url/SKILL.md").read_text(encoding="utf-8")
@@ -136,16 +164,16 @@ def test_url_skill_keeps_one_login_attempt_and_security_stop_contract():
     assert "즉시 STOP" in skill
 
 
-def _receipt(*, pages=10, opened=2, saved=2):
+def _receipt(*, pages=10, opened=0, saved=0):
     channel = {
         "login_verified": True, "query_verified": True,
         "result_count_verified": True, "pages_visited": pages,
         "last_page_reached": False, "opened_profiles": opened,
-        "saved_receipts": saved, "candidates": [],
+        "saved_receipts": saved, "profile_evidence": [], "candidates": [],
     }
     import json
     return "FLEET_SEARCH_RECEIPT:" + json.dumps(
-        {"channels": {"saramin": channel, "jobkorea": dict(channel)}}
+        {"position_id": "position-1", "channels": {"saramin": channel, "jobkorea": dict(channel)}}
     )
 
 
@@ -158,15 +186,38 @@ def test_aisearch_completion_receipt_rejects_one_page_and_save_mismatch():
 
 def test_aisearch_completion_receipt_accepts_ten_pages_with_equal_saves():
     receipt = validate_aisearch_receipt(_receipt(), {})
-    assert receipt["channels"]["saramin"]["saved_receipts"] == 2
+    assert receipt["channels"]["saramin"]["saved_receipts"] == 0
 
 
-def test_aisearch_candidate_requires_complete_browser_evidence_receipt():
+def test_aisearch_candidate_requires_complete_browser_evidence_receipt(tmp_path: Path):
+    import base64
     import json
+    from types import SimpleNamespace
+
+    from tools.multi_position_sourcing.browser_evidence import capture_owned_browser_evidence
+    from tools.multi_position_sourcing.profile_archive_store import ProfileArchiveStore
+
+    profile_url = "https://www.saramin.co.kr/zf_user/member/resume-view?resume_idx=1"
+
+    class Tab:
+        target_id = "target-exact"
+
+        def eval(self, script: str):
+            return profile_url if script == "location.href" else "candidate resume"
+
+        def send(self, method: str, _params=None):
+            assert method == "Page.captureScreenshot"
+            return {
+                "data": base64.b64encode(
+                    base64.b64decode(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                    )
+                ).decode("ascii")
+            }
 
     candidate = {
         "candidate_name": "Candidate",
-        "profile_url": "https://www.saramin.co.kr/zf_user/member/resume-view?resume_idx=1",
+        "profile_url": profile_url,
         "channel": "saramin",
         "score": 90,
         "why_fit": ["backend"],
@@ -178,20 +229,42 @@ def test_aisearch_candidate_requires_complete_browser_evidence_receipt():
     payload = json.loads(_receipt(opened=1, saved=1).split(":", 1)[1])
     payload["channels"]["saramin"]["candidates"] = [candidate]
     with pytest.raises(ValueError, match="evidence"):
-        validate_aisearch_receipt("FLEET_SEARCH_RECEIPT:" + json.dumps(payload), {})
+        validate_aisearch_receipt(
+            "FLEET_SEARCH_RECEIPT:" + json.dumps(payload), {"channels": ["saramin"]}
+        )
 
-    candidate["evidence"] = {
-        "status": "saved",
-        "screenshot_path": "/private/capture.png",
-        "text_path": "/private/visible-text.txt",
-        "manifest_path": "/private/manifest.json",
-        "screenshot_sha256": "a" * 64,
-        "visible_text_sha256": "b" * 64,
-    }
+    evidence = capture_owned_browser_evidence(
+        Tab(),
+        site="saramin",
+        task="ai-search",
+        mode="profile",
+        expected_target_id="target-exact",
+        profile_url=profile_url,
+        position_id="position-1",
+        candidate_index=1,
+        mutation_guard=lambda: None,
+        auth_probe=lambda _tab, _site: SimpleNamespace(
+            authenticated=True,
+            challenge=False,
+            auth_conflict=False,
+            url=profile_url,
+            proof_names=("profile_detail",),
+        ),
+        root_dir=tmp_path / "evidence",
+        archive_store=ProfileArchiveStore(tmp_path / "archive" / "profiles.sqlite3"),
+    ).public_dict()
+    candidate["evidence"] = evidence
+    payload["channels"]["saramin"]["profile_evidence"] = [evidence]
     validated = validate_aisearch_receipt(
-        "FLEET_SEARCH_RECEIPT:" + json.dumps(payload), {}
+        "FLEET_SEARCH_RECEIPT:" + json.dumps(payload), {"channels": ["saramin"]}
     )
     assert validated["channels"]["saramin"]["candidates"][0]["saved"] is True
+
+    candidate["profile_url"] = profile_url.replace("resume_idx=1", "resume_idx=2")
+    with pytest.raises(ValueError, match="browser evidence"):
+        validate_aisearch_receipt(
+            "FLEET_SEARCH_RECEIPT:" + json.dumps(payload), {"channels": ["saramin"]}
+        )
 
 
 def test_build_job_prompt_fail_closed():
@@ -440,6 +513,63 @@ def _worker(queue, runner, notes):
     )
 
 
+def _human_done(summary: str = "후보 정리 완료") -> str:
+    return summary + '\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}'
+
+
+def _url_done(tmp_path: Path, summary: str = "링크드인 라이브서치 준비 완료") -> str:
+    import base64
+    import json
+    from types import SimpleNamespace
+
+    from tools.multi_position_sourcing.browser_evidence import capture_owned_browser_evidence
+
+    url = "https://www.linkedin.com/talent/search"
+
+    class Tab:
+        target_id = "target-url"
+
+        def eval(self, script: str):
+            return url if script == "location.href" else "LinkedIn Recruiter search results"
+
+        def send(self, method: str, _params=None):
+            assert method == "Page.captureScreenshot"
+            return {
+                "data": base64.b64encode(
+                    base64.b64decode(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                    )
+                ).decode("ascii")
+            }
+
+    receipt = capture_owned_browser_evidence(
+        Tab(),
+        site="linkedin_rps",
+        task="url",
+        mode="evidence",
+        expected_target_id="target-url",
+        mutation_guard=lambda: None,
+        auth_probe=lambda _tab, _site: SimpleNamespace(
+            authenticated=True,
+            challenge=False,
+            auth_conflict=False,
+            url=url,
+            proof_names=("recruiter_account",),
+        ),
+        root_dir=tmp_path / "url-evidence",
+    ).public_dict()
+    return summary + "\nURL_EVIDENCE_RECEIPT:" + json.dumps(receipt)
+
+
+def test_humansearch_and_url_receipts_are_mandatory(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="missing"):
+        validate_humansearch_receipt("완료")
+    with pytest.raises(ValueError, match="missing"):
+        validate_url_receipt("완료")
+    assert validate_humansearch_receipt(_human_done())["opened_profiles"] == 0
+    assert validate_url_receipt(_url_done(tmp_path))["task"] == "url"
+
+
 def test_run_once_idle_when_no_job():
     q = FakeQueue(None)
     notes = []
@@ -455,7 +585,7 @@ def test_run_once_done_path():
     calls = []
     def runner(prompt, timeout):
         calls.append(prompt)
-        return ("후보 5명 등록 완료", 0)
+        return (_human_done("후보 5명 등록 완료"), 0)
     w = _worker(q, runner, notes)
     assert w.run_once() == "done"
     assert len(calls) == 1 and "humansearch 스킬" in calls[0]
@@ -574,7 +704,7 @@ def test_loop_script_and_plist_exist():
 def test_run_once_start_notify_before_done():
     q = FakeQueue(_job())
     notes = []
-    w = _worker(q, lambda p, timeout: ("후보 5명 등록 완료", 0), notes)
+    w = _worker(q, lambda p, timeout: (_human_done("후보 5명 등록 완료"), 0), notes)
     assert w.run_once() == "done"
     assert len(notes) == 2, f"알림 2건(시작→완료) 기대: {notes}"
     start, final = notes[0][1], notes[1][1]
@@ -603,11 +733,11 @@ def test_run_once_dry_run_has_no_start_notify():
 
 # ── 이슈 A(2026-07-15 goal §1) — done release 시 followup_skill 1단계 체이닝 ──
 
-def test_done_release_enqueues_followup_once_without_propagation():
+def test_done_release_enqueues_followup_once_without_propagation(tmp_path: Path):
     job = _job(skill="url", params={"followup_skill": "aisearch"})
     q = FakeQueue(job)
     notes = []
-    w = _worker(q, lambda p, timeout: ("링크드인 라이브서치 준비 완료", 0), notes)
+    w = _worker(q, lambda p, timeout: (_url_done(tmp_path), 0), notes)
     assert w.run_once() == "done"
     assert len(q.enqueued) == 1, f"후속 잡 정확히 1건: {q.enqueued}"
     nxt = q.enqueued[0]
@@ -630,7 +760,7 @@ def test_failed_and_paused_release_do_not_enqueue_followup():
 
 def test_job_without_followup_never_enqueues():
     q = FakeQueue(_job())
-    w = _worker(q, lambda p, timeout: ("후보 5명 등록 완료", 0), [])
+    w = _worker(q, lambda p, timeout: (_human_done("후보 5명 등록 완료"), 0), [])
     assert w.run_once() == "done"
     assert q.enqueued == []
 
@@ -642,14 +772,14 @@ def test_default_report_channel_equals_owner_dm_channel():
     assert DEFAULT_REPORT_CHANNEL == DM_CHANNEL
 
 
-def test_followup_derives_new_idempotency_key_no_unique_collision():
+def test_followup_derives_new_idempotency_key_no_unique_collision(tmp_path: Path):
     """V1(Codex) 반증 수용 — 부모 잡의 idempotency_key 를 후속 잡이 그대로 복사하면
     fleet_job_idempotency 유니크 인덱스와 충돌해 후속 잡이 조용히 유실된다(회귀).
     후속 잡은 파생 키(부모키:followup:스킬)를 써야 하고, 형식 캡(160자)도 지켜야 한다."""
     job = _job(skill="url", params={
         "followup_skill": "aisearch", "idempotency_key": "discord:42"})
     q = FakeQueue(job)
-    w = _worker(q, lambda p, timeout: ("라이브서치 준비 완료", 0), [])
+    w = _worker(q, lambda p, timeout: (_url_done(tmp_path), 0), [])
     assert w.run_once() == "done"
     assert len(q.enqueued) == 1
     key = q.enqueued[0]["params"].get("idempotency_key")
@@ -658,25 +788,25 @@ def test_followup_derives_new_idempotency_key_no_unique_collision():
     assert len(key) <= 160
 
 
-def test_followup_idempotency_key_capped_at_160():
+def test_followup_idempotency_key_capped_at_160(tmp_path: Path):
     long_key = "k" * 155
     job = _job(skill="url", params={
         "followup_skill": "aisearch", "idempotency_key": long_key})
     q = FakeQueue(job)
-    w = _worker(q, lambda p, timeout: ("ok", 0), [])
+    w = _worker(q, lambda p, timeout: (_url_done(tmp_path, "ok"), 0), [])
     assert w.run_once() == "done"
     key = q.enqueued[0]["params"]["idempotency_key"]
     assert len(key) <= 160 and key != long_key
 
 
-def test_followup_invalid_skill_is_blocked_before_key_derivation():
+def test_followup_invalid_skill_is_blocked_before_key_derivation(tmp_path: Path):
     """V1 2R(minor) — 화이트리스트 밖 followup 은 키 파생 전에 차단(음수 슬라이스 원천 제거).
     비정상 값이어도 enqueue 0건 + 예외 없음(fail-closed)."""
     job = _job(skill="url", params={
         "followup_skill": "S" * 151, "idempotency_key": "P" * 200})
     q = FakeQueue(job)
     notes = []
-    w = _worker(q, lambda p, timeout: ("ok", 0), notes)
+    w = _worker(q, lambda p, timeout: (_url_done(tmp_path, "ok"), 0), notes)
     assert w.run_once() == "done"
     assert q.enqueued == []
     assert any("후속 스킬 무효" in t for _, t in notes)
@@ -690,7 +820,7 @@ def _capture_subprocess(monkeypatch):
     calls = []
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        return SimpleNamespace(stdout="후보 정리 완료", stderr="", returncode=0)
+        return SimpleNamespace(stdout=_human_done(), stderr="", returncode=0)
     monkeypatch.setattr(fw.subprocess, "run", fake_run)
     return calls
 
@@ -738,7 +868,7 @@ def test_injected_runner_wins_over_agent_param():
     prompts = []
     def runner(prompt, timeout):
         prompts.append(prompt)
-        return ("ok", 0)
+        return (_human_done("ok"), 0)
     w = _worker(q, runner, [])
     assert w.run_once() == "done"
     assert len(prompts) == 1
@@ -755,7 +885,7 @@ def test_falsy_injected_runner_still_wins(monkeypatch):
             return False
         def __call__(self, prompt, timeout):
             self.calls.append(prompt)
-            return ("ok", 0)
+            return (_human_done("ok"), 0)
 
     runner = FalsyRunner()
     q = FakeQueue(_job(params={"agent": "codex"}))
@@ -859,7 +989,7 @@ def test_default_runner_env_carries_busy_badge_claude(monkeypatch):
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["env"] = kwargs.get("env")
-        return SimpleNamespace(stdout="후보 정리 완료", stderr="", returncode=0)
+        return SimpleNamespace(stdout=_human_done(), stderr="", returncode=0)
     monkeypatch.setattr(fw.subprocess, "run", fake_run)
     q = FakeQueue(_job())
     w = FleetWorker(machine="macmini", queue=q, notifier=lambda job, text: None)
@@ -879,7 +1009,7 @@ def test_default_runner_env_busy_agent_codex(monkeypatch):
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         captured["env"] = kwargs.get("env")
-        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+        return SimpleNamespace(stdout=_human_done("ok"), stderr="", returncode=0)
     monkeypatch.setattr(fw.subprocess, "run", fake_run)
     q = FakeQueue(_job(params={"agent": "codex"}))
     w = FleetWorker(machine="macmini", queue=q, notifier=lambda job, text: None)
@@ -893,7 +1023,7 @@ def test_injected_runner_signature_unchanged_by_badge():
     # 주입 러너는 (prompt, timeout) 2인자 그대로 — 배지 주입은 기본 러너 한정
     q = FakeQueue(_job())
     prompts = []
-    w = _worker(q, lambda p, timeout: (prompts.append(p) or ("ok", 0)), [])
+    w = _worker(q, lambda p, timeout: (prompts.append(p) or (_human_done("ok"), 0)), [])
     assert w.run_once() == "done"
     assert len(prompts) == 1
 
@@ -1127,12 +1257,12 @@ def test_record_heartbeat_falls_back_to_legacy_rpc(monkeypatch):
     assert "p_linkedin_rps_logged_in" not in calls[1]
 
 
-def test_followup_uses_own_skill_account_key_not_parents_seat_lock():
+def test_followup_uses_own_skill_account_key_not_parents_seat_lock(tmp_path: Path):
     """url 부모(좌석 공유 락)의 후속 aisearch 는 자기 스킬 기본 키(portal:<machine>)를
     써야 한다 — LinkedIn 좌석 락을 불필요하게 잡으면 다른 링크드인 잡을 막는다."""
     job = _job(skill="url", params={"followup_skill": "aisearch"},
                account_key="portal:linkedin_rps")
     q = FakeQueue(job)
-    w = _worker(q, lambda p, timeout: ("준비 완료", 0), [])
+    w = _worker(q, lambda p, timeout: (_url_done(tmp_path, "준비 완료"), 0), [])
     assert w.run_once() == "done"
     assert q.enqueued[0]["account_key"] == "portal:macmini"

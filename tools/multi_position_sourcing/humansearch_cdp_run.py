@@ -20,6 +20,11 @@ from urllib.parse import parse_qs, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.multi_position_sourcing import raw_cdp as cdp
+from tools.multi_position_sourcing.browser_evidence import (
+    BrowserEvidenceError,
+    capture_owned_browser_evidence,
+    complete_evidence_payload,
+)
 from tools.multi_position_sourcing.harvest_policy import deterministic_delay_ms, worker_should_yield
 from tools.multi_position_sourcing.humansearch import (
     hard_exclude_reason,
@@ -36,7 +41,12 @@ from tools.multi_position_sourcing.models import (
     Position,
 )
 from tools.multi_position_sourcing.owner_activity import detect_owner_activity_snapshot
+from tools.multi_position_sourcing.portal_worker import (
+    ProfileLockError,
+    assert_raw_browser_mutation_allowed,
+)
 from tools.multi_position_sourcing.session_guard import _default_login_lease
+from tools.multi_position_sourcing.session_guard import read_auth_observation
 from tools.multi_position_sourcing.session_guard import resolve_existing_target
 
 SEARCH_URL_BASE = (
@@ -538,7 +548,7 @@ def process_cards_with_r4(
         snapshot = owner_snapshot() if callable(owner_snapshot) else owner_snapshot
         if owner_snapshot_should_yield(snapshot):
             log("R4 yield — owner Chrome activity detected; stopping profile traversal")
-            break
+            raise ProfileLockError("owner activity detected before profile traversal")
         try:
             _run_mutation_guard(mutation_guard)
             r = process_profile(
@@ -558,6 +568,14 @@ def process_cards_with_r4(
         except PreflightError as e:
             log(f"R4 STOP — live preflight failed during traversal: {e}")
             break
+        except BrowserEvidenceError as e:
+            log(f"R4 STOP — profile evidence was not saved: {e}")
+            _write_results(all_rows)
+            raise
+        except ProfileLockError as e:
+            log(f"R4 STOP — owner or browser lease blocked traversal: {e}")
+            _write_results(all_rows)
+            raise
         except Exception as e:
             log(f"  #{i} ERROR {card.get('name')}: {e}")
             _write_results(all_rows)
@@ -594,23 +612,27 @@ def process_profile(
     if not name or name.casefold() != expected_name.casefold():
         raise _profile_context_error("candidate identity mismatch after navigation")
     education = _clean(info.get("education", "")).replace("School name", "").strip()
-    safe = re.sub(r"[^A-Za-z0-9]+", "_", name)[:40] or f"cand{idx}"
-    shot = OUT_DIR / f"{idx:02d}_{safe}.png"
-    guard(tab)
-    _assert_current_profile_identity(tab, profile_url)
-    _run_mutation_guard(mutation_guard)
-    try:
-        tab.screenshot(str(shot))
-    except Exception as e:
-        shot.unlink(missing_ok=True)
-        raise RuntimeError("profile screenshot save failed; traversal must not advance") from e
-    try:
+    def evidence_guard() -> None:
         guard(tab)
         _assert_current_profile_identity(tab, profile_url)
         _run_mutation_guard(mutation_guard)
-    except Exception:
-        shot.unlink(missing_ok=True)
-        raise
+
+    evidence = capture_owned_browser_evidence(
+        tab,
+        site="linkedin_rps",
+        task="humansearch",
+        mode="profile",
+        expected_target_id=str(getattr(tab, "target_id", "") or ""),
+        profile_url=profile_url,
+        mutation_guard=evidence_guard,
+        auth_probe=read_auth_observation,
+        root_dir=OUT_DIR,
+        position_id=POSITION.position_id,
+        candidate_index=idx,
+    )
+    if not complete_evidence_payload(evidence.public_dict()):
+        raise BrowserEvidenceError("profile evidence receipt failed integrity validation")
+    shot = Path(evidence.screenshot_path)
     tenures = build_tenures(info.get("dates", []))
     prof = CapturedProfile(
         profile_url=profile_url,
@@ -627,14 +649,7 @@ def process_profile(
         evidence_paths=(str(shot),) if shot else (),
         employment_history=tenures,
     )
-    from tools.multi_position_sourcing.profile_archive_store import ProfileArchiveStore
-
     hard_exclude = runner_hard_exclude(prof)
-    receipt = ProfileArchiveStore().save(
-        profile_url=profile_url, channel="linkedin_rps", position_id=POSITION.position_id,
-        scenario="humansearch", page=1, candidate_index=idx, screenshot_path=shot,
-        resume_text=prof.visible_text, hard_exclude_reason=hard_exclude or "",
-    )
     match = None if hard_exclude else score_humansearch(prof, POSITION)
     return {
         "idx": idx,
@@ -652,7 +667,13 @@ def process_profile(
         "why_fit": list(match.why_fit) if match else [],
         "why_not": list(match.why_not) if match else [f"hard_exclude:{hard_exclude}"],
         "screenshot": str(shot),
-        "db_row_id": receipt.row_id,
+        "screenshot_path": str(shot),
+        "text_path": evidence.text_path,
+        "manifest_path": evidence.manifest_path,
+        "evidence_paths": [evidence.screenshot_path, evidence.text_path, evidence.manifest_path],
+        "evidence": evidence.public_dict(),
+        "db_row_id": evidence.archive_row_id,
+        "profile_archive_id": evidence.archive_row_id,
         "save_status": "saved",
         # 재채점용 원시 필드(채점 상수 변경 시 재오픈 없이 offline re-score 가능)
         "summary": prof.summary,
@@ -673,16 +694,21 @@ def main(
     target_id: str | None = None,
     lease_factory=None,
     target_resolver=None,
+    mutation_sleep=time.sleep,
 ) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
     lease.acquire()
     tab = None
     try:
-        mutation_guard = getattr(lease, "assert_owned", None)
-        if not callable(mutation_guard):
+        assert_owned = getattr(lease, "assert_owned", None)
+        if not callable(assert_owned):
             raise RuntimeError("LinkedIn profile lease cannot prove ownership")
-        mutation_guard()
+        mutation_guard = lambda: assert_raw_browser_mutation_allowed(
+            lease,
+            owner_snapshot=owner_snapshot,
+            sleep=mutation_sleep,
+        )
         t = resolve_exact_recruiter_target(
             target_id=target_id,
             target_resolver=target_resolver,
@@ -735,6 +761,17 @@ def main(
         passers = [r for r in results if r["score"] >= 70]
         log(f"=== DONE: {len(results) + len(excluded)} opened, {len(excluded)} hard-excluded, "
             f"{len(results)} scored, {len(passers)} passers(>=70) ===")
+        print(
+            "HUMANSEARCH_EVIDENCE_RECEIPT:"
+            + json.dumps(
+                {
+                    "opened_profiles": len(all_rows),
+                    "profile_evidence": [row["evidence"] for row in all_rows],
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
     finally:
         try:
             if tab is not None:

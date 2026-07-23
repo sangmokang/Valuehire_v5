@@ -48,3 +48,20 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
 ## 안전 불변식
 제안/메일 발송 자동 클릭 금지(SOT3) · 사장님 크롬 점유 시 양보 후 자동 재개(R4) ·
 캡차/차단 감지 시 STOP, 같은 URL 재네비게이션 반복 금지 · 보고는 한국어로 쉽게(SOT0).
+
+
+## 익스텐션 독립 화면·본문 자동 저장
+
+- 정식 `humansearch_cdp_run.py`는 프로필마다 화면 PNG·보이는 본문·manifest·로컬 DB 영수증을 자동 저장한 뒤에만 다음 후보로 진행한다. 익스텐션 저장 여부는 성공 조건이 아니다.
+- Claude-in-Chrome/MCP로 상세를 연 폴백 경로에서도 채점·다음 화면 이동 전에 동일한 정식 실행기를 호출한다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence \
+  --site <saramin|jobkorea|linkedin_rps> --agent <Claude|Codex> \
+  --task humansearch --mode profile --target-id <exact-target-id> \
+  --profile-url <full-profile-url> --position-id <position-id> --candidate-index <n>
+```
+
+- exit 0 JSON의 `capture_status=saved`, `screenshot_path`, `text_path`, `manifest_path`, 두 SHA-256과 archive row id를 results.json의 `evidence`에 넣는다.
+- 저장 실패·캡차·세션 충돌·로그인 소실·화면 변경이면 그 후보에서 순회를 중단한다. 저장 증거 없는 후보는 채점·ClickUp/Discord 등록 금지다.
+- 새 창·새 탭·브라우저 종료·target close는 0회이며, 종료 시 CDP WebSocket만 해제한다.

@@ -20,13 +20,29 @@
         "why_fit": ["string", "string (필수, 1~3개)"],
         "profile_summary": "string (필수, 2~4줄: 현직/이력·연차·핵심스택·학력)",
         "risk": "string (선택: 연차부족·해외거주·과시니어 등 확인필요)",
-        "evidence": "string (선택: 근거 경로/원문)"
+        "evidence": {
+          "status": "saved",
+          "site": "saramin|jobkorea|linkedin_rps",
+          "task": "ai-search",
+          "mode": "profile",
+          "profile_url": "후보 profile_url과 정확히 동일",
+          "position_id": "상위 position_id와 정확히 동일",
+          "candidate_index": "1 이상의 정수",
+          "screenshot_path": "private viewport.png 절대경로",
+          "text_path": "private visible-text.txt 절대경로",
+          "manifest_path": "private manifest.json 절대경로",
+          "screenshot_sha256": "64자리 SHA-256",
+          "visible_text_sha256": "64자리 SHA-256",
+          "archive_row_id": "1 이상의 로컬 DB 행 번호",
+          "archive_db_path": "private profile archive SQLite 절대경로"
+        }
       }
     ]
   },
-  "required_fields": ["profile_url", "score", "why_fit", "profile_summary"],
+  "required_fields": ["profile_url", "score", "why_fit", "profile_summary", "evidence"],
   "rules": [
-    "필수 4필드 누락 시 해당 후보는 전송 보류(점수만 있는 후보 금지).",
+    "필수 필드와 evidence 저장 영수증 누락 시 해당 후보는 전송 보류(점수만 있는 후보 금지).",
+    "evidence는 다른 후보·다른 채널·login/url 영수증 재사용 금지. 후보 URL·채널·position_id와 정확히 결합한다.",
     "발송(제안/메일/InMail)은 절대 자동 금지 — 이 계약은 '후보 리스트 전송'만.",
     "디스코드 전송 채널 기본값 = #ai_search (위 channel 정보).",
     "점수 85+ = 강력추천 표기, 70~84 = 후보, 70 미만은 리스트 제외 권장."
