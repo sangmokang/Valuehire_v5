@@ -47,7 +47,7 @@
     "duplicate_check_required": true,
     "duplicate_scope": ["position_parent_task", "candidate_profile_url_subtask"],
     "profile_save_evidence_required": true,
-    "profile_save_evidence_fields": ["screenshot", "screenshot_path", "evidence_paths", "archive_path", "saved_profile_path", "profile_archive_id", "sourcing_result_id", "db_row_id", "supabase_profile_archive_id"],
+    "profile_save_evidence_fields": ["evidence"],
     "candidate_subtask_required_fields": ["profile_url", "score", "why_fit", "profile_summary", "saved_profile_evidence"],
     "write_gate": "ClickUp create/update/comment 는 L3 외부 쓰기 — 사장님 현재 턴 명시 승인 전까지 dry-run. 단 duplicate check/read 는 등록 전 필수 회수 단계.",
     "fail_closed_on": ["wrong_list_id", "duplicate_check_missing", "profile_save_evidence_missing", "invalid_profile_url", "missing_profile_url", "missing_required_output_field"]

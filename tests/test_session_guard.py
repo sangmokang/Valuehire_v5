@@ -80,6 +80,29 @@ def test_auth_probe_returns_only_boolean_evidence_not_body_text() -> None:
     assert "text:" not in tab.script
     assert ".slice(0, 50000)" not in tab.script
     assert "bodyText" in tab.script  # evaluated inside the page; never returned
+    assert "folded.includes('로그아웃')" not in tab.script
+    assert "accountControls" in tab.script
+
+
+def test_resume_body_words_do_not_authenticate_without_account_controls() -> None:
+    class Tab:
+        def eval(self, _script: str):
+            return {
+                "url": "https://www.jobkorea.co.kr/corp/person/find/resume/view?rNo=2",
+                "hasChallenge": False,
+                "hasSessionConflict": False,
+                "hasLogout": False,
+                "hasValueConnect": False,
+                "saraminSearch": False,
+                "jobkoreaSearch": False,
+                "linkedinSearch": False,
+                "linkedinAccount": False,
+            }
+
+    observation = read_auth_observation(Tab(), "jobkorea")
+
+    assert observation.authenticated is False
+    assert "profile_detail" in observation.proof_names
 
 
 def test_linkedin_talent_projects_account_marker_is_authenticated_without_search_link() -> None:

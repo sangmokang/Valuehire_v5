@@ -1,14 +1,18 @@
 """Production wiring for exact-target HUMAN_AUTH and safe keepalive."""
 from __future__ import annotations
 
+import base64
 import errno
 import json
 import os
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tools.multi_position_sourcing import portal_worker
+from tools.multi_position_sourcing.browser_evidence import capture_owned_browser_evidence
 from tools.multi_position_sourcing.session_guard import (
     AuthObservation,
     BrowserTargetRef,
@@ -100,7 +104,16 @@ class _Tab:
                     }
                 }
             }
+        if method == "Page.captureScreenshot":
+            return {"data": base64.b64encode(_PNG_1X1).decode("ascii")}
         raise AssertionError(method)
+
+    def eval(self, script: str):
+        if script == "location.href":
+            return "https://www.linkedin.com/talent/home"
+        if "document.body" in script:
+            return "LinkedIn Recruiter authenticated home"
+        return None
 
 
 def _increasing_owner(trace: list[str]):
@@ -135,6 +148,42 @@ def _authenticated(_tab: object, _site: str) -> AuthObservation:
         url="https://www.linkedin.com/talent/home",
         proof_names=("talent_surface", "recruiter_account"),
     )
+
+
+_PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
+
+def _saved_login_evidence(*args, **kwargs):
+    kwargs["root_dir"] = Path(tempfile.mkdtemp(prefix="valuehire-login-evidence-test-"))
+    kwargs["auth_probe"] = _authenticated
+    return capture_owned_browser_evidence(*args, **kwargs)
+
+
+def test_human_auth_rejects_saved_label_without_real_evidence_files() -> None:
+    trace: list[str] = []
+    result = run_human_auth_episode(
+        "linkedin_rps",
+        agent="Codex",
+        stop_requested=lambda: False,
+        owner_snapshot=_increasing_owner(trace),
+        mutation_sleep=lambda _seconds: None,
+        wait_sleep=lambda _seconds: None,
+        _lease_factory=lambda _site: _Lease(trace),
+        _target_resolver=lambda *_args, **_kwargs: _ref(),
+        _tab_attacher=lambda *_args, **_kwargs: _Tab(trace),
+        _auth_reader=_authenticated,
+        _evidence_capture=lambda *_args, **_kwargs: {
+            "status": "saved",
+            "capture_status": "saved",
+            "task": "login",
+            "mode": "evidence",
+        },
+    )
+
+    assert result["status"] == "evidence_failed"
+    assert result["capture_status"] == "failed"
 
 
 def test_human_auth_runner_holds_lease_emits_locator_and_disconnects_only() -> None:
@@ -210,9 +259,12 @@ def test_human_auth_runner_holds_lease_emits_locator_and_disconnects_only() -> N
         _presenter=present,
         _auth_waiter=wait,
         _cleanup=lambda *_args, **_kwargs: {"status": "cleanup_not_needed"},
+        _evidence_capture=_saved_login_evidence,
     )
 
-    assert result["status"] == "authenticated"
+    assert result["status"] == "authenticated", result
+    assert result["capture_status"] == "saved"
+    assert result["evidence"]["task"] == "login"
     assert trace[0] == "lease.acquire"
     assert trace.index("resolve:linkedin_rps:target-exact") < trace.index("attach:target-exact:False")
     assert trace.index("tab.disconnect") < trace.index("lease.release")
@@ -291,6 +343,7 @@ def test_human_auth_runner_waits_for_lease_conflict_without_browser_action() -> 
         _target_resolver=lambda _site, **_kwargs: trace.append("resolve") or _ref(),
         _tab_attacher=lambda *_args, **_kwargs: trace.append("attach") or _Tab(trace),
         _auth_reader=_authenticated,
+        _evidence_capture=_saved_login_evidence,
     )
 
     assert result["status"] == "authenticated"
@@ -395,10 +448,12 @@ def test_human_auth_production_detector_uses_fifteen_second_quiet_threshold(
         ),
         _auth_waiter=waiter,
         _cleanup=lambda *_args, **_kwargs: {"status": "cleanup_ok"},
+        _evidence_capture=_saved_login_evidence,
     )
 
     assert result["status"] == "authenticated"
-    assert thresholds[-1] == 15.0
+    assert 15.0 in thresholds
+    assert "auth-threshold:15.0" in trace
 
 
 def test_human_auth_later_presentation_gate_waits_read_only_then_resumes() -> None:
@@ -411,11 +466,23 @@ def test_human_auth_later_presentation_gate_waits_read_only_then_resumes() -> No
             (True, 0.0),
             (False, 180.0),
             (False, 181.0),
+            (False, 182.0),
+            (False, 183.0),
+            (False, 184.0),
+            (False, 185.0),
+            (False, 186.0),
+            (False, 187.0),
         ]
     )
+    fallback_idle = 187.0
 
     def owner():
-        active, idle = next(snapshots)
+        nonlocal fallback_idle
+        try:
+            active, idle = next(snapshots)
+        except StopIteration:
+            fallback_idle += 1.0
+            active, idle = False, fallback_idle
         return SimpleNamespace(
             owner_activity_detected=active,
             idle_seconds=idle,
@@ -445,9 +512,10 @@ def test_human_auth_later_presentation_gate_waits_read_only_then_resumes() -> No
         _presenter=presenter,
         _auth_waiter=lambda **_kwargs: _authenticated(None, "linkedin_rps"),
         _cleanup=lambda *_args, **_kwargs: {"status": "cleanup_ok"},
+        _evidence_capture=_saved_login_evidence,
     )
 
-    assert result["status"] == "authenticated"
+    assert result["status"] == "authenticated", result
     assert "wait:5.0" in trace
     assert trace.index("wait:5.0") < trace.index("present.mutated")
 
@@ -1121,7 +1189,7 @@ def test_cli_exposes_and_dispatches_real_human_auth_subcommand(monkeypatch, caps
 
     def run(site: str, *, agent: str, target_id: str | None, **_kwargs: object):
         calls.append((site, agent, target_id))
-        return {"status": "authenticated", "site": site}
+        return {"status": "authenticated", "capture_status": "saved", "site": site}
 
     monkeypatch.setattr(
         "tools.multi_position_sourcing.session_guard.run_human_auth_episode",

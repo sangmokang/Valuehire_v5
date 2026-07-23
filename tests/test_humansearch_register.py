@@ -17,6 +17,7 @@ import sys
 
 import pytest
 
+from tools.multi_position_sourcing import humansearch_register as register_module
 from tools.multi_position_sourcing.humansearch import hard_exclude_reason
 from tools.multi_position_sourcing.humansearch_register import (
     FY26_AI_SEARCH_LIST_ID,
@@ -62,6 +63,24 @@ def _runner_dict(**over) -> dict:
     return d
 
 
+def _with_structured_evidence(
+    candidate: dict, *, position_id: str = "86abc", channel: str = "linkedin_rps"
+) -> dict:
+    result = dict(candidate)
+    result["evidence"] = {
+        "status": "saved",
+        "capture_status": "saved",
+        "site": channel,
+        "task": "humansearch",
+        "mode": "profile",
+        "profile_url": result["url"],
+        "position_id": position_id,
+        "manifest_path": "/private/valuehire-test/manifest.json",
+        "screenshot_sha256": "a" * 64,
+    }
+    return result
+
+
 _ESCAPED_SHORT_HISTORY = [
     {"company": "FreelancerCoin", "start_month": "2017-11", "end_month": "2018-06"},
     {"company": "tutto", "start_month": "2017-06", "end_month": "2018-03"},
@@ -102,7 +121,7 @@ def _hook_event(
 def test_candidate_spec_hook_blocks_escaped_short_tenure_for_both_engines(
     model: str, tool_name: str, description_key: str
 ) -> None:
-    escaped = _runner_dict(
+    escaped = _with_structured_evidence(_runner_dict(
         name="DongJun Kwon",
         url="https://www.linkedin.com/talent/profile/escaped-short-tenure",
         score=87,
@@ -114,7 +133,7 @@ def test_candidate_spec_hook_blocks_escaped_short_tenure_for_both_engines(
             "Aug 2016 – Nov 2016",
         ),
         employment_history=_ESCAPED_SHORT_HISTORY,
-    )
+    ), position_id="bist-pool")
     description = _candidate_task_description(
         escaped, position_id="bist-pool", channel="linkedin_rps"
     )
@@ -198,7 +217,7 @@ def test_candidate_spec_hook_fails_closed_on_exact_manual_bypass_shape() -> None
 
 
 def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None:
-    partial = _runner_dict(
+    partial = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/partial-history",
         visible_text=_linkedin_raw(
             "Nov 2017 – Jun 2018",
@@ -209,7 +228,7 @@ def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None
         employment_history=[
             {"company": "Stable", "start_month": "2019-01", "end_month": "2024-01"},
         ],
-    )
+    ), position_id="position-1")
     event = _hook_event(
         model="gpt-5.6",
         tool_name="mcp__clickup__clickup_create_task",
@@ -233,7 +252,7 @@ def test_candidate_spec_hook_rejects_history_omitted_from_source_dates() -> None
 def test_candidate_spec_hook_rejects_partial_history_in_all_source_formats(
     channel: str, visible_text: str
 ) -> None:
-    partial = _runner_dict(
+    partial = _with_structured_evidence(_runner_dict(
         url="https://www.jobkorea.co.kr/profile/partial" if channel == "jobkorea" else
             "https://www.linkedin.com/talent/profile/full-month-partial",
         visible_text=visible_text,
@@ -242,7 +261,7 @@ def test_candidate_spec_hook_rejects_partial_history_in_all_source_formats(
             if channel == "jobkorea" else
             {"company": "Stable", "start_month": "2010-01", "end_month": "2020-01"},
         ],
-    )
+    ), position_id="position-1", channel=channel)
     event = _hook_event(
         model="gpt-5.6",
         tool_name="mcp__clickup__clickup_create_task",
@@ -252,14 +271,14 @@ def test_candidate_spec_hook_rejects_partial_history_in_all_source_formats(
 
 
 def test_candidate_spec_hook_rejects_reversed_tenure_ranges() -> None:
-    invalid = _runner_dict(
+    invalid = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/reversed",
         visible_text=_linkedin_raw("Dec 2023 – Jan 2023", "Jun 2024 – Mar 2024"),
         employment_history=[
             {"company": "A", "start_month": "2023-12", "end_month": "2023-01"},
             {"company": "B", "start_month": "2024-06", "end_month": "2024-03"},
         ],
-    )
+    ), position_id="position-1")
     event = _hook_event(
         model="gpt-5.6",
         tool_name="mcp__clickup__clickup_create_task",
@@ -267,13 +286,13 @@ def test_candidate_spec_hook_rejects_reversed_tenure_ranges() -> None:
     )
     assert candidate_spec_hook_cli(json.dumps(event)) == (2, "candidate_history_invalid")
 
-    bad_month = _runner_dict(
+    bad_month = _with_structured_evidence(_runner_dict(
         url="https://www.jobkorea.co.kr/profile/bad-month",
         visible_text="경력\n2023.00 ~ 2023.05",
         employment_history=[
             {"company": "A", "start_month": "2023-00", "end_month": "2023-05"},
         ],
-    )
+    ), position_id="position-1", channel="jobkorea")
     bad_month_event = _hook_event(
         model="gpt-5.6",
         tool_name="mcp__clickup__clickup_create_task",
@@ -283,7 +302,7 @@ def test_candidate_spec_hook_rejects_reversed_tenure_ranges() -> None:
 
 
 def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() -> None:
-    clean = _runner_dict(
+    clean = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/stable-candidate",
         visible_text=_linkedin_raw(
             "Jan 2019 – Jan 2024",
@@ -293,7 +312,7 @@ def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() 
             {"company": "Stable", "start_month": "2019-01", "end_month": "2024-01"},
             {"company": "Current", "start_month": "2024-01", "end_month": ""},
         ],
-    )
+    ), position_id="position-1")
     candidate_event = _hook_event(
         model="gpt-5.6",
         tool_name="mcp__clickup__clickup_create_task",
@@ -336,7 +355,7 @@ def test_candidate_spec_hook_allows_clean_canonical_candidate_and_parent_task() 
 
 
 def test_candidate_spec_hook_deduplicates_titles_and_excludes_current_tenure() -> None:
-    edge = _runner_dict(
+    edge = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/date-edge",
         visible_text=_linkedin_raw(
             "Jan 2023 – Jun 2023",
@@ -350,7 +369,7 @@ def test_candidate_spec_hook_deduplicates_titles_and_excludes_current_tenure() -
             {"company": "Twelve months", "start_month": "2020-01", "end_month": "2021-01"},
             {"company": "Current", "start_month": "2024-01", "end_month": ""},
         ],
-    )
+    ), position_id="position-1")
     event = _hook_event(
         model="gpt-5.6",
         tool_name="mcp__clickup__clickup_update_task",
@@ -649,45 +668,64 @@ class _FakeClickUp:
         return {"id": task_id, "url": f"https://app.clickup.com/t/{task_id}"}
 
 
-def test_clickup_registration_eligible_requires_saved_profile_evidence() -> None:
+def test_clickup_registration_eligible_requires_saved_profile_evidence(monkeypatch) -> None:
     """ClickUp 등록은 프로필 저장 증거가 있는 후보만 통과 — 단순 URL/점수 통과와 분리."""
-    saved = _runner_dict(screenshot="/tmp/profile.png")
+    saved = _with_structured_evidence(
+        _runner_dict(url="https://www.linkedin.com/talent/profile/saved")
+    )
     unsaved = _runner_dict(url="https://www.linkedin.com/in/not-saved")
-    unsaved.pop("screenshot", None)
-    unsaved.pop("evidence_paths", None)
+    forged = _runner_dict(
+        url=saved["url"], screenshot="/tmp/profile.png", db_row_id="row-1"
+    )
 
-    assert has_saved_profile_evidence(saved) is True
-    assert has_saved_profile_evidence(unsaved) is False
-    assert clickup_registration_eligible([saved, unsaved], "linkedin_rps") == [saved]
+    monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: False)
+    assert has_saved_profile_evidence(
+        saved, channel="linkedin_rps", position_id="86abc"
+    ) is False
+    monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
+    assert has_saved_profile_evidence(
+        saved, channel="linkedin_rps", position_id="86abc"
+    ) is True
+    assert has_saved_profile_evidence(
+        unsaved, channel="linkedin_rps", position_id="86abc"
+    ) is False
+    assert has_saved_profile_evidence(
+        forged, channel="linkedin_rps", position_id="86abc"
+    ) is False
+    assert clickup_registration_eligible(
+        [saved, unsaved], "linkedin_rps", position_id="86abc"
+    ) == [saved]
 
 
-def test_clickup_registration_eligible_requires_output_contract_fields() -> None:
+def test_clickup_registration_eligible_requires_output_contract_fields(monkeypatch) -> None:
     """Subtask 후보는 profile_url·score·why_fit·profile_summary 계약을 만족해야 한다."""
-    base = _runner_dict(
+    base = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/abc",
         score=91,
         why_fit=["직무 직결"],
         summary="프로필 요약",
-        screenshot="/tmp/profile.png",
-    )
+    ))
     no_why_fit = dict(base, url="https://www.linkedin.com/talent/profile/no-why", why_fit=[])
     no_summary = dict(base, url="https://www.linkedin.com/talent/profile/no-summary", summary="")
 
     assert has_required_candidate_output_fields(base) is True
     assert has_required_candidate_output_fields(no_why_fit) is False
     assert has_required_candidate_output_fields(no_summary) is False
-    assert clickup_registration_eligible([base, no_why_fit, no_summary], "linkedin_rps") == [base]
+    monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
+    assert clickup_registration_eligible(
+        [base, no_why_fit, no_summary], "linkedin_rps", position_id="86abc"
+    ) == [base]
 
 
-def test_clickup_fy26_registration_checks_duplicates_before_creating_tasks() -> None:
+def test_clickup_fy26_registration_checks_duplicates_before_creating_tasks(monkeypatch) -> None:
     """부모 Task 와 후보 profile_url Subtask 를 먼저 검색한 뒤 FY26AI_Search 리스트에만 생성."""
     fake = _FakeClickUp()
-    candidate = _runner_dict(
+    candidate = _with_structured_evidence(_runner_dict(
         name="홍길동",
         url="https://www.linkedin.com/talent/profile/abc",
         score=91,
-        screenshot="/tmp/profile.png",
-    )
+    ))
+    monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
 
     plan = register_clickup_fy26_ai_search(
         position_name="Acme Backend",
@@ -712,14 +750,14 @@ def test_clickup_fy26_registration_checks_duplicates_before_creating_tasks() -> 
     assert candidate["url"] in fake.creates[1][2]
 
 
-def test_clickup_fy26_registration_skips_duplicate_candidate_subtask() -> None:
+def test_clickup_fy26_registration_skips_duplicate_candidate_subtask(monkeypatch) -> None:
     """같은 부모 아래 이미 profile_url 이 있으면 후보 Subtask 를 새로 만들지 않는다."""
-    candidate = _runner_dict(
+    candidate = _with_structured_evidence(_runner_dict(
         name="홍길동",
         url="https://www.linkedin.com/talent/profile/dup",
         score=88,
-        screenshot="/tmp/profile.png",
-    )
+    ))
+    monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
     fake = _FakeClickUp(duplicate_profile_urls={candidate["url"]})
 
     plan = register_clickup_fy26_ai_search(
@@ -751,14 +789,14 @@ def test_clickup_fy26_registration_requires_duplicate_checker() -> None:
         )
 
 
-def test_clickup_fy26_registration_dry_run_never_creates_tasks() -> None:
+def test_clickup_fy26_registration_dry_run_never_creates_tasks(monkeypatch) -> None:
     """dry-run 은 중복검사만 하고 create_task 를 호출하지 않는다."""
     fake = _FakeClickUp()
-    candidate = _runner_dict(
+    candidate = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/dry",
         score=82,
-        screenshot="/tmp/profile.png",
-    )
+    ))
+    monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
 
     plan = register_clickup_fy26_ai_search(
         position_name="Acme Backend",
@@ -809,9 +847,14 @@ def test_clickup_fy26_registration_live_requires_parent_task_id() -> None:
         )
 
 
-def test_profile_save_evidence_fields_include_db_and_supabase_ids() -> None:
-    """DB/Supabase 저장 id 도 SOT 의 프로필 저장 증거 필드로 인정된다."""
-    assert "sourcing_result_id" in PROFILE_SAVE_EVIDENCE_FIELDS
-    assert "db_row_id" in PROFILE_SAVE_EVIDENCE_FIELDS
-    assert has_saved_profile_evidence(_runner_dict(screenshot="", sourcing_result_id="src-1")) is True
-    assert has_saved_profile_evidence(_runner_dict(screenshot="", db_row_id="row-1")) is True
+def test_profile_save_evidence_contract_requires_structured_receipt() -> None:
+    """스크린샷 경로나 DB id 단독 값은 더 이상 등록 증거가 아니다."""
+    assert PROFILE_SAVE_EVIDENCE_FIELDS == ("evidence",)
+    for forged in (
+        _runner_dict(screenshot="/tmp/profile.png"),
+        _runner_dict(sourcing_result_id="src-1"),
+        _runner_dict(db_row_id="row-1"),
+    ):
+        assert has_saved_profile_evidence(
+            forged, channel="linkedin_rps", position_id="86abc"
+        ) is False

@@ -132,11 +132,12 @@ _SITE_TARGET_PATH_PREFIXES: dict[Site, tuple[str, ...]] = {
     "saramin": (
         "/zf_user/memcom/talent-pool/",
         "/zf_user/member/resume-view",
+        "/applicant-view/position/resume/",
         "/zf_user/auth",
         "/zf_user/company-viewer/certification",
     ),
     "jobkorea": (
-        "/corp/person/find",
+        "/corp/person/",
         "/login/",
         "/searchfirm/",
         "/recruit/co_read",
@@ -150,6 +151,21 @@ _SITE_TARGET_PATH_PREFIXES: dict[Site, tuple[str, ...]] = {
         "/enterprise-authentication/",
         "/authwall",
     ),
+}
+_SITE_AUTHENTICATED_PROFILE_PREFIXES: dict[Site, tuple[str, ...]] = {
+    "saramin": (
+        "/zf_user/member/resume-view",
+        "/applicant-view/position/resume/",
+    ),
+    "jobkorea": (
+        "/corp/person/find/resume/view",
+        "/corp/person/detail",
+        "/corp/person/view",
+        "/person/",
+        "/searchfirm/",
+        "/recruit/co_read",
+    ),
+    "linkedin_rps": ("/talent/profile/",),
 }
 _SITE_PROFILE_ENV: dict[Site, str] = {
     "saramin": "SARAMIN_PROFILE",
@@ -516,6 +532,18 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
   });
   const bodyText = document.body && document.body.innerText || '';
   const folded = bodyText.toLowerCase();
+  const accountControls = [
+    ...document.querySelectorAll(
+      'header a, header button, nav a, nav button, [class*="gnb"] a, [class*="gnb"] button, '
+      + '[class*="header"] a, [class*="header"] button, [class*="account"], [class*="user"]'
+    )
+  ].filter((e) => {
+    const s = getComputedStyle(e); const r = e.getBoundingClientRect();
+    return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0' && r.width > 0 && r.height > 0;
+  });
+  const accountText = accountControls.map((e) =>
+    `${e.innerText || e.textContent || ''} ${e.getAttribute('aria-label') || ''}`
+  ).join(' ').toLowerCase();
   const path = location.pathname.toLowerCase();
   const sessionConflictPath = /\/enterprise-authentication\/sessions(\/|$)/.test(path);
   const enterpriseChallengePath = /\/enterprise-authentication\//.test(path) && !sessionConflictPath;
@@ -531,8 +559,8 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     url: location.href,
     hasChallenge: challengePath || challengeControl || challengePhrase,
     hasSessionConflict: sessionConflictPath || sessionConflictPhrase,
-    hasLogout: folded.includes('로그아웃') || folded.includes('log out'),
-    hasValueConnect: folded.includes('valueconnect') || folded.includes('value connect') || bodyText.includes('밸류커넥트'),
+    hasLogout: accountText.includes('로그아웃') || accountText.includes('log out'),
+    hasValueConnect: accountText.includes('valueconnect') || accountText.includes('value connect') || accountText.includes('밸류커넥트'),
     saraminSearch: !!document.querySelector('input.search_input') && !!document.querySelector('#career_min') && !!document.querySelector('#career_max'),
     jobkoreaSearch: !!document.querySelector("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"),
     linkedinSearch: visible('a[href*="/talent/search"]'),
@@ -550,6 +578,13 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     )
     proofs: list[str] = []
     authenticated = False
+    try:
+        path = urlsplit(url).path.casefold()
+    except ValueError:
+        path = ""
+    profile_detail = _official_site_url(site, url) and any(
+        path.startswith(prefix) for prefix in _SITE_AUTHENTICATED_PROFILE_PREFIXES[site]
+    )
     if auth_conflict:
         proofs.append("session_conflict")
     elif site == "saramin":
@@ -559,7 +594,9 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
             proofs.append("account_or_logout")
         if search:
             proofs.append("talent_search_controls")
-        authenticated = bool(account and search and _official_site_url(site, url))
+        if profile_detail:
+            proofs.append("profile_detail")
+        authenticated = bool(account and (search or profile_detail) and _official_site_url(site, url))
     elif site == "jobkorea":
         logout = raw.get("hasLogout") is True
         account = raw.get("hasValueConnect") is True
@@ -568,7 +605,11 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
             proofs.append("logout_and_account")
         if search:
             proofs.append("talent_search_controls")
-        authenticated = bool(logout and account and search and _official_site_url(site, url))
+        if profile_detail:
+            proofs.append("profile_detail")
+        authenticated = bool(
+            logout and account and (search or profile_detail) and _official_site_url(site, url)
+        )
     elif site == "linkedin_rps":
         surface = _official_site_url(site, url) and urlsplit(url).path.casefold().startswith("/talent/")
         account = raw.get("linkedinAccount") is True
@@ -1523,6 +1564,7 @@ def run_human_auth_episode(
     _presenter: Callable[..., LoginWindowLocator] | None = None,
     _auth_waiter: Callable[..., AuthObservation | None] | None = None,
     _cleanup: Callable[..., dict[str, Any]] | None = None,
+    _evidence_capture: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Run one exact existing-target auth handoff without creating browser state."""
     if site not in _SITE_DOMAINS:
@@ -1540,6 +1582,11 @@ def run_human_auth_episode(
     else:
         mutation_owner_snapshot = owner_snapshot
         auth_owner_snapshot = owner_snapshot
+    from .browser_evidence import (
+        BrowserEvidenceError,
+        capture_owned_browser_evidence,
+        complete_evidence_payload,
+    )
     from .portal_worker import assert_raw_browser_mutation_allowed
 
     lease_factory = _lease_factory or _default_login_lease
@@ -1549,6 +1596,7 @@ def run_human_auth_episode(
     presenter = _presenter or present_exact_login_window_once
     waiter = _auth_waiter or wait_for_human_auth
     cleanup = _cleanup or cleanup_exact_login_presentation
+    evidence_capture = _evidence_capture or capture_owned_browser_evidence
     stop = stop_requested or (lambda: False)
     sink = locator_sink or (lambda _payload: None)
     lease = lease_factory(site)
@@ -1570,6 +1618,70 @@ def run_human_auth_episode(
             owner_snapshot=mutation_owner_snapshot,
             sleep=mutation_sleep,
         )
+
+        def authenticated_with_evidence(
+            observation: AuthObservation,
+            *,
+            already_authenticated: bool,
+            extra: Mapping[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            if not _wait_for_initial_mutation_gate(
+                mutation_gate,
+                stop_requested=stop,
+                sleep=wait_sleep,
+            ):
+                return {"status": "human_auth_stopped", "site": site}
+            try:
+                evidence_receipt = evidence_capture(
+                    tab,
+                    site=site,
+                    task="login",
+                    mode="evidence",
+                    expected_target_id=ref.target_id,
+                    mutation_guard=mutation_gate,
+                    auth_probe=auth_reader,
+                )
+            except BrowserEvidenceError as exc:
+                return {
+                    "status": "evidence_failed",
+                    "capture_status": "failed",
+                    "site": site,
+                    "reason": str(exc),
+                }
+            if hasattr(evidence_receipt, "public_dict"):
+                evidence_payload = evidence_receipt.public_dict()
+            elif isinstance(evidence_receipt, Mapping):
+                evidence_payload = dict(evidence_receipt)
+            else:
+                return {
+                    "status": "evidence_failed",
+                    "capture_status": "failed",
+                    "site": site,
+                    "reason": "login evidence receipt is invalid",
+                }
+            if (
+                evidence_payload.get("status") != "saved"
+                or evidence_payload.get("capture_status", "saved") != "saved"
+                or not complete_evidence_payload(evidence_payload)
+            ):
+                return {
+                    "status": "evidence_failed",
+                    "capture_status": "failed",
+                    "site": site,
+                    "reason": "login evidence receipt is not saved",
+                }
+            result: dict[str, Any] = {
+                "status": "authenticated",
+                "capture_status": evidence_payload.get("capture_status", evidence_payload.get("status")),
+                "site": site,
+                "already_authenticated": already_authenticated,
+                "auth_url": _sanitize_locator_url(observation.url),
+                "proof_names": list(observation.proof_names),
+                "evidence": evidence_payload,
+            }
+            if extra:
+                result.update(extra)
+            return result
         # Attach itself is read-only, but the gate here ensures a user who is
         # actively driving this exact managed browser is never even shadowed.
         # HUMAN_ACTIVE is a read-only wait state, not a terminal error.
@@ -1595,13 +1707,10 @@ def run_human_auth_episode(
         ):
             return _terminal_auth_conflict_result(site, initial_auth)
         if _auth_matches(initial_auth, ref.initial_url):
-            return {
-                "status": "authenticated",
-                "site": site,
-                "already_authenticated": True,
-                "auth_url": _sanitize_locator_url(initial_auth.url),
-                "proof_names": list(initial_auth.proof_names),
-            }
+            return authenticated_with_evidence(
+                initial_auth,
+                already_authenticated=True,
+            )
 
         if stop():
             return {"status": "human_auth_stopped", "site": site}
@@ -1669,15 +1778,11 @@ def run_human_auth_episode(
             locator,
             mutation_gate=mutation_gate,
         )
-        return {
-            "status": "authenticated",
-            "site": site,
-            "already_authenticated": False,
-            "auth_url": _sanitize_locator_url(observation.url),
-            "proof_names": list(observation.proof_names),
-            "window": public_locator,
-            "cleanup": cleanup_result,
-        }
+        return authenticated_with_evidence(
+            observation,
+            already_authenticated=False,
+            extra={"window": public_locator, "cleanup": cleanup_result},
+        )
     finally:
         if (
             tab is not None
@@ -1912,6 +2017,157 @@ def run_safe_keepalive_episode(
         lease.release()
 
 
+def run_capture_evidence_episode(
+    site: Site,
+    *,
+    task: str,
+    mode: Literal["profile", "evidence"],
+    agent: str,
+    target_id: str,
+    profile_url: str = "",
+    position_id: str = "",
+    candidate_index: int = 0,
+    owner_snapshot: Callable[[], Any] | None = None,
+    mutation_sleep: Callable[[float], None] = time.sleep,
+    wait_sleep: Callable[[float], None] = time.sleep,
+    _lease_factory: Callable[[Site], Any] | None = None,
+    _target_resolver: Callable[..., BrowserTargetRef] | None = None,
+    _tab_attacher: Callable[..., Any] | None = None,
+    _auth_reader: Callable[[Any, Site], AuthObservation] | None = None,
+    _capture: Callable[..., Any] | None = None,
+    _root_dir: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    """Save one stable screen/text receipt from an exact existing target.
+
+    Discovery, the owner-idle barrier, lease lifetime, exact-target attach, and
+    WebSocket-only teardown are identical for Claude, Codex, and Hermes.  The
+    capture core receives the live guard instead of accepting caller-asserted
+    safety strings.
+    """
+
+    if site not in _SITE_DOMAINS:
+        raise ValueError(f"unsupported login site: {site!r}")
+    if mode not in {"profile", "evidence"}:
+        raise ValueError(f"unsupported evidence mode: {mode!r}")
+    expected_mode = {
+        "ai-search": "profile",
+        "humansearch": "profile",
+        "url": "evidence",
+        "login": "evidence",
+    }.get(task)
+    if expected_mode != mode:
+        raise ValueError(f"unsupported browser evidence task/mode: {task!r}/{mode!r}")
+    clean_agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-.")[:24]
+    if not clean_agent:
+        raise ValueError("agent label is required for browser evidence")
+    wanted_target = str(target_id or "").strip()
+    if not wanted_target:
+        raise ValueError("exact target id is required for browser evidence")
+    if owner_snapshot is None:
+        from .owner_activity import detect_owner_activity_snapshot
+
+        owner_snapshot = detect_owner_activity_snapshot
+    from .browser_evidence import (
+        BrowserEvidenceError,
+        capture_owned_browser_evidence,
+        complete_evidence_payload,
+    )
+    from .portal_worker import assert_raw_browser_mutation_allowed
+
+    lease_factory = _lease_factory or _default_login_lease
+    resolver = _target_resolver or resolve_existing_target
+    attacher = _tab_attacher or _attach_exact_ref
+    auth_reader = _auth_reader or read_auth_observation
+    capture = _capture or capture_owned_browser_evidence
+    lease = lease_factory(site)
+    tab: Any | None = None
+    try:
+        _acquire_login_lease_read_only(
+            lease,
+            stop_requested=lambda: False,
+            sleep=wait_sleep,
+        )
+        ref = resolver(site, target_id=wanted_target)
+        mutation_guard = lambda: assert_raw_browser_mutation_allowed(
+            lease,
+            owner_snapshot=owner_snapshot,
+            sleep=mutation_sleep,
+        )
+        if not _wait_for_initial_mutation_gate(
+            mutation_guard,
+            stop_requested=lambda: False,
+            sleep=wait_sleep,
+        ):
+            return {"status": "stopped", "capture_status": "stopped", "site": site}
+        tab = attacher({
+            "id": ref.target_id,
+            "type": "page",
+            "url": ref.initial_url,
+            "webSocketDebuggerUrl": ref.websocket_url,
+        }, badge=False)
+        if _tab_target_id(tab) != ref.target_id:
+            raise RuntimeError("attached target identity does not match resolved target")
+        observation = auth_reader(tab, site)
+        if site == "linkedin_rps" and observation.auth_conflict is True:
+            return {
+                "status": "auth_conflict",
+                "capture_status": "auth_conflict",
+                "site": site,
+            }
+        if not _auth_matches(observation, ref.initial_url):
+            return {
+                "status": "auth_required",
+                "capture_status": "auth_required",
+                "site": site,
+            }
+        kwargs: dict[str, Any] = {
+            "site": site,
+            "task": task,
+            "mode": mode,
+            "expected_target_id": ref.target_id,
+            "profile_url": profile_url,
+            "position_id": position_id,
+            "candidate_index": candidate_index,
+            "mutation_guard": mutation_guard,
+            "auth_probe": auth_reader,
+        }
+        if _root_dir is not None:
+            kwargs["root_dir"] = _root_dir
+        try:
+            receipt = capture(tab, **kwargs)
+        except BrowserEvidenceError as exc:
+            return {
+                "status": "failed",
+                "capture_status": "failed",
+                "site": site,
+                "reason": str(exc),
+            }
+        if hasattr(receipt, "public_dict"):
+            payload = receipt.public_dict()
+        elif isinstance(receipt, Mapping):
+            payload = dict(receipt)
+        else:
+            payload = {
+                key: getattr(receipt, key)
+                for key in ("status", "manifest_path")
+                if hasattr(receipt, key)
+            }
+        payload.setdefault("capture_status", payload.get("status", "failed"))
+        payload["site"] = site
+        payload["agent"] = clean_agent
+        if not complete_evidence_payload(payload):
+            return {
+                "status": "failed",
+                "capture_status": "failed",
+                "site": site,
+                "reason": "browser evidence receipt failed integrity validation",
+            }
+        return payload
+    finally:
+        _disconnect_websocket_only(tab)
+        lease.release()
+
+
 def keepalive_due(site: Site, *, last_at: float | None, now: float) -> bool:
     """마지막 keepalive 이후 주기가 지났는가. 첫 회차(last_at=None)는 항상 due."""
     if last_at is None:
@@ -2010,6 +2266,18 @@ def main(argv: list[str] | None = None) -> int:
     keepalive.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     keepalive.add_argument("--agent", required=True)
     keepalive.add_argument("--safe-target-json", required=True)
+    evidence = commands.add_parser(
+        "capture-evidence",
+        help="save private screenshot/text/manifest from one exact existing target",
+    )
+    evidence.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
+    evidence.add_argument("--agent", required=True)
+    evidence.add_argument("--task", required=True, choices=("ai-search", "humansearch", "url", "login"))
+    evidence.add_argument("--mode", required=True, choices=("profile", "evidence"))
+    evidence.add_argument("--target-id", required=True)
+    evidence.add_argument("--profile-url", default="")
+    evidence.add_argument("--position-id", default="")
+    evidence.add_argument("--candidate-index", type=int, default=0)
     args = parser.parse_args(argv)
     site: Site = args.site
 
@@ -2020,10 +2288,28 @@ def main(argv: list[str] | None = None) -> int:
             target_id=args.target_id,
             locator_sink=lambda payload: print(json.dumps(payload, ensure_ascii=False)),
         )
-    else:
+    elif args.command == "keepalive":
         target = load_safe_keepalive_target(args.safe_target_json)
         result = run_safe_keepalive_episode(site, target, agent=args.agent)
+    else:
+        result = run_capture_evidence_episode(
+            site,
+            task=args.task,
+            mode=args.mode,
+            agent=args.agent,
+            target_id=args.target_id,
+            profile_url=args.profile_url,
+            position_id=args.position_id,
+            candidate_index=args.candidate_index,
+        )
     print(json.dumps(result, ensure_ascii=False))
+    if args.command == "capture-evidence":
+        return 0 if result.get("capture_status") == "saved" else 1
+    if args.command == "human-auth":
+        return 0 if (
+            result.get("status") == "authenticated"
+            and result.get("capture_status") == "saved"
+        ) else 1
     return 0
 
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tools.multi_position_sourcing import humansearch_cdp_run as runner
+from tools.multi_position_sourcing.browser_evidence import BrowserEvidenceError
 from tools.multi_position_sourcing.humansearch_preflight import PreflightError
 from tools.multi_position_sourcing.session_guard import BrowserTargetRef
 
@@ -14,6 +16,9 @@ SOURCE_SEARCH_URL = (
     "https://www.linkedin.com/talent/hire/1752949252/discover/recruiterSearch"
     "?searchContextId=context-156&searchHistoryId=21211832492"
     "&searchRequestId=request-156"
+)
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 
 
@@ -63,6 +68,7 @@ class _ProfileTab:
     def __init__(self, tmp_path: Path) -> None:
         self.tmp_path = tmp_path
         self.navigated: list[str] = []
+        self.target_id = "target-exact"
         self.extractions = 0
         self.screenshots = 0
 
@@ -73,6 +79,20 @@ class _ProfileTab:
     def eval(self, _script: str):
         if _script == "location.href":
             return self.navigated[-1] if self.navigated else ""
+        if "hasSessionConflict" in _script and "linkedinAccount" in _script:
+            return {
+                "url": self.navigated[-1] if self.navigated else "",
+                "hasChallenge": False,
+                "hasSessionConflict": False,
+                "hasLogout": False,
+                "hasValueConnect": False,
+                "saraminSearch": False,
+                "jobkoreaSearch": False,
+                "linkedinSearch": True,
+                "linkedinAccount": True,
+            }
+        if _script.startswith("(() => document.body ?"):
+            return "Robotics control learning manipulation " * 40
         self.extractions += 1
         return {
             "name": "Candidate",
@@ -89,9 +109,26 @@ class _ProfileTab:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_bytes(b"png")
 
+    def send(self, method: str, _params=None):
+        if method != "Page.captureScreenshot":
+            raise AssertionError(method)
+        self.screenshots += 1
+        return {"data": base64.b64encode(PNG_1X1).decode("ascii")}
 
-def _archive_receipt(*_args, **_kwargs):
+
+def _archive_receipt(*_args, **kwargs):
+    finalizer = kwargs.pop("finalizer")
+    finalizer(1, Path("/tmp/valuehire-test-profile-archives.sqlite3"))
     return SimpleNamespace(row_id=1)
+
+
+def _safe_owner_snapshot():
+    return SimpleNamespace(
+        detection_status="ok",
+        owner_activity_detected=False,
+        idle_seconds=120.0,
+        portal_site_active=False,
+    )
 
 
 def test_profile_open_prefers_exact_result_href_over_bare_profile_url(
@@ -103,8 +140,9 @@ def test_profile_open_prefers_exact_result_href_over_bare_profile_url(
     )
     tab = _ProfileTab(tmp_path)
     monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(runner, "complete_evidence_payload", lambda _payload: True)
     monkeypatch.setattr(
-        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save",
+        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save_with_finalizer",
         _archive_receipt,
     )
 
@@ -125,6 +163,37 @@ def test_profile_open_prefers_exact_result_href_over_bare_profile_url(
     assert result["source_search_url"] == SOURCE_SEARCH_URL
 
 
+def test_profile_evidence_integrity_is_required_before_scoring(
+    monkeypatch, tmp_path: Path
+) -> None:
+    tab = _ProfileTab(tmp_path)
+    monkeypatch.setattr(runner, "OUT_DIR", tmp_path)
+    monkeypatch.setattr(runner, "complete_evidence_payload", lambda _payload: False)
+    monkeypatch.setattr(
+        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save_with_finalizer",
+        _archive_receipt,
+    )
+    monkeypatch.setattr(
+        runner,
+        "score_humansearch",
+        lambda *_args, **_kwargs: pytest.fail("scoring must wait for valid evidence"),
+    )
+
+    with pytest.raises(BrowserEvidenceError, match="integrity validation"):
+        runner.process_profile(
+            tab,
+            {
+                "url": "https://www.linkedin.com/talent/profile/AAA",
+                "navigation_url": (
+                    "https://www.linkedin.com/talent/profile/AAA?project=1752949252"
+                ),
+                "source_search_url": SOURCE_SEARCH_URL,
+                "name": "Candidate",
+            },
+            1,
+        )
+
+
 def test_session_conflict_stops_before_extract_screenshot_or_archive(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -141,7 +210,7 @@ def test_session_conflict_stops_before_extract_screenshot_or_archive(
 
     monkeypatch.setattr(runner, "assert_not_blocked_or_abort", blocked)
     monkeypatch.setattr(
-        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save",
+        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save_with_finalizer",
         archive,
     )
 
@@ -189,7 +258,7 @@ def test_candidate_identity_mismatch_stops_before_screenshot_or_archive(
 
     monkeypatch.setattr(runner, "assert_not_blocked_or_abort", lambda _tab: {"ok": True})
     monkeypatch.setattr(
-        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save",
+        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save_with_finalizer",
         archive,
     )
 
@@ -320,16 +389,16 @@ def test_profile_is_rechecked_after_screenshot_before_archive(
 
     def late_conflict(_tab):
         checks["count"] += 1
-        if checks["count"] == 3:
+        if checks["count"] == 4:
             raise PreflightError({"reasons": ["late session conflict"]})
         return {"ok": True}
 
     monkeypatch.setattr(
-        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save",
+        "tools.multi_position_sourcing.profile_archive_store.ProfileArchiveStore.save_with_finalizer",
         lambda *args, **kwargs: archive_calls.append((args, kwargs)),
     )
 
-    with pytest.raises(PreflightError, match="late session conflict"):
+    with pytest.raises(BrowserEvidenceError, match="owner and lease proof") as exc_info:
         runner.process_profile(
             tab,
             {
@@ -343,8 +412,9 @@ def test_profile_is_rechecked_after_screenshot_before_archive(
             1,
             live_check=late_conflict,
         )
+    assert isinstance(exc_info.value.__cause__, PreflightError)
 
-    assert checks["count"] == 3
+    assert checks["count"] == 4
     assert tab.screenshots == 1
     assert archive_calls == []
     assert list(tmp_path.glob("*.png")) == []
@@ -626,9 +696,11 @@ def test_main_holds_one_linkedin_profile_lease_and_releases_on_attach_error(
             target_id="exact",
             target_resolver=lambda *_args, **_kwargs: ref,
             lease_factory=lambda _site: Lease(),
+            owner_snapshot=_safe_owner_snapshot,
+            mutation_sleep=lambda _seconds: None,
         )
 
-    assert trace == ["acquire", "assert_owned", "assert_owned", "release"]
+    assert trace == ["acquire", "assert_owned", "assert_owned", "assert_owned", "release"]
 
 
 def test_conflict_target_is_attached_without_badge_and_only_disconnected(
@@ -680,11 +752,13 @@ def test_conflict_target_is_attached_without_badge_and_only_disconnected(
     )
 
     with pytest.raises(PreflightError, match="multiple sign-ins"):
-        runner.main(
-            target_id="exact",
-            target_resolver=lambda *_args, **_kwargs: ref,
-            lease_factory=lambda _site: Lease(),
-        )
+            runner.main(
+                target_id="exact",
+                target_resolver=lambda *_args, **_kwargs: ref,
+                lease_factory=lambda _site: Lease(),
+                owner_snapshot=_safe_owner_snapshot,
+                mutation_sleep=lambda _seconds: None,
+            )
 
     assert "attach.badge=False" in trace
     assert "tab.disconnect" in trace
@@ -745,6 +819,8 @@ def test_safe_target_proves_badge_before_first_navigation(monkeypatch, tmp_path:
             target_id="exact",
             target_resolver=lambda *_args, **_kwargs: ref,
             lease_factory=lambda _site: Lease(),
+            owner_snapshot=_safe_owner_snapshot,
+            mutation_sleep=lambda _seconds: None,
         )
 
     assert trace.index(f"badge:{runner.SEARCH_URL_BASE}") < trace.index("navigate")

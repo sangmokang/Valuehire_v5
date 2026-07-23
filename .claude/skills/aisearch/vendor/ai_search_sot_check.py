@@ -12,17 +12,7 @@ EXPECTED_CLICKUP_LIST_ID = "901818680208"
 EXPECTED_CLICKUP_LIST_NAME = "FY26AI_Search"
 EXPECTED_CLICKUP_LIST_URL = "https://app.clickup.com/9018789656/v/li/901818680208"
 EXPECTED_CLICKUP_STRUCTURE = "position_parent_task + candidate_subtasks"
-EXPECTED_PROFILE_SAVE_EVIDENCE_FIELDS = (
-    "screenshot",
-    "screenshot_path",
-    "evidence_paths",
-    "archive_path",
-    "saved_profile_path",
-    "profile_archive_id",
-    "sourcing_result_id",
-    "db_row_id",
-    "supabase_profile_archive_id",
-)
+EXPECTED_PROFILE_SAVE_EVIDENCE_FIELDS = ("evidence",)
 REQUIRED_CLICKUP_FAIL_CLOSED = {
     "wrong_list_id",
     "duplicate_check_missing",

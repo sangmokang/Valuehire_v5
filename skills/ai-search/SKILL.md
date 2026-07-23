@@ -111,3 +111,20 @@ The live AI Search stage sequence is:
 
 - `references/spec-procedure.md`: consolidated SOT, gates, and stage rules.
 - `references/code-map.md`: related repo code, scripts, tests, and known missing/dead references.
+
+
+## 익스텐션 독립 화면·본문 자동 저장
+
+- 사람인·잡코리아·LinkedIn 상세 프로필을 연 직후, 차단 검사와 로그인 마커 확인을 통과하면 채점·다음 화면 이동보다 먼저 아래 정식 실행기를 호출한다. 크롬 익스텐션의 저장 성공 여부를 기다리거나 성공으로 가정하지 않는다.
+- 현재 실행 주체(Claude 또는 Codex), 정확한 기존 target id, 수확 원본 전체 profile URL, 포지션 id와 순번을 그대로 넘긴다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence \
+  --site <saramin|jobkorea|linkedin_rps> --agent <Claude|Codex> \
+  --task ai-search --mode profile --target-id <exact-target-id> \
+  --profile-url <full-profile-url> --position-id <position-id> --candidate-index <n>
+```
+
+- exit 0 JSON의 `capture_status=saved`, `screenshot_path`, `text_path`, `manifest_path`, `screenshot_sha256`, `visible_text_sha256`를 그 후보의 `evidence`에 그대로 넣는다.
+- 명령이 실패하거나 필드가 하나라도 없으면 `saved=true`, 완료 영수증, 점수화, ClickUp/Discord 등록을 금지한다. 캡차·세션 충돌·로그인 소실·사람 사용 중 상태는 해당 채널을 중단하고 우회 캡처하지 않는다.
+- 실행기는 기존 탭만 읽고 화면을 저장하며 새 창·새 탭·navigate·focus·close를 하지 않는다.

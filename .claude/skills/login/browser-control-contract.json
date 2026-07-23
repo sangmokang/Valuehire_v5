@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.4.0",
+  "schema_version": "1.5.0",
   "skill": "login",
   "supported_agents": ["claude", "codex", "hermes"],
   "platform": "macos",
@@ -234,6 +234,43 @@
       "idle_based_auto_resume": false,
       "operation_window": "owner_declared_delegation_only"
     }
+  },
+  "browser_evidence_capture": {
+    "runner": "python3 -m tools.multi_position_sourcing.session_guard capture-evidence",
+    "tasks": ["ai-search", "humansearch", "url", "login"],
+    "modes": ["profile", "evidence"],
+    "task_modes": {"ai-search": "profile", "humansearch": "profile", "url": "evidence", "login": "evidence"},
+    "requires_exact_target": true,
+    "requires_site_lease": true,
+    "requires_fresh_owner_idle_guard": true,
+    "requires_positive_auth_marker": true,
+    "caller_safety_strings_accepted": false,
+    "browser_mutations": [],
+    "success_status": "saved",
+    "success_fields": [
+      "site",
+      "task",
+      "mode",
+      "profile_url",
+      "position_id",
+      "candidate_index",
+      "screenshot_path",
+      "text_path",
+      "manifest_path",
+      "screenshot_sha256",
+      "visible_text_sha256",
+      "archive_row_id",
+      "archive_db_path"
+    ],
+    "fail_closed_on": [
+      "human_active",
+      "auth_lost",
+      "captcha_or_checkpoint",
+      "session_conflict",
+      "target_or_profile_identity_change",
+      "visible_text_change",
+      "screenshot_or_storage_failure"
+    ]
   },
   "legacy_unsafe": {
     "tools.multi_position_sourcing.portal_login": [

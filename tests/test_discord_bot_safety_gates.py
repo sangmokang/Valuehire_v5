@@ -149,7 +149,8 @@ class LoginGateWiringTests(unittest.TestCase):
     def test_injected_runner_keeps_legacy_behavior(self) -> None:
         # 주입 러너(테스트 하위호환) — 게이트 미적용으로 기존 스위트가 계속 성립.
         q = WorkerFakeQueue(_job())
-        w = FleetWorker(machine="macmini", queue=q, runner=lambda p, t: ("ok", 0),
+        done = 'ok\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}'
+        w = FleetWorker(machine="macmini", queue=q, runner=lambda p, t: (done, 0),
                         notifier=lambda j, t: None)
         self.assertEqual(w.run_once(), "done")
 

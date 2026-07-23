@@ -88,7 +88,7 @@ def _worker(queue, clock, pause_on_job_id=None, *, wall_clock=None, yield_state_
     def runner(prompt, timeout):
         if pause_on_job_id is not None and f"잡 #{pause_on_job_id}" in prompt:
             return ("PAUSED_FOR_HUMAN: 캡차", 0)
-        return ("후보 3명 저장 완료", 0)
+        return ('후보 3명 저장 완료\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}', 0)
 
     return FleetWorker(
         machine="macmini", queue=queue, runner=runner,
@@ -128,7 +128,8 @@ def test_repeated_pause_extends_yield_window():
     q = FakeQueue([_group_job(7), _job(8), _job(9)])
     w = _worker(q, clock, pause_on_job_id=None)
     w.runner = lambda prompt, timeout: (
-        ("후보 3명 저장 완료", 0) if "잡 #7" in prompt else ("PAUSED_FOR_HUMAN: 캡차", 0))
+        ('후보 3명 저장 완료\nHUMANSEARCH_EVIDENCE_RECEIPT:{"opened_profiles":0,"profile_evidence":[]}', 0)
+        if "잡 #7" in prompt else ("PAUSED_FOR_HUMAN: 캡차", 0))
     assert w.run_once() == "done"
     assert w.run_once() == "paused_for_human"   # t=0: 1번째 이상 → 창 [0,60)
     clock.now += 61
