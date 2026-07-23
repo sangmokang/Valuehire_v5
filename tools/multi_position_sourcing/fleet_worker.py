@@ -67,7 +67,9 @@ def login_gate_required_channels(job: Mapping[str, Any]) -> tuple[str, ...]:
         mapped = []
         for ch in raw:
             name = str(ch).strip()
-            mapped.append("linkedin_rps" if name in ("linkedin", "linkedin_rps") else name)
+            normalized = "linkedin_rps" if name in ("linkedin", "linkedin_rps") else name
+            if normalized in ("saramin", "jobkorea", "linkedin_rps"):
+                mapped.append(normalized)
         return tuple(dict.fromkeys(m for m in mapped if m))
     return ()
 
@@ -111,6 +113,40 @@ def login_gate_block_reason(payload: Any, job: Mapping[str, Any],
         if entry.get("ready") is not True:
             return f"{channel} 로그인 not-ready"
     return None
+
+
+def _run_login_preflight(job: Mapping[str, Any]) -> bool:
+    """검색 전에 정식 포털 로그인 준비 러너를 한 번 실행한다.
+
+    저장 자격증명으로 복구 가능한 세션만 자동 복구한다. 캡차·2FA·checkpoint는
+    ``--no-human-intervention`` 계약에 따라 즉시 not-ready 영수증으로 남고, 호출부가
+    검색을 시작하지 않은 채 사람에게 넘긴다.
+    """
+    channels = login_gate_required_channels(job)
+    if not channels:
+        return True
+    command = [
+        sys.executable,
+        "-m",
+        "tools.multi_position_sourcing.portal_login",
+        "--channels",
+        ",".join(channels),
+        "--worker-id",
+        str(job.get("machine") or "default"),
+        "--no-human-intervention",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            timeout=max(60, 240 * len(channels)),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
 
 
 CLAUDE_TIMEOUT_SECONDS = 2400  # 40분
@@ -1002,6 +1038,13 @@ class FleetWorker:
         # — 주입 러너(테스트/시뮬레이션)는 브라우저를 안 여니 기존 계약 유지.
         if not self._runner_injected and job.get("skill") in FLEET_SKILLS:
             reason = login_gate_block_reason(_read_login_receipt(), job, int(time.time()))
+            if reason is not None:
+                self._notify(job, (
+                    f"🔐 잡 #{job_id} 로그인 준비를 먼저 확인합니다 — "
+                    f"skill={job.get('skill')}"))
+                _run_login_preflight(job)
+                reason = login_gate_block_reason(
+                    _read_login_receipt(), job, int(time.time()))
             if reason is not None:
                 self._release(job, job_id, "paused_for_human",
                               error=f"로그인 선행 게이트: {reason}")

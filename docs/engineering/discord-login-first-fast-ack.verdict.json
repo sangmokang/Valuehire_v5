@@ -1,0 +1,71 @@
+{
+  "task": "discord-login-first-fast-ack",
+  "date": "2026-07-23",
+  "risk": "L3",
+  "verdict": "PASS_WITH_DEPLOYMENT_PENDING",
+  "acceptance": [
+    {
+      "id": "AC1",
+      "claim": "aisearch, humansearch, url, login 슬래시는 큐 접근 전에 접수 표시를 갱신한다",
+      "evidence": "ThreeSecondDeferTests.test_search_and_login_commands_show_ack_before_queue_work",
+      "pass": true
+    },
+    {
+      "id": "AC2",
+      "claim": "텍스트 검색 명령도 권한 확인 후 큐 접근 전에 접수 표시를 보낸다",
+      "evidence": "TextMessageTests.test_text_search_ack_is_sent_before_queue_work",
+      "pass": true
+    },
+    {
+      "id": "AC3",
+      "claim": "로그인 영수증이 없으면 정식 portal_login 준비 러너를 먼저 실행한다",
+      "evidence": "LoginGateWiringTests.test_search_job_without_receipt_runs_login_first_then_pauses",
+      "pass": true
+    },
+    {
+      "id": "AC4",
+      "claim": "자동 로그인 성공 뒤 같은 검색 잡을 계속 실행한다",
+      "evidence": "LoginGateWiringTests.test_auto_login_success_continues_same_search_job",
+      "pass": true
+    },
+    {
+      "id": "AC5",
+      "claim": "로그인 준비 실패 시 검색 러너는 실행되지 않고 사람 개입 상태로 멈춘다",
+      "evidence": "LoginGateWiringTests.test_search_job_without_receipt_runs_login_first_then_pauses",
+      "pass": true
+    }
+  ],
+  "adversarial_checks": [
+    {
+      "attack": "비인가 사용자가 즉답 차이로 명령 존재를 추론",
+      "result": "정본 route_discord_invocation 통과 전에는 상세 접수 표시를 보내지 않음",
+      "pass": true
+    },
+    {
+      "attack": "공개 웹 검색도 보호 포털 로그인을 요구해 불필요하게 중단",
+      "result": "public_web은 로그인 필요 채널에서 제외하고 별도 회귀 테스트 추가",
+      "pass": true
+    },
+    {
+      "attack": "캡차 또는 2FA 상황에서 검색이 먼저 실행",
+      "result": "no-human-intervention 준비 영수증이 ready가 아니면 paused_for_human",
+      "pass": true
+    },
+    {
+      "attack": "큐 장애가 즉시 접수 표시 뒤 성공처럼 남음",
+      "result": "같은 Discord 원응답을 접수 불가 최종 문구로 교체하는 전체 회귀 테스트 통과",
+      "pass": true
+    }
+  ],
+  "verification": {
+    "focused": "126 passed, 3 subtests passed",
+    "full": "2474 passed, 4 xfailed, 105 subtests passed",
+    "ai_search_sot": "status=OK",
+    "diff_check": "PASS"
+  },
+  "remaining": [
+    "운영 Discord 봇과 fleet worker 재시작 또는 배포는 이번 코드 작업에서 수행하지 않았다",
+    "Hermes 종료 단계는 SOT-33 절차에 따라 별도 운영 작업으로 남아 있다",
+    "명시적 /login은 즉시 접수 표시는 제공하지만 큐 화이트리스트 밖이라는 기존 제한은 유지한다"
+  ]
+}
