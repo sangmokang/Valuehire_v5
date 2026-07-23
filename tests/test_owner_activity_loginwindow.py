@@ -53,6 +53,16 @@ def test_locked_screen_is_not_owner_activity():
     assert snap.foreground_app == "loginwindow"
 
 
+def test_multiline_fallback_output_stays_fail_closed():
+    """Codex V2 — 폴백 출력이 여러 줄이면 판독 불가 = 양보(크롬 활동 오판 금지)."""
+    snap = oa.detect_owner_activity_snapshot(
+        run_command=_fake_run(combined_rc=1, combined_out="",
+                              name_out="Google Chrome\n잡음 한 줄"),
+        system_name="Darwin",
+    )
+    assert snap.owner_activity_detected is True
+
+
 def test_both_queries_failing_stays_fail_closed():
     snap = oa.detect_owner_activity_snapshot(
         run_command=_fake_run(combined_rc=1, combined_out="",

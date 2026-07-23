@@ -117,8 +117,13 @@ def _macos_frontmost_app_and_pid(
         )
         if fallback.returncode != 0:
             return None, None
-        name_only = (fallback.stdout or "").strip()
-        return (name_only or None), None
+        # Codex V2(#192): 정확히 한 줄일 때만 앱 이름으로 신뢰 — 여러 줄(예: 크롬 이름
+        # 뒤 잡음)이면 판독 불가로 fail-closed(양보). 실제 크롬 활동을 부재로 오판 금지.
+        fallback_lines = [l.strip() for l in (fallback.stdout or "").splitlines()
+                          if l.strip()]
+        if len(fallback_lines) != 1:
+            return None, None
+        return fallback_lines[0], None
     raw = (result.stdout or "").strip()
     if not raw:
         return None, None
