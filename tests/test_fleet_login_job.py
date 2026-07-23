@@ -58,12 +58,28 @@ def test_new_job_payload_login_without_url():
 
 
 def test_new_job_payload_login_rejects_garbage_url():
-    """fail-closed 유지 — 빈 값 또는 정상 URL 만. 쓰레기 문자열은 여전히 거부."""
+    """fail-closed 유지 — login 은 빈 값만. 쓰레기 문자열은 여전히 거부."""
     payload = job_queue.new_job_payload(
         machine="macmini", skill="login", position_url="not a url",
         requested_by=OWNER_ID, role="owner",
     )
     assert payload is None
+
+
+def test_new_job_payload_login_rejects_any_url():
+    """Codex V2 2R-1 — login 은 무대상 스킬: 정상 URL 이라도 거부(빈 값만 허용)."""
+    payload = job_queue.new_job_payload(
+        machine="macmini", skill="login",
+        position_url="https://app.clickup.com/t/86eufjabc",
+        requested_by=OWNER_ID, role="owner",
+    )
+    assert payload is None
+
+
+def test_build_job_prompt_login_rejects_any_url():
+    with pytest.raises(ValueError):
+        fleet_worker.build_job_prompt(
+            _login_job(position_url="https://app.clickup.com/t/86eufjabc"))
 
 
 def test_new_job_payload_search_still_requires_url():
@@ -160,9 +176,13 @@ def _file_receipt(now=_NOW, ready=True,
     }
 
 
-def _validate(stdout, file_payload=None, now=_NOW):
+_STARTED = _NOW - 600  # 잡 시작 시각(기본: 10분 전 시작, 영수증은 그 뒤 갱신)
+
+
+def _validate(stdout, file_payload=None, now=_NOW, started=_STARTED):
     return fleet_worker.validate_login_receipt(
         stdout,
+        started_epoch=started,
         file_payload=_file_receipt() if file_payload is None else file_payload,
         now_epoch=now)
 
@@ -221,6 +241,38 @@ def test_validate_login_receipt_file_cross_check_stale_fails():
 def test_validate_login_receipt_file_missing_fails():
     with pytest.raises(ValueError):
         _validate("완료\n" + _login_receipt_line(), file_payload={})
+
+
+def test_validate_login_receipt_file_older_than_job_start_fails():
+    """Codex V2 2R-2 — 24시간 내라도 잡 시작 *이전* 영수증은 미갱신 = 거부."""
+    before_start = _file_receipt(now=_STARTED - 60)
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(), file_payload=before_start)
+
+
+def test_validate_login_receipt_duplicate_stdout_keys_fails():
+    """Codex V2 2R-3 — JSON 중복 키(뒤값 승리 트릭) 거부."""
+    line = (fleet_worker._LOGIN_RECEIPT_MARKER
+            + '{"channels": {"saramin": {"ready": false}, "saramin": {"ready": true}, '
+              '"jobkorea": {"ready": true}, "linkedin_rps": {"ready": true}}, '
+              '"output": "artifacts/portal_session_status_latest.json"}')
+    with pytest.raises(ValueError):
+        _validate("완료\n" + line)
+
+
+def test_validate_login_receipt_duplicate_file_entries_fails():
+    """파일에 같은 채널이 두 번(모순 가능) 있으면 거부."""
+    payload = _file_receipt()
+    payload["portal_sessions"].append({"channel": "saramin", "ready": False})
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(), file_payload=payload)
+
+
+def test_validate_login_receipt_extra_file_channel_fails():
+    payload = _file_receipt(
+        channels=("saramin", "jobkorea", "linkedin_rps", "fakeportal"))
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(), file_payload=payload)
 
 
 def test_login_prompt_requires_receipt_marker():

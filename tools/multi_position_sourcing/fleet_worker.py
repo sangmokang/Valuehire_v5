@@ -89,8 +89,13 @@ def login_gate_block_reason(payload: Any, job: Mapping[str, Any],
 
 
 def _receipt_block_reason(payload: Any, required: tuple[str, ...],
-                          now_epoch: int) -> str | None:
-    """영수증 payload 순수 판정(#188 에서 login 완료 교차검증과 공용으로 추출)."""
+                          now_epoch: int,
+                          min_generated_epoch: int | None = None) -> str | None:
+    """영수증 payload 순수 판정(#188 에서 login 완료 교차검증과 공용으로 추출).
+
+    min_generated_epoch(Codex V2 2R-2): 지정 시 그 시각 이전 영수증은 '이번 실행에서
+    갱신 안 됨'으로 차단 — 24시간 내 옛 영수증으로 완료를 위장하는 각도 봉인.
+    """
     if not isinstance(payload, Mapping):
         return "로그인 영수증 없음(artifacts/portal_session_status_latest.json)"
     from datetime import datetime
@@ -106,13 +111,19 @@ def _receipt_block_reason(payload: Any, required: tuple[str, ...],
     age = now_epoch - int(dt.timestamp())
     if age < 0 or age > LOGIN_RECEIPT_MAX_AGE_SECONDS:
         return f"로그인 영수증 만료/미래 시각(age={age}s)"
+    if min_generated_epoch is not None and int(dt.timestamp()) < min_generated_epoch:
+        return "로그인 영수증이 잡 시작 이전 것(이번 실행에서 미갱신)"
     sessions = payload.get("portal_sessions")
     if not isinstance(sessions, list):
         return "로그인 영수증에 portal_sessions 없음"
     by_channel = {}
     for entry in sessions:
         if isinstance(entry, Mapping):
-            by_channel[str(entry.get("channel") or "")] = entry
+            name = str(entry.get("channel") or "")
+            # Codex V2 2R-3: 같은 채널 항목이 두 번이면 모순 가능(뒤값 승리) — 차단.
+            if name in by_channel:
+                return f"{name} 로그인 영수증 항목 중복(모순 가능)"
+            by_channel[name] = entry
     for channel in required:
         entry = by_channel.get(channel)
         if not isinstance(entry, Mapping):
@@ -326,8 +337,8 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         raise ValueError(f"invalid job id: {job_id!r}")
     url = job.get("position_url")
     if skill == "login":
-        # login 은 대상 URL 이 없다(#188) — 빈 값만 허용, 쓰레기 문자열은 여전히 거부.
-        if not isinstance(url, str) or (url.strip() and not _valid_url(url)):
+        # login 은 무대상 스킬(#188, Codex V2 2R-1) — 빈 값만 허용(URL 있으면 거부).
+        if not isinstance(url, str) or url.strip():
             raise ValueError(f"invalid position_url: {url!r}")
     elif not _valid_url(url):
         raise ValueError(f"invalid position_url: {url!r}")
@@ -583,7 +594,18 @@ def validate_url_receipt(stdout: str) -> dict[str, Any]:
 _UNSET = object()
 
 
-def validate_login_receipt(stdout: str, *, file_payload: Any = _UNSET,
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """json object_pairs_hook — 중복 키(뒤값 승리 위조 각도) 거부(Codex V2 2R-3)."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON key: {key}")
+        out[key] = value
+    return out
+
+
+def validate_login_receipt(stdout: str, *, started_epoch: int,
+                           file_payload: Any = _UNSET,
                            now_epoch: int | None = None) -> dict[str, Any]:
     """login 잡 완료 증거(#188, R2) — 3사 채널별 ready=True 명시 없이는 done 금지.
 
@@ -600,7 +622,13 @@ def validate_login_receipt(stdout: str, *, file_payload: Any = _UNSET,
     lines = [l.strip() for l in (stdout or "").splitlines() if l.strip()]
     if not lines or not lines[-1].startswith(_LOGIN_RECEIPT_MARKER):
         raise ValueError("login receipt must be the last non-empty line")
-    receipt = _marked_json(lines[-1], _LOGIN_RECEIPT_MARKER)
+    try:
+        receipt = json.loads(lines[-1][len(_LOGIN_RECEIPT_MARKER):].strip(),
+                             object_pairs_hook=_reject_duplicate_keys)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("login completion receipt invalid") from exc
+    if not isinstance(receipt, dict):
+        raise ValueError("login completion receipt invalid")
     channels = receipt.get("channels")
     if not isinstance(channels, dict) or set(channels) != set(_LOGIN_RECEIPT_CHANNELS):
         raise ValueError("login receipt channels must be exactly the three portals")
@@ -614,9 +642,16 @@ def validate_login_receipt(stdout: str, *, file_payload: Any = _UNSET,
         file_payload = _read_login_receipt()
     if now_epoch is None:
         now_epoch = int(time.time())
-    reason = _receipt_block_reason(file_payload, _LOGIN_RECEIPT_CHANNELS, now_epoch)
+    reason = _receipt_block_reason(file_payload, _LOGIN_RECEIPT_CHANNELS, now_epoch,
+                                   min_generated_epoch=started_epoch)
     if reason is not None:
         raise ValueError(f"login receipt file cross-check failed: {reason}")
+    # Codex V2 2R-3: 파일 채널은 정확히 3사 각 1건 — 초과·중복은 위조/모순 신호.
+    names = sorted(str(e.get("channel") or "")
+                   for e in file_payload.get("portal_sessions", [])
+                   if isinstance(e, Mapping))
+    if names != sorted(_LOGIN_RECEIPT_CHANNELS):
+        raise ValueError("login receipt file channels must be exactly the three portals")
     return receipt
 
 
@@ -1163,6 +1198,8 @@ class FleetWorker:
         if not self._runner_injected:
             # 이슈 B + #188 — 주입 러너(테스트/시뮬레이션)는 그대로, 실 경로만 SOT 선택.
             agent_label, runner = select_job_engine(job)
+        # #188 Codex V2 2R-2: login 완료 영수증은 이 시각 이후 갱신본만 인정.
+        started_epoch = int(time.time())
         try:
             if self._runner_injected:
                 raw = runner(prompt, self.timeout)
@@ -1235,7 +1272,7 @@ class FleetWorker:
                 return "failed"
         elif job.get("skill") == "login":
             try:
-                validate_login_receipt(stdout)
+                validate_login_receipt(stdout, started_epoch=started_epoch)
             except ValueError as exc:
                 self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
                 self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")

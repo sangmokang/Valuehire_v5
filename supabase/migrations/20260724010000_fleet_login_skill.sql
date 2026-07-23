@@ -30,7 +30,8 @@ alter table public.jobs add constraint jobs_position_url_http_chk
   check (
     (skill = 'login' and position_url = '')
     or (
-      position_url ~ '^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?([/?#].*)?$'
+      skill <> 'login'
+      and position_url ~ '^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?([/?#].*)?$'
       and position_url !~ '\s'
       and substring(position_url from '^https?://([^/?#:]+)') !~ '\.\.'
       and (

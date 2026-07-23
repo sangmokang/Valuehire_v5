@@ -288,12 +288,13 @@ def new_job_payload(
         return None
     if role not in FLEET_ROLES:
         return None
-    if not _valid_url(position_url):
-        # login 은 대상 URL 이 없는 스킬(#188) — 빈 문자열만 예외 허용, 그 외 무효 값은
-        # 기존과 동일하게 fail-closed.
-        if not (skill == "login" and isinstance(position_url, str)
-                and not position_url.strip()):
+    if skill == "login":
+        # login 은 무대상 스킬(#188, Codex V2 2R-1) — 빈 문자열만 허용.
+        # 정상 URL 이라도 거부한다(대상이 있는 로그인 잡은 계약 밖).
+        if not isinstance(position_url, str) or position_url.strip():
             return None
+    elif not _valid_url(position_url):
+        return None
     if not isinstance(requested_by, str) or not requested_by.strip():
         return None
     # V1(worker)+V2: 개행·제어문자·유니코드 줄구분자(U+2028/2029/0085) 포함 requested_by 는
