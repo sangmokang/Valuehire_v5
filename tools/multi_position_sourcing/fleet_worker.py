@@ -156,6 +156,8 @@ _PAUSE_MARKER = "PAUSED_FOR_HUMAN:"
 _SEARCH_RECEIPT_MARKER = "FLEET_SEARCH_RECEIPT:"
 _HUMANSEARCH_RECEIPT_MARKER = "HUMANSEARCH_EVIDENCE_RECEIPT:"
 _URL_RECEIPT_MARKER = "URL_EVIDENCE_RECEIPT:"
+_LOGIN_RECEIPT_MARKER = "LOGIN_EVIDENCE_RECEIPT:"
+_LOGIN_RECEIPT_CHANNELS = ("saramin", "jobkorea", "linkedin_rps")
 _NETWORK_CONFIG_FLAG = "sandbox_workspace_write.network_access=true"
 
 # 기본 보고 채널 = 사장님 DM 채널(scripts/discord_command_listener.py 와 동일)
@@ -357,7 +359,11 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             f"5. 비밀번호·쿠키·토큰을 출력하지 말 것.\n"
             f"6. 검색·수집·발송은 이 잡 범위 밖 — 시작하지 말 것.\n"
             f"7. 완료 후 영수증(artifacts/portal_session_status_latest.json) 갱신을 "
-            f"확인하고 채널별 ready 여부를 보고할 것.\n"
+            f"확인하고, 마지막 줄에 {_LOGIN_RECEIPT_MARKER} 뒤로 "
+            f'{{"channels": {{"saramin": {{"ready": true}}, "jobkorea": {{"ready": true}}, '
+            f'"linkedin_rps": {{"ready": true}}}}, "output": "<영수증 경로>"}} 형식 JSON 을 '
+            f"출력할 것. ready 가 아닌 채널이 있으면 이 마커 대신 규칙 3의 PAUSE 마커로 "
+            f"종료할 것(거짓 ready 금지).\n"
         )
     url_login_rule = ""
     capture_rule = ""
@@ -564,6 +570,23 @@ def validate_url_receipt(stdout: str) -> dict[str, Any]:
         or receipt.get("mode") != "evidence"
     ):
         raise ValueError("url browser evidence incomplete")
+    return receipt
+
+
+def validate_login_receipt(stdout: str) -> dict[str, Any]:
+    """login 잡 완료 증거(#188, R2) — 3사 채널별 ready=True 명시 없이는 done 금지.
+
+    ready 아닌 채널이 있으면 엔진은 done 이 아니라 PAUSE 마커로 종료했어야 한다
+    (캡차·2FA 는 사람 몫). 그러므로 '완료' 주장 + not-ready 조합은 계약 위반이다.
+    """
+    receipt = _marked_json(stdout, _LOGIN_RECEIPT_MARKER)
+    channels = receipt.get("channels")
+    if not isinstance(channels, dict):
+        raise ValueError("login receipt channels missing")
+    for name in _LOGIN_RECEIPT_CHANNELS:
+        entry = channels.get(name)
+        if not isinstance(entry, dict) or entry.get("ready") is not True:
+            raise ValueError(f"login receipt: {name} not ready")
     return receipt
 
 
@@ -1176,6 +1199,13 @@ class FleetWorker:
         elif job.get("skill") == "url":
             try:
                 validate_url_receipt(stdout)
+            except ValueError as exc:
+                self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
+                self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")
+                return "failed"
+        elif job.get("skill") == "login":
+            try:
+                validate_login_receipt(stdout)
             except ValueError as exc:
                 self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
                 self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")

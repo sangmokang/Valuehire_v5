@@ -132,3 +132,43 @@ def test_build_job_prompt_search_still_requires_url():
     with pytest.raises(ValueError):
         fleet_worker.build_job_prompt(
             _login_job(skill="humansearch", position_url=""))
+
+
+# ── 완료 영수증 — login 도 증거 없이 done 이 될 수 없다(R2) ──────────────
+
+
+def _login_receipt_line(channels=("saramin", "jobkorea", "linkedin_rps"),
+                        ready=True):
+    import json
+    return fleet_worker._LOGIN_RECEIPT_MARKER + json.dumps({
+        "channels": {ch: {"ready": ready} for ch in channels},
+        "output": "artifacts/portal_session_status_latest.json",
+    })
+
+
+def test_validate_login_receipt_accepts_all_ready():
+    receipt = fleet_worker.validate_login_receipt(
+        "작업 완료\n" + _login_receipt_line())
+    assert set(receipt["channels"]) == {"saramin", "jobkorea", "linkedin_rps"}
+
+
+def test_validate_login_receipt_missing_marker_fails():
+    with pytest.raises(ValueError):
+        fleet_worker.validate_login_receipt("로그인 다 했습니다(증거 없음)")
+
+
+def test_validate_login_receipt_not_ready_channel_fails():
+    with pytest.raises(ValueError):
+        fleet_worker.validate_login_receipt(
+            "완료\n" + _login_receipt_line(ready=False))
+
+
+def test_validate_login_receipt_missing_channel_fails():
+    with pytest.raises(ValueError):
+        fleet_worker.validate_login_receipt(
+            "완료\n" + _login_receipt_line(channels=("saramin",)))
+
+
+def test_login_prompt_requires_receipt_marker():
+    prompt = fleet_worker.build_job_prompt(_login_job())
+    assert fleet_worker._LOGIN_RECEIPT_MARKER in prompt
