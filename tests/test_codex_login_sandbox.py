@@ -25,19 +25,32 @@ def _pairs(args):
     return list(zip(args, args[1:]))
 
 
-def test_login_job_codex_args_allow_valuehire_writes():
-    args = fleet_worker.build_codex_exec_args({"VALUEHIRE_JOB_SKILL": "login"})
+def _owner_login_env(**extra):
+    return {"VALUEHIRE_JOB_SKILL": "login", "VALUEHIRE_JOB_ROLE": "owner", **extra}
+
+
+def test_owner_login_job_codex_args_allow_valuehire_writes():
+    args = fleet_worker.build_codex_exec_args(_owner_login_env())
     assert ("--sandbox", "workspace-write") in _pairs(args)
     assert ("--add-dir", VALUEHIRE_HOME) in _pairs(args)
     assert fleet_worker._NETWORK_CONFIG_FLAG in args
 
 
-def test_login_overrides_explicit_read_only_mode():
-    args = fleet_worker.build_codex_exec_args({
-        "VALUEHIRE_JOB_SKILL": "login",
-        "VALUEHIRE_AGENT_EXECUTION_MODE": "read_only",
-    })
+def test_owner_login_overrides_explicit_read_only_mode():
+    args = fleet_worker.build_codex_exec_args(
+        _owner_login_env(VALUEHIRE_AGENT_EXECUTION_MODE="read_only"))
     assert ("--sandbox", "workspace-write") in _pairs(args)
+
+
+def test_member_forged_login_does_not_escalate():
+    """Codex V2 F1 — anon 이 강제하는 role=member 로는 넓은 샌드박스를 못 얻는다."""
+    args = fleet_worker.build_codex_exec_args({
+        "VALUEHIRE_JOB_SKILL": "login", "VALUEHIRE_JOB_ROLE": "member"})
+    assert ("--sandbox", "read-only") in _pairs(args)
+    assert ("--add-dir", VALUEHIRE_HOME) not in _pairs(args)
+    # role 미지정(구 페이로드)도 확장 금지 — fail-closed.
+    args2 = fleet_worker.build_codex_exec_args({"VALUEHIRE_JOB_SKILL": "login"})
+    assert ("--sandbox", "read-only") in _pairs(args2)
 
 
 def test_non_login_default_stays_read_only_without_valuehire_dir():
@@ -48,16 +61,18 @@ def test_non_login_default_stays_read_only_without_valuehire_dir():
 
 
 def test_login_args_keep_danger_guard():
-    args = fleet_worker.build_codex_exec_args({"VALUEHIRE_JOB_SKILL": "login"})
+    args = fleet_worker.build_codex_exec_args(_owner_login_env())
     assert "danger-full-access" not in args
     assert "--dangerously-bypass-approvals-and-sandbox" not in args
 
 
-def test_busy_badge_env_carries_job_skill():
+def test_busy_badge_env_carries_job_skill_and_role():
     class _Q:  # noqa: D401 — 최소 큐 스텁
         pass
 
     worker = fleet_worker.FleetWorker(
         machine="macmini", queue=_Q(), notifier=lambda job, text: None)
-    env = worker._busy_badge_env({"id": 7, "skill": "login"}, "codex")
+    env = worker._busy_badge_env(
+        {"id": 7, "skill": "login", "role": "owner"}, "codex")
     assert env.get("VALUEHIRE_JOB_SKILL") == "login"
+    assert env.get("VALUEHIRE_JOB_ROLE") == "owner"

@@ -841,8 +841,14 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
     )
     # #194: login 잡은 쓰기 없이는 성립 불가(잠금 파일·영수증) — 모드와 무관하게
     # workspace-write + ~/.valuehire add-dir 를 강제한다(라이브 잡 #75 2회 재현 봉인).
+    # Codex V2 F1(권한상승 위조 방어): 이 확장은 role=='owner' 일 때만 준다. 최소권한
+    # 게이트웨이 RPC 는 anon 호출을 항상 role='member' 로 강제하므로(위조 불가), 공개
+    # 키로 위조한 login 잡은 이 넓은 샌드박스를 얻지 못한다(member 는 read-only 유지 →
+    # 쓰기 거부로 paused, fail-closed). 진짜 owner 인증 enqueue 경로는 후속 과제(B1).
     login_job = str(source.get("VALUEHIRE_JOB_SKILL") or "") == "login"
-    if login_job:
+    owner_role = str(source.get("VALUEHIRE_JOB_ROLE") or "") == "owner"
+    login_escalated = login_job and owner_role
+    if login_escalated:
         mode = "workspace_write"
     sandbox = {"read_only": "read-only", "workspace_write": "workspace-write"}.get(mode)
     if sandbox is None:
@@ -850,8 +856,12 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
     args = ["exec", "-C", str(REPO), "--sandbox", sandbox]
     if sandbox == "workspace-write":
         args.extend(["-c", _NETWORK_CONFIG_FLAG])
-    if login_job:
+    if login_escalated:
         valuehire_home = Path.home() / ".valuehire"
+        # Codex V2 F2: 윈도우 홈 경로의 cmd.exe 메타문자는 명령 분리·변수확장 위험 —
+        # owner 저장소 경로(위)와 동일 차단 기준을 적용한다.
+        if sys.platform == "win32" and any(ch in str(valuehire_home) for ch in "&|<>^%!()"):
+            raise ValueError("unsafe Windows valuehire path")
         valuehire_home.mkdir(parents=True, exist_ok=True)
         args.extend(["--add-dir", str(valuehire_home)])
     if str(source.get("VALUEHIRE_OWNER_AGENT_JOB") or "") == "1":
@@ -1131,8 +1141,10 @@ class FleetWorker:
         env = dict(os.environ)
         env["VH_BUSY_TASK"] = f"fleet #{job.get('id')} ({job.get('skill')})"
         env["VH_BUSY_AGENT"] = agent_label
-        # #194: Codex 인자 빌더가 잡 스킬을 알 수 있게 전달(login 샌드박스 확장 키).
+        # #194: Codex 인자 빌더가 잡 스킬·역할을 알 수 있게 전달 — login 샌드박스 확장은
+        # skill=login && role=owner 일 때만(Codex V2 F1 위조 방어).
         env["VALUEHIRE_JOB_SKILL"] = str(job.get("skill") or "")
+        env["VALUEHIRE_JOB_ROLE"] = str(job.get("role") or "")
         if job.get("skill") == OWNER_AGENT_SKILL:
             params = job.get("params") or {}
             env["VALUEHIRE_OWNER_AGENT_JOB"] = "1"
