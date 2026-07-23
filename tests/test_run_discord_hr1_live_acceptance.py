@@ -7,6 +7,7 @@ import sys
 
 from scripts.run_discord_hr1_live_acceptance import (
     build_hr1_receipt,
+    cleanup_hr1_jobs,
     expected_hr1_messages,
     gateway_subprocess_argv,
     gateway_subprocess_env,
@@ -58,6 +59,33 @@ def test_gateway_child_gets_minimal_key_but_no_service_role(tmp_path: Path) -> N
     assert child["DISCORD_HR1_REPLAY_FIRST_ENQUEUED"] == "1"
     assert "SUPABASE_SERVICE_ROLE_KEY" not in child
     assert "SERVICE_ROLE_KEY" not in child
+
+
+def test_cleanup_cancels_only_nonterminal_hr1_jobs(monkeypatch) -> None:
+    calls = []
+    rows = [
+        {"id": 70, "status": "paused_for_human"},
+        {"id": 71, "status": "done"},
+    ]
+
+    def fake_rows(_url, _key, _path):
+        return rows
+
+    def fake_request(url, **kwargs):
+        calls.append((url, kwargs.get("payload")))
+        return [{"id": 70, "status": "cancelled"}]
+
+    monkeypatch.setattr(
+        "scripts.run_discord_hr1_live_acceptance._supabase_rows", fake_rows,
+    )
+    monkeypatch.setattr(
+        "scripts.run_discord_hr1_live_acceptance._json_request", fake_request,
+    )
+    cleanup_hr1_jobs("https://example.supabase.co", "service", [70, 71])
+    assert calls == [
+        ("https://example.supabase.co/rest/v1/rpc/cancel_job",
+         {"p_job_id": 70, "p_reason": "HR-1 live acceptance aborted"}),
+    ]
 
 
 def test_gateway_child_starts_as_repo_module() -> None:
