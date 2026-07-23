@@ -51,9 +51,14 @@ LOGIN_RECEIPT_MAX_AGE_SECONDS = 86400  # fleet_heartbeat.PORTAL_STATUS_MAX_AGE_S
 
 
 def _read_login_receipt() -> Any:
-    """영수증 JSON 읽기 — 없거나 깨지면 None(판정은 login_gate_block_reason 이 fail-closed)."""
+    """영수증 JSON 읽기 — 없거나 깨지면 None(판정은 login_gate_block_reason 이 fail-closed).
+
+    Codex V2 3R-1: 파일 쪽도 중복 키(뒤값 승리 모순) 거부 — 훅이 ValueError 를 던지면
+    기존 계약대로 None(=차단)으로 떨어진다.
+    """
     try:
-        return json.loads((REPO / LOGIN_RECEIPT_RELPATH).read_text(encoding="utf-8"))
+        return json.loads((REPO / LOGIN_RECEIPT_RELPATH).read_text(encoding="utf-8"),
+                          object_pairs_hook=_reject_duplicate_keys)
     except (OSError, ValueError):
         return None
 
@@ -118,12 +123,14 @@ def _receipt_block_reason(payload: Any, required: tuple[str, ...],
         return "로그인 영수증에 portal_sessions 없음"
     by_channel = {}
     for entry in sessions:
-        if isinstance(entry, Mapping):
-            name = str(entry.get("channel") or "")
-            # Codex V2 2R-3: 같은 채널 항목이 두 번이면 모순 가능(뒤값 승리) — 차단.
-            if name in by_channel:
-                return f"{name} 로그인 영수증 항목 중복(모순 가능)"
-            by_channel[name] = entry
+        # Codex V2 3R-2: 비정상 항목을 조용히 건너뛰지 않는다 — 형식 오류 = 차단.
+        if not isinstance(entry, Mapping):
+            return "로그인 영수증 portal_sessions 항목 형식 오류"
+        name = str(entry.get("channel") or "")
+        # Codex V2 2R-3: 같은 채널 항목이 두 번이면 모순 가능(뒤값 승리) — 차단.
+        if name in by_channel:
+            return f"{name} 로그인 영수증 항목 중복(모순 가능)"
+        by_channel[name] = entry
     for channel in required:
         entry = by_channel.get(channel)
         if not isinstance(entry, Mapping):
@@ -646,10 +653,10 @@ def validate_login_receipt(stdout: str, *, started_epoch: int,
                                    min_generated_epoch=started_epoch)
     if reason is not None:
         raise ValueError(f"login receipt file cross-check failed: {reason}")
-    # Codex V2 2R-3: 파일 채널은 정확히 3사 각 1건 — 초과·중복은 위조/모순 신호.
+    # Codex V2 2R-3/3R-2: 파일 채널은 정확히 3사 각 1건 — 초과·중복·비정상 항목 전부
+    # 위조/모순 신호(비정상 항목은 _receipt_block_reason 이 이미 차단, 여기선 개수 일치).
     names = sorted(str(e.get("channel") or "")
-                   for e in file_payload.get("portal_sessions", [])
-                   if isinstance(e, Mapping))
+                   for e in file_payload.get("portal_sessions", []))
     if names != sorted(_LOGIN_RECEIPT_CHANNELS):
         raise ValueError("login receipt file channels must be exactly the three portals")
     return receipt

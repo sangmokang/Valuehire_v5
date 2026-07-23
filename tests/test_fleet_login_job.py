@@ -275,6 +275,25 @@ def test_validate_login_receipt_extra_file_channel_fails():
         _validate("완료\n" + _login_receipt_line(), file_payload=payload)
 
 
+def test_validate_login_receipt_malformed_file_entry_fails():
+    """Codex V2 3R-2 — 비정상(비객체) 항목을 조용히 건너뛰지 않는다."""
+    payload = _file_receipt()
+    payload["portal_sessions"].append("garbage-entry")
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(), file_payload=payload)
+
+
+def test_read_login_receipt_rejects_duplicate_file_keys(tmp_path, monkeypatch):
+    """Codex V2 3R-1 — 영수증 파일의 JSON 중복 키(뒤값 승리)도 None(차단)."""
+    target = tmp_path / fleet_worker.LOGIN_RECEIPT_RELPATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        '{"generated_at": "2026-07-24T00:00:00+00:00", '
+        '"portal_sessions": [], "portal_sessions": []}', encoding="utf-8")
+    monkeypatch.setattr(fleet_worker, "REPO", tmp_path)
+    assert fleet_worker._read_login_receipt() is None
+
+
 def test_login_prompt_requires_receipt_marker():
     prompt = fleet_worker.build_job_prompt(_login_job())
     assert fleet_worker._LOGIN_RECEIPT_MARKER in prompt
