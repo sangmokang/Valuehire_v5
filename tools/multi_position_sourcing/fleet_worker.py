@@ -32,6 +32,7 @@ from .fleet_heartbeat import read_linkedin_login_flag
 from .job_queue import (
     FLEET_MACHINES,
     FLEET_SKILLS,
+    FOLLOWUP_SKILLS,
     OWNER_AGENT_SKILL,
     JobQueueClient,
     _valid_url,
@@ -50,9 +51,14 @@ LOGIN_RECEIPT_MAX_AGE_SECONDS = 86400  # fleet_heartbeat.PORTAL_STATUS_MAX_AGE_S
 
 
 def _read_login_receipt() -> Any:
-    """영수증 JSON 읽기 — 없거나 깨지면 None(판정은 login_gate_block_reason 이 fail-closed)."""
+    """영수증 JSON 읽기 — 없거나 깨지면 None(판정은 login_gate_block_reason 이 fail-closed).
+
+    Codex V2 3R-1: 파일 쪽도 중복 키(뒤값 승리 모순) 거부 — 훅이 ValueError 를 던지면
+    기존 계약대로 None(=차단)으로 떨어진다.
+    """
     try:
-        return json.loads((REPO / LOGIN_RECEIPT_RELPATH).read_text(encoding="utf-8"))
+        return json.loads((REPO / LOGIN_RECEIPT_RELPATH).read_text(encoding="utf-8"),
+                          object_pairs_hook=_reject_duplicate_keys)
     except (OSError, ValueError):
         return None
 
@@ -84,6 +90,17 @@ def login_gate_block_reason(payload: Any, job: Mapping[str, Any],
     required = login_gate_required_channels(job)
     if not required:
         return None
+    return _receipt_block_reason(payload, required, now_epoch)
+
+
+def _receipt_block_reason(payload: Any, required: tuple[str, ...],
+                          now_epoch: int,
+                          min_generated_epoch: float | None = None) -> str | None:
+    """영수증 payload 순수 판정(#188 에서 login 완료 교차검증과 공용으로 추출).
+
+    min_generated_epoch(Codex V2 2R-2): 지정 시 그 시각 이전 영수증은 '이번 실행에서
+    갱신 안 됨'으로 차단 — 24시간 내 옛 영수증으로 완료를 위장하는 각도 봉인.
+    """
     if not isinstance(payload, Mapping):
         return "로그인 영수증 없음(artifacts/portal_session_status_latest.json)"
     from datetime import datetime
@@ -99,13 +116,23 @@ def login_gate_block_reason(payload: Any, job: Mapping[str, Any],
     age = now_epoch - int(dt.timestamp())
     if age < 0 or age > LOGIN_RECEIPT_MAX_AGE_SECONDS:
         return f"로그인 영수증 만료/미래 시각(age={age}s)"
+    # Codex V2 4R: 정수 절삭 비교는 같은 초 안의 '시작 직전' 영수증을 통과시킨다
+    # — 소수점 시각 그대로 비교(fail-closed 방향).
+    if min_generated_epoch is not None and dt.timestamp() < float(min_generated_epoch):
+        return "로그인 영수증이 잡 시작 이전 것(이번 실행에서 미갱신)"
     sessions = payload.get("portal_sessions")
     if not isinstance(sessions, list):
         return "로그인 영수증에 portal_sessions 없음"
     by_channel = {}
     for entry in sessions:
-        if isinstance(entry, Mapping):
-            by_channel[str(entry.get("channel") or "")] = entry
+        # Codex V2 3R-2: 비정상 항목을 조용히 건너뛰지 않는다 — 형식 오류 = 차단.
+        if not isinstance(entry, Mapping):
+            return "로그인 영수증 portal_sessions 항목 형식 오류"
+        name = str(entry.get("channel") or "")
+        # Codex V2 2R-3: 같은 채널 항목이 두 번이면 모순 가능(뒤값 승리) — 차단.
+        if name in by_channel:
+            return f"{name} 로그인 영수증 항목 중복(모순 가능)"
+        by_channel[name] = entry
     for channel in required:
         entry = by_channel.get(channel)
         if not isinstance(entry, Mapping):
@@ -156,6 +183,8 @@ _PAUSE_MARKER = "PAUSED_FOR_HUMAN:"
 _SEARCH_RECEIPT_MARKER = "FLEET_SEARCH_RECEIPT:"
 _HUMANSEARCH_RECEIPT_MARKER = "HUMANSEARCH_EVIDENCE_RECEIPT:"
 _URL_RECEIPT_MARKER = "URL_EVIDENCE_RECEIPT:"
+_LOGIN_RECEIPT_MARKER = "LOGIN_EVIDENCE_RECEIPT:"
+_LOGIN_RECEIPT_CHANNELS = ("saramin", "jobkorea", "linkedin_rps")
 _NETWORK_CONFIG_FLAG = "sandbox_workspace_write.network_access=true"
 
 # 기본 보고 채널 = 사장님 DM 채널(scripts/discord_command_listener.py 와 동일)
@@ -295,6 +324,16 @@ def build_owner_agent_prompt(job: Mapping[str, Any]) -> str:
     )
 
 
+def select_job_engine(job: Mapping[str, Any]) -> tuple[str, Callable[..., Any]]:
+    """엔진 선택 SOT(#188) — login 은 항상 Codex(사장님 지시 2026-07-24),
+    그 외 스킬은 params.agent 로 선택(codex 명시 시만 Codex, 기본 claude)."""
+    if job.get("skill") == "login":
+        return "codex", _run_codex
+    if (job.get("params") or {}).get("agent") == "codex":
+        return "codex", _run_codex
+    return "claude", _run_claude
+
+
 def build_job_prompt(job: Mapping[str, Any]) -> str:
     """잡 1건 → claude -p 실행 문구. 계약 위반 잡은 ValueError(fail-closed)."""
     skill = job.get("skill")
@@ -306,7 +345,11 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
         raise ValueError(f"invalid job id: {job_id!r}")
     url = job.get("position_url")
-    if not _valid_url(url):
+    if skill == "login":
+        # login 은 무대상 스킬(#188, Codex V2 2R-1) — 빈 값만 허용(URL 있으면 거부).
+        if not isinstance(url, str) or url.strip():
+            raise ValueError(f"invalid position_url: {url!r}")
+    elif not _valid_url(url):
         raise ValueError(f"invalid position_url: {url!r}")
     # V1+V2: 개행/제어문자/유니코드 줄구분자(U+2028/2029/0085) = 프롬프트 인젝션 → fail-closed
     # (splitlines 가 줄로 취급하는 모든 문자 — 일반 스페이스 외 공백류 전부 거부)
@@ -319,6 +362,36 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     params = job.get("params") or {}
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
+    if skill == "login":
+        # SOT26 로그인 계약(#188) — 자동 로그인 항상, 사람 몫은 2FA·캡차·checkpoint 뿐.
+        machine = str(job.get("machine") or "(미상)")
+        return (
+            f"[Valuehire 잡 #{job_id}] login 스킬을 발동해 3사(사람인·잡코리아·LinkedIn RPS) "
+            f"포털 로그인 세션을 점검·복구해줘.\n"
+            f"- 요청자: {requested_by} (Discord, 역할: {role})\n"
+            f"{params_line}"
+            f"- 결과: 한국어로 요약해 stdout 에 출력할 것 (워커가 Discord 로 전달함)\n"
+            f"규칙:\n"
+            f"1. 저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것(SOT26 INV1 — "
+            f"로그인을 막는 대기·회피 금지).\n"
+            f"2. 정식 준비 러너를 사용할 것: PYTHONPATH=. python3 -m "
+            f"tools.multi_position_sourcing.portal_login --channels "
+            f"saramin,jobkorea,linkedin_rps --worker-id {machine} — "
+            f"즉석 raw 자동화로 우회하지 말 것.\n"
+            f"3. 캡차/2FA/checkpoint 만 사람 몫 — 뜨면 그 브라우저 창을 앞으로 띄워 두고 "
+            f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력한 뒤 즉시 종료할 것"
+            f"(자동 우회 금지).\n"
+            f"4. 브라우저 보존: 창·탭·프로필 종료 0건 — 로그인된 크롬 프로필을 "
+            f"로그아웃·삭제·초기화하지 말 것.\n"
+            f"5. 비밀번호·쿠키·토큰을 출력하지 말 것.\n"
+            f"6. 검색·수집·발송은 이 잡 범위 밖 — 시작하지 말 것.\n"
+            f"7. 완료 후 영수증(artifacts/portal_session_status_latest.json) 갱신을 "
+            f"확인하고, 마지막 줄에 {_LOGIN_RECEIPT_MARKER} 뒤로 "
+            f'{{"channels": {{"saramin": {{"ready": true}}, "jobkorea": {{"ready": true}}, '
+            f'"linkedin_rps": {{"ready": true}}}}, "output": "<영수증 경로>"}} 형식 JSON 을 '
+            f"출력할 것. ready 가 아닌 채널이 있으면 이 마커 대신 규칙 3의 PAUSE 마커로 "
+            f"종료할 것(거짓 ready 금지).\n"
+        )
     url_login_rule = ""
     capture_rule = ""
     if skill == "url":
@@ -524,6 +597,70 @@ def validate_url_receipt(stdout: str) -> dict[str, Any]:
         or receipt.get("mode") != "evidence"
     ):
         raise ValueError("url browser evidence incomplete")
+    return receipt
+
+
+_UNSET = object()
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """json object_pairs_hook — 중복 키(뒤값 승리 위조 각도) 거부(Codex V2 2R-3)."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON key: {key}")
+        out[key] = value
+    return out
+
+
+def validate_login_receipt(stdout: str, *, started_epoch: float,
+                           file_payload: Any = _UNSET,
+                           now_epoch: int | None = None) -> dict[str, Any]:
+    """login 잡 완료 증거(#188, R2) — 3사 채널별 ready=True 명시 없이는 done 금지.
+
+    ready 아닌 채널이 있으면 엔진은 done 이 아니라 PAUSE 마커로 종료했어야 한다
+    (캡차·2FA 는 사람 몫). 그러므로 '완료' 주장 + not-ready 조합은 계약 위반이다.
+
+    Codex V2 반증 수용(위조 각도 봉인):
+    - 마커는 *마지막 비공백 줄* 이어야 한다(중간 삽입 후 딴소리 금지).
+    - 채널은 정확히 3사(초과·누락 모두 거부), ready 는 bool True 만.
+    - output 은 고정 영수증 경로여야 한다.
+    - stdout 주장만 믿지 않는다 — 실제 영수증 파일(LOGIN_RECEIPT_RELPATH)을
+      교차 대조한다(신선도 + 3사 ready). 파일 주입 인자는 단위테스트용.
+    """
+    lines = [l.strip() for l in (stdout or "").splitlines() if l.strip()]
+    if not lines or not lines[-1].startswith(_LOGIN_RECEIPT_MARKER):
+        raise ValueError("login receipt must be the last non-empty line")
+    try:
+        receipt = json.loads(lines[-1][len(_LOGIN_RECEIPT_MARKER):].strip(),
+                             object_pairs_hook=_reject_duplicate_keys)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("login completion receipt invalid") from exc
+    if not isinstance(receipt, dict):
+        raise ValueError("login completion receipt invalid")
+    channels = receipt.get("channels")
+    if not isinstance(channels, dict) or set(channels) != set(_LOGIN_RECEIPT_CHANNELS):
+        raise ValueError("login receipt channels must be exactly the three portals")
+    for name in _LOGIN_RECEIPT_CHANNELS:
+        entry = channels.get(name)
+        if not isinstance(entry, dict) or entry.get("ready") is not True:
+            raise ValueError(f"login receipt: {name} not ready")
+    if receipt.get("output") != LOGIN_RECEIPT_RELPATH:
+        raise ValueError("login receipt output path mismatch")
+    if file_payload is _UNSET:
+        file_payload = _read_login_receipt()
+    if now_epoch is None:
+        now_epoch = int(time.time())
+    reason = _receipt_block_reason(file_payload, _LOGIN_RECEIPT_CHANNELS, now_epoch,
+                                   min_generated_epoch=started_epoch)
+    if reason is not None:
+        raise ValueError(f"login receipt file cross-check failed: {reason}")
+    # Codex V2 2R-3/3R-2: 파일 채널은 정확히 3사 각 1건 — 초과·중복·비정상 항목 전부
+    # 위조/모순 신호(비정상 항목은 _receipt_block_reason 이 이미 차단, 여기선 개수 일치).
+    names = sorted(str(e.get("channel") or "")
+                   for e in file_payload.get("portal_sessions", []))
+    if names != sorted(_LOGIN_RECEIPT_CHANNELS):
+        raise ValueError("login receipt file channels must be exactly the three portals")
     return receipt
 
 
@@ -1067,9 +1204,12 @@ class FleetWorker:
             f"position: {job.get('position_url')}"))
         runner = self.runner
         agent_label = "claude"
-        if not self._runner_injected and (job.get("params") or {}).get("agent") == "codex":
-            runner = _run_codex  # 이슈 B — agent 미지정/claude 는 기존 경로 그대로
-            agent_label = "codex"
+        if not self._runner_injected:
+            # 이슈 B + #188 — 주입 러너(테스트/시뮬레이션)는 그대로, 실 경로만 SOT 선택.
+            agent_label, runner = select_job_engine(job)
+        # #188 Codex V2 2R-2/4R: login 완료 영수증은 이 시각 이후 갱신본만 인정
+        # (정수 절삭 없이 소수점 시각 그대로 — 같은 초 경계 우회 봉인).
+        started_epoch = time.time()
         try:
             if self._runner_injected:
                 raw = runner(prompt, self.timeout)
@@ -1136,6 +1276,13 @@ class FleetWorker:
         elif job.get("skill") == "url":
             try:
                 validate_url_receipt(stdout)
+            except ValueError as exc:
+                self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
+                self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")
+                return "failed"
+        elif job.get("skill") == "login":
+            try:
+                validate_login_receipt(stdout, started_epoch=started_epoch)
             except ValueError as exc:
                 self._release(job, job_id, "failed", error=f"완료 영수증 계약 위반: {exc}")
                 self._notify(job, f"❌ 잡 #{job_id} 실패 — 완료 영수증 계약 위반: {exc}")
@@ -1216,7 +1363,8 @@ class FleetWorker:
             return
         # V1 2R(minor) 수용: 화이트리스트 밖 followup 은 키 파생 전에 차단 —
         # 비정상 긴 스킬명이 음수 슬라이스(160-len(suffix)<0)를 만들 여지 원천 제거.
-        if followup not in FLEET_SKILLS:
+        # Codex V2(#188): login 은 followup 자동 체이닝 금지(FOLLOWUP_SKILLS).
+        if followup not in FOLLOWUP_SKILLS:
             self._notify(job, (
                 f"⚠️ 잡 #{job.get('id')} 후속 스킬 무효({str(followup)[:40]!r}) — 체이닝 생략"))
             return
