@@ -32,6 +32,7 @@ from .fleet_heartbeat import read_linkedin_login_flag
 from .job_queue import (
     FLEET_MACHINES,
     FLEET_SKILLS,
+    FOLLOWUP_SKILLS,
     OWNER_AGENT_SKILL,
     JobQueueClient,
     _valid_url,
@@ -84,6 +85,12 @@ def login_gate_block_reason(payload: Any, job: Mapping[str, Any],
     required = login_gate_required_channels(job)
     if not required:
         return None
+    return _receipt_block_reason(payload, required, now_epoch)
+
+
+def _receipt_block_reason(payload: Any, required: tuple[str, ...],
+                          now_epoch: int) -> str | None:
+    """영수증 payload 순수 판정(#188 에서 login 완료 교차검증과 공용으로 추출)."""
     if not isinstance(payload, Mapping):
         return "로그인 영수증 없음(artifacts/portal_session_status_latest.json)"
     from datetime import datetime
@@ -573,20 +580,43 @@ def validate_url_receipt(stdout: str) -> dict[str, Any]:
     return receipt
 
 
-def validate_login_receipt(stdout: str) -> dict[str, Any]:
+_UNSET = object()
+
+
+def validate_login_receipt(stdout: str, *, file_payload: Any = _UNSET,
+                           now_epoch: int | None = None) -> dict[str, Any]:
     """login 잡 완료 증거(#188, R2) — 3사 채널별 ready=True 명시 없이는 done 금지.
 
     ready 아닌 채널이 있으면 엔진은 done 이 아니라 PAUSE 마커로 종료했어야 한다
     (캡차·2FA 는 사람 몫). 그러므로 '완료' 주장 + not-ready 조합은 계약 위반이다.
+
+    Codex V2 반증 수용(위조 각도 봉인):
+    - 마커는 *마지막 비공백 줄* 이어야 한다(중간 삽입 후 딴소리 금지).
+    - 채널은 정확히 3사(초과·누락 모두 거부), ready 는 bool True 만.
+    - output 은 고정 영수증 경로여야 한다.
+    - stdout 주장만 믿지 않는다 — 실제 영수증 파일(LOGIN_RECEIPT_RELPATH)을
+      교차 대조한다(신선도 + 3사 ready). 파일 주입 인자는 단위테스트용.
     """
-    receipt = _marked_json(stdout, _LOGIN_RECEIPT_MARKER)
+    lines = [l.strip() for l in (stdout or "").splitlines() if l.strip()]
+    if not lines or not lines[-1].startswith(_LOGIN_RECEIPT_MARKER):
+        raise ValueError("login receipt must be the last non-empty line")
+    receipt = _marked_json(lines[-1], _LOGIN_RECEIPT_MARKER)
     channels = receipt.get("channels")
-    if not isinstance(channels, dict):
-        raise ValueError("login receipt channels missing")
+    if not isinstance(channels, dict) or set(channels) != set(_LOGIN_RECEIPT_CHANNELS):
+        raise ValueError("login receipt channels must be exactly the three portals")
     for name in _LOGIN_RECEIPT_CHANNELS:
         entry = channels.get(name)
         if not isinstance(entry, dict) or entry.get("ready") is not True:
             raise ValueError(f"login receipt: {name} not ready")
+    if receipt.get("output") != LOGIN_RECEIPT_RELPATH:
+        raise ValueError("login receipt output path mismatch")
+    if file_payload is _UNSET:
+        file_payload = _read_login_receipt()
+    if now_epoch is None:
+        now_epoch = int(time.time())
+    reason = _receipt_block_reason(file_payload, _LOGIN_RECEIPT_CHANNELS, now_epoch)
+    if reason is not None:
+        raise ValueError(f"login receipt file cross-check failed: {reason}")
     return receipt
 
 
@@ -1286,7 +1316,8 @@ class FleetWorker:
             return
         # V1 2R(minor) 수용: 화이트리스트 밖 followup 은 키 파생 전에 차단 —
         # 비정상 긴 스킬명이 음수 슬라이스(160-len(suffix)<0)를 만들 여지 원천 제거.
-        if followup not in FLEET_SKILLS:
+        # Codex V2(#188): login 은 followup 자동 체이닝 금지(FOLLOWUP_SKILLS).
+        if followup not in FOLLOWUP_SKILLS:
             self._notify(job, (
                 f"⚠️ 잡 #{job.get('id')} 후속 스킬 무효({str(followup)[:40]!r}) — 체이닝 생략"))
             return

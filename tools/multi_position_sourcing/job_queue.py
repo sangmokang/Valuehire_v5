@@ -25,6 +25,9 @@ REPO = Path(__file__).resolve().parents[2]
 # dynamic and share this syntax with fleet_machines.machine_id in PostgreSQL.
 FLEET_MACHINES: tuple[str, ...] = ("macmini", "macbook", "winpc")
 FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url", "jdintake", "login")
+# Codex V2(#188) — followup 자동 체이닝은 login 금지: 검색 잡이 끝났다고 저장 자격증명을
+# 쓰는 전 포털 로그인을 자동 연쇄 실행하면 안 된다(로그인은 명시 요청·게이트 경유만).
+FOLLOWUP_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url", "jdintake")
 OWNER_AGENT_SKILL = "agent"
 QUEUE_SKILLS: tuple[str, ...] = (*FLEET_SKILLS, OWNER_AGENT_SKILL)
 OWNER_AGENT_MAX_REQUEST_CHARS = 8_000
@@ -210,6 +213,17 @@ def url_host_resolves_public(url: str, *, getaddrinfo: Any = None) -> bool:
 LINKEDIN_RPS_ACCOUNT_KEY = "portal:linkedin_rps"
 
 
+def position_url_requires_public_dns(payload: Mapping[str, Any]) -> bool:
+    """POST 직전 공인 DNS 검사 대상 여부(#188 Codex V2 F1).
+
+    login 잡의 빈 position_url 만 검사 면제 — 그 외(URL 이 실재하는 모든 잡)는
+    기존 fail-closed 그대로. new_job_payload 가 빈 URL 을 login 에만 허용하므로
+    이 면제는 login 밖으로 넓어질 수 없다.
+    """
+    return not (payload.get("skill") == "login"
+                and not str(payload.get("position_url") or "").strip())
+
+
 def default_account_key(skill: str, machine: str) -> str:
     """계정 락 기본 정책 — LinkedIn 잡(url)은 좌석 공유 키, 그 외는 머신 바인딩 키."""
     if skill == "url":
@@ -299,7 +313,8 @@ def new_job_payload(
         if not _valid_owner_agent_params(params, position_url.strip(), role):
             return None
     # 이슈 A(2026-07-15): followup_skill 도 화이트리스트만 — 큐 입구에서 fail-closed
-    if "followup_skill" in params and params["followup_skill"] not in FLEET_SKILLS:
+    # Codex V2(#188): login 은 followup 대상이 아니다(FOLLOWUP_SKILLS).
+    if "followup_skill" in params and params["followup_skill"] not in FOLLOWUP_SKILLS:
         return None
     # 이슈 B(2026-07-15): 실행 엔진도 화이트리스트만 — claude|codex 외 거부
     if "agent" in params and params["agent"] not in FLEET_AGENTS:
@@ -521,7 +536,8 @@ class JobQueueClient:
             raise ValueError("무효 페이로드 — new_job_payload 검증 실패")
         # 조각 G(goal §5): 이름 기반 호스트도 POST 직전 DNS 해석으로 공인 여부를 강제.
         # 사설·loopback·메타데이터로 해석되면 HTTP 호출 없이 즉시 거부(fail-closed).
-        if not url_host_resolves_public(
+        # #188 Codex V2 F1: login 의 빈 URL 만 면제(position_url_requires_public_dns).
+        if position_url_requires_public_dns(revalidated) and not url_host_resolves_public(
                 revalidated["position_url"], getaddrinfo=self._getaddrinfo):
             raise ValueError(
                 "position_url 호스트가 공인 주소로 해석되지 않음(사설/loopback/메타데이터 거부)")

@@ -135,40 +135,145 @@ def test_build_job_prompt_search_still_requires_url():
 
 
 # ── 완료 영수증 — login 도 증거 없이 done 이 될 수 없다(R2) ──────────────
+# Codex V2 반증 수용: (1) 마커는 마지막 비공백 줄만, (2) 채널은 정확히 3개,
+# (3) output 경로 고정, (4) 실제 영수증 파일과 교차 대조.
+
+_NOW = 1_784_800_000
 
 
 def _login_receipt_line(channels=("saramin", "jobkorea", "linkedin_rps"),
-                        ready=True):
+                        ready=True,
+                        output="artifacts/portal_session_status_latest.json"):
     import json
     return fleet_worker._LOGIN_RECEIPT_MARKER + json.dumps({
         "channels": {ch: {"ready": ready} for ch in channels},
-        "output": "artifacts/portal_session_status_latest.json",
+        "output": output,
     })
 
 
+def _file_receipt(now=_NOW, ready=True,
+                  channels=("saramin", "jobkorea", "linkedin_rps")):
+    from datetime import datetime, timezone
+    return {
+        "generated_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+        "portal_sessions": [{"channel": ch, "ready": ready} for ch in channels],
+    }
+
+
+def _validate(stdout, file_payload=None, now=_NOW):
+    return fleet_worker.validate_login_receipt(
+        stdout,
+        file_payload=_file_receipt() if file_payload is None else file_payload,
+        now_epoch=now)
+
+
 def test_validate_login_receipt_accepts_all_ready():
-    receipt = fleet_worker.validate_login_receipt(
-        "작업 완료\n" + _login_receipt_line())
+    receipt = _validate("작업 완료\n" + _login_receipt_line())
     assert set(receipt["channels"]) == {"saramin", "jobkorea", "linkedin_rps"}
 
 
 def test_validate_login_receipt_missing_marker_fails():
     with pytest.raises(ValueError):
-        fleet_worker.validate_login_receipt("로그인 다 했습니다(증거 없음)")
+        _validate("로그인 다 했습니다(증거 없음)")
+
+
+def test_validate_login_receipt_marker_mid_output_fails():
+    """Codex V2 — 마커 뒤에 다른 출력이 붙으면(중간 삽입 위조) 거부."""
+    with pytest.raises(ValueError):
+        _validate(_login_receipt_line() + "\n그리고 추가 로그")
 
 
 def test_validate_login_receipt_not_ready_channel_fails():
     with pytest.raises(ValueError):
-        fleet_worker.validate_login_receipt(
-            "완료\n" + _login_receipt_line(ready=False))
+        _validate("완료\n" + _login_receipt_line(ready=False))
 
 
 def test_validate_login_receipt_missing_channel_fails():
     with pytest.raises(ValueError):
-        fleet_worker.validate_login_receipt(
-            "완료\n" + _login_receipt_line(channels=("saramin",)))
+        _validate("완료\n" + _login_receipt_line(channels=("saramin",)))
+
+
+def test_validate_login_receipt_extra_channel_fails():
+    """Codex V2 — 임의 채널 추가로 부풀린 영수증 거부(정확히 3개)."""
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(
+            channels=("saramin", "jobkorea", "linkedin_rps", "fakeportal")))
+
+
+def test_validate_login_receipt_wrong_output_path_fails():
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(output="/tmp/elsewhere.json"))
+
+
+def test_validate_login_receipt_file_cross_check_not_ready_fails():
+    """stdout 이 ready 라고 우겨도 실제 영수증 파일이 not-ready 면 거부."""
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(),
+                  file_payload=_file_receipt(ready=False))
+
+
+def test_validate_login_receipt_file_cross_check_stale_fails():
+    stale = _file_receipt(now=_NOW - fleet_worker.LOGIN_RECEIPT_MAX_AGE_SECONDS - 10)
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(), file_payload=stale)
+
+
+def test_validate_login_receipt_file_missing_fails():
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(), file_payload={})
 
 
 def test_login_prompt_requires_receipt_marker():
     prompt = fleet_worker.build_job_prompt(_login_job())
     assert fleet_worker._LOGIN_RECEIPT_MARKER in prompt
+
+
+# ── Codex V2 F3 — followup:login 자동 체이닝 차단 ────────────────────────
+
+
+def test_followup_skills_exclude_login():
+    assert "login" not in job_queue.FOLLOWUP_SKILLS
+    assert set(job_queue.FOLLOWUP_SKILLS) == set(job_queue.FLEET_SKILLS) - {"login"}
+
+
+def test_new_job_payload_rejects_followup_login():
+    payload = job_queue.new_job_payload(
+        machine="macmini", skill="url",
+        position_url="https://app.clickup.com/t/86eufjabc",
+        requested_by=OWNER_ID, role="owner",
+        params={"followup_skill": "login"},
+    )
+    assert payload is None
+
+
+def test_fleet_args_rejects_followup_login():
+    from tools.multi_position_sourcing.fleet_args import (
+        FleetArgsError, parse_fleet_args)
+    with pytest.raises(FleetArgsError):
+        parse_fleet_args(
+            "fleet-run",
+            "url:https://app.clickup.com/t/86eufjabc followup:login")
+
+
+# ── Codex V2 F1 — 운영(관리자) 경로에서도 login 등록이 가능해야 한다 ─────
+
+
+def test_public_dns_check_skipped_only_for_login_empty_url():
+    assert job_queue.position_url_requires_public_dns(
+        {"skill": "login", "position_url": ""}) is False
+    assert job_queue.position_url_requires_public_dns(
+        {"skill": "humansearch",
+         "position_url": "https://app.clickup.com/t/86eufjabc"}) is True
+    # login 이라도 URL 이 있으면 DNS 검사 대상(약화 금지).
+    assert job_queue.position_url_requires_public_dns(
+        {"skill": "login",
+         "position_url": "https://app.clickup.com/t/86eufjabc"}) is True
+
+
+def test_login_migration_extends_jobs_skill_check():
+    import pathlib
+    files = sorted(pathlib.Path("supabase/migrations").glob("*login_skill*.sql"))
+    assert files, "login 스킬 DB 마이그레이션이 없습니다(라이브 큐가 login 을 거부)"
+    sql = files[-1].read_text(encoding="utf-8")
+    assert "jobs_skill_check" in sql
+    assert "'login'" in sql

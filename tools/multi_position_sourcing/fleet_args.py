@@ -20,7 +20,7 @@ import urllib.parse
 from typing import Any
 
 from .fleet_dispatch import FLEET_COMMANDS
-from .job_queue import FLEET_MACHINES, FLEET_SKILLS
+from .job_queue import FLEET_MACHINES, FLEET_SKILLS, FOLLOWUP_SKILLS
 
 FLEET_ARG_COMMANDS: tuple[str, ...] = FLEET_COMMANDS
 
@@ -172,8 +172,9 @@ def parse_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
         # 이슈 A(2026-07-15): url→aisearch 순차 핸드오프 — 후속 스킬도 화이트리스트만
         followup = options.pop("followup", "")
         if followup:
-            if followup not in FLEET_SKILLS:
-                raise FleetArgsError(f"followup 은 {FLEET_SKILLS} 만 허용합니다")
+            # Codex V2(#188): login 은 followup 자동 체이닝 금지(FOLLOWUP_SKILLS).
+            if followup not in FOLLOWUP_SKILLS:
+                raise FleetArgsError(f"followup 은 {FOLLOWUP_SKILLS} 만 허용합니다")
             params["followup_skill"] = followup
         # 이슈 B(2026-07-15): 실행 엔진 선택 — claude|codex 만(fail-closed)
         agent = options.pop("agent", _MISSING)
