@@ -417,6 +417,31 @@ def _fetch_jobs(
     return {int(row["id"]): row for row in rows if isinstance(row.get("id"), int)}
 
 
+def cleanup_hr1_jobs(
+    supabase_url: str, service_key: str, job_ids: Sequence[int],
+) -> None:
+    """Cancel only this run's queued/paused jobs after an unsuccessful acceptance."""
+    if not job_ids:
+        return
+    jobs = _supabase_rows(
+        supabase_url,
+        service_key,
+        f"jobs?select=id,status&id=in.({','.join(str(value) for value in job_ids)})",
+    )
+    for job in jobs:
+        if job.get("status") not in {"queued", "paused_for_human"}:
+            continue
+        _json_request(
+            f"{supabase_url.rstrip('/')}/rest/v1/rpc/cancel_job",
+            method="POST",
+            payload={
+                "p_job_id": int(job["id"]),
+                "p_reason": "HR-1 live acceptance aborted",
+            },
+            headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"},
+        )
+
+
 def _wait_for_jobs(
     *,
     supabase_url: str,
@@ -519,6 +544,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     gateway_exit_code: int | None = None
     jobs: dict[int, dict[str, Any]] = {}
+    job_ids: list[int] = []
     try:
         _wait_for_gateway(evidence_path, process, args.startup_timeout)
         print(
@@ -545,6 +571,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         gateway_exit_code = _stop_gateway(process)
         log_handle.close()
+        if job_ids:
+            try:
+                observed = _fetch_jobs(supabase_url, service_key, job_ids)
+                if any(row.get("status") != "done" for row in observed.values()):
+                    cleanup_hr1_jobs(supabase_url, service_key, job_ids)
+            except Exception as exc:  # noqa: BLE001 — preserve the original failure.
+                print(f"HR-1 cleanup warning: {type(exc).__name__}", file=sys.stderr)
 
     evidence = _read_evidence(evidence_path)
     hermes_after = _hermes_state()
