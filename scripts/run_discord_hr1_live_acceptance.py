@@ -57,8 +57,8 @@ def expected_hr1_messages(position_url: str) -> tuple[str, str, str]:
     url = str(position_url or "").strip()
     _require(url.startswith(("https://", "http://")), "position URL is required")
     return (
-        f"/url url:{url} machine:winpc engine:claude",
-        f"/url url:{url} machine:winpc engine:codex",
+        f"/url {url} winpc engine:claude",
+        f"/url {url} winpc engine:codex",
         f"이 포지션으로 LinkedIn 검색 URL 만들어줘 {url} winpc",
     )
 
