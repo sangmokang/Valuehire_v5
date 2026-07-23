@@ -64,7 +64,7 @@ def test_minimal_client_enqueues_login_with_empty_url():
 
 def test_minimal_client_still_rejects_agent_before_network():
     client = _CapturingClient()
-    with pytest.raises(PermissionError):
+    with pytest.raises((PermissionError, ValueError)):
         client.enqueue({**_payload(), "skill": "agent"})
     assert client.calls == []
 

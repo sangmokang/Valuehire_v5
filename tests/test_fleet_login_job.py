@@ -351,7 +351,7 @@ def test_public_dns_check_skipped_only_for_login_empty_url():
 
 def test_login_migration_extends_jobs_skill_check():
     import pathlib
-    files = sorted(pathlib.Path("supabase/migrations").glob("*login_skill*.sql"))
+    files = sorted(pathlib.Path("supabase/migrations").glob("*fleet_login_skill*.sql"))
     assert files, "login 스킬 DB 마이그레이션이 없습니다(라이브 큐가 login 을 거부)"
     sql = files[-1].read_text(encoding="utf-8")
     assert "jobs_skill_check" in sql
