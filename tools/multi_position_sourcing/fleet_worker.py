@@ -295,6 +295,16 @@ def build_owner_agent_prompt(job: Mapping[str, Any]) -> str:
     )
 
 
+def select_job_engine(job: Mapping[str, Any]) -> tuple[str, Callable[..., Any]]:
+    """엔진 선택 SOT(#188) — login 은 항상 Codex(사장님 지시 2026-07-24),
+    그 외 스킬은 params.agent 로 선택(codex 명시 시만 Codex, 기본 claude)."""
+    if job.get("skill") == "login":
+        return "codex", _run_codex
+    if (job.get("params") or {}).get("agent") == "codex":
+        return "codex", _run_codex
+    return "claude", _run_claude
+
+
 def build_job_prompt(job: Mapping[str, Any]) -> str:
     """잡 1건 → claude -p 실행 문구. 계약 위반 잡은 ValueError(fail-closed)."""
     skill = job.get("skill")
@@ -306,7 +316,11 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
         raise ValueError(f"invalid job id: {job_id!r}")
     url = job.get("position_url")
-    if not _valid_url(url):
+    if skill == "login":
+        # login 은 대상 URL 이 없다(#188) — 빈 값만 허용, 쓰레기 문자열은 여전히 거부.
+        if not isinstance(url, str) or (url.strip() and not _valid_url(url)):
+            raise ValueError(f"invalid position_url: {url!r}")
+    elif not _valid_url(url):
         raise ValueError(f"invalid position_url: {url!r}")
     # V1+V2: 개행/제어문자/유니코드 줄구분자(U+2028/2029/0085) = 프롬프트 인젝션 → fail-closed
     # (splitlines 가 줄로 취급하는 모든 문자 — 일반 스페이스 외 공백류 전부 거부)
@@ -319,6 +333,32 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     params = job.get("params") or {}
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
+    if skill == "login":
+        # SOT26 로그인 계약(#188) — 자동 로그인 항상, 사람 몫은 2FA·캡차·checkpoint 뿐.
+        machine = str(job.get("machine") or "(미상)")
+        return (
+            f"[Valuehire 잡 #{job_id}] login 스킬을 발동해 3사(사람인·잡코리아·LinkedIn RPS) "
+            f"포털 로그인 세션을 점검·복구해줘.\n"
+            f"- 요청자: {requested_by} (Discord, 역할: {role})\n"
+            f"{params_line}"
+            f"- 결과: 한국어로 요약해 stdout 에 출력할 것 (워커가 Discord 로 전달함)\n"
+            f"규칙:\n"
+            f"1. 저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것(SOT26 INV1 — "
+            f"로그인을 막는 대기·회피 금지).\n"
+            f"2. 정식 준비 러너를 사용할 것: PYTHONPATH=. python3 -m "
+            f"tools.multi_position_sourcing.portal_login --channels "
+            f"saramin,jobkorea,linkedin_rps --worker-id {machine} — "
+            f"즉석 raw 자동화로 우회하지 말 것.\n"
+            f"3. 캡차/2FA/checkpoint 만 사람 몫 — 뜨면 그 브라우저 창을 앞으로 띄워 두고 "
+            f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력한 뒤 즉시 종료할 것"
+            f"(자동 우회 금지).\n"
+            f"4. 브라우저 보존: 창·탭·프로필 종료 0건 — 로그인된 크롬 프로필을 "
+            f"로그아웃·삭제·초기화하지 말 것.\n"
+            f"5. 비밀번호·쿠키·토큰을 출력하지 말 것.\n"
+            f"6. 검색·수집·발송은 이 잡 범위 밖 — 시작하지 말 것.\n"
+            f"7. 완료 후 영수증(artifacts/portal_session_status_latest.json) 갱신을 "
+            f"확인하고 채널별 ready 여부를 보고할 것.\n"
+        )
     url_login_rule = ""
     capture_rule = ""
     if skill == "url":
@@ -1067,9 +1107,9 @@ class FleetWorker:
             f"position: {job.get('position_url')}"))
         runner = self.runner
         agent_label = "claude"
-        if not self._runner_injected and (job.get("params") or {}).get("agent") == "codex":
-            runner = _run_codex  # 이슈 B — agent 미지정/claude 는 기존 경로 그대로
-            agent_label = "codex"
+        if not self._runner_injected:
+            # 이슈 B + #188 — 주입 러너(테스트/시뮬레이션)는 그대로, 실 경로만 SOT 선택.
+            agent_label, runner = select_job_engine(job)
         try:
             if self._runner_injected:
                 raw = runner(prompt, self.timeout)

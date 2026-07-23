@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parents[2]
 # they are no longer an admission whitelist. Registered machine IDs are
 # dynamic and share this syntax with fleet_machines.machine_id in PostgreSQL.
 FLEET_MACHINES: tuple[str, ...] = ("macmini", "macbook", "winpc")
-FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url", "jdintake")
+FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url", "jdintake", "login")
 OWNER_AGENT_SKILL = "agent"
 QUEUE_SKILLS: tuple[str, ...] = (*FLEET_SKILLS, OWNER_AGENT_SKILL)
 OWNER_AGENT_MAX_REQUEST_CHARS = 8_000
@@ -275,7 +275,11 @@ def new_job_payload(
     if role not in FLEET_ROLES:
         return None
     if not _valid_url(position_url):
-        return None
+        # login 은 대상 URL 이 없는 스킬(#188) — 빈 문자열만 예외 허용, 그 외 무효 값은
+        # 기존과 동일하게 fail-closed.
+        if not (skill == "login" and isinstance(position_url, str)
+                and not position_url.strip()):
+            return None
     if not isinstance(requested_by, str) or not requested_by.strip():
         return None
     # V1(worker)+V2: 개행·제어문자·유니코드 줄구분자(U+2028/2029/0085) 포함 requested_by 는

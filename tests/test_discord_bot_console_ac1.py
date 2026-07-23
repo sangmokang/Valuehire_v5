@@ -297,14 +297,20 @@ class SlashBehaviorTests(_NotifySilencedCase):
         self.assertNotEqual(result["action"], "enqueued")
         self.assertIn("아직 지원", interaction.sent[0]["content"])
 
-    async def test_login_not_yet_supported_friendly_rejection(self) -> None:
+    async def test_login_enqueues_queue_job(self) -> None:
+        """스펙 전환(#188) — /login 은 '아직 지원 안 함' 안내가 아니라 큐 정식 잡이다.
+
+        워커가 이 잡을 Codex 엔진으로 강제 실행하는 계약은
+        tests/test_fleet_login_job.py 가 검사한다.
+        """
         queue = FakeQueue()
         interaction = _dm("login", [{"name": "portal", "value": "saramin"}])
         result = await handle_slash_interaction(
             interaction, queue=queue, authorized_users=AUTHORIZED, config=CONFIG)
-        self.assertEqual(queue.enqueued, [])
-        self.assertNotEqual(result["action"], "enqueued")
-        self.assertIn("아직 지원", interaction.sent[0]["content"])
+        self.assertEqual(result["action"], "enqueued")
+        self.assertEqual(len(queue.enqueued), 1)
+        self.assertEqual(queue.enqueued[0]["skill"], "login")
+        self.assertEqual(queue.enqueued[0]["position_url"], "")
 
     async def test_login_from_stranger_stays_silent(self) -> None:
         queue = FakeQueue()

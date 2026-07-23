@@ -207,5 +207,10 @@ def parse_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
         if params:
             options["params"] = params
         if "url" not in options:
-            raise FleetArgsError("fleet-run 에는 url(ClickUp 등 포지션 링크)이 필요합니다")
+            if options.get("skill") == "login":
+                # login 은 대상 URL 이 없는 스킬(#188) — 빈 값으로 고정(new_job_payload
+                # 의 login 전용 빈 URL 허용과 짝).
+                options["url"] = ""
+            else:
+                raise FleetArgsError("fleet-run 에는 url(ClickUp 등 포지션 링크)이 필요합니다")
     return options
