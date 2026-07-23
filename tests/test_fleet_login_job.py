@@ -250,6 +250,14 @@ def test_validate_login_receipt_file_older_than_job_start_fails():
         _validate("완료\n" + _login_receipt_line(), file_payload=before_start)
 
 
+def test_validate_login_receipt_same_second_but_earlier_fails():
+    """Codex V2 4R — 같은 초 안이라도 시작 직전(소수점) 영수증은 거부."""
+    with pytest.raises(ValueError):
+        _validate("완료\n" + _login_receipt_line(),
+                  file_payload=_file_receipt(now=_STARTED + 0.2),
+                  started=_STARTED + 0.5)
+
+
 def test_validate_login_receipt_duplicate_stdout_keys_fails():
     """Codex V2 2R-3 — JSON 중복 키(뒤값 승리 트릭) 거부."""
     line = (fleet_worker._LOGIN_RECEIPT_MARKER

@@ -95,7 +95,7 @@ def login_gate_block_reason(payload: Any, job: Mapping[str, Any],
 
 def _receipt_block_reason(payload: Any, required: tuple[str, ...],
                           now_epoch: int,
-                          min_generated_epoch: int | None = None) -> str | None:
+                          min_generated_epoch: float | None = None) -> str | None:
     """영수증 payload 순수 판정(#188 에서 login 완료 교차검증과 공용으로 추출).
 
     min_generated_epoch(Codex V2 2R-2): 지정 시 그 시각 이전 영수증은 '이번 실행에서
@@ -116,7 +116,9 @@ def _receipt_block_reason(payload: Any, required: tuple[str, ...],
     age = now_epoch - int(dt.timestamp())
     if age < 0 or age > LOGIN_RECEIPT_MAX_AGE_SECONDS:
         return f"로그인 영수증 만료/미래 시각(age={age}s)"
-    if min_generated_epoch is not None and int(dt.timestamp()) < min_generated_epoch:
+    # Codex V2 4R: 정수 절삭 비교는 같은 초 안의 '시작 직전' 영수증을 통과시킨다
+    # — 소수점 시각 그대로 비교(fail-closed 방향).
+    if min_generated_epoch is not None and dt.timestamp() < float(min_generated_epoch):
         return "로그인 영수증이 잡 시작 이전 것(이번 실행에서 미갱신)"
     sessions = payload.get("portal_sessions")
     if not isinstance(sessions, list):
@@ -611,7 +613,7 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def validate_login_receipt(stdout: str, *, started_epoch: int,
+def validate_login_receipt(stdout: str, *, started_epoch: float,
                            file_payload: Any = _UNSET,
                            now_epoch: int | None = None) -> dict[str, Any]:
     """login 잡 완료 증거(#188, R2) — 3사 채널별 ready=True 명시 없이는 done 금지.
@@ -1205,8 +1207,9 @@ class FleetWorker:
         if not self._runner_injected:
             # 이슈 B + #188 — 주입 러너(테스트/시뮬레이션)는 그대로, 실 경로만 SOT 선택.
             agent_label, runner = select_job_engine(job)
-        # #188 Codex V2 2R-2: login 완료 영수증은 이 시각 이후 갱신본만 인정.
-        started_epoch = int(time.time())
+        # #188 Codex V2 2R-2/4R: login 완료 영수증은 이 시각 이후 갱신본만 인정
+        # (정수 절삭 없이 소수점 시각 그대로 — 같은 초 경계 우회 봉인).
+        started_epoch = time.time()
         try:
             if self._runner_injected:
                 raw = runner(prompt, self.timeout)
