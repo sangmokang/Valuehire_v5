@@ -103,7 +103,27 @@ def _macos_frontmost_app_and_pid(
         run_command,
     )
     if result.returncode != 0:
-        return None, None
+        # #192: 잠금화면에서는 frontmost 가 loginwindow 가 되고 `{name, unix id}`
+        # 복합 질의가 -1728 로 실패한다(라이브 실측 2026-07-24). name 단독 질의로
+        # 폴백해야 '잠금화면 = 사장님 부재'가 fail-closed 영구 양보로 오판되지 않는다.
+        fallback = _run_text(
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to get name of first '
+                "application process whose frontmost is true",
+            ],
+            run_command,
+        )
+        if fallback.returncode != 0:
+            return None, None
+        # Codex V2(#192): 정확히 한 줄일 때만 앱 이름으로 신뢰 — 여러 줄(예: 크롬 이름
+        # 뒤 잡음)이면 판독 불가로 fail-closed(양보). 실제 크롬 활동을 부재로 오판 금지.
+        fallback_lines = [l.strip() for l in (fallback.stdout or "").splitlines()
+                          if l.strip()]
+        if len(fallback_lines) != 1:
+            return None, None
+        return fallback_lines[0], None
     raw = (result.stdout or "").strip()
     if not raw:
         return None, None
