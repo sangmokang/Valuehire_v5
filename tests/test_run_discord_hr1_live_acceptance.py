@@ -29,8 +29,8 @@ def _fingerprint(value: str) -> str:
 def test_expected_messages_are_exact_three_paths_on_winpc() -> None:
     messages = expected_hr1_messages(POSITION)
     assert len(messages) == 3
-    assert messages[0].startswith("/url ") and "engine:claude" in messages[0]
-    assert messages[1].startswith("/url ") and "engine:codex" in messages[1]
+    assert messages[0] == f"/url {POSITION} winpc engine:claude"
+    assert messages[1] == f"/url {POSITION} winpc engine:codex"
     assert not messages[2].startswith("/")
     assert all(POSITION in message and "winpc" in message for message in messages)
 

@@ -198,6 +198,7 @@ The production RPC readback and live Discord checks run only after the local com
 | Killswitch engaged | Stop before lease/connect. |
 | Lease held or ownership lost | Do not connect, or close an existing client and release best-effort. |
 | Duplicate response or Hermes response observed | Stop direct gateway and mark HR-1 failed. |
+| Discord client rewrites or line-wraps an approved command | Stop and release the gateway; use the parser-equivalent compact one-line command on a fresh run. Never reuse mixed evidence. |
 | CAPTCHA/2FA/identity checkpoint | Stop the affected job and require human resolution. |
 | WinPC remote administration unavailable | Keep the gateway stopped; complete local fail-closed work, record connectivity evidence, and resume U3 only when the existing managed path is reachable. |
 | Any condition not listed above | Explicitly stop, record it, and update this table before resuming. |
