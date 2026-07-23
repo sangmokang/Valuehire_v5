@@ -839,12 +839,21 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
         str(source.get("VALUEHIRE_AGENT_EXECUTION_MODE"))
         if "VALUEHIRE_AGENT_EXECUTION_MODE" in source else "read_only"
     )
+    # #194: login 잡은 쓰기 없이는 성립 불가(잠금 파일·영수증) — 모드와 무관하게
+    # workspace-write + ~/.valuehire add-dir 를 강제한다(라이브 잡 #75 2회 재현 봉인).
+    login_job = str(source.get("VALUEHIRE_JOB_SKILL") or "") == "login"
+    if login_job:
+        mode = "workspace_write"
     sandbox = {"read_only": "read-only", "workspace_write": "workspace-write"}.get(mode)
     if sandbox is None:
         raise ValueError(f"unsupported Codex execution mode: {mode!r}")
     args = ["exec", "-C", str(REPO), "--sandbox", sandbox]
     if sandbox == "workspace-write":
         args.extend(["-c", _NETWORK_CONFIG_FLAG])
+    if login_job:
+        valuehire_home = Path.home() / ".valuehire"
+        valuehire_home.mkdir(parents=True, exist_ok=True)
+        args.extend(["--add-dir", str(valuehire_home)])
     if str(source.get("VALUEHIRE_OWNER_AGENT_JOB") or "") == "1":
         v4_root = _v4_repo(source)
         if not v4_root.is_dir():
@@ -1122,6 +1131,8 @@ class FleetWorker:
         env = dict(os.environ)
         env["VH_BUSY_TASK"] = f"fleet #{job.get('id')} ({job.get('skill')})"
         env["VH_BUSY_AGENT"] = agent_label
+        # #194: Codex 인자 빌더가 잡 스킬을 알 수 있게 전달(login 샌드박스 확장 키).
+        env["VALUEHIRE_JOB_SKILL"] = str(job.get("skill") or "")
         if job.get("skill") == OWNER_AGENT_SKILL:
             params = job.get("params") or {}
             env["VALUEHIRE_OWNER_AGENT_JOB"] = "1"
