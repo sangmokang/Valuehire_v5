@@ -88,6 +88,30 @@ def test_minimal_client_rejects_login_with_url():
     assert client.calls == []
 
 
+def test_worker_blocks_private_url_jobs(monkeypatch):
+    """Codex V2 F3 — anon 키로 RPC 직접 호출해 넣은 사설 URL 잡도 워커가 차단."""
+    from tools.multi_position_sourcing import fleet_worker
+    monkeypatch.setattr(fleet_worker, "url_host_resolves_public",
+                        lambda url, **kw: False)
+    job = {"skill": "humansearch",
+           "position_url": "https://app.clickup.com/t/86eufjabc"}
+    assert fleet_worker.job_url_block_reason(job) is not None
+    # login('')·agent 는 각자 계약 — 이 검사 대상 아님.
+    assert fleet_worker.job_url_block_reason(
+        {"skill": "login", "position_url": ""}) is None
+    assert fleet_worker.job_url_block_reason(
+        {"skill": "agent", "position_url": "x"}) is None
+
+
+def test_worker_allows_public_url_jobs(monkeypatch):
+    from tools.multi_position_sourcing import fleet_worker
+    monkeypatch.setattr(fleet_worker, "url_host_resolves_public",
+                        lambda url, **kw: True)
+    assert fleet_worker.job_url_block_reason(
+        {"skill": "humansearch",
+         "position_url": "https://app.clickup.com/t/86eufjabc"}) is None
+
+
 def test_gateway_login_rpc_migration_exists_with_guards():
     files = sorted(pathlib.Path("supabase/migrations").glob(
         "*gateway_login*.sql"))

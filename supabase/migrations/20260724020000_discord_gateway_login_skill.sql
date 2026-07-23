@@ -13,8 +13,19 @@
 --
 -- 본문은 라이브 함수 정의(2026-07-24 실측 pg_get_functiondef)를 그대로 복제하고
 -- 화이트리스트 한 줄만 넓힌다.
+--
+-- Codex V2(#190) 수용:
+--   1) 반환형이 다른 옛 6인자 정의(20260719)가 있으면 create or replace 가 실패한다
+--      (반환형 교체 불가) — 명시 drop 후 재생성, 권한 재설정.
+--   2) 20260722 가 만든 7인자 오버로드(p_role 수용·discord idempotency 미강제)는
+--      anon 이 호출 가능한 인가 우회 구멍 — 정확한 시그니처로 제거.
 
-create or replace function public.discord_gateway_enqueue(
+drop function if exists public.discord_gateway_enqueue(
+  text, text, text, text, text, jsonb, text);  -- 7인자(p_role) 오버로드 제거
+drop function if exists public.discord_gateway_enqueue(
+  text, text, text, text, jsonb, text);        -- 옛 6인자(반환형 상이) 제거
+
+create function public.discord_gateway_enqueue(
   p_machine text, p_position_url text, p_requested_by text,
   p_skill text default 'aisearch'::text, p_params jsonb default '{}'::jsonb,
   p_account_key text default ''::text)
@@ -65,3 +76,10 @@ begin
       from inserted;
 end;
 $function$;
+
+-- drop 으로 기존 grant 가 사라졌고, 새 함수는 기본값(PUBLIC 실행 가능)로 생성된다
+-- — 최소권한 원칙대로 전부 회수 후 anon 에만 실행권을 준다(20260719 와 동일 원칙).
+revoke all on function public.discord_gateway_enqueue(text, text, text, text, jsonb, text)
+  from public;
+grant execute on function public.discord_gateway_enqueue(text, text, text, text, jsonb, text)
+  to anon;

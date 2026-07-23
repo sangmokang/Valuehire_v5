@@ -39,6 +39,7 @@ from .job_queue import (
     default_account_key,
     is_valid_machine_id,
     new_job_payload,
+    url_host_resolves_public,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -322,6 +323,22 @@ def build_owner_agent_prompt(job: Mapping[str, Any]) -> str:
         f"7. 캡차/2FA/본인확인을 만나면 '{_PAUSE_MARKER} <상황>'을 마지막 줄에 출력할 것.\n"
         "8. 최종 결과는 한국어로 stdout에 요약할 것.\n"
     )
+
+
+def job_url_block_reason(job: Mapping[str, Any]) -> str | None:
+    """실행 직전 URL 공인 DNS 재검증(#190 Codex V2 F3).
+
+    파이썬 게이트웨이 클라이언트의 SSRF 검사는 anon 키로 RPC 를 *직접* 호출하면
+    우회된다(DB 는 URL 형식만 검사). 소비 지점(워커)에서 한 번 더 공인 주소를
+    강제해, 큐를 어떻게 넣었든 사설/loopback 대상 실행을 차단한다(fail-closed).
+    URL 을 쓰는 스킬만 대상 — login('')·agent(디스코드 승인 링크)는 각자 계약이 있다.
+    """
+    if job.get("skill") not in ("humansearch", "aisearch", "url", "jdintake"):
+        return None
+    url = job.get("position_url")
+    if not url_host_resolves_public(url):
+        return "position_url 호스트가 공인 주소로 해석되지 않음(사설/loopback/메타데이터 거부)"
+    return None
 
 
 def select_job_engine(job: Mapping[str, Any]) -> tuple[str, Callable[..., Any]]:
@@ -1171,6 +1188,14 @@ class FleetWorker:
             self._release(job, job_id, "done", result_summary="dry-run — 실행기 미실행")
             self._notify(job, f"🧪 잡 #{job_id} dry-run 완료 (실행기 미실행)")
             return "done"
+        # #190 Codex V2 F3: DB 직접 enqueue 우회 방어 — 실행 직전 URL 공인 재검증.
+        # 주입 러너(테스트/시뮬레이션)는 네트워크 DNS 를 만지지 않도록 기존 계약 유지.
+        if not self._runner_injected:
+            url_reason = job_url_block_reason(job)
+            if url_reason is not None:
+                self._release(job, job_id, "failed", error=url_reason)
+                self._notify(job, f"❌ 잡 #{job_id} 실패 — {url_reason}")
+                return "failed"
         # AC-3 G4(1층): 검색 스킬은 로그인 영수증이 유효할 때만 실행. 기본 러너 경로 한정
         # — 주입 러너(테스트/시뮬레이션)는 브라우저를 안 여니 기존 계약 유지.
         if not self._runner_injected and job.get("skill") in FLEET_SKILLS:
