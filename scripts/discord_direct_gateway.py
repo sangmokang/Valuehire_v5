@@ -72,9 +72,11 @@ from tools.multi_position_sourcing.discord_routing import (
     BOT_CONSOLE_COMMANDS,
     DIRECT_SEARCH_SKILL_COMMANDS,
     DiscordAccessConfig,
+    DiscordInvocation,
     discord_slash_command_payloads,
     load_discord_access_config,
     parse_discord_command_text,
+    route_discord_invocation,
 )
 from tools.multi_position_sourcing.fleet_dispatch import FLEET_COMMANDS, OWNER_USER_IDS
 from tools.multi_position_sourcing.job_queue import FLEET_SKILLS
@@ -95,6 +97,7 @@ _SNOWFLAKE_RE = re.compile(r"^[0-9]{15,22}$")
 # response=None(침묵) 인 모든 사유에 공통으로 쓰는 무정보 ack — §8 참고. 내용을 절대
 # 사유별로 분기하지 않는다(그 차이 자체가 신호가 됨).
 _GENERIC_SILENT_ACK = "🔕"
+_IMMEDIATE_ACK = "⏳ 요청을 접수했습니다. 로그인 상태를 먼저 확인한 뒤 작업을 시작합니다."
 _RESPONSE_CHAR_LIMIT = 1900  # goal §4 — 1,900자 분할 회신 계약과 동일 상한(단발 회신도 안전측 절단).
 
 # INV-D5 — 게이트웨이 자신의 큐 자격증명은 job_queue.JobQueueClient() 기본값
@@ -408,6 +411,29 @@ async def _safe_first_reply(interaction: Any, content: str, *, event_id: str) ->
         logger.warning("discord_direct_gateway: 회신 전송 실패 event_id=%s", event_id)
 
 
+def _envelope_access_allowed(
+    envelope: DiscordEnvelope,
+    *,
+    authorized_users: Sequence[DiscordAuthorizedUser],
+    config: DiscordAccessConfig,
+) -> bool:
+    """큐를 건드리지 않고 즉답 가능 여부만 정본 라우터로 판정한다."""
+    decision = route_discord_invocation(
+        DiscordInvocation(
+            user_id=envelope.user_id,
+            channel_id=envelope.channel_id,
+            command_name=envelope.command,
+            is_dm=envelope.is_dm,
+            invocation_kind="direct",
+            guild_id=envelope.guild_id,
+            member_role_ids=envelope.role_ids,
+        ),
+        authorized_users=authorized_users,
+        config=config,
+    )
+    return bool(decision.allowed)
+
+
 async def handle_slash_interaction(
     interaction: Any,
     *,
@@ -431,6 +457,16 @@ async def handle_slash_interaction(
     if envelope is None:
         await _safe_first_reply(interaction, _GENERIC_SILENT_ACK, event_id="?")
         return {"handled": False, "action": "unsupported_interaction", "response": None}
+
+    data = getattr(interaction, "data", None) or {}
+    original_command = str(data.get("name") or "").strip().lower()
+    if original_command in (*DIRECT_SEARCH_SKILL_COMMANDS, "login") \
+            and _envelope_access_allowed(
+                envelope, authorized_users=authorized_users, config=config):
+        # 사용자가 느끼는 응답은 큐/Supabase 왕복보다 먼저 보인다. 정본 라우터로
+        # 인가된 요청에만 같은 무정보 문구를 쓰고, 비인가는 기존 침묵을 유지한다.
+        await _safe_first_reply(
+            interaction, _IMMEDIATE_ACK, event_id=envelope.event_id)
 
     # M1 봉인: 큐를 미리 만들지 않고 프록시를 넘긴다 — 권한 통과 후 dispatch 가 처음
     # 큐를 만질 때만 factory 가 돈다(비인가·거부 경로는 큐 무접촉 → 운영 상태 비노출).
@@ -456,8 +492,6 @@ async def handle_slash_interaction(
             outgoing = _QUEUE_UNAVAILABLE_MSG
         else:
             # AC-1 콘솔 표면 후처리 — 인가자에게만(response None=침묵 경로는 그대로 둔다).
-            data = getattr(interaction, "data", None) or {}
-            original_command = str(data.get("name") or "").strip().lower()
             if original_command in ("skill", "login") \
                     and action in ("error", "parse_error"):
                 requested = _requested_console_skill(original_command, data.get("options"))
@@ -587,6 +621,10 @@ async def handle_text_message(
         contact_allowed = is_authorized_discord_dm(envelope.user_id, tuple(authorized_users))
         if not (owner_allowed or contact_allowed):
             return None
+
+    if envelope.command == "fleet-run":
+        # 텍스트 경로는 Discord의 defer가 없으므로, 권한 확인 직후 큐보다 먼저 직접 알린다.
+        await _send_text(message, _IMMEDIATE_ACK)
 
     try:
         resolved_queue = queue if queue is not None else queue_factory()  # type: ignore[misc]

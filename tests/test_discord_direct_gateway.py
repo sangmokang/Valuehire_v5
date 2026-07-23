@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import logging
 import os
 import shlex
@@ -117,13 +118,19 @@ class FakeFollowup:
 class FakeInteractionEditor:
     """discord.Interaction.edit_original_response 흉내 — 첫 회신 경로(§8)."""
 
-    def __init__(self, calls: list[str], sent: list[dict]) -> None:
+    def __init__(self, calls: list[str], sent: list[dict], edits: list[str]) -> None:
         self._calls = calls
         self._sent = sent
+        self._edits = edits
 
     async def __call__(self, *, content: str = "") -> None:
         self._calls.append("edit_original_response")
-        self._sent.append({"content": content, "ephemeral": True})
+        self._edits.append(content)
+        replacement = {"content": content, "ephemeral": True}
+        if self._sent:
+            self._sent[-1] = replacement
+        else:
+            self._sent.append(replacement)
 
 
 class FakeRole:
@@ -156,9 +163,11 @@ class FakeInteraction:
         self.user = FakeMember(user_id, role_ids)
         self.calls: list[str] = []
         self.sent: list[dict] = []
+        self.edits: list[str] = []
         self.response = FakeResponse(self.calls)
         self.followup = FakeFollowup(self.calls, self.sent)
-        self.edit_original_response = FakeInteractionEditor(self.calls, self.sent)
+        self.edit_original_response = FakeInteractionEditor(
+            self.calls, self.sent, self.edits)
 
 
 class FakeChannel:
@@ -364,6 +373,29 @@ class IdempotencyKeyInjectionTests(unittest.TestCase):
 
 
 class ThreeSecondDeferTests(_NotifySilencedCase):
+    async def test_search_and_login_commands_show_ack_before_queue_work(self) -> None:
+        """사용자가 느끼는 응답은 큐 왕복 전에 보여야 한다."""
+        for index, command in enumerate(("aisearch", "humansearch", "url", "login"), start=1):
+            interaction = FakeInteraction(
+                interaction_id=f"57{index:016d}",
+                user_id=OWNER_ID,
+                command=command,
+                options=[] if command == "login" else [{"name": "url", "value": CLICKUP_URL}],
+            )
+            class SlowQueue(FakeQueue):
+                def enqueue(self, payload):
+                    time.sleep(0.15)
+                    return super().enqueue(payload)
+
+            task = asyncio.create_task(handle_slash_interaction(
+                interaction, queue=SlowQueue(), authorized_users=AUTHORIZED,
+                config=DiscordAccessConfig(allow_dm=True),
+            ))
+            await asyncio.sleep(0.02)
+            self.assertTrue(interaction.edits, f"/{command} 접수 표시가 큐보다 늦음")
+            self.assertEqual(interaction.edits[0], gw._IMMEDIATE_ACK)
+            await task
+
     async def test_defer_called_before_queue_touched(self) -> None:
         interaction = FakeInteraction(
             interaction_id="444444444444444444", user_id=MEMBER_ID,
@@ -662,6 +694,33 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
 
 
 class TextMessageTests(_NotifySilencedCase):
+    async def test_text_search_ack_is_sent_before_queue_work(self) -> None:
+        order: list[str] = []
+        message = FakeMessage(
+            message_id="707070707070707070", author_id=OWNER_ID,
+            content=f"/aisearch url:{CLICKUP_URL}",
+        )
+
+        original_send = message.channel.send
+
+        async def ordered_send(content: str) -> None:
+            order.append(f"send:{content}")
+            await original_send(content)
+
+        message.channel.send = ordered_send
+
+        class OrderedQueue(FakeQueue):
+            def enqueue(self, payload):
+                order.append("queue.enqueue")
+                return super().enqueue(payload)
+
+        await handle_text_message(
+            message, bot_user_id="999999999999999999", queue=OrderedQueue(),
+            authorized_users=AUTHORIZED, config=DiscordAccessConfig(allow_dm=True),
+        )
+        self.assertEqual(order[0], f"send:{gw._IMMEDIATE_ACK}")
+        self.assertIn("queue.enqueue", order)
+
     def test_owner_text_alias_normalizes_to_fleet_run(self) -> None:
         for index, command in enumerate(("url", "aisearch", "humansearch"), start=1):
             message = FakeMessage(

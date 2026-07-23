@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 from tools.multi_position_sourcing.fleet_worker import (
     FleetWorker,
+    _run_login_preflight,
     login_gate_block_reason,
 )
 
@@ -81,6 +82,10 @@ class LoginGateReasonTests(unittest.TestCase):
                                         "linkedin_rps": False})
         self.assertIsNotNone(login_gate_block_reason(payload, _job(skill="url"), NOW))
 
+    def test_public_web_only_search_needs_no_portal_login(self) -> None:
+        job = _job(skill="aisearch", params={"channels": ["public_web"]})
+        self.assertIsNone(login_gate_block_reason(None, job, NOW))
+
     def test_missing_required_channel_entry_blocks(self) -> None:
         payload = _receipt(channels=("saramin",))  # jobkorea 항목 자체가 없음
         self.assertIsNotNone(login_gate_block_reason(payload, _job(), NOW))
@@ -89,6 +94,27 @@ class LoginGateReasonTests(unittest.TestCase):
         payload = _receipt()
         payload["generated_at"] = "2026-07-22T00:00:00"  # tz 없음 → 신뢰 불가
         self.assertIsNotNone(login_gate_block_reason(payload, _job(), NOW))
+
+
+class LoginPreflightRunnerTests(unittest.TestCase):
+    def test_url_preflight_uses_only_linkedin_and_never_waits_for_human(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with patch(
+            "tools.multi_position_sourcing.fleet_worker.subprocess.run",
+            return_value=completed,
+        ) as runner:
+            self.assertTrue(_run_login_preflight(_job(skill="url")))
+        command = runner.call_args.args[0]
+        self.assertEqual(command[command.index("--channels") + 1], "linkedin_rps")
+        self.assertIn("--no-human-intervention", command)
+
+    def test_preflight_failure_is_fail_closed(self) -> None:
+        completed = SimpleNamespace(returncode=1, stdout="", stderr="secret upstream detail")
+        with patch(
+            "tools.multi_position_sourcing.fleet_worker.subprocess.run",
+            return_value=completed,
+        ):
+            self.assertFalse(_run_login_preflight(_job()))
 
 
 class WorkerFakeQueue:
@@ -117,9 +143,12 @@ class LoginGateWiringTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _run(self, tmp_receipt, job):
+    def _run(self, tmp_receipt, job, *, receipt_after_preflight=None,
+             preflight_ok=False):
         from tools.multi_position_sourcing import fleet_worker as fw
         calls = []
+        preflights = []
+        receipt_reads = iter((tmp_receipt, receipt_after_preflight))
 
         def fake_run(cmd, **kwargs):
             calls.append(list(cmd))
@@ -127,24 +156,44 @@ class LoginGateWiringTests(unittest.TestCase):
 
         notes = []
         with patch.object(fw.subprocess, "run", fake_run), \
-             patch.object(fw, "_read_login_receipt", lambda: tmp_receipt):
+             patch.object(
+                 fw, "_read_login_receipt",
+                 lambda: next(receipt_reads, receipt_after_preflight)), \
+             patch.object(
+                 fw, "_run_login_preflight",
+                 lambda current_job: preflights.append(current_job) or preflight_ok):
             q = WorkerFakeQueue(job)
             w = FleetWorker(machine="macmini", queue=q,
                             notifier=lambda j, t: notes.append(t))
             status = w.run_once()
-        return status, q, calls, notes
+        return status, q, calls, notes, preflights
 
-    def test_search_job_without_receipt_pauses_before_runner(self) -> None:
-        status, q, calls, notes = self._run(None, _job())
+    def test_search_job_without_receipt_runs_login_first_then_pauses(self) -> None:
+        status, q, calls, notes, preflights = self._run(None, _job())
         self.assertEqual(status, "paused_for_human")
         self.assertEqual(calls, [], "러너(subprocess)가 실행되면 안 됨")
+        self.assertEqual(len(preflights), 1)
         self.assertEqual(q.released[-1][1], "paused_for_human")
         self.assertTrue(any("로그인" in n for n in notes), notes)
 
+    def test_auto_login_success_continues_same_search_job(self) -> None:
+        status, q, calls, notes, preflights = self._run(
+            None,
+            _job(params={"agent": "claude"}),
+            receipt_after_preflight=_receipt(),
+            preflight_ok=True,
+        )
+        self.assertGreaterEqual(len(preflights), 1)
+        self.assertGreaterEqual(len(calls), 1, "로그인 뒤 검색 러너가 이어서 실행돼야 함")
+        self.assertNotEqual(status, "paused_for_human")
+        self.assertTrue(any("로그인" in n for n in notes), notes)
+
     def test_search_job_with_fresh_receipt_runs(self) -> None:
-        status, q, calls, _notes = self._run(_receipt(), _job(params={"agent": "claude"}))
+        status, q, calls, _notes, preflights = self._run(
+            _receipt(), _job(params={"agent": "claude"}))
         # 러너는 실행됐다(영수증 통과). 결과 상태는 출력 계약에 따름 — 여기선 실행 여부만.
         self.assertGreaterEqual(len(calls), 1)
+        self.assertEqual(preflights, [])
 
     def test_injected_runner_keeps_legacy_behavior(self) -> None:
         # 주입 러너(테스트 하위호환) — 게이트 미적용으로 기존 스위트가 계속 성립.

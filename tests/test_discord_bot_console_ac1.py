@@ -100,7 +100,11 @@ class FakeEditor:
 
     async def __call__(self, *, content: str = "") -> None:
         self._calls.append("edit_original_response")
-        self._sent.append({"content": content})
+        replacement = {"content": content}
+        if self._sent:
+            self._sent[-1] = replacement
+        else:
+            self._sent.append(replacement)
 
 
 class FakeMember:
