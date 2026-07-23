@@ -101,6 +101,7 @@ def test_build_job_prompt_contains_contract():
     assert "params.search_urls" in p
     assert "local secret store" in p
     assert "FLEET_SEARCH_RECEIPT:" in p
+    assert "session_guard capture-evidence" in p
     # 스킬 경로 금지 — 발동 문구 방식만
     assert "/mnt/skills" not in p
 
@@ -158,6 +159,39 @@ def test_aisearch_completion_receipt_rejects_one_page_and_save_mismatch():
 def test_aisearch_completion_receipt_accepts_ten_pages_with_equal_saves():
     receipt = validate_aisearch_receipt(_receipt(), {})
     assert receipt["channels"]["saramin"]["saved_receipts"] == 2
+
+
+def test_aisearch_candidate_requires_complete_browser_evidence_receipt():
+    import json
+
+    candidate = {
+        "candidate_name": "Candidate",
+        "profile_url": "https://www.saramin.co.kr/zf_user/member/resume-view?resume_idx=1",
+        "channel": "saramin",
+        "score": 90,
+        "why_fit": ["backend"],
+        "profile_summary": "8 years",
+        "hard_excluded": False,
+        "saved": True,
+        "evidence": {},
+    }
+    payload = json.loads(_receipt(opened=1, saved=1).split(":", 1)[1])
+    payload["channels"]["saramin"]["candidates"] = [candidate]
+    with pytest.raises(ValueError, match="evidence"):
+        validate_aisearch_receipt("FLEET_SEARCH_RECEIPT:" + json.dumps(payload), {})
+
+    candidate["evidence"] = {
+        "status": "saved",
+        "screenshot_path": "/private/capture.png",
+        "text_path": "/private/visible-text.txt",
+        "manifest_path": "/private/manifest.json",
+        "screenshot_sha256": "a" * 64,
+        "visible_text_sha256": "b" * 64,
+    }
+    validated = validate_aisearch_receipt(
+        "FLEET_SEARCH_RECEIPT:" + json.dumps(payload), {}
+    )
+    assert validated["channels"]["saramin"]["candidates"][0]["saved"] is True
 
 
 def test_build_job_prompt_fail_closed():
