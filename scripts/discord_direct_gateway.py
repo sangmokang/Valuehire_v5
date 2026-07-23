@@ -828,6 +828,7 @@ class MinimalPrivilegeQueueClient:
         from tools.multi_position_sourcing.job_queue import (
             JobQueueConflictError,
             new_job_payload,
+            position_url_requires_public_dns,
             url_host_resolves_public,
         )
 
@@ -841,12 +842,15 @@ class MinimalPrivilegeQueueClient:
         )
         if revalidated is None or payload.get("status") != "queued":
             raise ValueError("무효 페이로드 — new_job_payload 검증 실패")
-        if revalidated["skill"] not in ("humansearch", "aisearch", "url"):
+        # #190: login 편입(#188 짝) — owner/agent 잡 위조 방지 경계는 그대로.
+        if revalidated["skill"] not in ("humansearch", "aisearch", "url", "login"):
             raise PermissionError(
                 f"최소권한 게이트웨이 경로는 skill={revalidated['skill']!r} 을 지원하지 "
                 "않습니다(owner/agent 잡 위조 방지 — INV-D5 v2 경계)."
             )
-        if not url_host_resolves_public(revalidated["position_url"]):
+        # #190: SSRF 검사는 login 의 빈 URL 만 면제(position_url_requires_public_dns).
+        if position_url_requires_public_dns(revalidated) \
+                and not url_host_resolves_public(revalidated["position_url"]):
             raise ValueError(
                 "position_url 호스트가 공인 주소로 해석되지 않음(사설/loopback/메타데이터 거부)")
 
