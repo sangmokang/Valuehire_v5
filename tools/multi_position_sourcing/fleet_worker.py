@@ -332,6 +332,11 @@ def job_url_block_reason(job: Mapping[str, Any]) -> str | None:
     우회된다(DB 는 URL 형식만 검사). 소비 지점(워커)에서 한 번 더 공인 주소를
     강제해, 큐를 어떻게 넣었든 사설/loopback 대상 실행을 차단한다(fail-closed).
     URL 을 쓰는 스킬만 대상 — login('')·agent(디스코드 승인 링크)는 각자 계약이 있다.
+
+    알려진 한계(정직 표기, Codex V2 2R): 검사-사용 사이 DNS 재바인딩(TTL 트릭)이나
+    공개 호스트의 사설 주소 리다이렉트까지는 이 층에서 고정할 수 없다 — 실행기는
+    브라우저를 사람처럼 조작하므로 소켓 수준 주소 고정이 성립하지 않는다. 이 검사는
+    enqueue 시점 검사와 같은 기준을 소비 시점에 한 번 더 적용하는 방벽이다.
     """
     if job.get("skill") not in ("humansearch", "aisearch", "url", "jdintake"):
         return None

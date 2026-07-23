@@ -839,6 +839,10 @@ def _pass_login_gate(monkeypatch):
         ],
     }
     monkeypatch.setattr(fw, "_read_login_receipt", lambda: receipt)
+    # #190: 실행 직전 URL 공인 DNS 재검증도 주입 — 폐쇄망(오프라인) 테스트 환경에서
+    # 실 DNS 에 의존하지 않게 한다(hermetic). 차단 동작 자체는
+    # tests/test_discord_gateway_login_path.py 가 별도로 검사한다.
+    monkeypatch.setattr(fw, "url_host_resolves_public", lambda url, **kw: True)
 
 
 def test_runner_default_uses_codex_exec_for_agent_codex(monkeypatch):
