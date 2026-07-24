@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 CONTRACT_VERSION = "candidate-match-v2-2026-07-24"
@@ -31,7 +33,7 @@ class MatchingContractError(ValueError):
 
 
 @lru_cache(maxsize=1)
-def _stage4_contract() -> dict[str, Any]:
+def _matching_contract() -> dict[str, Any]:
     repo = Path(__file__).resolve().parents[2]
     path = repo / "docs/sot/24-position-jd-sot.json"
     try:
@@ -42,9 +44,13 @@ def _stage4_contract() -> dict[str, Any]:
                 f"matching contract version mismatch in {path}: "
                 f"{contract['version']!r}"
             )
-        return contract["stages"]["stage_4_deterministic_total"]
+        return contract
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise MatchingContractError(f"cannot load matching contract: {path}") from exc
+
+
+def _stage4_contract() -> dict[str, Any]:
+    return _matching_contract()["stages"]["stage_4_deterministic_total"]
 
 
 def _nonblank(value: object, *, field: str) -> str:
@@ -232,3 +238,125 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
         "gate_cap": cap,
         "weights_applied": weights,
     }
+
+
+def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object]:
+    """Run one temperature-zero-equivalent local Claude JSON extraction step."""
+
+    # Import lazily: when a sibling runner is executed by path, its directory
+    # contains selectors.py and would otherwise shadow the stdlib module.
+    module_dir = str(Path(__file__).resolve().parent)
+    removed = [entry for entry in sys.path if str(Path(entry or ".").resolve()) == module_dir]
+    sys.path[:] = [
+        entry for entry in sys.path if str(Path(entry or ".").resolve()) != module_dir
+    ]
+    try:
+        import subprocess
+    finally:
+        sys.path[:0] = removed
+
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)
+    completed = subprocess.run(
+        ["claude", "-p", "--model", model, prompt],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+    )
+    if completed.returncode != 0:
+        raise MatchingContractError(
+            f"claude matching stage failed: {(completed.stderr or '')[:240]}"
+        )
+    raw = completed.stdout.strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end < start:
+        raise MatchingContractError("claude matching stage returned no JSON object")
+    try:
+        parsed = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise MatchingContractError("claude matching stage returned invalid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise MatchingContractError("claude matching stage JSON must be an object")
+    return parsed
+
+
+def evaluate_candidate_contract(
+    profile: object,
+    position: object,
+    *,
+    llm_json_client: Callable[[str], dict[str, object]] = claude_json_client,
+    company_tier_map: Mapping[str, object] | None = None,
+    school_tier_map: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Execute SOT Stage 1-3 and return the validated Stage 4 input payload."""
+
+    templates = _matching_contract()["prompt_templates"]
+    jd_text = str(getattr(position, "jd_text", "") or "")
+    resume_text = "\n".join(
+        part
+        for part in (
+            str(getattr(profile, "visible_text", "") or ""),
+            str(getattr(profile, "summary", "") or ""),
+            str(getattr(profile, "education", "") or ""),
+        )
+        if part.strip()
+    )
+    if not jd_text.strip() or not resume_text.strip():
+        raise MatchingContractError("JD and resume source text are required")
+
+    jd_json = llm_json_client(templates["stage_1"].format(jd_raw_text=jd_text))
+    resume_json = llm_json_client(
+        templates["stage_2"].format(resume_raw_text=resume_text)
+    )
+    stage3 = llm_json_client(
+        templates["stage_3"].format(
+            jd_json=json.dumps(jd_json, ensure_ascii=False),
+            resume_json=json.dumps(resume_json, ensure_ascii=False),
+            company_tier_map=json.dumps(company_tier_map or {}, ensure_ascii=False),
+            school_tier_map=json.dumps(school_tier_map or {}, ensure_ascii=False),
+        )
+    )
+    evaluation: dict[str, object] = {
+        "contract_version": CONTRACT_VERSION,
+        "gates": stage3.get("gates"),
+        "dimensions": stage3.get("dimensions"),
+        "total_years": resume_json.get("total_years"),
+    }
+
+    must_have = jd_json.get("must_have")
+    if not isinstance(must_have, list) or not must_have:
+        raise MatchingContractError("Stage 1 must return at least one must-have")
+    expected = [
+        str(item.get("requirement", "")).strip()
+        for item in must_have
+        if isinstance(item, dict)
+    ]
+    gates = evaluation["gates"]
+    actual = (
+        [
+            str(item.get("requirement", "")).strip()
+            for item in gates
+            if isinstance(item, dict)
+        ]
+        if isinstance(gates, list)
+        else []
+    )
+    if not expected or actual != expected:
+        raise MatchingContractError(
+            "Stage 3 gates must match Stage 1 must-have requirements in order"
+        )
+    calculate_final_score(evaluation)
+    return evaluation
+
+
+def evaluate_candidate_with_claude(
+    profile: object,
+    position: object,
+) -> dict[str, object]:
+    """Production adapter used by the live Human Search traversal."""
+
+    return evaluate_candidate_contract(profile, position)

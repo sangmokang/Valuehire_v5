@@ -30,6 +30,10 @@ from tools.multi_position_sourcing.humansearch import (
     hard_exclude_reason,
     plan_result_count_traversal,
     score_humansearch,
+    score_humansearch_contract,
+)
+from tools.multi_position_sourcing.matching_score_contract import (
+    evaluate_candidate_with_claude,
 )
 from tools.multi_position_sourcing.scoring import tenure_months
 from tools.multi_position_sourcing.humansearch_preflight import PreflightError
@@ -541,6 +545,7 @@ def process_cards_with_r4(
     live_check=assert_not_blocked_or_abort,
     mutation_guard=None,
     badge_guard=None,
+    evaluation_client=None,
 ) -> list[dict]:
     """Open cards while respecting owner Chrome yield and mid-run preflight STOP."""
     all_rows: list[dict] = []
@@ -551,14 +556,14 @@ def process_cards_with_r4(
             raise ProfileLockError("owner activity detected before profile traversal")
         try:
             _run_mutation_guard(mutation_guard)
-            r = process_profile(
-                tab,
-                card,
-                i,
-                live_check=live_check,
-                mutation_guard=mutation_guard,
-                badge_guard=badge_guard,
-            )
+            profile_kwargs = {
+                "live_check": live_check,
+                "mutation_guard": mutation_guard,
+                "badge_guard": badge_guard,
+            }
+            if evaluation_client is not None:
+                profile_kwargs["evaluation_client"] = evaluation_client
+            r = process_profile(tab, card, i, **profile_kwargs)
             hx = r.get("hard_exclude")
             tag = "⛔HX  " if hx else ("✅PASS" if r["score"] >= 70 else "  ")
             log(f"{tag} #{i:02d} {r['name']!r} score={r['score']} otw={r['otw']} edu={r['education'][:30]!r}"
@@ -592,6 +597,7 @@ def process_profile(
     live_check=None,
     mutation_guard=None,
     badge_guard=None,
+    evaluation_client=None,
 ) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     profile_url, navigation_url, source_search_url, expected_name = (
@@ -650,7 +656,16 @@ def process_profile(
         employment_history=tenures,
     )
     hard_exclude = runner_hard_exclude(prof)
-    match = None if hard_exclude else score_humansearch(prof, POSITION)
+    evaluation = None
+    if hard_exclude:
+        match = None
+    elif evaluation_client is None:
+        # Direct unit/collection callers may still request the legacy prefilter.
+        # It remains unversioned and therefore cannot pass send/register gates.
+        match = score_humansearch(prof, POSITION)
+    else:
+        evaluation = evaluation_client(prof, POSITION)
+        match = score_humansearch_contract(prof, POSITION, evaluation)
     return {
         "idx": idx,
         "name": name,
@@ -664,6 +679,8 @@ def process_profile(
         "education": education,
         "score": match.score if match else 0,
         "breakdown": match.score_breakdown if match else {},
+        "contract_version": match.contract_version if match else "",
+        "evaluation": evaluation,
         "why_fit": list(match.why_fit) if match else [],
         "why_not": list(match.why_not) if match else [f"hard_exclude:{hard_exclude}"],
         "screenshot": str(shot),
@@ -695,6 +712,7 @@ def main(
     lease_factory=None,
     target_resolver=None,
     mutation_sleep=time.sleep,
+    evaluation_client=evaluate_candidate_with_claude,
 ) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
@@ -755,6 +773,7 @@ def main(
             live_check=assert_not_blocked_or_abort,
             mutation_guard=mutation_guard,
             badge_guard=badge_guard,
+            evaluation_client=evaluation_client,
         )
         results = collect_results(all_rows)
         excluded = [r for r in all_rows if r.get("hard_exclude")]

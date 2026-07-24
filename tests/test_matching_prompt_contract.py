@@ -384,6 +384,7 @@ def test_u3_active_humansearch_runner_wires_live_v2_evaluator() -> None:
 
     assert "evaluate_candidate_with_claude" in source
     assert "evaluation_client=evaluate_candidate_with_claude" in source
+    assert "evaluation_client=evaluation_client" in source
     assert '"evaluation": evaluation' in source
 
 
