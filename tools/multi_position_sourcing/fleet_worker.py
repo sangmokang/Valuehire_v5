@@ -775,6 +775,26 @@ def cancel_observed(status: Any) -> bool:
     return status is not None and status != "running"
 
 
+def _write_stdin_async(proc: Any, text: str) -> None:
+    """서브프로세스 stdin 을 데몬 스레드로 쓴다(#196 Codex V2 4R).
+
+    동기 write 는, 자식이 stdin 을 전혀 안 읽고 큰 prompt 가 파이프 버퍼(≈64KB)를
+    넘기면 그 자리에서 막힌다 — poll 루프(취소·타임아웃)에 진입조차 못 한다. 별도
+    스레드에 넘겨 poll 루프가 항상 돌게 하고, 취소로 프로세스를 죽이면 write 는
+    BrokenPipe 로 풀려 스레드가 조용히 끝난다(데몬이라 잔존 안 함)."""
+    import threading
+
+    def _writer():
+        try:
+            if proc.stdin is not None:
+                proc.stdin.write(text)
+                proc.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    threading.Thread(target=_writer, daemon=True).start()
+
+
 def _kill_process_group_posix(proc: "subprocess.Popen[Any]") -> None:
     """POSIX: 세션 리더로 띄운 서브프로세스의 프로세스그룹 전체(SIGTERM→SIGKILL)를 종료.
 
@@ -859,13 +879,9 @@ def _native_agent_run(
             stdin=subprocess.PIPE, stdout=out_f, stderr=err_f,
             text=True, encoding="utf-8", start_new_session=True,
         )
-        # 프롬프트를 stdin 으로 밀어넣고 닫는다 — stdout 은 파일이라 교착 없음.
-        try:
-            if proc.stdin is not None:
-                proc.stdin.write(input_text)
-                proc.stdin.close()
-        except BrokenPipeError:
-            pass
+        # 프롬프트를 stdin 으로 밀어넣는다 — stdout 은 파일이라 교착 없고, stdin write
+        # 는 데몬 스레드라 자식이 stdin 을 안 읽어도 poll 루프가 막히지 않는다(4R).
+        _write_stdin_async(proc, input_text)
         return proc
 
     def collect(_proc):
@@ -911,12 +927,7 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
                 stdin=subprocess.PIPE, stdout=out_f, stderr=err_f,
                 text=True, encoding="utf-8", creationflags=creationflags,
             )
-            try:
-                if proc.stdin is not None:
-                    proc.stdin.write(prompt)
-                    proc.stdin.close()
-            except (BrokenPipeError, OSError):
-                pass
+            _write_stdin_async(proc, prompt)  # 4R: 데몬 스레드(자식이 stdin 무시해도 무교착)
             started = time.monotonic()
             while True:
                 if proc.poll() is not None:

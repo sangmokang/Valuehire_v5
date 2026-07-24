@@ -254,6 +254,31 @@ def test_run_via_shell_cancel_no_stdin_deadlock_with_large_output(tmp_path):
     assert _t.time() - start < 10  # 교착이면 timeout(60s)까지 안 끝난다
 
 
+def test_native_run_cancels_even_if_child_never_reads_stdin(tmp_path):
+    """Codex V2 4R — 자식이 stdin 을 전혀 안 읽고 prompt 가 커도(파이프 초과) 취소 동작.
+
+    동기 write 였다면 write 에서 막혀 poll 루프에 못 들어간다 — 데몬 write 로 무교착."""
+    import sys
+    import time as _t
+
+    script_file = tmp_path / "noreadstdin.py"
+    script_file.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")  # stdin 안 읽음
+    big_prompt = "Z" * 300_000  # 파이프 버퍼(≈64KB) 초과
+    flips = {"n": 0}
+
+    def cancel_check():
+        flips["n"] += 1
+        return flips["n"] >= 2
+
+    start = _t.time()
+    with pytest.raises(fleet_worker.JobCancelled):
+        fleet_worker._native_agent_run(
+            [sys.executable, str(script_file)], cwd=".", env=None,
+            input_text=big_prompt, timeout=60, cancel_check=cancel_check,
+            poll_seconds=0.05)
+    assert _t.time() - start < 10
+
+
 def test_release_tolerates_already_cancelled_no_orphan_alarm():
     """Codex V2 2R F3 — release 직전 취소가 반영돼 RPC 가 'running 없음'으로 실패해도,
     상태가 cancelled 면 재시도·고아경보 없이 조용히 종료(None)."""
