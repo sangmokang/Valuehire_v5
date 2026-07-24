@@ -1456,6 +1456,14 @@ class FleetWorker:
             self._release(job, job_id, "failed", error=f"러너 반환형 계약 위반: {exc}")
             self._notify(job, f"❌ 잡 #{job_id} 실패 — 러너 반환형 계약 위반: {exc}")
             return "failed"
+        # #196 Codex V2 F4: 완료-취소 경합 — 서브프로세스가 취소 폴 직전에 정상 종료했는데
+        # 그 사이 owner 가 취소해 DB 가 이미 'cancelled' 라면, done/failed 로 보고하지
+        # 않는다. release(done)은 where status='running' 이라 no-op → 3회 재시도 후
+        # 거짓 '고아' 경보가 뜨고 완료 알림·후속잡까지 새는 걸 막는다. cancelled 로 종결.
+        cancel_check = self._cancel_check_for(job_id)
+        if cancel_check is not None and cancel_check():
+            self._notify(job, f"🛑 잡 #{job_id} 실행 중지됨 (owner 취소, {self.machine}).")
+            return "cancelled"
         result = parse_worker_output(stdout, code, stderr=stderr)
         if result["status"] == "paused_for_human":
             # 이슈 #107(SOT29 INV9, 사장님 지시): 사람 개입 신호 = '1분 양보' —

@@ -50,16 +50,17 @@ def _approval_sha256(request: str, agent: str, mode: str, approval_id: str) -> s
 # 상태 전이 화이트리스트 — 여기 없는 전이는 전부 거부.
 ALLOWED_TRANSITIONS: dict[str, tuple[str, ...]] = {
     "queued": ("running", "cancelled"),
-    "running": ("paused_for_human", "done", "failed"),
+    # #196: running→cancelled 추가(실행 중 즉시중지) — DB jobs_transition_guard 와 일치.
+    "running": ("paused_for_human", "done", "failed", "cancelled"),
     "paused_for_human": ("queued", "cancelled"),  # queued 복귀 = /resume
     "done": (),
     "failed": (),
     "cancelled": (),
 }
 
-# 취소는 cancel_job 전용(V1: running→cancelled 는 화이트리스트에 없음).
+# 취소는 cancel_job 전용. #196: running 도 취소 가능(DB cancel_job 와 일치).
 _RELEASE_STATUSES = ("done", "failed", "paused_for_human")
-_CANCELABLE_STATUSES = ("queued", "paused_for_human")
+_CANCELABLE_STATUSES = ("queued", "running", "paused_for_human")
 
 _NETLOC_RE = None  # lazy compile
 

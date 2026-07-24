@@ -154,6 +154,64 @@ def test_worker_returns_cancelled_without_release_on_jobcancelled():
     assert released == []  # 이미 terminal(cancelled) — 재release 금지
 
 
+def test_worker_completion_race_ends_cancelled(monkeypatch):
+    """Codex V2 F4 — 러너가 정상 종료했어도 그 사이 취소됐으면 done 이 아니라 cancelled.
+
+    release 는 호출되지 않아야 한다(finish_job no-op 재시도·거짓 고아경보·완료알림·
+    후속잡 유출 방지)."""
+    released = []
+
+    class _Q:
+        def claim_next(self, machine):
+            return {"id": 9, "skill": "humansearch", "machine": "macmini",
+                    "role": "owner",
+                    "position_url": "https://app.clickup.com/t/86eufjabc",
+                    "params": {}}
+
+        def job_status(self, job_id):
+            # 러너가 정상 종료한 시점엔 owner 취소가 이미 반영돼 있다(경합).
+            return "cancelled"
+
+        def release(self, *a, **k):
+            released.append((a, k))
+
+    def ok_runner(prompt, timeout, **kw):
+        return ("정상 출력", "", 0)  # 정상 완료
+
+    w = fleet_worker.FleetWorker(
+        machine="macmini", queue=_Q(), runner=ok_runner,
+        notifier=lambda j, t: None)
+    assert w.run_once() == "cancelled"
+    assert released == []
+
+
+def test_native_agent_run_kills_real_process_on_cancel():
+    """Codex V2 F6 — 실제 서브프로세스를 취소 신호로 프로세스그룹째 종료(통합)."""
+    import os
+    import signal
+    import sys
+    import time as _t
+
+    flips = {"n": 0}
+
+    def cancel_check():
+        flips["n"] += 1
+        return flips["n"] >= 2  # 첫 폴은 계속, 두 번째 폴에서 취소
+
+    # 자기 프로세스그룹에 자식을 하나 더 두고 오래 자는 프로세스 — killpg 로 둘 다 죽어야.
+    script = ("import time,sys,os\n"
+              "sys.stderr.write('up'); sys.stderr.flush()\n"
+              "time.sleep(120)\n")
+    start = _t.time()
+    with pytest.raises(fleet_worker.JobCancelled):
+        fleet_worker._native_agent_run(
+            [sys.executable, "-c", script], cwd=".", env=None,
+            input_text="", timeout=60, cancel_check=cancel_check,
+            poll_seconds=0.05)
+    # 120초 sleep 인데 취소로 즉시(≤10초) 끝나야 한다.
+    assert _t.time() - start < 10
+
+
 def test_migration_allows_running_to_cancelled():
     files = sorted(pathlib.Path("supabase/migrations").glob("*running*cancel*.sql"))
     assert files, "running 취소 마이그레이션이 없습니다"
