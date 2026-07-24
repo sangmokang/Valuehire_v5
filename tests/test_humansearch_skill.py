@@ -328,7 +328,8 @@ def test_h5_send_gate_filters_invalid_url_and_low_score() -> None:
         why_fit=(),
         why_not=(),
         evidence_paths=(),
-        score_breakdown={},
+        score_breakdown={f"D{i}": 4 for i in range(1, 9)},
+        contract_version="candidate-match-v2-2026-07-24",
     )
     low = PositionMatch(
         candidate_url="https://www.linkedin.com/in/low",
