@@ -33,6 +33,7 @@ from tools.multi_position_sourcing.humansearch import (
     score_humansearch_contract,
 )
 from tools.multi_position_sourcing.matching_score_contract import (
+    assert_live_evaluator_ready,
     evaluate_candidate_with_claude,
 )
 from tools.multi_position_sourcing.scoring import tenure_months
@@ -546,6 +547,7 @@ def process_cards_with_r4(
     mutation_guard=None,
     badge_guard=None,
     evaluation_client=None,
+    evaluation_stage_check=None,
 ) -> list[dict]:
     """Open cards while respecting owner Chrome yield and mid-run preflight STOP."""
     all_rows: list[dict] = []
@@ -563,6 +565,8 @@ def process_cards_with_r4(
             }
             if evaluation_client is not None:
                 profile_kwargs["evaluation_client"] = evaluation_client
+            if evaluation_stage_check is not None:
+                profile_kwargs["evaluation_stage_check"] = evaluation_stage_check
             r = process_profile(tab, card, i, **profile_kwargs)
             hx = r.get("hard_exclude")
             tag = "⛔HX  " if hx else ("✅PASS" if r["score"] >= 70 else "  ")
@@ -598,6 +602,7 @@ def process_profile(
     mutation_guard=None,
     badge_guard=None,
     evaluation_client=None,
+    evaluation_stage_check=None,
 ) -> dict:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     profile_url, navigation_url, source_search_url, expected_name = (
@@ -664,7 +669,11 @@ def process_profile(
         # It remains unversioned and therefore cannot pass send/register gates.
         match = score_humansearch(prof, POSITION)
     else:
-        evaluation = evaluation_client(prof, POSITION)
+        evaluation = evaluation_client(
+            prof,
+            POSITION,
+            stage_boundary_check=evaluation_stage_check,
+        )
         match = score_humansearch_contract(prof, POSITION, evaluation)
     return {
         "idx": idx,
@@ -713,7 +722,9 @@ def main(
     target_resolver=None,
     mutation_sleep=time.sleep,
     evaluation_client=evaluate_candidate_with_claude,
+    evaluation_ready_check=assert_live_evaluator_ready,
 ) -> None:
+    evaluation_ready_check()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
     lease.acquire()
@@ -774,6 +785,7 @@ def main(
             mutation_guard=mutation_guard,
             badge_guard=badge_guard,
             evaluation_client=evaluation_client,
+            evaluation_stage_check=mutation_guard,
         )
         results = collect_results(all_rows)
         excluded = [r for r in all_rows if r.get("hard_exclude")]

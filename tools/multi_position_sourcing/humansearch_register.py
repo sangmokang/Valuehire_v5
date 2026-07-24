@@ -196,6 +196,17 @@ def eligible(results: list[dict], channel: Channel) -> list[dict]:
             f"D{index}" for index in range(1, 9)
         }:
             continue  # D1-D8 근거 계약 미완료 → fail-closed
+        dimensions = evaluation.get("dimensions") if isinstance(evaluation, Mapping) else None
+        if not isinstance(dimensions, Mapping) or any(
+            breakdown.get(dimension_id)
+            != (
+                "N/A"
+                if dimensions.get(dimension_id, {}).get("score") == "not_applicable"
+                else dimensions.get(dimension_id, {}).get("score")
+            )
+            for dimension_id in breakdown
+        ):
+            continue  # 표시용 breakdown도 검증된 Stage 3 소점수와 정확히 일치해야 함
         # register 스키마 URL 키는 'url'. 하류(build_message·clickup) 도 r['url'] 을 읽으므로 여기서 'url' 로 통일한다.
         if not is_valid_profile_url(r.get("url")):
             continue  # URL 무효/결손 → 제외
@@ -406,6 +417,7 @@ def _candidate_spec(result: Mapping[str, object], channel: Channel) -> dict[str,
         "score": result.get("score"),
         "contract_version": result.get("contract_version"),
         "evaluation": result.get("evaluation"),
+        "breakdown": result.get("breakdown"),
         "summary": str(result.get("summary", "") or ""),
         "headline": str(result.get("headline", "") or ""),
         "visible_text": visible_text,
@@ -586,6 +598,19 @@ def candidate_spec_hook_reason(event: object) -> str | None:
         return "candidate_evaluation_invalid"
     if calculated["score"] != score:
         return "candidate_score_mismatch"
+    dimensions = spec.get("evaluation", {}).get("dimensions")
+    breakdown = spec.get("breakdown")
+    if not isinstance(dimensions, Mapping) or not isinstance(breakdown, Mapping):
+        return "candidate_breakdown_invalid"
+    expected_breakdown = {
+        dimension_id: (
+            "N/A" if item.get("score") == "not_applicable" else item.get("score")
+        )
+        for dimension_id, item in dimensions.items()
+        if isinstance(item, Mapping)
+    }
+    if dict(breakdown) != expected_breakdown:
+        return "candidate_breakdown_mismatch"
     if spec.get("saved_profile_evidence") in (None, "", "missing"):
         return "candidate_evidence_missing"
     visible_text = str(spec.get("visible_text", "") or "")

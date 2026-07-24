@@ -64,7 +64,12 @@
           "weights": {"D1": 27, "D2": 10, "D3": 14, "D4": 9, "D5": 7, "D6": 10, "D7": 14, "D8": 9},
           "redistribution": {"D2_not_applicable": {"D1": 10}, "D6_not_applicable": {"D1": 7, "D3": 3}},
           "school_sensitive_client": {"D8": 4, "D1": -4},
-          "senior_10_years_plus": "현재 D8 가중치의 floor(절반)을 D1로 이전",
+          "senior_10_years_plus": {
+            "minimum_total_years": 10,
+            "source_dimension": "D8",
+            "target_dimension": "D1",
+            "transfer": "floor_half_current_weight"
+          },
           "gate_caps": {"fail": 49, "uncertain_2_plus": 69},
           "score_bands": {
             "strong": {"min": 85, "max": 100},

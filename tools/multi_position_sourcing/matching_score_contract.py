@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -197,7 +198,12 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
     weights = dict(contract["weights"])
 
     if dimensions["D2"]["score"] == "not_applicable":
-        weights["D1"] += weights.pop("D2")
+        d2_weight = weights.pop("D2")
+        redistribution = contract["redistribution"]["D2_not_applicable"]
+        if sum(redistribution.values()) != d2_weight:
+            raise MatchingContractError("D2 redistribution does not conserve weight")
+        for dimension_id, weight in redistribution.items():
+            weights[dimension_id] += weight
     if dimensions["D6"]["score"] == "not_applicable":
         d6_weight = weights.pop("D6")
         redistribution = contract["redistribution"]["D6_not_applicable"]
@@ -210,10 +216,18 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
         transfer = contract["school_sensitive_client"]
         weights["D8"] += transfer["D8"]
         weights["D1"] += transfer["D1"]
-    if total_years >= 10:
-        shift = weights["D8"] // 2
-        weights["D8"] -= shift
-        weights["D1"] += shift
+    senior = contract["senior_10_years_plus"]
+    if (
+        not isinstance(senior, dict)
+        or senior.get("transfer") != "floor_half_current_weight"
+    ):
+        raise MatchingContractError("senior weight transfer is malformed")
+    if total_years >= senior["minimum_total_years"]:
+        source = senior["source_dimension"]
+        target = senior["target_dimension"]
+        shift = weights[source] // 2
+        weights[source] -= shift
+        weights[target] += shift
 
     if sum(weights.values()) != 100:
         raise MatchingContractError("applied weights must sum to 100")
@@ -257,15 +271,20 @@ def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object
 
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
-    completed = subprocess.run(
-        ["claude", "-p", "--model", model, prompt],
-        cwd=Path(__file__).resolve().parents[2],
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=180,
-    )
+    try:
+        completed = subprocess.run(
+            ["claude", "-p", "--model", model, prompt],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except FileNotFoundError as exc:
+        raise MatchingContractError("claude CLI is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MatchingContractError("claude matching stage timed out after 60s") from exc
     if completed.returncode != 0:
         raise MatchingContractError(
             f"claude matching stage failed: {(completed.stderr or '')[:240]}"
@@ -284,6 +303,22 @@ def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object
     return parsed
 
 
+def default_tier_maps() -> tuple[dict[str, str], dict[str, str]]:
+    """Return the repository-owned deterministic tier signals for Stage 3."""
+
+    from .scoring import HIGH_TIER_COMPANY_SIGNALS, HIGH_TIER_SCHOOL_SIGNALS
+
+    return (
+        {name: "high" for name in sorted(HIGH_TIER_COMPANY_SIGNALS)},
+        {name: "high" for name in sorted(HIGH_TIER_SCHOOL_SIGNALS)},
+    )
+
+
+def assert_live_evaluator_ready() -> None:
+    if shutil.which("claude") is None:
+        raise MatchingContractError("claude CLI is required for live candidate-match-v2")
+
+
 def evaluate_candidate_contract(
     profile: object,
     position: object,
@@ -291,6 +326,7 @@ def evaluate_candidate_contract(
     llm_json_client: Callable[[str], dict[str, object]] = claude_json_client,
     company_tier_map: Mapping[str, object] | None = None,
     school_tier_map: Mapping[str, object] | None = None,
+    stage_boundary_check: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     """Execute SOT Stage 1-3 and return the validated Stage 4 input payload."""
 
@@ -308,10 +344,16 @@ def evaluate_candidate_contract(
     if not jd_text.strip() or not resume_text.strip():
         raise MatchingContractError("JD and resume source text are required")
 
+    if stage_boundary_check is not None:
+        stage_boundary_check()
     jd_json = llm_json_client(templates["stage_1"].format(jd_raw_text=jd_text))
+    if stage_boundary_check is not None:
+        stage_boundary_check()
     resume_json = llm_json_client(
         templates["stage_2"].format(resume_raw_text=resume_text)
     )
+    if stage_boundary_check is not None:
+        stage_boundary_check()
     stage3 = llm_json_client(
         templates["stage_3"].format(
             jd_json=json.dumps(jd_json, ensure_ascii=False),
@@ -356,7 +398,16 @@ def evaluate_candidate_contract(
 def evaluate_candidate_with_claude(
     profile: object,
     position: object,
+    *,
+    stage_boundary_check: Callable[[], None] | None = None,
 ) -> dict[str, object]:
     """Production adapter used by the live Human Search traversal."""
 
-    return evaluate_candidate_contract(profile, position)
+    company_tiers, school_tiers = default_tier_maps()
+    return evaluate_candidate_contract(
+        profile,
+        position,
+        company_tier_map=company_tiers,
+        school_tier_map=school_tiers,
+        stage_boundary_check=stage_boundary_check,
+    )
