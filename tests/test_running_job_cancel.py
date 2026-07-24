@@ -244,6 +244,14 @@ def test_run_via_shell_cancel_no_stdin_deadlock_with_large_output(tmp_path):
         flips["n"] += 1
         return flips["n"] >= 2
 
+    # 자식 python 의 pid 를 파일로 남겨 취소 후 실제로 죽는지(POSIX 트리 정리) 확인.
+    child_pid_file = tmp_path / "shell_child.pid"
+    script_file.write_text(
+        "import sys,time,os\n"
+        f"open({str(child_pid_file)!r},'w').write(str(os.getpid()))\n"
+        f"sys.stdout.write({big_out!r});sys.stdout.flush()\n"
+        "sys.stdin.read()\n"
+        "time.sleep(120)\n", encoding="utf-8")
     # _run_via_shell 은 shell=True — POSIX 는 단일 문자열 원소로 sh -c 실행.
     shell_cmd = [f"{sys.executable} {script_file}"]
     start = _t.time()
@@ -252,6 +260,13 @@ def test_run_via_shell_cancel_no_stdin_deadlock_with_large_output(tmp_path):
             shell_cmd, big_prompt, 60, ".", None,
             cancel_check=cancel_check, poll_seconds=0.05)
     assert _t.time() - start < 10  # 교착이면 timeout(60s)까지 안 끝난다
+    # 5R: POSIX 셸 경로도 자식을 실제로 정리했는가(taskkill no-op 로 새는지 검증).
+    import os
+    _t.sleep(0.5)
+    if child_pid_file.exists():
+        child_pid = int(child_pid_file.read_text().strip())
+        with pytest.raises(OSError):
+            os.kill(child_pid, 0)
 
 
 def test_native_run_cancels_even_if_child_never_reads_stdin(tmp_path):

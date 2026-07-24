@@ -775,6 +775,18 @@ def cancel_observed(status: Any) -> bool:
     return status is not None and status != "running"
 
 
+def _terminate_tree(proc: Any) -> None:
+    """플랫폼 무관 프로세스트리 종료(#196 Codex V2 5R).
+
+    Windows 는 taskkill /T(트리), POSIX 는 killpg(프로세스그룹) — 어느 쪽이든 자식
+    (손자 브라우저 등)까지 고아 없이 정리한다. POSIX 경로는 호출자가 start_new_session
+    으로 프로세스그룹을 만들어 둔 것을 전제한다."""
+    if sys.platform == "win32":
+        _terminate_process_tree_windows(proc.pid)
+    else:
+        _kill_process_group_posix(proc)
+
+
 def _write_stdin_async(proc: Any, text: str) -> None:
     """서브프로세스 stdin 을 데몬 스레드로 쓴다(#196 Codex V2 4R).
 
@@ -916,8 +928,14 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
         # 취소·타임아웃 시 taskkill /T 로 cmd.exe 트리 전체를 종료한다.
         import tempfile
 
-        creationflags = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                         if sys.platform == "win32" else 0)
+        # 5R: 트리 종료가 자식까지 잡도록 프로세스그룹을 만든다 — Windows 는
+        # CREATE_NEW_PROCESS_GROUP, POSIX 는 start_new_session(setsid → killpg 대상).
+        popen_kwargs: dict[str, Any] = {}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            popen_kwargs["start_new_session"] = True
         out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
         err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
         try:
@@ -925,7 +943,7 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
                 cmd, shell=True, cwd=cwd,
                 env=dict(env) if env is not None else None,
                 stdin=subprocess.PIPE, stdout=out_f, stderr=err_f,
-                text=True, encoding="utf-8", creationflags=creationflags,
+                text=True, encoding="utf-8", **popen_kwargs,
             )
             _write_stdin_async(proc, prompt)  # 4R: 데몬 스레드(자식이 stdin 무시해도 무교착)
             started = time.monotonic()
@@ -934,10 +952,10 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
                     out_f.seek(0); err_f.seek(0)
                     return out_f.read(), err_f.read(), proc.returncode
                 if cancel_check():
-                    _terminate_process_tree_windows(proc.pid)
+                    _terminate_tree(proc)  # 5R: 플랫폼별(POSIX killpg / Win taskkill)
                     raise JobCancelled()
                 if (time.monotonic() - started) > timeout:
-                    _terminate_process_tree_windows(proc.pid)
+                    _terminate_tree(proc)
                     raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
                 time.sleep(poll_seconds)
         finally:
