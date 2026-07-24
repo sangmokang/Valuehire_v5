@@ -162,5 +162,19 @@ class PlanHelperIsExposed(unittest.TestCase):
         self.assertIsNone(message_to_envelope(msg, bot_user_id="123456789012345678"))
 
 
+class ClientForwardsSearcher(unittest.TestCase):
+    """#200 — 운영 클라이언트가 nl_searcher_factory 를 on_message 로 전달해야 NL 이 산다."""
+
+    def test_direct_gateway_client_stores_and_forwards_factory(self):
+        from scripts.discord_direct_gateway import DirectGatewayClient
+        sentinel = lambda: _searcher(("PM", CU + "86a"))
+        client = DirectGatewayClient(
+            authorized_users=(), config=DiscordAccessConfig(allow_dm=True),
+            queue_factory=lambda: FakeQueue(),
+            nl_searcher_factory=sentinel)
+        # 저장돼 on_message 가 handle_text_message 로 넘길 수 있어야 한다.
+        self.assertIs(client._nl_searcher_factory, sentinel)
+
+
 if __name__ == "__main__":
     unittest.main()
