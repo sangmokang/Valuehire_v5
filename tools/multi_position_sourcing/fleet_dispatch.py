@@ -60,13 +60,16 @@ def build_fleet_job_payload(
     skill = (options.get("skill") or "").strip()
     url = (options.get("url") or "").strip()
     params = dict(options.get("params") or {})
-    # /model 전역 기본 배선: agent/model 이 명시되지 않은 job 에만 기본을 주입하고,
-    # 명시된 job 은 그 값을 보존한다(setdefault). "저장만 되고 실제 job 엔 안 먹힘"
-    # (부분 배선) 방지 — 사장님 /st 배선증명.
-    from . import engine_model_default as emd
-    _emd_default = emd.get_default(_ENGINE_MODEL_PATH)
-    params.setdefault("agent", _emd_default["engine"])
-    params.setdefault("model", _emd_default["model"])
+    # /model 전역 기본 배선: 사장님이 /model 로 **실제 설정했을 때만**(파일 존재) 주입하고,
+    # 미설정이면 주입하지 않아 기존 lane별 기본(검색 스킬=claude, owner agent=codex —
+    # select_job_engine)을 그대로 보존한다. (무조건 빌트인 codex 를 주입해 "미지정=claude"
+    # e2e 계약을 깨던 회귀 수정.) 명시된 agent/model 은 항상 보존(setdefault).
+    from pathlib import Path as _Path
+    if _Path(_ENGINE_MODEL_PATH).exists():
+        from . import engine_model_default as emd
+        _emd_default = emd.get_default(_ENGINE_MODEL_PATH)
+        params.setdefault("agent", _emd_default["engine"])
+        params.setdefault("model", _emd_default["model"])
     # SOT29 existing fleet default/account binding stays authoritative. Natural language
     # may select winpc only through an explicit win/windows/윈도우/winpc token.
     machine = options.get("machine") or "macmini"

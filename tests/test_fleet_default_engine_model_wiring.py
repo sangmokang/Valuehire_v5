@@ -27,6 +27,17 @@ def test_payload_fills_global_default_when_unset(monkeypatch, tmp_path):
     assert payload["params"]["model"] == "claude-opus-4-8"
 
 
+def test_payload_no_injection_when_default_unset(monkeypatch, tmp_path):
+    # 사장님이 /model 을 설정하지 않았으면(파일 없음) agent/model 을 주입하지 않는다 —
+    # 기존 lane별 기본(검색=claude, owner agent=codex)을 보존(회귀 방지).
+    monkeypatch.setattr(fd, "_ENGINE_MODEL_PATH", tmp_path / "none.json", raising=False)
+    payload = build_fleet_job_payload(
+        {"skill": "humansearch", "url": CU, "machine": "macmini"},
+        requested_by="814353841088757800:owner", role="owner")
+    assert "agent" not in (payload["params"] or {})
+    assert "model" not in (payload["params"] or {})
+
+
 def test_payload_keeps_explicit_agent_and_model(monkeypatch, tmp_path):
     p = tmp_path / "d.json"
     emd.set_default(p, engine="claude", model="claude-opus-4-8")
