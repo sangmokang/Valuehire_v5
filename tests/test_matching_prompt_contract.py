@@ -96,11 +96,30 @@ def test_u1_named_agent_surfaces_resolve_sot24() -> None:
         REPO / ".claude/skills/url/SKILL.md",
         REPO / "skills/ai-search/SKILL.md",
         REPO / "skills/humansearch/SKILL.md",
+        REPO / ".codex/skills/ai-search/SKILL.md",
+        REPO / ".codex/skills/humansearch/SKILL.md",
+        REPO / ".codex/skills/url/SKILL.md",
     )
     for surface in surfaces:
         text = surface.read_text(encoding="utf-8")
         assert "docs/sot/24-position-jd-sot.json" in text, surface
         assert CONTRACT_VERSION in text, surface
+
+    codex_config = json.loads(
+        (
+            REPO / ".codex/skills/humansearch/humansearch.config.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert codex_config["scoring"]["contract_version"] == CONTRACT_VERSION
+
+
+def test_u2_active_output_copy_has_no_legacy_rubric_label() -> None:
+    source = (
+        REPO / "tools/multi_position_sourcing/humansearch_register.py"
+    ).read_text(encoding="utf-8")
+
+    assert "학력30·직무50·논리10·이직안정10" not in source
+    assert "D1~D8" in source
 
 
 def _payload(
