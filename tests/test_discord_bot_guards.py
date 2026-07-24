@@ -113,6 +113,33 @@ class LoginGateHookTests(unittest.TestCase):
             self.assertEqual(code, 0)
 
 
+class LoginReceiptForgeryHookTests(unittest.TestCase):
+    """#639 V2 실증 우회 봉인 — 영수증 위조(쓰기 도구·shell·링크) 차단, 읽기 통과."""
+
+    def test_blocks_shell_write_and_symlink(self) -> None:
+        for cmd in ("echo '{}' > ~/.valuehire/login_receipts/saramin.json",
+                    "ln -sf /tmp/forged.json ~/.valuehire/login_receipts/saramin.json",
+                    "cp /tmp/fake.json ~/.valuehire/login_receipts/jobkorea.json"):
+            code, err = _dispatch(_tool("Bash", command=cmd), fleet=False)
+            self.assertEqual(code, 2, cmd)
+            self.assertIn("login-receipt-forgery", err)
+
+    def test_blocks_write_tool_to_receipt_path(self) -> None:
+        code, err = _dispatch(_tool(
+            "Write", file_path="/Users/x/.valuehire/login_receipts/saramin.json",
+            content="{}"), fleet=False)
+        self.assertEqual(code, 2)
+        self.assertIn("login-receipt-forgery", err)
+
+    def test_allows_reads_and_other_paths(self) -> None:
+        code, _ = _dispatch(_tool(
+            "Bash", command="cat ~/.valuehire/login_receipts/saramin.json"), fleet=False)
+        self.assertEqual(code, 0)
+        code, _ = _dispatch(_tool(
+            "Write", file_path="/tmp/notes.md", content="x"), fleet=False)
+        self.assertEqual(code, 0)
+
+
 class SendHookTests(unittest.TestCase):
     def test_blocks_sendish_bash_in_fleet_job(self) -> None:
         for cmd in ("python3 tools/x.py --send", "echo hi | sendmail a@b.c",
