@@ -222,6 +222,38 @@ def test_native_agent_run_kills_real_process_group_on_cancel(tmp_path):
         os.kill(child_pid, 0)
 
 
+def test_run_via_shell_cancel_no_stdin_deadlock_with_large_output(tmp_path):
+    """Codex V2 3R — 자식이 큰 출력을 먼저 쏟고 큰 입력을 기다려도 교착 없이 취소된다.
+
+    임시파일 리다이렉트라 stdin write 가 stdout 파이프 포화로 막히지 않아야 한다."""
+    import sys
+    import time as _t
+
+    big_out = "X" * 200_000  # 파이프 버퍼(보통 64KB)를 훨씬 초과
+    script_file = tmp_path / "big.py"
+    script_file.write_text(
+        "import sys,time\n"
+        f"sys.stdout.write({big_out!r});sys.stdout.flush()\n"
+        "sys.stdin.read()\n"      # 큰 입력을 기다림(양쪽 통로 포화 유발 시도)
+        "time.sleep(120)\n",
+        encoding="utf-8")
+    big_prompt = "Y" * 200_000
+    flips = {"n": 0}
+
+    def cancel_check():
+        flips["n"] += 1
+        return flips["n"] >= 2
+
+    # _run_via_shell 은 shell=True — POSIX 는 단일 문자열 원소로 sh -c 실행.
+    shell_cmd = [f"{sys.executable} {script_file}"]
+    start = _t.time()
+    with pytest.raises(fleet_worker.JobCancelled):
+        fleet_worker._run_via_shell(
+            shell_cmd, big_prompt, 60, ".", None,
+            cancel_check=cancel_check, poll_seconds=0.05)
+    assert _t.time() - start < 10  # 교착이면 timeout(60s)까지 안 끝난다
+
+
 def test_release_tolerates_already_cancelled_no_orphan_alarm():
     """Codex V2 2R F3 — release 직전 취소가 반영돼 RPC 가 'running 없음'으로 실패해도,
     상태가 cancelled 면 재시도·고아경보 없이 조용히 종료(None)."""

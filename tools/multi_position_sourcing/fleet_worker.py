@@ -893,37 +893,49 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
     고아로 남긴다). encoding='utf-8' 을 명시해 비-UTF-8 Windows 로케일에서도 한글
     프롬프트/출력이 깨지지 않게 한다(Codex Rescue V2 발견).
     """
-    creationflags = 0
-    if cancel_check is not None and sys.platform == "win32":
-        # #196 Codex V2 2R: 취소 시 트리 종료(taskkill /T)가 cmd.exe 자식까지 잡도록
-        # 새 프로세스그룹으로 띄운다(윈도우도 취소 감시 경로를 태운다).
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    proc = subprocess.Popen(
-        cmd, shell=True, cwd=cwd, env=dict(env) if env is not None else None,
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", creationflags=creationflags,
-    )
     if cancel_check is not None:
-        # 취소 감시 경로: prompt 를 stdin 으로 넣고 닫은 뒤, communicate 를 짧은 timeout
-        # 으로 반복 폴링하며 취소를 확인한다. 취소면 트리 종료 후 JobCancelled.
+        # #196 Codex V2 3R: 취소 감시 경로는 stdout/stderr 를 임시파일로 리다이렉트한다.
+        # PIPE 로 두면 큰 prompt 를 stdin 에 쓰는 동안 자식이 stdout 을 먼저 채워 양쪽
+        # 파이프가 막히는 교착이 난다(polling 진입 전 멈춤) — 파일 리다이렉트로 원천 차단.
+        # 취소·타임아웃 시 taskkill /T 로 cmd.exe 트리 전체를 종료한다.
+        import tempfile
+
+        creationflags = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                         if sys.platform == "win32" else 0)
+        out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+        err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
         try:
-            if proc.stdin is not None:
-                proc.stdin.write(prompt)
-                proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
-        started = time.monotonic()
-        while True:
+            proc = subprocess.Popen(
+                cmd, shell=True, cwd=cwd,
+                env=dict(env) if env is not None else None,
+                stdin=subprocess.PIPE, stdout=out_f, stderr=err_f,
+                text=True, encoding="utf-8", creationflags=creationflags,
+            )
             try:
-                stdout, stderr = proc.communicate(timeout=poll_seconds)
-                return (stdout or ""), (stderr or ""), proc.returncode
-            except subprocess.TimeoutExpired:
+                if proc.stdin is not None:
+                    proc.stdin.write(prompt)
+                    proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+            started = time.monotonic()
+            while True:
+                if proc.poll() is not None:
+                    out_f.seek(0); err_f.seek(0)
+                    return out_f.read(), err_f.read(), proc.returncode
                 if cancel_check():
                     _terminate_process_tree_windows(proc.pid)
                     raise JobCancelled()
                 if (time.monotonic() - started) > timeout:
                     _terminate_process_tree_windows(proc.pid)
-                    raise
+                    raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+                time.sleep(poll_seconds)
+        finally:
+            out_f.close(); err_f.close()
+    proc = subprocess.Popen(
+        cmd, shell=True, cwd=cwd, env=dict(env) if env is not None else None,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8",
+    )
     try:
         stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
     except subprocess.TimeoutExpired:
