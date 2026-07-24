@@ -843,7 +843,16 @@ def _kill_process_group_posix(
     except (ProcessLookupError, OSError):
         pass
     deadline = monotonic() + max(0.0, grace_seconds)
-    while group_alive() and monotonic() < deadline:
+    while True:
+        # Codex V2 8R: 매 폴마다 리더를 reap 한다 — 리더가 깨끗이 종료해도 reap 전엔
+        # 좀비로 남아 killpg(pgid,0) 이 '살아있음'으로 보고돼 유예를 끝까지 기다리던
+        # 응답성 결함을 없앤다. reap 후엔 그룹 존재 여부가 실제 살아있는 자식만 반영.
+        try:
+            proc.poll()
+        except Exception:  # noqa: BLE001 — poll 실패는 무시(killpg 존재확인이 최종 기준)
+            pass
+        if not group_alive() or monotonic() >= deadline:
+            break
         sleep(poll_step)
     if group_alive():
         try:

@@ -354,6 +354,25 @@ def test_kill_group_force_kills_sigterm_ignoring_child(tmp_path):
         os.kill(child_pid, 0)
 
 
+def test_kill_group_returns_fast_when_leader_exits_cleanly(tmp_path):
+    """Codex V2 8R — 자식 없이 깨끗이 종료하는 리더는 유예를 다 기다리지 않고 즉시 반환.
+
+    리더를 매 폴마다 reap 하므로 좀비가 그룹 존재로 잘못 보고되지 않는다."""
+    import subprocess as _sp
+    import sys
+    import time as _t
+
+    # 자식을 안 띄우고 SIGTERM 즉시 종료하는 리더.
+    leader = _sp.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                       start_new_session=True)
+    _t.sleep(0.2)  # 확실히 기동
+    start = _t.time()
+    # 유예 5초를 주지만, 리더가 SIGTERM 으로 즉시 죽고 자식이 없으니 훨씬 빨리 반환.
+    fleet_worker._kill_process_group_posix(
+        leader, grace_seconds=5.0, poll_step=0.02, sleep=_t.sleep)
+    assert _t.time() - start < 2.0  # 유예(5s) 훨씬 이전에 반환
+
+
 def test_release_tolerates_already_cancelled_no_orphan_alarm():
     """Codex V2 2R F3 — release 직전 취소가 반영돼 RPC 가 'running 없음'으로 실패해도,
     상태가 cancelled 면 재시도·고아경보 없이 조용히 종료(None)."""
