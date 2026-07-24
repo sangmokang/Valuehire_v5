@@ -847,6 +847,7 @@ class DirectGatewayClient(discord.Client):
                 message, bot_user_id=bot_user_id, queue_factory=self._queue_factory,
                 authorized_users=self._authorized_users, config=self._config, audit=self._audit,
                 owner_user_ids=self._owner_user_ids,
+                nl_searcher_factory=self._nl_searcher_factory,  # #200: replay 도 동일 자연어 배선(누락 수정)
             )
             self._record_hr1_delivery(message, replay, delivery="replay")
 

@@ -210,6 +210,39 @@ def test_hr1_client_replays_first_enqueued_delivery_without_second_response(tmp_
     assert rows[0]["content_fingerprint"] == rows[1]["content_fingerprint"]
 
 
+def test_hr1_replay_passes_nl_searcher_factory_to_both_deliveries(tmp_path) -> None:
+    """원본·replay 두 전달 모두 #200 자연어 검색기 팩토리를 받아야 한다.
+
+    (병합 회귀 방지: replay 호출에서 nl_searcher_factory 가 빠지면 자연어 요청의
+    replay 가 검색기 없이 nl_reply 로 변해 HR-1 중복-무응답 계약이 깨진다.)
+    """
+    sentinel = lambda: object()
+    client = gateway.DirectGatewayClient(
+        authorized_users=(),
+        config=DiscordAccessConfig(allow_dm=True),
+        queue_factory=lambda: object(),
+        nl_searcher_factory=sentinel,
+        hr1_evidence_recorder=Hr1EvidenceRecorder(tmp_path / "events.jsonl"),
+        hr1_replay_first_enqueued=True,
+    )
+    message = FakeMessage(
+        message_id="1529267252160927202",
+        author_id=OWNER,
+        content=f"이 포지션으로 후보 찾아줘 {POSITION}",
+    )
+    message.author.bot = False
+    seen_factories: list = []
+
+    async def _recorder(*_args, **kwargs):
+        seen_factories.append(kwargs.get("nl_searcher_factory"))
+        return {"action": "enqueued", "job_id": 202}
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(gateway, "handle_text_message", _recorder)
+        asyncio.run(client.on_message(message))
+    assert seen_factories == [sentinel, sentinel]
+
+
 @pytest.mark.parametrize(
     "mutate",
     (
@@ -519,13 +552,6 @@ def test_minimal_privilege_sql_defines_hr1_runtime_rpcs() -> None:
     assert "create unique index if not exists jobs_discord_idempotency_key_uidx" not in sql
 
 
-@pytest.mark.skip(
-    reason="HR-1 자체 NL 명령포맷 라인(#184, `skill:aisearch url:… idempotency:…`)에 "
-    "묶인 테스트다. 이 이식은 lease 게이트+evidence 계약만 최신 main(#200 NL, "
-    "ClickUp 검색기 정본)으로 올린다 — HR-1 NL 라인을 main NL(#200)과 합치는 것은 "
-    "별도 과제(NL 라인 정합)로 분리한다. 운영 NL 경로는 _build_client 가 실제 검색기를 "
-    "배선하므로 이 무검색기 시나리오는 생산 경로가 아니다."
-)
 def test_plain_natural_url_reaches_queue_without_clickup_searcher() -> None:
     class Queue:
         def __init__(self) -> None:
