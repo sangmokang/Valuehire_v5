@@ -1088,6 +1088,10 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
     if sandbox is None:
         raise ValueError(f"unsupported Codex execution mode: {mode!r}")
     args = ["exec", "-C", str(REPO), "--sandbox", sandbox]
+    # job.params.model → 실행 모델 선택(사장님 /st). 미지정이면 기존 기본 유지(fail-safe).
+    _model = str(source.get("VALUEHIRE_AGENT_MODEL") or "").strip()
+    if _model:
+        args.extend(["--model", _model])
     if sandbox == "workspace-write":
         args.extend(["-c", _NETWORK_CONFIG_FLAG])
     if login_escalated:
