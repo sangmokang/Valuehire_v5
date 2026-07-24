@@ -57,8 +57,8 @@ def expected_hr1_messages(position_url: str) -> tuple[str, str, str]:
     url = str(position_url or "").strip()
     _require(url.startswith(("https://", "http://")), "position URL is required")
     return (
-        f"/url {url} winpc engine:claude",
-        f"/url {url} winpc engine:codex",
+        f"/url url:{url} machine:winpc engine:claude",
+        f"/url url:{url} machine:winpc engine:codex",
         f"이 포지션으로 LinkedIn 검색 URL 만들어줘 {url} winpc",
     )
 
@@ -97,6 +97,7 @@ def build_hr1_receipt(
     expected_messages: Sequence[str],
     discord_bot_message_ids: Sequence[str],
     duplicate_row_count: int,
+    global_queue_nonterminal_count: int,
     hermes_before: Mapping[str, Any],
     hermes_after: Mapping[str, Any],
     git_sha_v4: str,
@@ -134,6 +135,12 @@ def build_hr1_receipt(
         "duplicate delivery did not suppress its response",
     )
     _require(duplicate_row_count == 1, "duplicate event created more than one queue row")
+    _require(
+        isinstance(global_queue_nonterminal_count, int)
+        and not isinstance(global_queue_nonterminal_count, bool)
+        and global_queue_nonterminal_count == 0,
+        "global queue is not empty",
+    )
 
     response_ids = [str(row.get("response_id") or "") for row in originals]
     _require(
@@ -222,8 +229,7 @@ def build_hr1_receipt(
         "jobs": job_evidence[:2],
         "natural_language": natural,
         "duplicate_response_count": 0,
-        "queue_nonterminal_count": sum(
-            1 for job in jobs.values() if job.get("status") not in _TERMINAL),
+        "queue_nonterminal_count": global_queue_nonterminal_count,
         "rollback_tested": True,
         "claude_job_id": job_evidence[0]["job_id"],
         "claude_response_id": job_evidence[0]["response_id"],
@@ -316,6 +322,24 @@ def _read_evidence(path: Path) -> list[dict[str, Any]]:
             _require(isinstance(value, dict), "HR-1 evidence row is not an object")
             rows.append(value)
     return rows
+
+
+def job_ids_from_evidence(evidence: Sequence[Mapping[str, Any]]) -> list[int]:
+    """Recover only this run's originally enqueued jobs for abort cleanup."""
+    job_ids: list[int] = []
+    for row in evidence:
+        job_id = row.get("job_id")
+        if (
+            row.get("kind") == "discord_delivery"
+            and row.get("delivery") == "original"
+            and row.get("action") == "enqueued"
+            and isinstance(job_id, int)
+            and not isinstance(job_id, bool)
+            and job_id > 0
+            and job_id not in job_ids
+        ):
+            job_ids.append(job_id)
+    return job_ids
 
 
 def _hermes_state() -> dict[str, Any]:
@@ -415,6 +439,15 @@ def _fetch_jobs(
         f"jobs?select={select}&id=in.({ids})",
     )
     return {int(row["id"]): row for row in rows if isinstance(row.get("id"), int)}
+
+
+def _queue_nonterminal_count(supabase_url: str, service_key: str) -> int:
+    rows = _supabase_rows(
+        supabase_url,
+        service_key,
+        "jobs?select=id&status=in.(queued,running,paused_for_human)",
+    )
+    return len(rows)
 
 
 def cleanup_hr1_jobs(
@@ -523,6 +556,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     hermes_before = _hermes_state()
     _require(hermes_before.get("launchctl_count") == 1 and len(hermes_before.get("pids") or []) == 1,
              "Hermes must remain live and singular before HR-1")
+    _require(
+        _queue_nonterminal_count(supabase_url, service_key) == 0,
+        "global queue is not empty before HR-1",
+    )
 
     run_dir = ROOT / "artifacts/discord-cutover/hr1-runs" / (
         time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
@@ -571,6 +608,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         gateway_exit_code = _stop_gateway(process)
         log_handle.close()
+        try:
+            job_ids = list(dict.fromkeys([
+                *job_ids,
+                *job_ids_from_evidence(_read_evidence(evidence_path)),
+            ]))
+        except Exception as exc:  # noqa: BLE001 — preserve the original failure.
+            print(f"HR-1 evidence recovery warning: {type(exc).__name__}", file=sys.stderr)
         if job_ids:
             try:
                 observed = _fetch_jobs(supabase_url, service_key, job_ids)
@@ -606,6 +650,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "params->>idempotency_key": f"eq.discord:{first_event}",
     })
     duplicate_rows = _supabase_rows(supabase_url, service_key, f"jobs?{duplicate_filter}")
+    global_queue_nonterminal_count = _queue_nonterminal_count(
+        supabase_url, service_key,
+    )
     final_readiness = _gateway_readiness(
         supabase_url, minimal_key, _sha256(token),
     )
@@ -617,6 +664,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         expected_messages=messages,
         discord_bot_message_ids=bot_message_ids,
         duplicate_row_count=len(duplicate_rows),
+        global_queue_nonterminal_count=global_queue_nonterminal_count,
         hermes_before=hermes_before,
         hermes_after=hermes_after,
         git_sha_v4=_git_sha(v4_root),

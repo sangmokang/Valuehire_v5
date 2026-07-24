@@ -35,6 +35,26 @@ full verifier passed 2495 tests with 4 expected failures and 105 Node subtests. 
 adversarial review returned `LOCAL_SAFEGUARDS: PASS`, `HR1_LIVE: RED`, with no additional blocking
 code finding. The live verdict deliberately remains RED until U3-U5 execute.
 
+Continuation observation (2026-07-23, WinPC PID 19976): U3 reached `worker_ready=true` with
+`claude_ready=true`, `codex_ready=true`, and killswitch off. A generation-10 live delivery then
+exposed a parser-contract defect in commit `b7fe0c4`: the exact compact first message was enqueued
+and replay-deduplicated to one job and one reply, but bare `winpc` was discarded by the Discord
+text option parser, so job 74 defaulted to `macmini`. The aborted run was not reused as success
+evidence; job 74 was read back as queued and cancelled through `cancel_job`. RED now covers the
+actual `message_to_envelope -> parse_fleet_args` path, and the approved one-line inputs use explicit
+`url:` and `machine:` fields.
+
+That interrupted delivery also exposed two independent false-GREEN risks. First, `job_ids` was
+populated only after all three messages, so a partial run could leave its first queued job outside
+abort cleanup. The runner now recovers only original/enqueued job IDs from its own evidence before
+canonical cleanup. Second, the receipt counted only its three observed jobs rather than the global
+production queue. The runner now rejects a nonempty global queue before connect, re-reads it after
+the three jobs, and passes that exact count into receipt construction. Unrelated `macmini`
+`humansearch` jobs 71-73 currently keep HR-1 fail-closed; they are not silently cancelled or
+laundered out of the receipt. Focused verification after these changes is 107 passed. A requested
+Claude read-only adversarial run was attempted but did not start because the local Claude account
+had reached its weekly limit; this is recorded as unverified, not PASS.
+
 The relevant strict recurrence-ledger rows are the repeated command/SOT-violation row and the
 reconfirmation row. This continuation follows their promoted controls: the exception table owns
 unexpected states, and the owner's current instruction is not reconfirmed.
@@ -199,6 +219,9 @@ The production RPC readback and live Discord checks run only after the local com
 | Lease held or ownership lost | Do not connect, or close an existing client and release best-effort. |
 | Duplicate response or Hermes response observed | Stop direct gateway and mark HR-1 failed. |
 | Discord client rewrites or line-wraps an approved command | Stop and release the gateway; use the parser-equivalent compact one-line command on a fresh run. Never reuse mixed evidence. |
+| One-line text contains bare URL/machine tokens that the Discord option parser discards | Reject that input contract; require explicit `url:` and `machine:` and prove the real message-to-fleet parser path before another live run. |
+| Gateway exits after only a subset of originals enqueue | Recover original/enqueued job IDs from the current run evidence and cancel only its queued/paused jobs; never reuse partial evidence. |
+| Global queue contains unrelated nonterminal jobs | Refuse gateway start or final receipt; do not cancel unrelated jobs without explicit owner authorization and do not substitute a run-local count. |
 | CAPTCHA/2FA/identity checkpoint | Stop the affected job and require human resolution. |
 | WinPC remote administration unavailable | Keep the gateway stopped; complete local fail-closed work, record connectivity evidence, and resume U3 only when the existing managed path is reachable. |
 | Any condition not listed above | Explicitly stop, record it, and update this table before resuming. |

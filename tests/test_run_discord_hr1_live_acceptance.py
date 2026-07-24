@@ -5,6 +5,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
+from scripts import run_discord_hr1_live_acceptance as live_runner
 from scripts.run_discord_hr1_live_acceptance import (
     build_hr1_receipt,
     cleanup_hr1_jobs,
@@ -12,6 +15,8 @@ from scripts.run_discord_hr1_live_acceptance import (
     gateway_subprocess_argv,
     gateway_subprocess_env,
 )
+from scripts.discord_direct_gateway import message_to_envelope
+from tools.multi_position_sourcing.fleet_args import parse_fleet_args
 from tools.multi_position_sourcing.discord_hr1 import validate_hr1_receipt
 
 
@@ -29,10 +34,43 @@ def _fingerprint(value: str) -> str:
 def test_expected_messages_are_exact_three_paths_on_winpc() -> None:
     messages = expected_hr1_messages(POSITION)
     assert len(messages) == 3
-    assert messages[0] == f"/url {POSITION} winpc engine:claude"
-    assert messages[1] == f"/url {POSITION} winpc engine:codex"
+    assert messages[0] == f"/url url:{POSITION} machine:winpc engine:claude"
+    assert messages[1] == f"/url url:{POSITION} machine:winpc engine:codex"
     assert not messages[2].startswith("/")
     assert all(POSITION in message and "winpc" in message for message in messages)
+
+
+def test_expected_text_commands_reach_winpc_through_the_real_gateway_parser() -> None:
+    class _Author:
+        id = 814353841088757800
+        bot = False
+
+    class _Channel:
+        id = 948846296482086912
+
+    class _Message:
+        guild = None
+        author = _Author()
+        channel = _Channel()
+
+        def __init__(self, content: str, event_id: int) -> None:
+            self.content = content
+            self.id = event_id
+
+    messages = expected_hr1_messages(POSITION)
+    for event_id, expected_agent, content in (
+        (1529723252237275236, "claude", messages[0]),
+        (1529723252237275237, "codex", messages[1]),
+    ):
+        envelope = message_to_envelope(
+            _Message(content, event_id),
+            bot_user_id="946740848018735114",
+        )
+        assert envelope is not None
+        parsed = parse_fleet_args(envelope.command, envelope.raw_args)
+        assert parsed["url"] == POSITION
+        assert parsed["machine"] == "winpc"
+        assert parsed["params"]["agent"] == expected_agent
 
 
 def test_runner_is_directly_executable_from_repo_root() -> None:
@@ -86,6 +124,26 @@ def test_cleanup_cancels_only_nonterminal_hr1_jobs(monkeypatch) -> None:
         ("https://example.supabase.co/rest/v1/rpc/cancel_job",
          {"p_job_id": 70, "p_reason": "HR-1 live acceptance aborted"}),
     ]
+
+
+def test_partial_delivery_job_ids_are_recovered_for_abort_cleanup() -> None:
+    evidence = [
+        {
+            "kind": "discord_delivery",
+            "delivery": "original",
+            "action": "enqueued",
+            "job_id": 74,
+        },
+        {
+            "kind": "discord_delivery",
+            "delivery": "replay",
+            "action": "duplicate",
+            "job_id": 74,
+        },
+        {"kind": "gateway_stopped", "released": True},
+    ]
+
+    assert live_runner.job_ids_from_evidence(evidence) == [74]
 
 
 def test_gateway_child_starts_as_repo_module() -> None:
@@ -172,6 +230,7 @@ def test_build_receipt_requires_and_combines_live_evidence() -> None:
         expected_messages=messages,
         discord_bot_message_ids=list(response_ids),
         duplicate_row_count=1,
+        global_queue_nonterminal_count=0,
         hermes_before={"pids": [4321], "launchctl_count": 1},
         hermes_after={"pids": [4321], "launchctl_count": 1},
         git_sha_v4="a" * 40,
@@ -193,3 +252,29 @@ def test_build_receipt_requires_and_combines_live_evidence() -> None:
     assert receipt["duplicate_response_count"] == 0
     assert receipt["queue_nonterminal_count"] == 0
     assert receipt["readiness_after"]["worker_pid"] == 4242
+
+    with pytest.raises(RuntimeError, match="global queue is not empty"):
+        build_hr1_receipt(
+            evidence=evidence,
+            jobs=jobs,
+            expected_messages=messages,
+            discord_bot_message_ids=list(response_ids),
+            duplicate_row_count=1,
+            global_queue_nonterminal_count=1,
+            hermes_before={"pids": [4321], "launchctl_count": 1},
+            hermes_after={"pids": [4321], "launchctl_count": 1},
+            git_sha_v4="a" * 40,
+            git_sha_v5="b" * 40,
+            verifier_sha256="e" * 64,
+            gateway_exit_code=0,
+            final_readiness={
+                "minimal_rpc": True,
+                "worker_ready": True,
+                "killswitch_engaged": False,
+                "worker_heartbeat_age_seconds": 5,
+                "worker_machine": "winpc",
+                "worker_pid": 4242,
+                "claude_ready": True,
+                "codex_ready": True,
+            },
+        )
