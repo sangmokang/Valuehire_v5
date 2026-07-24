@@ -582,8 +582,17 @@ class JobQueueClient:
         )
 
     def cancel(self, job_id: int, reason: str = "") -> Any:
-        """queued/paused_for_human 잡 취소 (cancel_job RPC)."""
+        """queued/running/paused_for_human 잡 취소 (cancel_job RPC, #196 로 running 포함)."""
         return self._call("POST", "/rpc/cancel_job", cancel_job_payload(job_id, reason))
+
+    def job_status(self, job_id: int) -> str | None:
+        """#196: 잡 상태 1건 조회(실행 중 취소 감지 폴링용). 없으면 None."""
+        if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+            raise ValueError(f"invalid job_id: {job_id!r}")
+        rows = self._call("GET", f"/jobs?id=eq.{job_id}&select=status&limit=1")
+        if isinstance(rows, list) and rows:
+            return rows[0].get("status")
+        return None
 
     def resume(self, job_id: int) -> Any:
         """paused_for_human → queued (/resume 전용 RPC)."""

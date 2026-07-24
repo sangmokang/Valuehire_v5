@@ -105,6 +105,55 @@ def test_run_agent_cancel_kills_group_and_raises():
 # ── (a) 마이그레이션 ────────────────────────────────────────────────────
 
 
+# ── 워커 배선: JobCancelled → 'cancelled', 재release 없음 ────────────────
+
+
+def test_worker_cancel_check_polls_job_status():
+    class _Q:
+        def __init__(self):
+            self.calls = []
+
+        def job_status(self, job_id):
+            self.calls.append(job_id)
+            return "cancelled"
+
+    w = fleet_worker.FleetWorker(
+        machine="macmini", queue=_Q(), notifier=lambda j, t: None)
+    check = w._cancel_check_for(75)
+    assert check() is True  # cancelled → 중단
+    # job_status 없는 큐는 None → 러너가 기존 subprocess.run 경로(하위호환) 사용.
+    w2 = fleet_worker.FleetWorker(
+        machine="macmini", queue=object(), notifier=lambda j, t: None)
+    assert w2._cancel_check_for(75) is None
+
+
+def test_worker_returns_cancelled_without_release_on_jobcancelled():
+    """JobCancelled 가 나면 워커는 release 없이 'cancelled' 반환(경합 안전)."""
+    released = []
+
+    class _Q:
+        def claim_next(self, machine):
+            return {"id": 9, "skill": "humansearch", "machine": "macmini",
+                    "role": "owner",
+                    "position_url": "https://app.clickup.com/t/86eufjabc",
+                    "params": {}}
+
+        def job_status(self, job_id):
+            return "cancelled"
+
+        def release(self, *a, **k):
+            released.append((a, k))
+
+    def raising_runner(prompt, timeout, **kw):
+        raise fleet_worker.JobCancelled()
+
+    w = fleet_worker.FleetWorker(
+        machine="macmini", queue=_Q(), runner=raising_runner,
+        notifier=lambda j, t: None)
+    assert w.run_once() == "cancelled"
+    assert released == []  # 이미 terminal(cancelled) — 재release 금지
+
+
 def test_migration_allows_running_to_cancelled():
     files = sorted(pathlib.Path("supabase/migrations").glob("*running*cancel*.sql"))
     assert files, "running 취소 마이그레이션이 없습니다"
