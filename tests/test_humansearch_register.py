@@ -38,6 +38,29 @@ from tools.multi_position_sourcing.humansearch_register import (
 from tools.multi_position_sourcing.models import CapturedProfile, EmploymentTenure
 
 
+def _contract_evaluation(score: int = 4) -> dict:
+    return {
+        "contract_version": "candidate-match-v2-2026-07-24",
+        "gates": [
+            {
+                "requirement": "Python 실무",
+                "verdict": "pass",
+                "evidence": "A사 Python 백엔드",
+            }
+        ],
+        "dimensions": {
+            f"D{i}": {
+                "score": score,
+                "evidence": f"resume evidence D{i}",
+                **({"needs_verification": []} if i == 7 else {}),
+                **({"school_sensitive_client": False} if i == 8 else {}),
+            }
+            for i in range(1, 9)
+        },
+        "total_years": 8,
+    }
+
+
 def _runner_dict(**over) -> dict:
     """humansearch_cdp_run.py 가 실제로 내보내는 results 항목 형상."""
     d = {
@@ -47,9 +70,10 @@ def _runner_dict(**over) -> dict:
         "otw": False,
         "headline": "Backend Engineer",
         "education": "부산대학교 학사",
-        "score": 82,
+        "score": 80,
         "breakdown": {f"D{i}": 4 for i in range(1, 9)},
         "contract_version": "candidate-match-v2-2026-07-24",
+        "evaluation": _contract_evaluation(),
         "why_fit": ["must-have 직결: python"],
         "why_not": [],
         "screenshot": "/x/1.png",
@@ -586,6 +610,16 @@ def test_eligible_rejects_legacy_direct_total_without_contract_version() -> None
     }
 
     assert eligible([r], "saramin") == []
+
+
+def test_eligible_recomputes_and_rejects_forged_llm_total() -> None:
+    forged = _runner_dict(
+        score=99,
+        visible_text="backend engineer",
+        summary="부산대 8년 안정적",
+    )
+
+    assert eligible([forged], "saramin") == []
 
 
 def test_eligible_low_tier_school_kept_on_linkedin() -> None:

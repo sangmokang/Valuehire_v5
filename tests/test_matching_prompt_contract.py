@@ -175,7 +175,6 @@ def _payload(
             for index in range(1, 9)
         },
         "total_years": total_years,
-        "school_weight_enabled": True,
     }
 
 
@@ -275,6 +274,14 @@ def test_u4_rejects_inputs_outside_the_contract(mutate) -> None:
     mutate(payload)
 
     with pytest.raises(MatchingContractError):
+        calculate_final_score(payload)
+
+
+def test_u4_rejects_missing_must_have_gate_evidence() -> None:
+    payload = _payload()
+    payload["gates"] = []
+
+    with pytest.raises(MatchingContractError, match="at least one"):
         calculate_final_score(payload)
 
 
