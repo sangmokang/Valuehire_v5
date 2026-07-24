@@ -26,9 +26,9 @@ _BROWSER = re.compile(
     re.IGNORECASE,
 )
 _PROCESS_TERMINATION = re.compile(
-    r"(?:^|[\n;&`]|\$\()\s*(?:sudo\s+|env\s+\S+=\S+\s+)*"
+    r"(?:^|[\n;&`!\"']|\$\()\s*(?:sudo\s+|env\s+\S+=\S+\s+)*"
     r"(?:p" r"kill|kill" r"all)\b"
-    r"|(?:^|[\n;&`]|\$\()\s*(?:sudo\s+|env\s+\S+=\S+\s+)*"
+    r"|(?:^|[\n;&`!\"']|\$\()\s*(?:sudo\s+|env\s+\S+=\S+\s+)*"
     r"kill\b(?:\s+-\S+)*\s+(?:%|\d|\$\(|`)"
     r"|\bxargs\s+(?:-\S+\s+)*kill\b"
     r"|\bosascript\b[\s\S]*\bquit\b",
@@ -48,7 +48,12 @@ _PROTECTED_CONTEXT = re.compile(
 )
 _UNSAFE_BROWSER_PRIMITIVE = re.compile(
     r"connectOver" r"CDP"
-    r"|\b(?:browser|context|page)\.(?:new_page|new_tab|close)\s*\("
+    r"|\b(?:browser|context|page)\."
+    r"(?:new_page|new_tab|newPage|newContext|new_context|close|goto)\s*\("
+    r"|\b(?:chromium|firefox|webkit)\."
+    r"(?:launch|launchPersistentContext|launch_persistent_context)\s*\("
+    r"|(?:^|[\s;&|])open\s+(?:-[A-Za-z]+\s+)*-a\s+"
+    r"[\"']?(?:Google[ _-]?Chrome|Chrome|Chromium)\b"
     r"|/json/" r"new\b"
     r"|\bTarget\.(?:create" r"Target|close" r"Target)\b"
     r"|\b(?:Browser|Page)\.close\b"
@@ -68,7 +73,7 @@ _UNSAFE_PORTAL_SCRIPT = re.compile(
     r"|(?:^|\s)-m\s+scripts\.(?:collect_linkedin|run_portal_search)\b",
     re.IGNORECASE,
 )
-_READ_ONLY_PROGRAMS = frozenset({"rg", "grep", "sed", "git"})
+_READ_ONLY_PROGRAMS = frozenset({"rg", "grep"})
 _SHELL_CONTROL_CHARS = frozenset(";&|`")
 
 
@@ -111,7 +116,14 @@ def _is_read_only_inspection(command: str) -> bool:
     if not tokens:
         return False
     program = os.path.basename(tokens[0])
-    return program in _READ_ONLY_PROGRAMS and not _has_shell_control(command)
+    if program not in _READ_ONLY_PROGRAMS or _has_shell_control(command):
+        return False
+    if program == "rg" and any(
+        token == "--pre" or token.startswith("--pre=")
+        for token in tokens[1:]
+    ):
+        return False
+    return True
 
 
 def _is_exact_session_guard(command: str) -> bool:

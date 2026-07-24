@@ -40,6 +40,16 @@ def test_login_guard_blocks_unsafe_browser_session_paths() -> None:
     jobkorea = _decode("6a6f626b6f7265612e636f2e6b72")
     blocked = (
         f'{_decode("706b696c6c")} -f "{chrome}"',
+        (
+            "git -c alias.x='!"
+            + _decode("706b696c6c")
+            + f' -f "{chrome}"\' x'
+        ),
+        (
+            "rg --pre '"
+            + _decode("706b696c6c")
+            + f' -f "{chrome}"\' pattern docs'
+        ),
         f'{_decode("6b696c6c")} -9 $(pgrep -f "{chrome}")',
         f"./scripts/portal_browsers.sh {_decode('73746f70')} linkedin",
         f"./scripts/portal_browsers.sh {_decode('72657374617274')} saramin",
@@ -56,6 +66,10 @@ def test_login_guard_blocks_unsafe_browser_session_paths() -> None:
         "python3 scripts/collect_linkedin.py --keywords backend --output /tmp/out.json",
         "python3 scripts/run_portal_search.py --channel linkedin_rps --keywords backend",
         "python3 -m scripts.collect_linkedin --keywords backend --output /tmp/out.json",
+        f'open -a "{chrome}" https://{linkedin}/search',
+        f"python3 unsafe.py # chromium.launch() https://{linkedin}",
+        f"node unsafe.mjs # chromium.launchPersistentContext() https://{linkedin}",
+        f"python3 unsafe.py # page.goto('https://{saramin}')",
         f"node unsafe.mjs # context.close() after https://{linkedin}",
     )
     for command in blocked:
