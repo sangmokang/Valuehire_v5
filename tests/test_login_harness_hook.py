@@ -91,6 +91,15 @@ def test_login_guard_allows_exact_runner_and_read_only_inspection() -> None:
             "keepalive --site saramin --agent Claude "
             "--safe-target-json /tmp/audited.json"
         ),
+        (
+            "PYTHONPATH=. python3 -m tools.multi_position_sourcing.portal_login "
+            "--channels saramin,jobkorea,linkedin_rps --worker-id macmini"
+        ),
+        (
+            "python3 -m tools.multi_position_sourcing.portal_login "
+            "--channels saramin,jobkorea,linkedin_rps --worker-id macmini "
+            "--no-human-intervention"
+        ),
         "./scripts/portal_browsers.sh status",
         "./scripts/portal_browsers.sh cdp jobkorea",
         "rg -n 'browser lifecycle patterns' docs tools",
@@ -236,6 +245,7 @@ def test_fleet_search_prompts_require_login_barrier_before_execution() -> None:
         assert "LOGIN_BARRIER=PASS" in prompt
         assert "local secret store 자동 로그인" not in prompt
         assert "session_guard human-auth" in prompt
+        assert "portal_session_status_latest.json" in prompt
         assert prompt.index("LOGIN_BARRIER=PASS") < prompt.index(
             f"{skill} 스킬의 검색·URL 작업"
         )

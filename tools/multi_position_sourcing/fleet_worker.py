@@ -416,7 +416,8 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         )
     login_barrier_rule = (
         "0. `docs/prompts/login-search-execution-contract.md`를 먼저 읽고 그대로 실행할 것. "
-        "필요 사이트 전부의 exact target과 로그인 마커를 정식 session_guard로 증명해 "
+        "워커가 필요한 사이트 전부의 `artifacts/portal_session_status_latest.json` "
+        "영수증과 exact target 로그인 마커를 정식 게이트로 검증해 "
         "`LOGIN_BARRIER=PASS` 영수증이 나온 뒤에만 "
         f"{skill} 스킬의 검색·URL 작업을 시작할 것. BLOCKED이면 검색을 시작하지 말고 "
         "사이트별 상태와 브라우저 보존 결과를 보고할 것.\n"

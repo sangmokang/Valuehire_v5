@@ -6,6 +6,8 @@
 
 - `skills/login/browser-control-contract.json`
 - `tools/multi_position_sourcing/session_guard.py`
+- `tools/multi_position_sourcing/portal_login.py`
+- `tools/multi_position_sourcing/fleet_worker.py`
 - `tools/multi_position_sourcing/raw_cdp.py`
 - `tools/multi_position_sourcing/owner_activity.py`
 - `.claude/hooks/guards/login.py`
@@ -43,30 +45,44 @@
 
 ## LOGIN_BARRIER
 
-다음 순서를 사이트마다 수행합니다.
+검색 잡을 모델에 넘기기 전에 워커가 다음 순서를 수행합니다.
 
-1. `scripts/portal_browsers.sh status`와 `cdp <site>`로 실제 endpoint를 읽습니다.
-2. 실행 중인 관리 브라우저의 기존 exact target 하나를 찾습니다.
-3. 대상이 없으면 새로 만들지 않습니다. `managed_browser_missing` 또는
-   `exact_target_missing`으로 종료합니다. 새 창 0개, 새 탭 0개입니다.
-4. `owner_activity.py`가 사람 사용 중이라고 판정하면 `HUMAN_ACTIVE`에서 무조작
-   대기합니다.
-5. 같은 exact target의 fresh DOM에서 사이트별 로그인 마커를 읽습니다.
-6. 이미 로그인됐으면 mutation 0회로 `AUTHENTICATED`를 반환합니다.
-7. 정상 로그아웃이면 검증된 exact-target 자동 로그인 어댑터만 1회 사용할 수 있습니다.
-   현재 checkout에 그 어댑터가 없으면 legacy 실행기로 바꾸지 말고 다음 정식 인계로
-   전환합니다.
+1. `artifacts/portal_session_status_latest.json`의 생성 시각·필수 채널·`ready=true`를
+   `login_gate_block_reason`으로 검증합니다.
+2. 영수증이 없거나 만료됐으면 워커가 다음 정식 준비 러너를 정확히 한 번 실행합니다.
 
 ```bash
-PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \
-  --site <site> --agent <agent> --target-id <exact-target-id>
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.portal_login \
+  --channels saramin,jobkorea,linkedin_rps \
+  --worker-id <machine> \
+  --no-human-intervention
 ```
 
-8. captcha·2FA·checkpoint는 정확한 창을 한 번만 표시하고 `HUMAN_AUTH`로 전이합니다.
+3. 준비 러너는 `scripts/portal_browsers.sh status`와 `cdp <site>`로 실제 endpoint를
+   읽고, 실행 중인 관리 브라우저의 기존 exact target을 사용합니다.
+4. 대상이 없으면 새로 만들지 않습니다. `managed_browser_missing` 또는
+   `exact_target_missing`으로 종료합니다. 새 창 0개, 새 탭 0개입니다.
+5. `owner_activity.py`가 사람 사용 중이라고 판정하면 `HUMAN_ACTIVE`에서 무조작
+   대기합니다.
+6. 같은 exact target의 fresh DOM에서 사이트별 로그인 마커를 읽습니다.
+7. 이미 로그인됐으면 mutation 0회로 `AUTHENTICATED`를 반환합니다.
+8. 정상 로그아웃이면 정식 `portal_login` 러너가 저장 자격증명을 1회만 제출합니다.
+   임의 인자·다른 스크립트·즉석 CDP 로그인은 허용하지 않습니다.
+9. 자동 준비 후에도 `ready=true`가 아니면 검색 잡은 `paused_for_human`으로 바뀌고
+   검색 모델은 실행되지 않습니다. 사용자가 `$login`을 실행하면 Codex가 같은 정식
+   러너를 사람 개입 허용 모드로 수행합니다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.portal_login \
+  --channels saramin,jobkorea,linkedin_rps \
+  --worker-id <machine>
+```
+
+10. captcha·2FA·checkpoint는 정확한 창을 한 번만 표시하고 `HUMAN_AUTH`로 전이합니다.
    사람이 처리하는 동안 click·type·navigate·reload·focus는 0회입니다.
-9. LinkedIn의 multiple-sign-in 화면은 `AUTH_CONFLICT`입니다. Continue·Confirm을
+11. LinkedIn의 multiple-sign-in 화면은 `AUTH_CONFLICT`입니다. Continue·Confirm을
    누르거나 다른 프로필에서 재로그인하지 않습니다.
-10. fresh 로그인 마커와 마지막 사람 입력 후 15초 조용함을 함께 증명해야
+12. fresh 로그인 마커와 마지막 사람 입력 후 15초 조용함을 함께 증명해야
     `AUTHENTICATED`입니다.
 
 고정 좌표 클릭과 스크린샷 OCR 클릭은 로그인 기본 수단이 아닙니다. 검증된 실행기가

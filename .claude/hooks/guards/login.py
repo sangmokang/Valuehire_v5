@@ -14,6 +14,7 @@ from typing import Any
 
 NAME = "login"
 _RUNNER = "tools.multi_position_sourcing.session_guard"
+_PORTAL_LOGIN_RUNNER = "tools.multi_position_sourcing.portal_login"
 _GUIDANCE = (
     "⛔ 차단(login): 로그인·검색 전에 기존 exact target을 정식 session_guard로 "
     "확인해야 합니다. `python3 -m tools.multi_position_sourcing.session_guard "
@@ -142,11 +143,30 @@ def _is_exact_session_guard(command: str) -> bool:
     )
 
 
+def _is_exact_portal_login_runner(command: str) -> bool:
+    if _has_shell_control(command):
+        return False
+    tokens = _tokens(command)
+    if tokens and tokens[0].startswith("PYTHONPATH="):
+        tokens = tokens[1:]
+    if len(tokens) not in {7, 8}:
+        return False
+    if not (
+        os.path.basename(tokens[0]) in {"python", "python3"}
+        and tokens[1:4] == ["-m", _PORTAL_LOGIN_RUNNER, "--channels"]
+        and tokens[4] == "saramin,jobkorea,linkedin_rps"
+        and tokens[5] == "--worker-id"
+        and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", tokens[6])
+    ):
+        return False
+    return len(tokens) == 7 or tokens[7] == "--no-human-intervention"
+
+
 def check(tool: str, tool_input: dict[str, Any]) -> str | None:
     command = _command(tool_input)
     if not command or _is_read_only_inspection(command):
         return None
-    if _is_exact_session_guard(command):
+    if _is_exact_session_guard(command) or _is_exact_portal_login_runner(command):
         return None
     if _PROCESS_TERMINATION.search(command) and _BROWSER.search(command):
         return _GUIDANCE
