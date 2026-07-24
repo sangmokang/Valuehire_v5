@@ -184,6 +184,7 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
             },
         )(),
         mutation_sleep=lambda _seconds: None,
+        evaluation_ready_check=lambda: None,
     )
 
     assert calls

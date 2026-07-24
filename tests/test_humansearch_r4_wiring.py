@@ -223,7 +223,11 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
 
     monkeypatch.setattr(hcr, "process_cards_with_r4", fake_process_cards)
 
-    hcr.main(owner_snapshot=sentinel, mutation_sleep=lambda _seconds: None)
+    hcr.main(
+        owner_snapshot=sentinel,
+        mutation_sleep=lambda _seconds: None,
+        evaluation_ready_check=lambda: None,
+    )
 
     assert calls == [sentinel]
     assert tab.closed is True

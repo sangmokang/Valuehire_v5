@@ -724,7 +724,6 @@ def main(
     evaluation_client=evaluate_candidate_with_claude,
     evaluation_ready_check=assert_live_evaluator_ready,
 ) -> None:
-    evaluation_ready_check()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
     lease.acquire()
@@ -777,6 +776,7 @@ def main(
             badge_guard=badge_guard,
         )
         log(f"planned traversal result_count={result_count} collected={len(cards)} start={start}")
+        evaluation_ready_check()
         all_rows = process_cards_with_r4(
             tab,
             cards,
