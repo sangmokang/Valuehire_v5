@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 from pathlib import Path
+import subprocess
 
 from tools.multi_position_sourcing.fleet_worker import build_job_prompt
 
@@ -10,6 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 GUARD = REPO / ".claude" / "hooks" / "guards" / "login.py"
 PROMPT = REPO / "docs" / "prompts" / "login-search-execution-contract.md"
 SKILL = REPO / "skills" / "login" / "SKILL.md"
+DISPATCH = REPO / ".claude" / "hooks" / "harness-dispatch.py"
 
 
 def _decode(value: str) -> str:
@@ -43,6 +47,10 @@ def test_login_guard_blocks_unsafe_browser_session_paths() -> None:
         f"node unsafe.mjs # {_decode('636f6e6e6563744f766572434450')} https://{linkedin}",
         f"python3 unsafe.py # context.new_page() https://{saramin}",
         f"node unsafe.mjs # PUT {_decode('2f6a736f6e2f6e6577')} https://{jobkorea}",
+        (
+            "python3 unsafe.py --site linkedin_rps # "
+            + _decode("52756e74696d652e6576616c75617465")
+        ),
         "python3 -m tools.multi_position_sourcing.portal_login --site linkedin_rps",
         "python3 -m tools.multi_position_sourcing.portal_autologin --site saramin",
         f"node unsafe.mjs # context.close() after https://{linkedin}",
@@ -88,6 +96,66 @@ def test_login_guard_handles_codex_command_arrays() -> None:
     )
     assert reason is not None
     assert "session_guard" in reason
+
+
+def test_harness_dispatch_discovers_and_runs_login_guard() -> None:
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (
+                _decode("706b696c6c")
+                + " -f "
+                + _decode("476f6f676c65204368726f6d65")
+            )
+        },
+    }
+    result = subprocess.run(
+        ["python3", str(DISPATCH)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        cwd=REPO,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(REPO)},
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "차단(login)" in result.stderr
+
+
+def test_exact_runner_name_cannot_allow_a_chained_unsafe_command() -> None:
+    guard = _load_guard()
+    command = (
+        "python3 -m tools.multi_position_sourcing.session_guard "
+        "human-auth --site linkedin_rps --agent Codex; "
+        + _decode("706b696c6c")
+        + " -f "
+        + _decode("476f6f676c65204368726f6d65")
+    )
+    assert guard.check("Bash", _bash(command)) is not None
+
+
+def test_read_only_prefix_cannot_allow_a_chained_unsafe_command() -> None:
+    guard = _load_guard()
+    command = (
+        "git status; "
+        + _decode("706b696c6c")
+        + " -f "
+        + _decode("476f6f676c65204368726f6d65")
+    )
+    assert guard.check("Bash", _bash(command)) is not None
+
+
+def test_quoted_search_alternation_remains_read_only() -> None:
+    guard = _load_guard()
+    pattern = (
+        _decode("706b696c6c")
+        + "|"
+        + _decode("6b696c6c616c6c")
+        + " "
+        + _decode("4368726f6d65")
+    )
+    command = f"rg -n '{pattern}' docs"
+    assert guard.check("Bash", _bash(command)) is None
 
 
 def test_execution_prompt_makes_login_a_code_enforced_search_barrier() -> None:

@@ -414,6 +414,13 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             f"출력할 것. ready 가 아닌 채널이 있으면 이 마커 대신 규칙 3의 PAUSE 마커로 "
             f"종료할 것(거짓 ready 금지).\n"
         )
+    login_barrier_rule = (
+        "0. `docs/prompts/login-search-execution-contract.md`를 먼저 읽고 그대로 실행할 것. "
+        "필요 사이트 전부의 exact target과 로그인 마커를 정식 session_guard로 증명해 "
+        "`LOGIN_BARRIER=PASS` 영수증이 나온 뒤에만 "
+        f"{skill} 스킬의 검색·URL 작업을 시작할 것. BLOCKED이면 검색을 시작하지 말고 "
+        "사이트별 상태와 브라우저 보존 결과를 보고할 것.\n"
+    )
     url_login_rule = ""
     capture_rule = ""
     if skill == "url":
@@ -457,6 +464,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"{params_line}"
         f"- 결과: 한국어로 요약해 stdout 에 출력할 것 (워커가 Discord 로 전달함)\n"
         f"규칙:\n"
+        f"{login_barrier_rule}"
         f"1. {skill} 외의 서치·수집 스킬을 발동하지 말 것.\n"
         f"2. 아웃리치·메시지·메일 발송은 어떤 경우에도 하지 말 것 (발송 게이트 SOT28).\n"
         f"3. 로그인된 크롬 프로필을 로그아웃·삭제·초기화하지 말 것.\n"
