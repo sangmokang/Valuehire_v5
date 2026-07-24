@@ -84,6 +84,8 @@ def _command(tool_input: Any) -> str:
     value = tool_input.get("command")
     if value in (None, ""):
         value = tool_input.get("cmd", "")
+    if value in (None, ""):
+        value = tool_input.get("chars", "")
     if isinstance(value, (list, tuple)):
         return " ".join(str(item) for item in value)
     return str(value or "")
@@ -154,9 +156,18 @@ def _is_exact_portal_login_runner(command: str) -> bool:
     if not (
         os.path.basename(tokens[0]) in {"python", "python3"}
         and tokens[1:4] == ["-m", _PORTAL_LOGIN_RUNNER, "--channels"]
-        and tokens[4] == "saramin,jobkorea,linkedin_rps"
         and tokens[5] == "--worker-id"
         and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", tokens[6])
+    ):
+        return False
+    channels = tokens[4].split(",")
+    if (
+        not channels
+        or len(channels) != len(set(channels))
+        or any(
+            channel not in {"saramin", "jobkorea", "linkedin_rps"}
+            for channel in channels
+        )
     ):
         return False
     return len(tokens) == 7 or tokens[7] == "--no-human-intervention"

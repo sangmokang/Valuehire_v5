@@ -100,6 +100,11 @@ def test_login_guard_allows_exact_runner_and_read_only_inspection() -> None:
             "--channels saramin,jobkorea,linkedin_rps --worker-id macmini "
             "--no-human-intervention"
         ),
+        (
+            "python3 -m tools.multi_position_sourcing.portal_login "
+            "--channels linkedin_rps --worker-id macmini "
+            "--no-human-intervention"
+        ),
         "./scripts/portal_browsers.sh status",
         "./scripts/portal_browsers.sh cdp jobkorea",
         "rg -n 'browser lifecycle patterns' docs tools",
@@ -119,6 +124,23 @@ def test_login_guard_handles_codex_command_arrays() -> None:
                 "-f",
                 _decode("476f6f676c65204368726f6d65"),
             ]
+        },
+    )
+    assert reason is not None
+    assert "session_guard" in reason
+
+
+def test_login_guard_handles_interactive_shell_chars() -> None:
+    guard = _load_guard()
+    reason = guard.check(
+        "write_stdin",
+        {
+            "chars": (
+                _decode("706b696c6c")
+                + " -f "
+                + _decode("476f6f676c65204368726f6d65")
+                + "\n"
+            )
         },
     )
     assert reason is not None
