@@ -122,6 +122,28 @@ def test_u2_active_output_copy_has_no_legacy_rubric_label() -> None:
     assert "D1~D8" in source
 
 
+def test_u2_ai_search_stage6_and_codex_references_use_v2_contract() -> None:
+    sot25 = json.loads(
+        (
+            REPO / "docs/sot/25-ai-search-execution-process.json"
+        ).read_text(encoding="utf-8")
+    )
+    stage6 = next(stage for stage in sot25["stages"] if stage["id"] == "6_evaluation")
+    assert stage6["matching_contract_version"] == CONTRACT_VERSION
+    assert stage6["scoring_axes"] == [f"D{i}" for i in range(1, 9)]
+    assert "final score" not in stage6["llm_output"].lower()
+
+    references = (
+        REPO / "skills/ai-search/references/spec-procedure.md",
+        REPO / ".codex/skills/ai-search/references/spec-procedure.md",
+    )
+    for reference in references:
+        text = reference.read_text(encoding="utf-8")
+        assert CONTRACT_VERSION in text, reference
+        assert "D1" in text and "D8" in text, reference
+        assert "Score with the SOT 24 axes" not in text, reference
+
+
 def _payload(
     *,
     score: int = 4,
