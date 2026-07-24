@@ -1039,6 +1039,10 @@ def _run_claude(prompt: str, timeout: int,
         if permission_mode is None:
             raise ValueError(f"unsupported Claude execution mode: {raw_mode!r}")
         base_args.extend(["--permission-mode", permission_mode])
+    _model = str((env or {}).get("VALUEHIRE_AGENT_MODEL") or "").strip()
+    if _model:
+        # job.params.model → 실행 모델 선택(사장님 /st). 미지정이면 기존 기본 유지(fail-safe).
+        base_args.extend(["--model", _model])
     base_args.append("-p")
     cmd, use_shell = _agent_argv("claude", base_args)
     if use_shell:
