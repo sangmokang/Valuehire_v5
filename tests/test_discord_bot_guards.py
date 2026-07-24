@@ -29,6 +29,9 @@ FLEET_ENV = {"VH_BUSY_TASK": "fleet #7 (humansearch)", "VH_BUSY_AGENT": "claude"
 
 def _dispatch(payload: dict, *, fleet: bool = True, project_dir: pathlib.Path | None = None):
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir or ROOT))
+    # #639: 영수증 정본은 채널별 파일 — 테스트는 실사용자 홈이 아닌 결정적 경로만 본다.
+    env["VH_LOGIN_RECEIPT_DIR"] = str((project_dir or ROOT) / "login_receipts")
+    env["VALUEHIRE_MACHINE"] = "macmini"
     env.pop("VH_BUSY_TASK", None)
     if fleet:
         env.update(FLEET_ENV)
@@ -42,16 +45,21 @@ def _tool(name: str, **kw) -> dict:
 
 
 def _write_receipt(root: pathlib.Path, *, ready=True, age_seconds=60) -> None:
-    gen = (datetime.datetime.now(datetime.timezone.utc)
-           - datetime.timedelta(seconds=age_seconds)).isoformat()
-    payload = {
-        "kind": "portal_session_preflight", "generated_at": gen, "ready": ready,
-        "portal_sessions": [{"channel": c, "ready": ready}
-                            for c in ("saramin", "jobkorea", "linkedin_rps")],
-    }
-    (root / "artifacts").mkdir(parents=True, exist_ok=True)
-    (root / "artifacts/portal_session_status_latest.json").write_text(
-        json.dumps(payload), encoding="utf-8")
+    """#639: 채널별 login_barrier 영수증(2층 훅이 보는 요약 필드)을 기록."""
+    ts = (datetime.datetime.now(datetime.timezone.utc)
+          - datetime.timedelta(seconds=age_seconds)).isoformat()
+    rdir = root / "login_receipts"
+    rdir.mkdir(parents=True, exist_ok=True)
+    for c in ("saramin", "jobkorea", "linkedin_rps"):
+        payload = {
+            "schema_version": 1, "channel": c,
+            "state": "AUTHENTICATED" if ready else "AUTH_LOST",
+            "ready": ready, "host": "macmini", "target_id": "T1",
+            "last_verified_at": ts, "owner_activity_detected": False,
+            "proof_names": ["marker"], "mutation_count": 0,
+            "capture_status": "saved",
+        }
+        (rdir / f"{c}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 class SkillWhitelistHookTests(unittest.TestCase):
