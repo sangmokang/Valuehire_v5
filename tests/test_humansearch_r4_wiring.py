@@ -210,17 +210,24 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(hcr, "iter_planned_cards", lambda _tab, **_kwargs: _cards(2))
 
     def fake_process_cards(
-        _tab, cards, *, owner_snapshot, live_check, mutation_guard, badge_guard
+        _tab, cards, *, owner_snapshot, live_check, mutation_guard, badge_guard,
+        evaluation_client, evaluation_stage_check,
     ):
         calls.append(owner_snapshot)
         assert live_check is hcr.assert_not_blocked_or_abort
+        assert evaluation_client is hcr.evaluate_candidate_with_claude
+        assert evaluation_stage_check is not None
         mutation_guard()
         badge_guard(_tab)
         return [_row(card, idx) for idx, card in enumerate(cards, 1)]
 
     monkeypatch.setattr(hcr, "process_cards_with_r4", fake_process_cards)
 
-    hcr.main(owner_snapshot=sentinel, mutation_sleep=lambda _seconds: None)
+    hcr.main(
+        owner_snapshot=sentinel,
+        mutation_sleep=lambda _seconds: None,
+        evaluation_ready_check=lambda: None,
+    )
 
     assert calls == [sentinel]
     assert tab.closed is True

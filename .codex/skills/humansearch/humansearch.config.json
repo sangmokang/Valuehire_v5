@@ -2,7 +2,7 @@
   "$schema_version": "1.0.0",
   "title": "humansearch — 사람이 걸어둔 검색 결과 순회·채점·디스코드 발송 설정 (SSOT)",
   "owner_decisions_2026-06-25": "합격선 70 / 지방 국공립 허용 / 사람인·잡코리아도 링크드인과 동일 가중치 / 채널 병렬 / 10페이지 랜덤·천천히",
-  "code_single_source": "tools/multi_position_sourcing/humansearch.py — 상수(SCORING_WEIGHTS·PASS_THRESHOLD·마커)와 이 JSON은 테스트(H2/H3)가 일치 강제",
+  "code_single_source": "docs/sot/24-position-jd-sot.json matching_prompt_contract + tools/multi_position_sourcing/matching_score_contract.py. humansearch.py legacy prefilter는 최종 등록 불가.",
 
   "invocation": {
     "trigger_keywords": ["humansearch", "휴먼서치", "이 화면 순회", "후보 솎아서 디스코드", "리스팅 돌면서 채점"],
@@ -51,11 +51,19 @@
   },
 
   "scoring": {
-    "weights": {"education": 0.30, "role_fit": 0.50, "profile_logic": 0.10, "job_stability": 0.10},
-    "weights_note": "학력30%·직무적합50%·프로필 논리력10%·이직 안정성10% (사장님 지시 그대로). 3채널 공통.",
+    "contract_version": "candidate-match-v2-2026-07-24",
+    "weights": {"D1": 27, "D2": 10, "D3": 14, "D4": 9, "D5": 7, "D6": 10, "D7": 14, "D8": 9},
+    "weights_note": "LLM은 근거 기반 D1~D8 소점수만 산출. 총점·게이트 상한·등급은 matching_score_contract.py가 결정.",
     "pass_threshold": 70,
-    "score_range": "0~100 가중합",
-    "function": "tools/multi_position_sourcing/humansearch.py score_humansearch()"
+    "score_range": "0~100 deterministic Stage 4",
+    "function": "tools/multi_position_sourcing/humansearch.py score_humansearch_contract()"
+  },
+
+  "legacy_prefilter_scoring": {
+    "weights": {"education": 0.30, "role_fit": 0.50, "profile_logic": 0.10, "job_stability": 0.10},
+    "status": "collection_ranking_only",
+    "final_registration_allowed": false,
+    "note": "과거 CDP 수집 순서용 휴리스틱. contract_version이 없어 등록 게이트에서 거부된다."
   },
 
   "hard_exclude": {

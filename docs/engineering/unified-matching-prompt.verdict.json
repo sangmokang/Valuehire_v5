@@ -1,0 +1,21 @@
+{
+  "goal": "candidate-match-v2-2026-07-24 is the only final scoring contract across v5 AI Search/Human Search/URL handoff and v4 reverse matching",
+  "issue": "https://github.com/sangmokang/Valuehire_v5/issues/198",
+  "verdict": "pass",
+  "verified_at": "2026-07-24T12:48:00+09:00",
+  "evidence": {
+    "v5_focused": "350 passed, 3 xfailed",
+    "v5_full": "2573 passed, 4 xfailed, 105 subtests passed",
+    "v4_focused": "matching contract/policy/runner/SOT/persist: 22 passed",
+    "v4_typecheck": "npx tsc --noEmit passed",
+    "v4_strict_gate": "56 checks passed",
+    "skill_validation": "8 repository Claude/Codex adapters passed quick_validate.py",
+    "global_hashes": "AI Search, Human Search, and URL Codex copies matched repository SHA-256; global Claude copies contained the same contract marker",
+    "adversarial_review": "Two independent Claude merge-base reviews found registration trust, live wiring, legacy fallback, popup, composite rewrite, gate, D7, tier-map, and metadata gaps; each confirmed scoring-critical finding was fixed and re-tested.",
+    "generator_reattack": "Malformed totals, blank evidence, empty gates, forged totals/breakdowns, missing tiers, legacy fallback, and D7 verification-overcap fixtures fail closed."
+  },
+  "remaining_risk": [
+    "Live portal traversal and external writes were intentionally outside this implementation goal.",
+    "The v4 full suite has unrelated environment/SOT failures; focused matching tests, typecheck, and strict gate pass."
+  ]
+}

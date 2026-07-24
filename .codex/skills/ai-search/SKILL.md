@@ -92,7 +92,9 @@ The live AI Search stage sequence is:
 4. `3_jd_intake`: use ClickUp JD first; supplement stale/missing JD from official hiring pages.
 5. `4_keyword_strategy`: split JD into industry, role, skill/tool, experience, and exclude axes.
 6. `5_channel_search`: search Saramin, Jobkorea, and LinkedIn RPS in parallel when ready.
-7. `6_evaluation`: score by JD fit, school signal, job stability, and domain/tool fit.
+7. `6_evaluation`: read `docs/sot/24-position-jd-sot.json` contract
+   `candidate-match-v2-2026-07-24`; LLM stages emit gates plus evidence-backed
+   D1-D8 subscores only, and deterministic Stage 4 code emits the total.
 8. `7_output_contract`: serialize only candidates with the required 4 fields; apply the FY26AI_Search ClickUp
    registration contract when ClickUp recording is in scope.
 9. `8_jd_template_lane`: for new/open roles, check LinkedIn/RPS JD template state; never send.

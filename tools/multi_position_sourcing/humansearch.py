@@ -23,6 +23,7 @@ from typing import Any
 from collections.abc import Iterable
 
 from .models import CapturedProfile, Channel, Position, PositionMatch
+from .matching_score_contract import CONTRACT_VERSION, calculate_final_score
 from .scoring import (
     HIGH_TIER_SCHOOL_SIGNALS,
     count_short_tenure_hops,
@@ -30,7 +31,7 @@ from .scoring import (
 )
 
 # ── 사장님 확정 상수 (config JSON 과 단일 출처로 일치해야 함; H2/H3 가 교차검증) ──
-SCORING_WEIGHTS: dict[str, float] = {
+LEGACY_PREFILTER_WEIGHTS: dict[str, float] = {
     "education": 0.30,
     "role_fit": 0.50,
     "profile_logic": 0.10,
@@ -350,7 +351,11 @@ def _job_stability_subscore(profile: CapturedProfile) -> tuple[float, list[str]]
 
 
 def score_humansearch(profile: CapturedProfile, position: Position) -> PositionMatch:
-    """가중 점수(0~100)로 PositionMatch 환원. 가중치는 SCORING_WEIGHTS 단일 출처."""
+    """Legacy collection heuristic; never eligible for final send/registration.
+
+    This remains only so existing CDP collection can rank an unreviewed local
+    queue. Final candidate decisions must pass ``score_humansearch_contract``.
+    """
     edu_sub = _education_subscore(profile)
     role_sub, role_reasons = _role_fit_subscore(profile, position)
     logic_sub = _profile_logic_subscore(profile)
@@ -364,9 +369,15 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
     }
     # 합격선 경계 정확도: 항목별 round() 누적은 raw 69.2 를 70 으로 부풀린다(합격 오판).
     # → raw 가중합을 *한 번만* 반올림해 총점을 낸다. breakdown 은 표시용(합 != score 일 수 있음).
-    raw = sum(SCORING_WEIGHTS[key] * subs[key] for key in SCORING_WEIGHTS)
+    raw = sum(
+        LEGACY_PREFILTER_WEIGHTS[key] * subs[key]
+        for key in LEGACY_PREFILTER_WEIGHTS
+    )
     score = max(0, min(100, round(100 * raw)))
-    breakdown = {key: round(100 * SCORING_WEIGHTS[key] * subs[key]) for key in SCORING_WEIGHTS}
+    breakdown = {
+        key: round(100 * LEGACY_PREFILTER_WEIGHTS[key] * subs[key])
+        for key in LEGACY_PREFILTER_WEIGHTS
+    }
 
     why_fit: list[str] = []
     why_not: list[str] = []
@@ -395,6 +406,52 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
     )
 
 
+def score_humansearch_contract(
+    profile: CapturedProfile,
+    position: Position,
+    evaluation: dict[str, object],
+) -> PositionMatch:
+    """Turn validated Stage 3 gates/D1-D8 into the only sendable match."""
+
+    result = calculate_final_score(evaluation)
+    dimensions = evaluation["dimensions"]
+    gates = evaluation["gates"]
+    if not isinstance(dimensions, dict) or not isinstance(gates, list):
+        # calculate_final_score normally catches this; keep the type boundary
+        # explicit for static callers and future refactors.
+        raise TypeError("evaluation must contain dimensions and gates")
+
+    why_fit = tuple(
+        f"{dimension_id}: {item['evidence']}"
+        for dimension_id, item in dimensions.items()
+        if isinstance(item, dict)
+        and item.get("score") != "not_applicable"
+        and isinstance(item.get("score"), int)
+        and item["score"] >= 3
+    )[:4]
+    why_not = tuple(
+        f"{gate['verdict']}: {gate['requirement']} — {gate['evidence']}"
+        for gate in gates
+        if isinstance(gate, dict) and gate.get("verdict") != "pass"
+    )[:4]
+    breakdown = {
+        dimension_id: "N/A" if item["score"] == "not_applicable" else item["score"]
+        for dimension_id, item in dimensions.items()
+        if isinstance(item, dict)
+    }
+    return PositionMatch(
+        candidate_url=profile.profile_url,
+        profile_summary=profile.summary,
+        position_id=position.position_id,
+        score=int(result["score"]),
+        why_fit=why_fit,
+        why_not=why_not,
+        evidence_paths=profile.evidence_paths,
+        score_breakdown=breakdown,
+        contract_version=CONTRACT_VERSION,
+    )
+
+
 def eligible_matches_for_send(matches: Iterable[PositionMatch]) -> tuple[PositionMatch, ...]:
     """Discord #ai_search 로 보낼 후보만 남긴다 — 발송 직전 강제 게이트(코드 배선).
 
@@ -405,5 +462,8 @@ def eligible_matches_for_send(matches: Iterable[PositionMatch]) -> tuple[Positio
     return tuple(
         m
         for m in matches
-        if m.score >= PASS_THRESHOLD and is_valid_profile_url(m.candidate_url)
+        if m.contract_version == CONTRACT_VERSION
+        and set(m.score_breakdown) == {f"D{index}" for index in range(1, 9)}
+        and m.score >= PASS_THRESHOLD
+        and is_valid_profile_url(m.candidate_url)
     )

@@ -1,7 +1,7 @@
 {
   "$schema_note": "포지션 JD 평가기준 SOT. AI Search 적합도 평가의 단일 기준. 사장님 지시(2026-06-25): 클릭업에서 JD를 찾아 SOT로 박고, 평가 시 클릭업 JD + 공식 홈페이지(career.wrtn.io 등) 상세를 함께 참고한다.",
-  "version": "1.0.0",
-  "updated_at": "2026-06-25",
+  "version": "2.0.0",
+  "updated_at": "2026-07-24",
   "source_of_truth": {
     "primary": "ClickUp FY26ClientsPosition 태스크의 JD(description)",
     "secondary": "각 포지션 공식 채용 홈페이지 원본 URL(career.wrtn.io 등) — 클릭업 JD가 비거나 오래되면 공식홈/구글링으로 상세 확인",
@@ -10,8 +10,82 @@
   "evaluation_contract": {
     "must_pass_before_send": "후보 JSON 필수 4필드(profile_url, score, why_fit, profile_summary)",
     "score_bands": {"strong": "85+", "candidate": "70-84", "drop": "<70"},
-    "scoring_axes": ["직무직결성(JD 필수요건 매칭)", "좋은 학교(학력 컷)", "이직 안정성/재직기간", "도메인 적합(산업·툴)"],
-    "send_policy": "발송(제안·메일·InMail)은 절대 자동 금지 — 사람이 마지막에 누른다(SOT 불변식 3)"
+    "scoring_axes": ["D1 직무 핵심역량", "D2 도메인/산업", "D3 레벨/연차", "D4 성장궤적/재직안정", "D5 성과근거", "D6 티어델타", "D7 성사현실성", "D8 학벌"],
+    "send_policy": "발송(제안·메일·InMail)은 절대 자동 금지 — 사람이 마지막에 누른다(SOT 불변식 3)",
+    "matching_prompt_contract": {
+      "version": "candidate-match-v2-2026-07-24",
+      "purpose": "aisearch·humansearch·url handoff와 v4 역매칭이 함께 쓰는 후보자↔JD 채점 계약. LLM은 구조화와 소점수만, 총점은 코드만 계산한다.",
+      "llm_must_not_output": ["final_score", "score_band"],
+      "llm_invocation": {"temperature": 0, "json_mode": true},
+      "stages": {
+        "stage_1_jd_structure": {
+          "input": {"jd_raw_text": "string"},
+          "output_required": ["position_title", "seniority_level", "seniority_inferred", "must_have", "nice_to_have", "domain", "company_stage", "comp_band", "team_context"],
+          "rules": ["must_have와 nice_to_have를 엄격히 구분", "요건을 검증 가능한 조건으로 정규화", "명시가 없을 때만 seniority를 추론하고 seniority_inferred=true", "없는 정보는 null"]
+        },
+        "stage_2_resume_structure": {
+          "input": {"resume_raw_text": "string"},
+          "output_required": ["name_masked", "total_years", "education", "careers", "skills", "achievements", "career_flags", "salary_info"],
+          "rules": ["사실만 추출하고 평가·인상·추측 금지", "겹치는 재직기간을 중복 계산하지 않음", "achievements는 수치·규모·성과가 명시된 항목만", "short_tenure_count는 인턴·계약직을 제외한 12개월 미만 경력 수", "gap_months는 6개월 이상 공백의 총 개월 수"]
+        },
+        "stage_3_gate_and_dimensions": {
+          "inputs": ["jd_json", "resume_json", "company_tier_map", "school_tier_map"],
+          "gate_verdicts": ["pass", "fail", "uncertain"],
+          "dimension_ids": ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"],
+          "evidence_required": true,
+          "prose_quality_scoring_forbidden": true,
+          "output_schema": {
+            "gates": [{"requirement": "string", "verdict": "pass|fail|uncertain", "evidence": "string"}],
+            "dimensions": {
+              "D1": {"score": "integer 0-5", "evidence": "string"},
+              "D2": {"score": "integer 0-5|not_applicable", "evidence": "string"},
+              "D3": {"score": "integer 0-5", "evidence": "string"},
+              "D4": {"score": "integer 0-5", "evidence": "string"},
+              "D5": {"score": "integer 0-5", "evidence": "string"},
+              "D6": {"score": "integer 0-5|not_applicable", "evidence": "string"},
+              "D7": {"score": "integer 0-5", "evidence": "string", "needs_verification": ["string"]},
+              "D8": {"score": "integer 0-5", "evidence": "string", "school_sensitive_client": "boolean"}
+            },
+            "one_line_verdict": "string"
+          },
+          "rubric": {
+            "D1": {"name": "직무 핵심역량 일치", "anchors": {"5": "must_have 전부와 핵심 nice_to_have를 실무 프로젝트 근거로 충족", "4": "must_have 전부 충족, 근거 명확", "3": "must_have 대부분 충족, 1개는 간접근거", "2": "must_have 절반 수준", "1": "키워드만 겹치고 실사용 근거 부족", "0": "직무 자체가 다름"}},
+            "D2": {"name": "도메인/산업 적합", "anchors": {"5": "동일 도메인·고객군 3년 이상", "3": "전환 학습비용이 낮은 인접 도메인", "1": "무관하지만 전환 근거 있음", "0": "무관하고 전환 근거 없음", "not_applicable": "JD domain이 null"}},
+            "D3": {"name": "레벨/연차 정합", "anchors": {"5": "정확히 일치하고 수행근거 있음", "3": "반 레벨 차이", "1": "한 레벨 차이 또는 명백한 오버스펙", "0": "두 레벨 이상 차이"}, "rule": "오버스펙도 감점"},
+            "D4": {"name": "성장 궤적·재직 안정성", "anchors": {"5": "일관된 상승과 평균재직 3년 이상", "3": "평이한 궤적과 보통 안정성", "1": "12개월 미만 경력 3회 이상 또는 하향이동 반복", "0": "잦은 이직과 설명 없는 장기공백 동시 존재"}},
+            "D5": {"name": "성과 근거 구체성", "anchors": {"5": "정량성과 3건 이상", "3": "정량성과 1-2건", "1": "역할 서술만 있고 성과 없음", "0": "판단 불가"}, "rule": "resume.achievements만 근거로 사용"},
+            "D6": {"name": "티어 델타", "anchors": {"5": "델타 0~+1", "4": "델타 -0.5", "3": "델타 +1.5", "2": "델타 -1 이하", "1": "델타 +2 이상", "not_applicable": "회사 티어 판단 불가"}},
+            "D7": {"name": "성사 현실성", "anchors": {"5": "현직 18개월 이상·연봉밴드 내·회사단계 이동 자연스러움", "3": "조건 하나 이상 불확실", "1": "연봉밴드 초과 추정 또는 현직 6개월 미만", "0": "지역·비자·밴드 등 명백한 결격"}, "rule": "정보 없는 항목은 확인 필요로 쓰고 3점 상한"},
+            "D8": {"name": "학벌", "anchors": {"5": "Tier S", "4": "Tier A", "3": "Tier B", "2": "Tier C", "1": "학위정보 불명확"}, "rule": "학사와 대학원 중 높은 티어, 학사 Tier S면 5 유지; 편입·전과 별도 감점 금지"}
+          }
+        },
+        "stage_4_deterministic_total": {
+          "implementation": "tools/multi_position_sourcing/matching_score_contract.py",
+          "weights": {"D1": 27, "D2": 10, "D3": 14, "D4": 9, "D5": 7, "D6": 10, "D7": 14, "D8": 9},
+          "redistribution": {"D2_not_applicable": {"D1": 10}, "D6_not_applicable": {"D1": 7, "D3": 3}},
+          "school_sensitive_client": {"D8": 4, "D1": -4},
+          "senior_10_years_plus": {
+            "minimum_total_years": 10,
+            "source_dimension": "D8",
+            "target_dimension": "D1",
+            "transfer": "floor_half_current_weight"
+          },
+          "gate_caps": {"fail": 49, "uncertain_2_plus": 69},
+          "score_bands": {
+            "strong": {"min": 85, "max": 100},
+            "candidate": {"min": 70, "max": 84},
+            "conditional": {"min": 50, "max": 69},
+            "reject": {"min": 0, "max": 49}
+          }
+        }
+      },
+      "prompt_templates": {
+        "stage_1": "당신은 채용공고(JD) 분석 전문가입니다. <JD>{jd_raw_text}</JD>를 읽고 JSON으로만 응답하세요. must_have와 nice_to_have를 엄격히 구분하고 각 요건을 검증 가능한 조건으로 정규화하세요. seniority_level은 junior|mid|senior|lead|executive, 명시가 없으면 역할 범위로 추론하고 seniority_inferred=true로 쓰세요. domain 요구가 없으면 null, comp_band 정보가 없으면 null입니다. JSON 키는 position_title, seniority_level, seniority_inferred, must_have(type,requirement,min_years), nice_to_have, domain, company_stage, comp_band(min,max,currency=KRW), team_context입니다. JSON 외 텍스트와 마크다운은 금지합니다.",
+        "stage_2": "당신은 이력서 정보 추출기입니다. <RESUME>{resume_raw_text}</RESUME>에서 사실만 추출해 JSON으로 응답하세요. 평가·판단·인상·추측은 금지하고 없는 정보는 null로 두세요. careers는 최신순이며 기간을 개월로 계산하고 현재 재직은 end=present, skills에는 last_used_year, achievements에는 수치·규모·성과가 명시된 항목만, total_years는 중복기간 없이 계산하세요. career_flags는 인턴·계약직을 제외한 12개월 미만 short_tenure_count, 6개월 이상 공백의 gap_months, current_tenure_months입니다. JSON 키는 name_masked=true,total_years,education,careers,skills,achievements,career_flags,salary_info입니다. JSON 외 텍스트는 금지합니다.",
+        "stage_3": "당신은 헤드헌팅 매칭 심사관입니다. <JD_JSON>{jd_json}</JD_JSON><RESUME_JSON>{resume_json}</RESUME_JSON><COMPANY_TIER_MAP>{company_tier_map}</COMPANY_TIER_MAP><SCHOOL_TIER_MAP>{school_tier_map}</SCHOOL_TIER_MAP>을 비교해 필수요건 gate와 D1-D8 소점수만 JSON으로 출력하세요. 총점을 계산하지 마세요. 각 applicable dimension에는 이력서의 구체적 evidence가 필수이며 근거가 없으면 0~1점입니다. 문장력·표현의 유려함·문서 완성도는 채점하지 말고 검증 가능한 경력·수치·프로젝트·재직이력만 사용하세요. gate는 pass(명시증거), uncertain(간접증거), fail(증거 없음/미달)입니다. D1 직무핵심역량, D2 도메인, D3 레벨/연차(오버스펙 감점), D4 성장궤적·안정성, D5 achievements 정량성과, D6 company_tier_map 티어델타, D7 성사현실성, D8 school_tier_map 학벌을 위 rubric의 0~5 전구간으로 채점하세요. JD에 도메인 요구가 없으면 D2는 not_applicable, company_tier_map에 비교 가능한 회사 정보가 없으면 D6는 not_applicable로 출력하세요. 출력 JSON은 gates(requirement,verdict,evidence), dimensions.D1~D8(score,evidence; D7 needs_verification; D8 school_sensitive_client), one_line_verdict입니다. JSON 외 텍스트는 금지합니다."
+      },
+      "operating_notes": ["Stage 3 few-shot 앵커는 익명화 실데이터 확보 후 추가", "점수·차원·실제 채용결과를 저장해 월 1회 가중치 보정", "동일 포지션 ±3점 후보만 pairwise 재정렬", "company/school tier map 미등록 항목만 LLM 추론"]
+    }
   },
   "positions": [
     {

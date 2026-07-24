@@ -149,9 +149,11 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
 
     def fake_process(
         _tab, card: dict, idx: int, *, live_check=None, mutation_guard=None,
-        badge_guard=None,
+        badge_guard=None, evaluation_client=None, evaluation_stage_check=None,
     ) -> dict:
         assert live_check is hcr.assert_not_blocked_or_abort
+        assert evaluation_client is hcr.evaluate_candidate_with_claude
+        assert evaluation_stage_check is not None
         mutation_guard()
         badge_guard(_tab)
         processed.append(card["url"])
@@ -161,9 +163,9 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
             "url": card["url"],
             "hard_exclude": None,
             "score": 70,
-                "otw": False,
-                "education": "",
-                "evidence": {"status": "saved", "manifest_path": f"/fixture/{idx}.json"},
+            "otw": False,
+            "education": "",
+            "evidence": {"status": "saved", "manifest_path": f"/fixture/{idx}.json"},
         }
 
     monkeypatch.setattr(hcr, "iter_planned_cards", fake_iter, raising=False)
@@ -182,6 +184,7 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
             },
         )(),
         mutation_sleep=lambda _seconds: None,
+        evaluation_ready_check=lambda: None,
     )
 
     assert calls

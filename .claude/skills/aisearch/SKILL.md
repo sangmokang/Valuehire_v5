@@ -84,7 +84,9 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 4. `3_jd_intake` — ClickUp JD 우선, 비거나 오래되면 공식 채용홈에서 보강. 정리된 포지션은 `docs/sot/24-position-jd-sot.json`.
 5. `4_keyword_strategy` — JD를 산업·직무·스킬/툴·경력·제외 5축으로. **AND 1개로 보통 90% 좁힘.**
 6. `5_channel_search` — 사람인·잡코리아·LinkedIn RPS **병렬**(INV7, 직렬 금지 → 뒤 채널 누락). talent pool URL만.
-7. `6_evaluation` — JD 적합·학교 신호·이직 안정성·도메인/툴 적합 4축 점수.
+7. `6_evaluation` — `docs/sot/24-position-jd-sot.json`의
+   `candidate-match-v2-2026-07-24` 계약을 읽는다. LLM은 필수요건 게이트와
+   근거가 붙은 D1~D8 소점수만 내고, 총점·등급은 Stage 4 코드만 계산한다.
 8. `7_output_contract` — 필수 4필드 충족 후보만 직렬화(아래 출력 계약)하고, ClickUp 기록 범위면 FY26AI_Search 등록 계약을 적용.
 9. `8_jd_template_lane` — 신규/오픈 포지션이면 LinkedIn/RPS JD 템플릿 상태까지. **Send 금지.**
 10. `9_report` — 채널별 인원·템플릿 상태·다음 키워드·산출물 경로·종료 사유 보고.

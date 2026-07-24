@@ -17,7 +17,7 @@ import pytest
 from tools.multi_position_sourcing.humansearch import (
     FREQUENT_JOB_CHANGE_MIN_HOPS,
     PASS_THRESHOLD,
-    SCORING_WEIGHTS,
+    LEGACY_PREFILTER_WEIGHTS,
     eligible_matches_for_send,
     hard_exclude_reason,
     is_valid_profile_url,
@@ -98,9 +98,18 @@ def test_h1_skill_has_safety_markers() -> None:
 def test_h2_config_loads_and_weights_sum_to_one() -> None:
     cfg = load_humansearch_config()
     weights = cfg["scoring"]["weights"]
-    assert abs(sum(weights.values()) - 1.0) < 1e-9, f"가중치 합 != 1.0: {weights}"
-    assert weights["role_fit"] == 0.50, "직무적합 0.50 확정"
-    assert weights["education"] == 0.30, "학력 0.30 확정"
+    assert cfg["scoring"]["contract_version"] == "candidate-match-v2-2026-07-24"
+    assert sum(weights.values()) == 100, f"가중치 합 != 100: {weights}"
+    assert weights == {
+        "D1": 27,
+        "D2": 10,
+        "D3": 14,
+        "D4": 9,
+        "D5": 7,
+        "D6": 10,
+        "D7": 14,
+        "D8": 9,
+    }
 
 
 def test_h2_config_threshold_and_traversal() -> None:
@@ -119,7 +128,7 @@ def test_h2_config_has_exclude_markers() -> None:
 
 # ── H3: 점수 = 가중치 반영 ───────────────────────────────────────
 def test_h3_weights_constant_matches_contract() -> None:
-    assert SCORING_WEIGHTS == {
+    assert LEGACY_PREFILTER_WEIGHTS == {
         "education": 0.30,
         "role_fit": 0.50,
         "profile_logic": 0.10,
@@ -133,7 +142,8 @@ def test_h3_score_is_positionmatch_in_range() -> None:
     assert match.candidate_url == "https://www.linkedin.com/talent/profile/abc123"
     assert match.position_id == "POS-1"
     assert 0 <= match.score <= 100
-    assert set(match.score_breakdown) == set(SCORING_WEIGHTS)
+    assert set(match.score_breakdown) == set(LEGACY_PREFILTER_WEIGHTS)
+    assert match.contract_version == ""
 
 
 def test_h3_role_fit_dominates_education() -> None:
@@ -328,7 +338,8 @@ def test_h5_send_gate_filters_invalid_url_and_low_score() -> None:
         why_fit=(),
         why_not=(),
         evidence_paths=(),
-        score_breakdown={},
+        score_breakdown={f"D{i}": 4 for i in range(1, 9)},
+        contract_version="candidate-match-v2-2026-07-24",
     )
     low = PositionMatch(
         candidate_url="https://www.linkedin.com/in/low",
@@ -357,7 +368,7 @@ def test_h5_send_gate_filters_invalid_url_and_low_score() -> None:
 def test_h2_config_constants_match_code_no_drift() -> None:
     """config JSON 값 == 코드 상수 — 한쪽만 바뀌는 드리프트 차단 (codex V1 LOW)."""
     cfg = load_humansearch_config()
-    assert cfg["scoring"]["weights"] == SCORING_WEIGHTS
+    assert cfg["legacy_prefilter_scoring"]["weights"] == LEGACY_PREFILTER_WEIGHTS
     assert cfg["scoring"]["pass_threshold"] == PASS_THRESHOLD
     fjc = cfg["hard_exclude"]["frequent_job_change"]
     assert fjc["min_short_hops"] == FREQUENT_JOB_CHANGE_MIN_HOPS

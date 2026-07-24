@@ -38,6 +38,29 @@ from tools.multi_position_sourcing.humansearch_register import (
 from tools.multi_position_sourcing.models import CapturedProfile, EmploymentTenure
 
 
+def _contract_evaluation(score: int = 4) -> dict:
+    return {
+        "contract_version": "candidate-match-v2-2026-07-24",
+        "gates": [
+            {
+                "requirement": "Python 실무",
+                "verdict": "pass",
+                "evidence": "A사 Python 백엔드",
+            }
+        ],
+        "dimensions": {
+            f"D{i}": {
+                "score": score,
+                "evidence": f"resume evidence D{i}",
+                **({"needs_verification": []} if i == 7 else {}),
+                **({"school_sensitive_client": False} if i == 8 else {}),
+            }
+            for i in range(1, 9)
+        },
+        "total_years": 8,
+    }
+
+
 def _runner_dict(**over) -> dict:
     """humansearch_cdp_run.py 가 실제로 내보내는 results 항목 형상."""
     d = {
@@ -47,8 +70,10 @@ def _runner_dict(**over) -> dict:
         "otw": False,
         "headline": "Backend Engineer",
         "education": "부산대학교 학사",
-        "score": 82,
-        "breakdown": {"education": 24, "role_fit": 40, "profile_logic": 10, "job_stability": 8},
+        "score": 80,
+        "breakdown": {f"D{i}": 4 for i in range(1, 9)},
+        "contract_version": "candidate-match-v2-2026-07-24",
+        "evaluation": _contract_evaluation(),
         "why_fit": ["must-have 직결: python"],
         "why_not": [],
         "screenshot": "/x/1.png",
@@ -124,7 +149,7 @@ def test_candidate_spec_hook_blocks_escaped_short_tenure_for_both_engines(
     escaped = _with_structured_evidence(_runner_dict(
         name="DongJun Kwon",
         url="https://www.linkedin.com/talent/profile/escaped-short-tenure",
-        score=87,
+        score=80,
         summary="AI Solutions Architect and full-stack engineer",
         visible_text=_linkedin_raw(
             "Nov 2017 – Jun 2018",
@@ -570,14 +595,48 @@ def test_eligible_excludes_low_tier_school_on_portal() -> None:
 
 
 def test_eligible_keeps_clean_passer() -> None:
-    r = _runner_dict(score=85, visible_text="backend engineer", summary="부산대 8년 안정적")
+    r = _runner_dict(score=80, visible_text="backend engineer", summary="부산대 8년 안정적")
     assert eligible([r], "saramin") == [r]
+
+
+def test_eligible_rejects_legacy_direct_total_without_contract_version() -> None:
+    r = _runner_dict(score=99, visible_text="backend engineer", summary="부산대")
+    r.pop("contract_version")
+    r["breakdown"] = {
+        "education": 30,
+        "role_fit": 50,
+        "profile_logic": 10,
+        "job_stability": 9,
+    }
+
+    assert eligible([r], "saramin") == []
+
+
+def test_eligible_recomputes_and_rejects_forged_llm_total() -> None:
+    forged = _runner_dict(
+        score=99,
+        visible_text="backend engineer",
+        summary="부산대 8년 안정적",
+    )
+
+    assert eligible([forged], "saramin") == []
+
+
+def test_eligible_rejects_forged_dimension_breakdown() -> None:
+    forged = _runner_dict(
+        score=80,
+        breakdown={**{f"D{i}": 4 for i in range(1, 9)}, "D1": 5},
+        visible_text="backend engineer",
+        summary="부산대 8년 안정적",
+    )
+
+    assert eligible([forged], "saramin") == []
 
 
 def test_eligible_low_tier_school_kept_on_linkedin() -> None:
     """링크드인은 학교 하드제외 미적용(portal 채널만) — 회귀 보호."""
     r = _runner_dict(
-        score=85, education="OO전문대학", visible_text="robotics", summary="x",
+        score=80, education="OO전문대학", visible_text="robotics", summary="x",
         url="https://www.linkedin.com/in/x",
     )
     assert eligible([r], "linkedin_rps") == [r]
@@ -601,8 +660,15 @@ def test_eligible_still_filters_low_score_and_bad_url() -> None:
 
 def test_eligible_sorts_passers_by_score_desc() -> None:
     """정상 후보 다건은 점수 내림차순 정렬 유지(기존 계약)."""
-    lo = _runner_dict(score=75, visible_text="backend", summary="부산대", url="https://x.co/a")
-    hi = _runner_dict(score=95, visible_text="backend", summary="부산대", url="https://x.co/b")
+    lo = _runner_dict(score=80, visible_text="backend", summary="부산대", url="https://x.co/a")
+    hi = _runner_dict(
+        score=100,
+        evaluation=_contract_evaluation(5),
+        breakdown={f"D{i}": 5 for i in range(1, 9)},
+        visible_text="backend",
+        summary="부산대",
+        url="https://x.co/b",
+    )
     assert eligible([lo, hi], "saramin") == [hi, lo]
 
 
@@ -701,7 +767,7 @@ def test_clickup_registration_eligible_requires_output_contract_fields(monkeypat
     """Subtask 후보는 profile_url·score·why_fit·profile_summary 계약을 만족해야 한다."""
     base = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/abc",
-        score=91,
+        score=80,
         why_fit=["직무 직결"],
         summary="프로필 요약",
     ))
@@ -723,7 +789,7 @@ def test_clickup_fy26_registration_checks_duplicates_before_creating_tasks(monke
     candidate = _with_structured_evidence(_runner_dict(
         name="홍길동",
         url="https://www.linkedin.com/talent/profile/abc",
-        score=91,
+        score=80,
     ))
     monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
 
@@ -755,7 +821,7 @@ def test_clickup_fy26_registration_skips_duplicate_candidate_subtask(monkeypatch
     candidate = _with_structured_evidence(_runner_dict(
         name="홍길동",
         url="https://www.linkedin.com/talent/profile/dup",
-        score=88,
+        score=80,
     ))
     monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
     fake = _FakeClickUp(duplicate_profile_urls={candidate["url"]})
@@ -794,7 +860,7 @@ def test_clickup_fy26_registration_dry_run_never_creates_tasks(monkeypatch) -> N
     fake = _FakeClickUp()
     candidate = _with_structured_evidence(_runner_dict(
         url="https://www.linkedin.com/talent/profile/dry",
-        score=82,
+        score=80,
     ))
     monkeypatch.setattr(register_module, "complete_evidence_payload", lambda _value: True)
 

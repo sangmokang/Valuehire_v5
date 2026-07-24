@@ -26,6 +26,11 @@ from tools.multi_position_sourcing.humansearch import (
     hard_exclude_reason,
     is_valid_profile_url,
 )
+from tools.multi_position_sourcing.matching_score_contract import (
+    CONTRACT_VERSION,
+    MatchingContractError,
+    calculate_final_score,
+)
 from tools.multi_position_sourcing.browser_evidence import complete_evidence_payload
 from tools.multi_position_sourcing.models import CapturedProfile, Channel, EmploymentTenure
 
@@ -177,6 +182,31 @@ def eligible(results: list[dict], channel: Channel) -> list[dict]:
         # NaN/inf 는 '<threshold' 를 통과(NaN 비교 False, inf>=t True) → 유한 수치 + 양수형(>=)으로 판정.
         if not (isinstance(score, (int, float)) and math.isfinite(score) and score >= PASS_THRESHOLD):
             continue  # 점수 미달·비수치·NaN·inf → 제외 (fail-closed)
+        if r.get("contract_version") != CONTRACT_VERSION:
+            continue  # legacy/LLM direct total은 최종 등록 금지
+        evaluation = r.get("evaluation")
+        try:
+            calculated = calculate_final_score(evaluation)
+        except (MatchingContractError, TypeError):
+            continue
+        if calculated["score"] != score:
+            continue  # 외부/LLM이 적은 총점은 신뢰하지 않고 Stage 4 재계산과 정확히 일치해야 함
+        breakdown = r.get("breakdown")
+        if not isinstance(breakdown, dict) or set(breakdown) != {
+            f"D{index}" for index in range(1, 9)
+        }:
+            continue  # D1-D8 근거 계약 미완료 → fail-closed
+        dimensions = evaluation.get("dimensions") if isinstance(evaluation, Mapping) else None
+        if not isinstance(dimensions, Mapping) or any(
+            breakdown.get(dimension_id)
+            != (
+                "N/A"
+                if dimensions.get(dimension_id, {}).get("score") == "not_applicable"
+                else dimensions.get(dimension_id, {}).get("score")
+            )
+            for dimension_id in breakdown
+        ):
+            continue  # 표시용 breakdown도 검증된 Stage 3 소점수와 정확히 일치해야 함
         # register 스키마 URL 키는 'url'. 하류(build_message·clickup) 도 r['url'] 을 읽으므로 여기서 'url' 로 통일한다.
         if not is_valid_profile_url(r.get("url")):
             continue  # URL 무효/결손 → 제외
@@ -385,6 +415,9 @@ def _candidate_spec(result: Mapping[str, object], channel: Channel) -> dict[str,
         "profile_url": str(result.get("url") or result.get("profile_url") or ""),
         "channel": channel,
         "score": result.get("score"),
+        "contract_version": result.get("contract_version"),
+        "evaluation": result.get("evaluation"),
+        "breakdown": result.get("breakdown"),
         "summary": str(result.get("summary", "") or ""),
         "headline": str(result.get("headline", "") or ""),
         "visible_text": visible_text,
@@ -557,6 +590,27 @@ def candidate_spec_hook_reason(event: object) -> str | None:
     score = spec.get("score")
     if not (isinstance(score, (int, float)) and math.isfinite(score) and score >= PASS_THRESHOLD):
         return "candidate_score_invalid"
+    if spec.get("contract_version") != CONTRACT_VERSION:
+        return "candidate_contract_version_invalid"
+    try:
+        calculated = calculate_final_score(spec.get("evaluation"))
+    except (MatchingContractError, TypeError):
+        return "candidate_evaluation_invalid"
+    if calculated["score"] != score:
+        return "candidate_score_mismatch"
+    dimensions = spec.get("evaluation", {}).get("dimensions")
+    breakdown = spec.get("breakdown")
+    if not isinstance(dimensions, Mapping) or not isinstance(breakdown, Mapping):
+        return "candidate_breakdown_invalid"
+    expected_breakdown = {
+        dimension_id: (
+            "N/A" if item.get("score") == "not_applicable" else item.get("score")
+        )
+        for dimension_id, item in dimensions.items()
+        if isinstance(item, Mapping)
+    }
+    if dict(breakdown) != expected_breakdown:
+        return "candidate_breakdown_mismatch"
     if spec.get("saved_profile_evidence") in (None, "", "missing"):
         return "candidate_evidence_missing"
     visible_text = str(spec.get("visible_text", "") or "")
@@ -776,7 +830,7 @@ def build_message(passers: list[dict]) -> str:
     head = (
         f"📋 **AI Search 후보 브리핑 — {POSITION_NAME}**\n"
         f"채널: LinkedIn Recruiter(RPS) · 합격선 {PASS_THRESHOLD}점 · 합격 {len(passers)}명\n"
-        f"(채점: 학력30·직무50·논리10·이직안정10 / 🟢=Open to work)\n"
+        f"(채점: 필수요건 gate + 근거 기반 D1~D8 / 🟢=Open to work)\n"
         "──────────────"
     )
     blocks = []
@@ -788,7 +842,7 @@ def build_message(passers: list[dict]) -> str:
             note = " ⚠️('Berkeley College'=명문대 오탐, 학력 재판단 요)"
         blocks.append(
             f"**{i}. {r['name']} — {r['score']}/100**{otw} · {_school(r.get('education',''))}{note}\n"
-            f"  학력{b.get('education','?')}/직무{b.get('role_fit','?')}/논리{b.get('profile_logic','?')}/안정{b.get('job_stability','?')}\n"
+            f"  D1~D8: {'/'.join(str(b.get(f'D{n}', '?')) for n in range(1, 9))}\n"
             f"  {r['url']}"
         )
     return head + "\n" + "\n".join(blocks)
@@ -812,13 +866,13 @@ def post_discord(message: str) -> int:
 
 def clickup_comment_body(passers: list[dict]) -> str:
     lines = [f"🔎 **AI Search 결과 — LinkedIn RPS · 합격 {len(passers)}명** (합격선 {PASS_THRESHOLD}점, 🟢=Open to work)",
-             "_채점: 학력30·직무50·논리10·이직안정10_", ""]
+             "_채점: 필수요건 gate + 근거 기반 D1~D8_", ""]
     for i, r in enumerate(passers, 1):
         b = r.get("breakdown", {})
         otw = " 🟢" if r.get("otw") else ""
         note = " ⚠️('Berkeley College'=명문대 오탐, 학력 재판단)" if "berkeley college" in (r.get("education","").lower()) else ""
         lines.append(f"{i}. **{r['name']}** ({r['score']}/100){otw} · {_school(r.get('education',''))}{note}")
-        lines.append(f"   학력{b.get('education','?')}/직무{b.get('role_fit','?')}/논리{b.get('profile_logic','?')}/안정{b.get('job_stability','?')} · [프로필 열기]({r['url']})")
+        lines.append(f"   D1~D8: {'/'.join(str(b.get(f'D{n}', '?')) for n in range(1, 9))} · [프로필 열기]({r['url']})")
     return "\n".join(lines)
 
 

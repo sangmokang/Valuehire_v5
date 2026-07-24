@@ -176,12 +176,18 @@
     {
       "id": "6_evaluation",
       "name": "적합도 평가 (24 SOT 평가계약)",
+      "matching_contract_version": "candidate-match-v2-2026-07-24",
       "scoring_axes": [
-        "직무직결성(JD 필수요건 매칭)",
-        "좋은 학교(학력 컷)",
-        "이직 안정성/재직기간",
-        "도메인 적합(산업·툴)"
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6",
+        "D7",
+        "D8"
       ],
+      "llm_output": "필수요건 gates와 evidence가 붙은 D1-D8 소점수만. total과 band는 deterministic Stage 4 코드가 계산.",
       "score_bands": { "strong": "85+", "candidate": "70-84", "drop": "<70" },
       "pass_criteria": "각 후보에 score + why_fit 산출, 70 미만은 리스트 제외 권장",
       "evidence": "후보별 점수표"
