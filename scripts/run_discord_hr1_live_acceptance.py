@@ -344,17 +344,47 @@ def job_ids_from_evidence(evidence: Sequence[Mapping[str, Any]]) -> list[int]:
 
 def _hermes_state() -> dict[str, Any]:
     target = f"gui/{os.getuid()}/ai.hermes.gateway"
-    result = subprocess.run(
+    launchctl = subprocess.run(
         ["launchctl", "print", target],
         capture_output=True,
         text=True,
         timeout=15,
         check=False,
     )
-    if result.returncode != 0:
-        return {"pids": [], "launchctl_count": 0}
-    pids = [int(value) for value in re.findall(r"(?m)^\s*pid\s*=\s*(\d+)\s*$", result.stdout)]
-    return {"pids": pids, "launchctl_count": 1}
+    pids = {
+        int(value)
+        for value in re.findall(
+            r"(?m)^\s*pid\s*=\s*(\d+)\s*$",
+            launchctl.stdout if launchctl.returncode == 0 else "",
+        )
+    }
+
+    # Hermes may be running from the supported CLI wrapper even when its
+    # launchd label is disabled. HR-1 must still prove that receiver remains
+    # unchanged; launchctl-only inspection would silently report no Hermes.
+    processes = subprocess.run(
+        ["ps", "-axo", "pid=,command="],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if processes.returncode == 0:
+        for line in processes.stdout.splitlines():
+            match = re.match(r"^\s*(\d+)\s+(.+)$", line)
+            if not match:
+                continue
+            command = match.group(2)
+            if re.search(
+                r"(?:^|[\s/])hermes(?:\s|$).*?\bgateway\s+run(?:\s|$)",
+                command,
+            ):
+                pids.add(int(match.group(1)))
+
+    return {
+        "pids": sorted(pids),
+        "launchctl_count": int(launchctl.returncode == 0),
+    }
 
 
 def _git_sha(path: Path) -> str:

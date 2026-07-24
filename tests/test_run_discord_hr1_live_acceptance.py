@@ -152,6 +152,31 @@ def test_gateway_child_starts_as_repo_module() -> None:
     ]
 
 
+def test_hermes_state_includes_manual_gateway_when_launchd_is_disabled(
+    monkeypatch,
+) -> None:
+    replies = iter([
+        subprocess.CompletedProcess(
+            ["launchctl"], returncode=113, stdout="", stderr="not found",
+        ),
+        subprocess.CompletedProcess(
+            ["ps"], returncode=0,
+            stdout=(
+                " 79255 /opt/python /Users/me/.hermes/venv/bin/hermes "
+                "gateway run --replace\n"
+                " 80000 /opt/python scripts/discord_direct_gateway.py\n"
+            ),
+            stderr="",
+        ),
+    ])
+    monkeypatch.setattr(live_runner.subprocess, "run", lambda *args, **kwargs: next(replies))
+
+    assert live_runner._hermes_state() == {
+        "pids": [79255],
+        "launchctl_count": 0,
+    }
+
+
 def test_build_receipt_requires_and_combines_live_evidence() -> None:
     messages = expected_hr1_messages(POSITION)
     event_ids = (
