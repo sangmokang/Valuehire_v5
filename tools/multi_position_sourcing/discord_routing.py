@@ -33,6 +33,8 @@ SUPPORTED_DISCORD_COMMANDS: tuple[str, ...] = (
     "fleet-resume",
     "fleet-status",
     "fleet-cancel",
+    # 엔진·모델 선택(2026-07-24 사장님 /st) — 조회는 누구나, 설정은 owner 전용(dispatch).
+    "model",
 )
 
 SEARCH_SOURCES: tuple[Channel, ...] = ("saramin", "jobkorea", "linkedin_rps", "public_web")
@@ -407,5 +409,17 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
             "type": 1,
             "contexts": [0, 1],
             "options": [{"name": "job", "description": "Job id.", "type": 3, "required": True}],
+        },
+        {
+            "name": "model",
+            "description": "Show or (owner) set default engine/model for fleet jobs.",
+            "type": 1,
+            "contexts": [0, 1],
+            "options": [
+                {"name": "engine", "description": "Engine (codex|claude).", "type": 3, "required": False,
+                 "choices": [{"name": e, "value": e} for e in ("codex", "claude")]},
+                {"name": "model", "description": "Model name (e.g. claude-opus-4-8, gpt-5.5).",
+                 "type": 3, "required": False},
+            ],
         },
     ]

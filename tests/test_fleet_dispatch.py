@@ -79,7 +79,7 @@ class FakeQueue:
 # ── 명령 등록 ────────────────────────────────────────────────────────
 
 def test_fleet_commands_registered_but_run_search_untouched():
-    assert set(FLEET_COMMANDS) == {"fleet-run", "fleet-resume", "fleet-status", "fleet-cancel"}
+    assert set(FLEET_COMMANDS) == {"fleet-run", "fleet-resume", "fleet-status", "fleet-cancel", "model"}
     for c in FLEET_COMMANDS:
         assert c in SUPPORTED_DISCORD_COMMANDS
     # 기존 run-search 는 그대로 존재(약화 금지)

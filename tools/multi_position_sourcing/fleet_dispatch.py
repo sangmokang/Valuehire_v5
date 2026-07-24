@@ -27,7 +27,10 @@ __all__ = [
     "dispatch_fleet_command", "is_owner", "owner_user_ids_from_env",
 ]
 
-FLEET_COMMANDS: tuple[str, ...] = ("fleet-run", "fleet-resume", "fleet-status", "fleet-cancel")
+FLEET_COMMANDS: tuple[str, ...] = ("fleet-run", "fleet-resume", "fleet-status", "fleet-cancel", "model")
+
+# 전역 기본 엔진·모델 영속 경로(디스코드 /model). 테스트는 monkeypatch 로 격리.
+_ENGINE_MODEL_PATH = "artifacts/discord-engine-model-default.json"
 _OWNER_ONLY: frozenset[str] = frozenset({"fleet-resume", "fleet-cancel"})
 
 # 사장님(밸류커넥트) Discord user id — discord_command_listener.OWNER_ID / dm_report.RECIPIENT_ID 와 동일.
@@ -56,7 +59,14 @@ def build_fleet_job_payload(
     """
     skill = (options.get("skill") or "").strip()
     url = (options.get("url") or "").strip()
-    params = options.get("params") or {}
+    params = dict(options.get("params") or {})
+    # /model 전역 기본 배선: agent/model 이 명시되지 않은 job 에만 기본을 주입하고,
+    # 명시된 job 은 그 값을 보존한다(setdefault). "저장만 되고 실제 job 엔 안 먹힘"
+    # (부분 배선) 방지 — 사장님 /st 배선증명.
+    from . import engine_model_default as emd
+    _emd_default = emd.get_default(_ENGINE_MODEL_PATH)
+    params.setdefault("agent", _emd_default["engine"])
+    params.setdefault("model", _emd_default["model"])
     # SOT29 existing fleet default/account binding stays authoritative. Natural language
     # may select winpc only through an explicit win/windows/윈도우/winpc token.
     machine = options.get("machine") or "macmini"
@@ -135,6 +145,24 @@ def dispatch_fleet_command(
     if invocation.command_name in _OWNER_ONLY and not owner:
         return {"action": "denied_owner_only",
                 "reason": f"{invocation.command_name} 은 owner 전용입니다"}
+
+    if invocation.command_name == "model":
+        from . import engine_model_default as emd
+        opts = dict(invocation.options or {})
+        engine = (opts.get("engine") or "").strip()
+        model = (opts.get("model") or "").strip()
+        if not engine and not model:
+            # 인자 없음 → 현재 전역 기본 조회(누구나).
+            return {"action": "model", "default": emd.get_default(_ENGINE_MODEL_PATH)}
+        # 설정은 owner 전용(전역 상태 변경, SOT-29 §5).
+        if not owner:
+            return {"action": "denied_owner_only",
+                    "reason": "model 설정은 owner 전용입니다"}
+        try:
+            default = emd.set_default(_ENGINE_MODEL_PATH, engine=engine, model=model)
+        except emd.EngineModelError as exc:
+            return {"action": "error", "reason": str(exc)}
+        return {"action": "model_set", "default": default}
 
     if invocation.command_name == "fleet-run":
         options = dict(invocation.options or {})
