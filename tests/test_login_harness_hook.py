@@ -14,6 +14,7 @@ GUARD = REPO / ".claude" / "hooks" / "guards" / "login.py"
 PROMPT = REPO / "docs" / "prompts" / "login-search-execution-contract.md"
 SKILL = REPO / "skills" / "login" / "SKILL.md"
 DISPATCH = REPO / ".claude" / "hooks" / "harness-dispatch.py"
+CODEX_HOOKS = REPO / ".codex" / "hooks.json"
 
 
 def _decode(value: str) -> str:
@@ -137,6 +138,15 @@ def test_harness_dispatch_discovers_and_runs_login_guard() -> None:
     )
     assert result.returncode == 2
     assert "차단(login)" in result.stderr
+
+
+def test_codex_pretooluse_runs_the_shared_harness_dispatch() -> None:
+    payload = json.loads(CODEX_HOOKS.read_text(encoding="utf-8"))
+    pre_tool_use = payload["hooks"]["PreToolUse"]
+    catch_all = [entry for entry in pre_tool_use if entry.get("matcher") == ".*"]
+    assert len(catch_all) == 1
+    commands = [hook["command"] for hook in catch_all[0]["hooks"]]
+    assert any(".claude/hooks/harness-dispatch.py" in command for command in commands)
 
 
 def test_exact_runner_name_cannot_allow_a_chained_unsafe_command() -> None:
