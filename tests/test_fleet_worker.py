@@ -841,6 +841,10 @@ def _pass_login_gate(monkeypatch):
         ],
     }
     monkeypatch.setattr(fw, "_read_login_receipt", lambda: receipt)
+    # #639: 1층 게이트가 채널별 login_barrier 영수증으로 승격 — 이 파일의 관심사가
+    # 아니므로 장벽은 통과로 주입(장벽 자체는 test_fleet_worker_login_barrier.py 가 검증).
+    monkeypatch.setattr(fw.login_barrier, "job_block_reason",
+                        lambda job, **kw: None)
     # #190: 실행 직전 URL 공인 DNS 재검증도 주입 — 폐쇄망(오프라인) 테스트 환경에서
     # 실 DNS 에 의존하지 않게 한다(hermetic). 차단 동작 자체는
     # tests/test_discord_gateway_login_path.py 가 별도로 검사한다.

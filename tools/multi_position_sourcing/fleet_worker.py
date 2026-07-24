@@ -29,6 +29,7 @@ from tools.codex_skill_sync.sync import (
 )
 
 from .fleet_heartbeat import read_linkedin_login_flag
+from . import login_barrier
 from .job_queue import (
     FLEET_MACHINES,
     FLEET_SKILLS,
@@ -141,40 +142,6 @@ def _receipt_block_reason(payload: Any, required: tuple[str, ...],
         if entry.get("ready") is not True:
             return f"{channel} 로그인 not-ready"
     return None
-
-
-def _run_login_preflight(job: Mapping[str, Any]) -> bool:
-    """검색 전에 정식 포털 로그인 준비 러너를 한 번 실행한다.
-
-    저장 자격증명으로 복구 가능한 세션만 자동 복구한다. 캡차·2FA·checkpoint는
-    ``--no-human-intervention`` 계약에 따라 즉시 not-ready 영수증으로 남고, 호출부가
-    검색을 시작하지 않은 채 사람에게 넘긴다.
-    """
-    channels = login_gate_required_channels(job)
-    if not channels:
-        return True
-    command = [
-        sys.executable,
-        "-m",
-        "tools.multi_position_sourcing.portal_login",
-        "--channels",
-        ",".join(channels),
-        "--worker-id",
-        str(job.get("machine") or "default"),
-        "--no-human-intervention",
-    ]
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            timeout=max(60, 240 * len(channels)),
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return completed.returncode == 0
 
 
 CLAUDE_TIMEOUT_SECONDS = 2400  # 40분
@@ -1518,24 +1485,27 @@ class FleetWorker:
                 self._release(job, job_id, "failed", error=url_reason)
                 self._notify(job, f"❌ 잡 #{job_id} 실패 — {url_reason}")
                 return "failed"
-        # AC-3 G4(1층): 검색 스킬은 로그인 영수증이 유효할 때만 실행. 기본 러너 경로 한정
-        # — 주입 러너(테스트/시뮬레이션)는 브라우저를 안 여니 기존 계약 유지.
+        # AC-3 G4(1층) + #639 login-first: 검색 스킬은 채널별 로그인 영수증(풍부 스키마 —
+        # 상태·host·target·화면 증거 파일·SHA-256)이 코드 검증을 통과할 때만 실행한다.
+        # 모델 출력 문구("LOGIN_BARRIER=PASS")는 신뢰하지 않는다. 레거시 portal_login
+        # 자동 preflight 는 login 스킬 계약(legacy_unsafe) 위반이라 제거 — 정식 사람
+        # 조치는 session_guard human-auth 뿐(자동 자격증명 어댑터는 이슈 B로 분리).
         if not self._runner_injected and job.get("skill") in FLEET_SKILLS:
-            reason = login_gate_block_reason(_read_login_receipt(), job, int(time.time()))
+            reason = login_barrier.job_block_reason(
+                job, machine=self.machine, now_epoch=time.time())
             if reason is not None:
-                self._notify(job, (
-                    f"🔐 잡 #{job_id} 로그인 준비를 먼저 확인합니다 — "
-                    f"skill={job.get('skill')}"))
-                _run_login_preflight(job)
-                reason = login_gate_block_reason(
-                    _read_login_receipt(), job, int(time.time()))
-            if reason is not None:
+                required = login_barrier.job_required_channels(job)
+                action = "\n".join(
+                    f"  python3 -m tools.multi_position_sourcing.session_guard "
+                    f"human-auth --site {ch} --agent fleet" for ch in required)
                 self._release(job, job_id, "paused_for_human",
-                              error=f"로그인 선행 게이트: {reason}")
+                              error=f"로그인 선행 장벽: {reason}")
                 self._notify(job, (
-                    f"⏸️ 잡 #{job_id} 대기(paused_for_human) — {reason}\n"
-                    f"사장님, /login 으로 포털 로그인을 먼저 완료해 주세요. "
-                    f"영수증 갱신 후 fleet-resume 로 재개됩니다."))
+                    f"⏸️ 잡 #{job_id} 대기(paused_for_human) — LOGIN_BARRIER=BLOCKED\n"
+                    f"machine={self.machine}, skill={job.get('skill')}\n"
+                    f"사유: {reason}\n"
+                    f"필요한 사람 조치(정확한 채널만):\n{action}\n"
+                    f"검색 executor 호출 0회 — 로그인 영수증 갱신 후 fleet-resume 로 재개됩니다."))
                 return "paused_for_human"
         if job.get("skill") == OWNER_AGENT_SKILL:
             try:

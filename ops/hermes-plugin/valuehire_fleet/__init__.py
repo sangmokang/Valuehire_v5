@@ -142,6 +142,37 @@ def _position_context_store(bridge):
     return _POSITION_CONTEXT_STORE
 
 
+# #639 login-first: $ 접두 텍스트 별칭 → / 슬래시 명령과 동일 command enum.
+# 메시지 맨 앞의 정확한 별칭만 인정한다(문장 중간 "$100"·"url" 은 명령 아님).
+# $login 은 v4 hermes-agent 플러그인 소유라 여기서 다루지 않는다.
+_DOLLAR_ALIASES = {
+    "$aisearch": "aisearch",
+    "$ai-search": "aisearch",
+    "$humansearch": "humansearch",
+    "$url": "url",
+}
+
+
+def _dollar_alias_rewrite(text, message_id):
+    stripped = (text or "").lstrip()
+    if not stripped.startswith("$"):
+        return None
+    parts = stripped.split(None, 1)
+    skill = _DOLLAR_ALIASES.get(parts[0].lower())
+    if skill is None:
+        return None
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    if not rest:
+        return {"action": "rewrite", "text": f"/{skill}"}
+    if not _SNOWFLAKE_RE.fullmatch(str(message_id or "")):
+        # 멱등키(event id) 없이는 직접 검색을 만들지 않는다 — fail-closed.
+        return None
+    return {
+        "action": "rewrite",
+        "text": f"/fleet-run {skill} {rest} idempotency:discord:{message_id}",
+    }
+
+
 def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_kwargs):
     """Capture identity and rewrite narrow natural search requests to fleet-run."""
     user_id = ""
@@ -177,6 +208,9 @@ def _capture_gateway_identity(event=None, gateway=None, session_store=None, **_k
     store = _position_context_store(bridge)
     context = store.get(user_id, channel_id)
     text = getattr(event, "text", "") or ""
+    alias_rewrite = _dollar_alias_rewrite(text, message_id)
+    if alias_rewrite is not None:
+        return alias_rewrite
     pending_key = (user_id, channel_id)
     pending = _PENDING_SEARCH_INTAKES.get(pending_key)
     if pending:
@@ -268,7 +302,8 @@ def _make_handler(command_name: str, *, fixed_skill: str = ""):
 
 
 def _make_search_intake_handler(command_name: str):
-    fixed_skill = "humansearch" if command_name in {"url", "humansearch"} else "aisearch"
+    # #639: /url 은 skill=url 로 enqueue 돼야 한다(기존 humansearch 고정은 스킬 의미 위반).
+    fixed_skill = {"url": "url", "humansearch": "humansearch"}.get(command_name, "aisearch")
 
     def _handler(_raw_args: str) -> str:
         gateway_user_id = _GATEWAY_USER_ID.get()
@@ -302,7 +337,7 @@ _COMMANDS: tuple[tuple[str, str, str], ...] = (
 
 
 _DIRECT_SEARCH_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("url", "다음 메시지의 인재검색 URL·필터로 Human Search 시작"),
+    ("url", "다음 메시지의 검색 URL·필터로 url 스킬(LinkedIn RPS 준비) 시작"),
     ("aisearch", "다음 메시지의 포지션으로 3채널 AI Search 시작"),
     ("humansearch", "다음 메시지의 인재검색 URL·필터로 Human Search 시작"),
 )
