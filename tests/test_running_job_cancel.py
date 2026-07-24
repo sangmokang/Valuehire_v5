@@ -206,7 +206,11 @@ def test_native_agent_run_kills_real_process_group_on_cancel(tmp_path):
 
     def cancel_check():
         flips["n"] += 1
-        return flips["n"] >= 2
+        # The assertion below verifies that an already-created grandchild is
+        # killed with the process group.  Wait for that child-ready signal
+        # before requesting cancellation; Python startup can exceed one 50ms
+        # poll on a loaded host.
+        return flips["n"] >= 2 and child_pid_file.exists()
 
     start = _t.time()
     with pytest.raises(fleet_worker.JobCancelled):
