@@ -104,11 +104,12 @@ Result bands:
 
 ### 6. Evaluation
 
-Score with the SOT 24 axes:
-- JD direct fit
-- School/education signal
-- Job stability and tenure
-- Domain/tool fit
+Use SOT 24 contract `candidate-match-v2-2026-07-24`:
+- LLM: must-have gates plus evidence-backed D1-D8 integer subscores only.
+- D1 role capabilities, D2 domain, D3 seniority, D4 trajectory/stability,
+  D5 measurable outcomes, D6 company-tier delta, D7 closing realism, D8 school.
+- Deterministic Stage 4 code alone calculates the total, gate caps, and band.
+- Reject a scored dimension without resume evidence; never score prose quality.
 
 Score bands:
 - `85+`: strong
