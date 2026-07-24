@@ -62,6 +62,12 @@ _LEGACY_LOGIN_MODULE = re.compile(
     r"(?:portal_login|portal_autologin)\b",
     re.IGNORECASE,
 )
+_UNSAFE_PORTAL_SCRIPT = re.compile(
+    r"(?:^|[\s\"'])(?:\./|[^\s\"']*/)?scripts/"
+    r"(?:collect_linkedin|run_portal_search)\.py\b"
+    r"|(?:^|\s)-m\s+scripts\.(?:collect_linkedin|run_portal_search)\b",
+    re.IGNORECASE,
+)
 _READ_ONLY_PROGRAMS = frozenset({"rg", "grep", "sed", "git"})
 _SHELL_CONTROL_CHARS = frozenset(";&|`")
 
@@ -135,6 +141,8 @@ def check(tool: str, tool_input: dict[str, Any]) -> str | None:
     if _PORTAL_LIFECYCLE.search(command):
         return _GUIDANCE
     if _LEGACY_LOGIN_MODULE.search(command):
+        return _GUIDANCE
+    if _UNSAFE_PORTAL_SCRIPT.search(command):
         return _GUIDANCE
     if (
         _PROTECTED_CONTEXT.search(command)

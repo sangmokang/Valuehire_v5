@@ -53,6 +53,9 @@ def test_login_guard_blocks_unsafe_browser_session_paths() -> None:
         ),
         "python3 -m tools.multi_position_sourcing.portal_login --site linkedin_rps",
         "python3 -m tools.multi_position_sourcing.portal_autologin --site saramin",
+        "python3 scripts/collect_linkedin.py --keywords backend --output /tmp/out.json",
+        "python3 scripts/run_portal_search.py --channel linkedin_rps --keywords backend",
+        "python3 -m scripts.collect_linkedin --keywords backend --output /tmp/out.json",
         f"node unsafe.mjs # context.close() after https://{linkedin}",
     )
     for command in blocked:
@@ -207,6 +210,8 @@ def test_fleet_search_prompts_require_login_barrier_before_execution() -> None:
         )
         assert "docs/prompts/login-search-execution-contract.md" in prompt
         assert "LOGIN_BARRIER=PASS" in prompt
+        assert "local secret store 자동 로그인" not in prompt
+        assert "session_guard human-auth" in prompt
         assert prompt.index("LOGIN_BARRIER=PASS") < prompt.index(
             f"{skill} 스킬의 검색·URL 작업"
         )
