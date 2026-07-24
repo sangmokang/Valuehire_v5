@@ -16,6 +16,8 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 - 관리 브라우저 프로세스·endpoint 조회: `scripts/portal_browsers.sh status|cdp`
 - 기존 탭 단일 연결·표시: `tools/multi_position_sourcing/raw_cdp.py`
 - 사람 활동 감지: `tools/multi_position_sourcing/owner_activity.py`
+- 검색 전 실행 프롬프트: `docs/prompts/login-search-execution-contract.md`
+- 금지 경로 강제 Hook: `.claude/hooks/guards/login.py`
 
 과거 기록이나 기존 코드가 이 스킬/안전계약과 충돌하면 과거 기록을 따르지 않는다.
 
