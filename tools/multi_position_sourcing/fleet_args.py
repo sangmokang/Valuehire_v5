@@ -42,7 +42,7 @@ _SEARCH_HOST_MARKERS: tuple[str, ...] = (
 
 _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "fleet-run": frozenset({
-        "skill", "url", "machine", "channels", "idempotency", "followup", "agent", "filters64",
+        "skill", "url", "machine", "channels", "idempotency", "followup", "agent", "model", "filters64",
     }),
     "fleet-status": frozenset(),
     "fleet-resume": frozenset({"job"}),
@@ -184,6 +184,14 @@ def parse_fleet_args(command: str, raw_args: str) -> dict[str, Any]:
             if agent not in ("claude", "codex"):
                 raise FleetArgsError("agent 는 claude|codex 만 허용합니다")
             params["agent"] = agent
+        # 엔진별 실행 모델 선택(사장님 /st: Codex·Claude 모델 선택). agent 처럼 fail-closed —
+        # 빈값·과길이·이상문자는 거부하고 조용히 미지정으로 떨어뜨리지 않는다. 엔진별
+        # 화이트리스트 검증은 후속 단위(여기서는 형식 게이트만 먼저 둔다).
+        model = options.pop("model", _MISSING)
+        if model is not _MISSING:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", model):
+                raise FleetArgsError("model 형식 오류(1~64자, 영숫자로 시작, . _ - 허용)")
+            params["model"] = model
         filters64 = options.pop("filters64", "")
         if filters64:
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,6000}={0,2}", filters64):
