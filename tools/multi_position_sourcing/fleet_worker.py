@@ -807,34 +807,51 @@ def _write_stdin_async(proc: Any, text: str) -> None:
     threading.Thread(target=_writer, daemon=True).start()
 
 
-def _kill_process_group_posix(proc: "subprocess.Popen[Any]") -> None:
+def _kill_process_group_posix(
+    proc: "subprocess.Popen[Any]", *,
+    grace_seconds: float = 3.0,
+    poll_step: float = 0.1,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> None:
     """POSIX: 세션 리더로 띄운 서브프로세스의 프로세스그룹 전체를 종료.
 
     Codex/claude 가 띄운 손자 프로세스(브라우저 등)까지 고아 없이 정리한다.
     start_new_session 으로 띄웠으므로 pgid == 리더 pid — getpgid 가 아니라 proc.pid 를
     직접 pgid 로 쓴다(Codex V2 6R: 리더가 먼저 죽어 reap 되면 getpgid 가 실패해 살아있는
-    자식을 못 잡던 결함 봉인). SIGTERM 유예 후 반드시 SIGKILL 을 그룹에 한 번 더 보내
-    SIGTERM 을 무시한 자식까지 강제 종료한다(idempotent, 이미 죽었으면 무해).
-    fail-soft(취소 처리를 막지 않는다)."""
+    자식을 못 잡던 결함 봉인).
+
+    Codex V2 7R: SIGTERM 후 그룹이 빌 때까지 유예 안에서 폴링(killpg(pgid,0) 이
+    ProcessLookupError 면 그룹 소멸)하고, 유예가 다 차도 남아있으면 SIGKILL 로 강제
+    종료한다 — 얌전한 그룹은 즉시(폴 간격 내) 끝나 응답성 유지, SIGTERM 을 무시하는
+    자식은 유예 뒤 반드시 죽는다. fail-soft(취소 처리를 막지 않는다)."""
     import signal
 
     pgid = proc.pid  # start_new_session → 리더 자신이 그룹 리더(pgid == pid)
+
+    def group_alive() -> bool:
+        try:
+            os.killpg(pgid, 0)  # 시그널 0 = 존재 확인(그룹에 멤버가 하나라도 있으면 통과)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True  # 권한 등 불확실 → 살아있다고 보고 SIGKILL 로 이어감(fail-closed)
+
     try:
         os.killpg(pgid, signal.SIGTERM)
     except (ProcessLookupError, OSError):
         pass
+    deadline = monotonic() + max(0.0, grace_seconds)
+    while group_alive() and monotonic() < deadline:
+        sleep(poll_step)
+    if group_alive():
+        try:
+            os.killpg(pgid, signal.SIGKILL)  # SIGTERM 무시한 자식까지 강제 종료(idempotent)
+        except (ProcessLookupError, OSError):
+            pass
     try:
-        proc.wait(timeout=3)
-    except Exception:  # noqa: BLE001 — 리더가 안 죽었어도 아래서 SIGKILL.
-        pass
-    # 유예 뒤 그룹 전체에 SIGKILL — 리더가 이미 죽었어도 살아남은 자식(그룹은 유지)을
-    # 강제 종료한다. getpgid 실패로 건너뛰던 경로를 없앤다.
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except (ProcessLookupError, OSError):
-        pass
-    try:
-        proc.wait(timeout=2)
+        proc.wait(timeout=2)  # 리더 reap(좀비 방지)
     except Exception:  # noqa: BLE001 — reap 실패해도 취소 자체는 성립.
         pass
 

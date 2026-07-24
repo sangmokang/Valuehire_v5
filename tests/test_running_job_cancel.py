@@ -320,6 +320,40 @@ def test_kill_group_reaps_survivor_when_leader_already_dead(tmp_path):
         os.kill(child_pid, 0)  # 자식도 죽음
 
 
+def test_kill_group_force_kills_sigterm_ignoring_child(tmp_path):
+    """Codex V2 7R — SIGTERM 을 무시하는 자식도 유예 후 SIGKILL 로 반드시 죽는다."""
+    import os
+    import subprocess as _sp
+    import sys
+    import time as _t
+
+    child_pid_file = tmp_path / "stubborn.pid"
+    child_script = tmp_path / "stubborn_child.py"
+    child_script.write_text(
+        "import signal,time,os\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"  # SIGTERM 무시
+        f"open({str(child_pid_file)!r},'w').write(str(os.getpid()))\n"
+        "time.sleep(120)\n", encoding="utf-8")
+    leader_script = tmp_path / "stubborn_leader.py"
+    leader_script.write_text(
+        "import subprocess,sys\n"
+        f"subprocess.Popen([sys.executable, {str(child_script)!r}])\n",
+        encoding="utf-8")
+    # 리더는 즉시 종료하고, 자식은 SIGTERM 을 무시한 채 잔다 → SIGKILL 로만 죽는다.
+    leader = _sp.Popen(
+        [sys.executable, str(leader_script)], start_new_session=True)
+    leader.wait(timeout=10)
+    _t.sleep(0.4)
+    child_pid = int(child_pid_file.read_text().strip())
+    os.kill(child_pid, 0)  # 살아있음
+    # 고정 유예를 짧게 주입(테스트 속도) — SIGTERM 무시 자식은 SIGKILL 로 죽어야.
+    fleet_worker._kill_process_group_posix(
+        leader, grace_seconds=0.3, sleep=_t.sleep)
+    _t.sleep(0.4)
+    with pytest.raises(OSError):
+        os.kill(child_pid, 0)
+
+
 def test_release_tolerates_already_cancelled_no_orphan_alarm():
     """Codex V2 2R F3 — release 직전 취소가 반영돼 RPC 가 'running 없음'으로 실패해도,
     상태가 cancelled 면 재시도·고아경보 없이 조용히 종료(None)."""
