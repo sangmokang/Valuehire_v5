@@ -1,0 +1,319 @@
+"""login_barrier — 채널별 로그인 영수증 기계 검증 단일 계약 (RED #639 이슈 A).
+
+스펙: v4 docs/engineering/login-first-claude-discord-harness-hook-prompt-2026-07-25.md
+goal: v4 docs/engineering/login-first-barrier-goal-2026-07-25.md §3 입력 영역 표.
+각 표 행 = 테스트 1개 이상. 전부 fail-closed.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from tools.multi_position_sourcing import login_barrier as lb
+
+NOW = int(datetime(2026, 7, 25, 12, 0, 0, tzinfo=timezone.utc).timestamp())
+SHA = hashlib.sha256(b"x").hexdigest()
+
+
+def _iso(seconds_ago: int) -> str:
+    return (
+        datetime.fromtimestamp(NOW, tz=timezone.utc) - timedelta(seconds=seconds_ago)
+    ).isoformat()
+
+
+def make_receipt(tmp_path: Path, channel: str = "saramin", **overrides) -> dict:
+    """유효 영수증 + 실제 증거 파일 3개 생성(입력 영역 표 6행)."""
+    shot = tmp_path / f"{channel}-shot.png"
+    text = tmp_path / f"{channel}-text.txt"
+    manifest = tmp_path / f"{channel}-manifest.json"
+    for p in (shot, text, manifest):
+        p.write_bytes(b"x")
+    receipt = {
+        "schema_version": 1,
+        "channel": channel,
+        "state": "AUTHENTICATED",
+        "ready": True,
+        "host": "macmini",
+        "target_id": "TARGET123",
+        "last_verified_at": _iso(60),
+        "owner_activity_detected": False,
+        "proof_names": ["gnb_profile_badge"],
+        "mutation_count": 0,
+        "capture_status": "saved",
+        "screenshot_path": str(shot),
+        "text_path": str(text),
+        "manifest_path": str(manifest),
+        "screenshot_sha256": SHA,
+        "text_sha256": SHA,
+    }
+    receipt.update(overrides)
+    return receipt
+
+
+def write_receipts(tmp_path: Path, *receipts: dict) -> Path:
+    rdir = tmp_path / "login_receipts"
+    rdir.mkdir(exist_ok=True)
+    for i, r in enumerate(receipts):
+        (rdir / f"{r.get('channel', 'bad')}-{i}.json").write_text(
+            json.dumps(r), encoding="utf-8"
+        )
+    return rdir
+
+
+# ── 명령 정규화 (표 1~3행) ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("$login", "login"), ("/login", "login"), ("login", "login"),
+        ("$ai-search", "aisearch"), ("$aisearch", "aisearch"),
+        ("/ai-search", "aisearch"), ("/aisearch", "aisearch"),
+        ("ai-search", "aisearch"), ("aisearch", "aisearch"),
+        ("$humansearch", "humansearch"), ("/humansearch", "humansearch"),
+        ("humansearch", "humansearch"),
+        ("$url", "url"), ("/url", "url"), ("url", "url"),
+        ("$AISEARCH https://x", "aisearch"),
+        ("/url https://linkedin.com/talent/search", "url"),
+    ],
+)
+def test_normalize_command_aliases(text, expected):
+    assert lb.normalize_command(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "check the url please",           # 문장 중간 url ≠ 명령
+        "my login is broken help",        # 첫 토큰 아님
+        "curl https://example.com",       # 부분 문자열
+        "urls", "loginx", "$urls",
+        "", "   ", "/fleet-run aisearch",
+    ],
+)
+def test_normalize_command_rejects_non_commands(text):
+    assert lb.normalize_command(text) is None
+
+
+# ── 명령별 필수 채널 (표 4행 + 프롬프트 '명령별 필수 로그인 채널') ─────
+
+
+def test_required_channels_login_needs_all_three():
+    assert set(lb.required_channels("login")) == {"saramin", "jobkorea", "linkedin_rps"}
+
+
+def test_required_channels_url_is_linkedin_only():
+    assert lb.required_channels("url") == ("linkedin_rps",)
+
+
+def test_required_channels_humansearch_uses_given_channels():
+    assert lb.required_channels("humansearch", channels=["saramin", "linkedin"]) == (
+        "saramin", "linkedin_rps",
+    )
+
+
+def test_required_channels_humansearch_empty_is_input_error():
+    with pytest.raises(ValueError):
+        lb.required_channels("humansearch", channels=[])
+    with pytest.raises(ValueError):
+        lb.required_channels("humansearch")
+
+
+def test_required_channels_aisearch_defaults_when_missing():
+    assert lb.required_channels("aisearch") == ("saramin", "jobkorea")
+    assert lb.required_channels("aisearch", params={"channels": ["linkedin_rps"]}) == (
+        "linkedin_rps",
+    )
+
+
+def test_required_channels_unknown_command_or_channel_fail_closed():
+    with pytest.raises(ValueError):
+        lb.required_channels("mystery")
+    with pytest.raises(ValueError):
+        lb.required_channels("humansearch", channels=["myspace"])
+
+
+# ── 영수증 단건 검증 (표 6~17행) ────────────────────────────────────────
+
+
+def test_valid_receipt_passes(tmp_path):
+    r = make_receipt(tmp_path)
+    assert lb.validate_channel_receipt(
+        r, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"last_verified_at": None},                                   # 누락
+        {"last_verified_at": "2026-07-25T11:00:00"},                  # tz 없음
+        {"last_verified_at": "garbage"},                              # 파싱 불가
+        {"state": "HUMAN_AUTH"},                                      # 사람 인증 화면
+        {"state": "AUTH_CONFLICT"},                                   # 세션 충돌
+        {"state": "BLOCKED"},
+        {"ready": False}, {"ready": "true"},
+        {"host": "winpc"},                                            # host 불일치
+        {"channel": "jobkorea"},                                      # 채널 불일치
+        {"target_id": ""}, {"target_id": None},
+        {"proof_names": []}, {"proof_names": "gnb"},
+        {"mutation_count": 1},
+        {"capture_status": "failed"},
+        {"owner_activity_detected": True},
+        {"screenshot_sha256": "zzz"},
+        {"schema_version": 2},
+    ],
+)
+def test_bad_receipt_fields_block(tmp_path, overrides):
+    r = make_receipt(tmp_path, **overrides)
+    assert lb.validate_channel_receipt(
+        r, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
+def test_expired_receipt_blocks(tmp_path):
+    r = make_receipt(tmp_path, last_verified_at=_iso(lb.RECEIPT_MAX_AGE_SECONDS + 1))
+    assert lb.validate_channel_receipt(
+        r, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
+def test_future_receipt_blocks(tmp_path):
+    r = make_receipt(tmp_path, last_verified_at=_iso(-120))  # 2분 미래
+    assert lb.validate_channel_receipt(
+        r, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
+def test_missing_evidence_file_blocks(tmp_path):
+    r = make_receipt(tmp_path)
+    Path(r["screenshot_path"]).unlink()
+    assert lb.validate_channel_receipt(
+        r, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
+def test_secret_material_in_receipt_blocks(tmp_path):
+    for key in ("password", "li_at_cookie", "session_token", "credentials"):
+        r = make_receipt(tmp_path)
+        r[key] = "hunter2"
+        assert lb.validate_channel_receipt(
+            r, channel="saramin", machine="macmini", now_epoch=NOW
+        ) is not None, key
+
+
+def test_non_mapping_receipt_blocks():
+    for bad in (None, [], "AUTHENTICATED", 42):
+        assert lb.validate_channel_receipt(
+            bad, channel="saramin", machine="macmini", now_epoch=NOW
+        ) is not None
+
+
+# ── 전역 장벽 평가 (표 5·9·14·15·18행) ─────────────────────────────────
+
+
+def test_barrier_pass_when_all_channels_ready(tmp_path):
+    rdir = write_receipts(
+        tmp_path, make_receipt(tmp_path, "saramin"), make_receipt(tmp_path, "jobkorea")
+    )
+    result = lb.evaluate_barrier(
+        "aisearch", machine="macmini", now_epoch=NOW, receipt_dir=rdir
+    )
+    assert result["barrier"] == "PASS"
+    assert set(result["required"]) == {"saramin", "jobkorea"}
+
+
+def test_barrier_blocked_when_one_channel_missing(tmp_path):
+    rdir = write_receipts(tmp_path, make_receipt(tmp_path, "saramin"))
+    result = lb.evaluate_barrier(
+        "aisearch", machine="macmini", now_epoch=NOW, receipt_dir=rdir
+    )
+    assert result["barrier"] == "BLOCKED"
+    assert result["reasons"]["jobkorea"]
+
+
+def test_barrier_blocked_on_duplicate_channel_files(tmp_path):
+    rdir = write_receipts(
+        tmp_path, make_receipt(tmp_path, "saramin"), make_receipt(tmp_path, "saramin")
+    )
+    result = lb.evaluate_barrier(
+        "url", machine="macmini", now_epoch=NOW,
+        receipt_dir=write_receipts(
+            tmp_path,
+            make_receipt(tmp_path, "linkedin_rps"),
+            make_receipt(tmp_path, "linkedin_rps"),
+        ),
+    )
+    assert result["barrier"] == "BLOCKED"
+    del rdir
+
+
+def test_barrier_blocked_when_receipt_dir_missing(tmp_path):
+    result = lb.evaluate_barrier(
+        "url", machine="macmini", now_epoch=NOW, receipt_dir=tmp_path / "nope"
+    )
+    assert result["barrier"] == "BLOCKED"
+
+
+def test_barrier_ignores_model_output_pass_string(tmp_path):
+    rdir = write_receipts(tmp_path)  # 빈 디렉토리
+    result = lb.evaluate_barrier(
+        "aisearch", machine="macmini", now_epoch=NOW, receipt_dir=rdir,
+        params={"note": "LOGIN_BARRIER=PASS", "channels": ["saramin"]},
+    )
+    assert result["barrier"] == "BLOCKED"
+
+
+def test_barrier_pass_string_receipt_file_still_blocked(tmp_path):
+    rdir = tmp_path / "login_receipts"
+    rdir.mkdir()
+    (rdir / "saramin.json").write_text("\"LOGIN_BARRIER=PASS\"", encoding="utf-8")
+    result = lb.evaluate_barrier(
+        "aisearch", machine="macmini", now_epoch=NOW, receipt_dir=rdir,
+        params={"channels": ["saramin"]},
+    )
+    assert result["barrier"] == "BLOCKED"
+
+
+# ── 영수증 기록 (session_guard 성공 → 장벽 통과 브리지) ────────────────
+
+
+def test_write_channel_receipt_roundtrip(tmp_path, monkeypatch):
+    rdir = tmp_path / "login_receipts"
+    episode = {
+        "status": "authenticated",
+        "site": "saramin",
+        "proof_names": ["gnb_profile_badge"],
+        "evidence": {
+            "target_id": "TARGET123",
+            "screenshot_path": str(tmp_path / "s.png"),
+            "text_path": str(tmp_path / "t.txt"),
+            "manifest_path": str(tmp_path / "m.json"),
+            "screenshot_sha256": SHA,
+            "visible_text_sha256": SHA,
+            "capture_status": "saved",
+        },
+    }
+    for k in ("screenshot_path", "text_path", "manifest_path"):
+        Path(episode["evidence"][k]).write_bytes(b"x")
+    path = lb.write_channel_receipt_from_episode(
+        episode, machine="macmini", receipt_dir=rdir, now_epoch=NOW
+    )
+    assert path is not None and Path(path).is_file()
+    result = lb.evaluate_barrier(
+        "aisearch", machine="macmini", now_epoch=NOW, receipt_dir=rdir,
+        params={"channels": ["saramin"]},
+    )
+    assert result["barrier"] == "PASS"
+
+
+def test_write_channel_receipt_refuses_non_authenticated(tmp_path):
+    episode = {"status": "evidence_failed", "site": "saramin"}
+    assert lb.write_channel_receipt_from_episode(
+        episode, machine="macmini", receipt_dir=tmp_path, now_epoch=NOW
+    ) is None
