@@ -88,6 +88,7 @@ def test_u1_prompt_templates_forbid_direct_total_and_require_json_evidence() -> 
     assert "evidence" in stage3
     assert all(f"D{i}" in stage3 for i in range(1, 9))
     assert "문장력" in stage3
+    assert "D6는 not_applicable" in stage3
 
 
 def test_u1_named_agent_surfaces_resolve_sot24() -> None:
