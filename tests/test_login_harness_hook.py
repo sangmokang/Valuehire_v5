@@ -7,6 +7,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 GUARD = REPO / ".claude" / "hooks" / "guards" / "login.py"
 PROMPT = REPO / "docs" / "prompts" / "login-search-execution-contract.md"
+SKILL = REPO / "skills" / "login" / "SKILL.md"
 
 
 def _decode(value: str) -> str:
@@ -113,3 +114,9 @@ def test_execution_prompt_makes_login_a_code_enforced_search_barrier() -> None:
     assert text.index("LOGIN_BARRIER") < text.index("SEARCH_EXECUTION")
     assert "탐지 우회" in text
     assert "반복 제출" in text
+
+
+def test_login_skill_points_to_the_prompt_and_hook() -> None:
+    text = SKILL.read_text(encoding="utf-8")
+    assert "docs/prompts/login-search-execution-contract.md" in text
+    assert ".claude/hooks/guards/login.py" in text
