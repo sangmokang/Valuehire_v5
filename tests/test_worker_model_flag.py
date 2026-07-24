@@ -48,6 +48,28 @@ def test_run_claude_omits_model_flag_when_env_absent(monkeypatch):
     assert "--model" not in captured["cmd"]
 
 
+class _Q:
+    pass
+
+
+def _worker():
+    from tools.multi_position_sourcing.fleet_worker import FleetWorker
+    return FleetWorker(machine="macmini", queue=_Q(), notifier=lambda job, text: None)
+
+
+def test_busy_badge_env_exports_model_from_params():
+    env = _worker()._busy_badge_env(
+        {"id": 1, "skill": "aisearch", "role": "member",
+         "params": {"model": "gpt-5.5"}}, "codex")
+    assert env["VALUEHIRE_AGENT_MODEL"] == "gpt-5.5"
+
+
+def test_busy_badge_env_model_empty_when_unset():
+    env = _worker()._busy_badge_env(
+        {"id": 2, "skill": "aisearch", "role": "member", "params": {}}, "claude")
+    assert env.get("VALUEHIRE_AGENT_MODEL", "") == ""
+
+
 def test_codex_args_include_model_from_env():
     args = build_codex_exec_args({"VALUEHIRE_AGENT_MODEL": "gpt-5.5"})
     assert "--model" in args
