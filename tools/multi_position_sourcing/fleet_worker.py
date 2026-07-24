@@ -760,8 +760,194 @@ def _terminate_process_tree_windows(pid: int) -> None:
         pass
 
 
+class JobCancelled(Exception):
+    """실행 중 owner 가 잡을 취소해 서브프로세스를 종료했음을 알리는 신호(#196)."""
+
+
+def cancel_observed(status: Any) -> bool:
+    """폴링한 잡 상태가 '이 실행을 중단해야 하는가' 순수 판정(#196).
+
+    - 'running': 계속(정상).
+    - None(조회 실패/일시장애): 계속 — 오탐으로 정상 잡을 죽이지 않는다(fail-open은
+      여기서 '중단 안 함'이 안전. 진짜 취소는 다음 폴에서 다시 잡힌다).
+    - 그 외('cancelled'·'failed'·잡 소멸 등): 중단.
+    """
+    return status is not None and status != "running"
+
+
+def _terminate_tree(proc: Any) -> None:
+    """플랫폼 무관 프로세스트리 종료(#196 Codex V2 5R).
+
+    Windows 는 taskkill /T(트리), POSIX 는 killpg(프로세스그룹) — 어느 쪽이든 자식
+    (손자 브라우저 등)까지 고아 없이 정리한다. POSIX 경로는 호출자가 start_new_session
+    으로 프로세스그룹을 만들어 둔 것을 전제한다."""
+    if sys.platform == "win32":
+        _terminate_process_tree_windows(proc.pid)
+    else:
+        _kill_process_group_posix(proc)
+
+
+def _write_stdin_async(proc: Any, text: str) -> None:
+    """서브프로세스 stdin 을 데몬 스레드로 쓴다(#196 Codex V2 4R).
+
+    동기 write 는, 자식이 stdin 을 전혀 안 읽고 큰 prompt 가 파이프 버퍼(≈64KB)를
+    넘기면 그 자리에서 막힌다 — poll 루프(취소·타임아웃)에 진입조차 못 한다. 별도
+    스레드에 넘겨 poll 루프가 항상 돌게 하고, 취소로 프로세스를 죽이면 write 는
+    BrokenPipe 로 풀려 스레드가 조용히 끝난다(데몬이라 잔존 안 함)."""
+    import threading
+
+    def _writer():
+        try:
+            if proc.stdin is not None:
+                proc.stdin.write(text)
+                proc.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    threading.Thread(target=_writer, daemon=True).start()
+
+
+def _kill_process_group_posix(
+    proc: "subprocess.Popen[Any]", *,
+    grace_seconds: float = 3.0,
+    poll_step: float = 0.1,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> None:
+    """POSIX: 세션 리더로 띄운 서브프로세스의 프로세스그룹 전체를 종료.
+
+    Codex/claude 가 띄운 손자 프로세스(브라우저 등)까지 고아 없이 정리한다.
+    start_new_session 으로 띄웠으므로 pgid == 리더 pid — getpgid 가 아니라 proc.pid 를
+    직접 pgid 로 쓴다(Codex V2 6R: 리더가 먼저 죽어 reap 되면 getpgid 가 실패해 살아있는
+    자식을 못 잡던 결함 봉인).
+
+    Codex V2 7R: SIGTERM 후 그룹이 빌 때까지 유예 안에서 폴링(killpg(pgid,0) 이
+    ProcessLookupError 면 그룹 소멸)하고, 유예가 다 차도 남아있으면 SIGKILL 로 강제
+    종료한다 — 얌전한 그룹은 즉시(폴 간격 내) 끝나 응답성 유지, SIGTERM 을 무시하는
+    자식은 유예 뒤 반드시 죽는다. fail-soft(취소 처리를 막지 않는다)."""
+    import signal
+
+    pgid = proc.pid  # start_new_session → 리더 자신이 그룹 리더(pgid == pid)
+
+    def group_alive() -> bool:
+        try:
+            os.killpg(pgid, 0)  # 시그널 0 = 존재 확인(그룹에 멤버가 하나라도 있으면 통과)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True  # 권한 등 불확실 → 살아있다고 보고 SIGKILL 로 이어감(fail-closed)
+
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        pass
+    deadline = monotonic() + max(0.0, grace_seconds)
+    while True:
+        # Codex V2 8R: 매 폴마다 리더를 reap 한다 — 리더가 깨끗이 종료해도 reap 전엔
+        # 좀비로 남아 killpg(pgid,0) 이 '살아있음'으로 보고돼 유예를 끝까지 기다리던
+        # 응답성 결함을 없앤다. reap 후엔 그룹 존재 여부가 실제 살아있는 자식만 반영.
+        try:
+            proc.poll()
+        except Exception:  # noqa: BLE001 — poll 실패는 무시(killpg 존재확인이 최종 기준)
+            pass
+        if not group_alive() or monotonic() >= deadline:
+            break
+        sleep(poll_step)
+    if group_alive():
+        try:
+            os.killpg(pgid, signal.SIGKILL)  # SIGTERM 무시한 자식까지 강제 종료(idempotent)
+        except (ProcessLookupError, OSError):
+            pass
+    try:
+        proc.wait(timeout=2)  # 리더 reap(좀비 방지)
+    except Exception:  # noqa: BLE001 — reap 실패해도 취소 자체는 성립.
+        pass
+
+
+def run_agent_with_cancel(
+    *,
+    popen_factory: Callable[[], Any],
+    cancel_check: Callable[[], bool],
+    kill_process_group: Callable[[Any], None] = _kill_process_group_posix,
+    collect_output: Callable[[Any], tuple[str, str]] | None = None,
+    timeout: int | None = None,
+    poll_seconds: float = 3.0,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> tuple[str, str, int]:
+    """서브프로세스를 폴링하며 실행하다 취소 감지 시 프로세스그룹째 종료(#196).
+
+    - 정상 종료: (stdout, stderr, returncode) 반환(기존 러너 계약과 동형).
+    - cancel_check() True: 프로세스그룹 종료 후 JobCancelled 발생(재release 금지 신호).
+    - timeout 초과: 프로세스그룹 종료 후 subprocess.TimeoutExpired 재전파(기존 계약).
+
+    출력 수집은 collect_output seam 으로 분리한다 — 실 경로는 임시파일 리다이렉트로
+    파이프 버퍼 교착 없이 poll() 만으로 감시하고, 종료 후 파일을 읽는다. 미지정 시
+    proc.communicate() 기본값(페이크/단순 프로세스용).
+    """
+    proc = popen_factory()
+    collect = collect_output or (lambda p: p.communicate())
+    started = monotonic() if timeout is not None else None
+    while True:
+        code = proc.poll()
+        if code is not None:
+            stdout, stderr = collect(proc)
+            return (stdout or ""), (stderr or ""), code
+        if cancel_check():
+            kill_process_group(proc)
+            raise JobCancelled()
+        if timeout is not None and started is not None \
+                and (monotonic() - started) > timeout:
+            kill_process_group(proc)
+            raise subprocess.TimeoutExpired(cmd="agent", timeout=timeout)
+        sleep(poll_seconds)
+
+
+def _native_agent_run(
+    cmd: list[str], *, cwd: str, env: Mapping[str, str] | None,
+    input_text: str, timeout: int,
+    cancel_check: Callable[[], bool],
+    poll_seconds: float = 3.0,
+) -> tuple[str, str, int]:
+    """POSIX 네이티브(exec) 경로 실행 — 취소 감지 시 프로세스그룹째 종료(#196).
+
+    파이프 교착 방지를 위해 stdout/stderr 를 임시파일로 리다이렉트한다(poll() 감시).
+    프롬프트는 stdin 으로 넘긴다(codex `-`/claude `-p` 동일). start_new_session 으로
+    프로세스그룹을 만들어 손자(브라우저 등)까지 killpg 로 정리한다."""
+    import tempfile
+
+    out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+    err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+
+    def factory():
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=dict(env) if env is not None else None,
+            stdin=subprocess.PIPE, stdout=out_f, stderr=err_f,
+            text=True, encoding="utf-8", start_new_session=True,
+        )
+        # 프롬프트를 stdin 으로 밀어넣는다 — stdout 은 파일이라 교착 없고, stdin write
+        # 는 데몬 스레드라 자식이 stdin 을 안 읽어도 poll 루프가 막히지 않는다(4R).
+        _write_stdin_async(proc, input_text)
+        return proc
+
+    def collect(_proc):
+        out_f.seek(0); err_f.seek(0)
+        return out_f.read(), err_f.read()
+
+    try:
+        return run_agent_with_cancel(
+            popen_factory=factory, cancel_check=cancel_check,
+            collect_output=collect, timeout=timeout, poll_seconds=poll_seconds,
+        )
+    finally:
+        out_f.close(); err_f.close()
+
+
 def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
-                    env: Mapping[str, str] | None) -> tuple[str, str, int]:
+                    env: Mapping[str, str] | None,
+                    cancel_check: Callable[[], bool] | None = None,
+                    poll_seconds: float = 3.0) -> tuple[str, str, int]:
     """윈도우 .cmd/.bat shim(shell=True) 경로 전용 실행기.
 
     subprocess.run 이 아니라 Popen+communicate 를 직접 써서, 타임아웃 시 cmd.exe
@@ -770,6 +956,45 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
     고아로 남긴다). encoding='utf-8' 을 명시해 비-UTF-8 Windows 로케일에서도 한글
     프롬프트/출력이 깨지지 않게 한다(Codex Rescue V2 발견).
     """
+    if cancel_check is not None:
+        # #196 Codex V2 3R: 취소 감시 경로는 stdout/stderr 를 임시파일로 리다이렉트한다.
+        # PIPE 로 두면 큰 prompt 를 stdin 에 쓰는 동안 자식이 stdout 을 먼저 채워 양쪽
+        # 파이프가 막히는 교착이 난다(polling 진입 전 멈춤) — 파일 리다이렉트로 원천 차단.
+        # 취소·타임아웃 시 taskkill /T 로 cmd.exe 트리 전체를 종료한다.
+        import tempfile
+
+        # 5R: 트리 종료가 자식까지 잡도록 프로세스그룹을 만든다 — Windows 는
+        # CREATE_NEW_PROCESS_GROUP, POSIX 는 start_new_session(setsid → killpg 대상).
+        popen_kwargs: dict[str, Any] = {}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            popen_kwargs["start_new_session"] = True
+        out_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+        err_f = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+        try:
+            proc = subprocess.Popen(
+                cmd, shell=True, cwd=cwd,
+                env=dict(env) if env is not None else None,
+                stdin=subprocess.PIPE, stdout=out_f, stderr=err_f,
+                text=True, encoding="utf-8", **popen_kwargs,
+            )
+            _write_stdin_async(proc, prompt)  # 4R: 데몬 스레드(자식이 stdin 무시해도 무교착)
+            started = time.monotonic()
+            while True:
+                if proc.poll() is not None:
+                    out_f.seek(0); err_f.seek(0)
+                    return out_f.read(), err_f.read(), proc.returncode
+                if cancel_check():
+                    _terminate_tree(proc)  # 5R: 플랫폼별(POSIX killpg / Win taskkill)
+                    raise JobCancelled()
+                if (time.monotonic() - started) > timeout:
+                    _terminate_tree(proc)
+                    raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+                time.sleep(poll_seconds)
+        finally:
+            out_f.close(); err_f.close()
     proc = subprocess.Popen(
         cmd, shell=True, cwd=cwd, env=dict(env) if env is not None else None,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -788,7 +1013,8 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
 
 
 def _run_claude(prompt: str, timeout: int,
-                env: Mapping[str, str] | None = None) -> tuple[str, str, int]:
+                env: Mapping[str, str] | None = None,
+                cancel_check: Callable[[], bool] | None = None) -> tuple[str, str, int]:
     """claude -p 실행(레포 루트). 반환: (stdout, stderr, exit_code) — QA-3 로 분리.
 
     env=None 이면 부모 환경 상속(기존과 동일). 이슈 E: 워커가 배지 env 를 넘긴다.
@@ -816,7 +1042,15 @@ def _run_claude(prompt: str, timeout: int,
     base_args.append("-p")
     cmd, use_shell = _agent_argv("claude", base_args)
     if use_shell:
-        return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+        return _run_via_shell(cmd, prompt, timeout, str(REPO), env,
+                              cancel_check=cancel_check)
+    if cancel_check is not None:
+        # #196: owner_agent 는 stdin(-p), 일반은 argv 말미 prompt — 둘 다 stdin 으로
+        # 통일해 취소 감지 경로를 태운다(claude 는 -p 와 stdin 모두 프롬프트를 받는다).
+        run_cmd = cmd if owner_agent else [*cmd]
+        return _native_agent_run(
+            run_cmd, cwd=str(REPO), env=env, input_text=prompt, timeout=timeout,
+            cancel_check=cancel_check)
     if owner_agent:
         proc = subprocess.run(
             cmd, cwd=str(REPO), input=prompt, capture_output=True, text=True,
@@ -878,7 +1112,8 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
 
 
 def _run_codex(prompt: str, timeout: int,
-               env: Mapping[str, str] | None = None) -> tuple[str, str, int]:
+               env: Mapping[str, str] | None = None,
+               cancel_check: Callable[[], bool] | None = None) -> tuple[str, str, int]:
     """codex exec 실행(레포 루트) — 이슈 B(2026-07-15). claude -p 와 동형 계약.
 
     이슈 F: 윈도우 .cmd shim 경로는 `codex exec -`(stdin 소스 명시) + input=prompt.
@@ -890,7 +1125,13 @@ def _run_codex(prompt: str, timeout: int,
         raise ValueError(f"Codex 실행파일이 아닙니다: {codex_name!r}")
     cmd, use_shell = _agent_argv(codex_name, build_codex_exec_args(env))
     if use_shell:
-        return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+        return _run_via_shell(cmd, prompt, timeout, str(REPO), env,
+                              cancel_check=cancel_check)
+    if cancel_check is not None:
+        # #196: 실행 중 owner 취소를 감지·종료 가능한 경로.
+        return _native_agent_run(
+            cmd, cwd=str(REPO), env=env, input_text=prompt, timeout=timeout,
+            cancel_check=cancel_check)
     proc = subprocess.run(
         cmd, cwd=str(REPO), input=prompt, capture_output=True, text=True,
         encoding="utf-8", timeout=timeout,
@@ -1135,6 +1376,25 @@ class FleetWorker:
         except Exception as exc:  # noqa: BLE001
             print(f"[fleet] notify 실패(fail-soft): {exc}", file=sys.stderr)
 
+    def _cancel_check_for(self, job_id: int) -> Callable[[], bool] | None:
+        """#196: 실행 중 러너가 부를 취소 판정 — 자기 잡 상태를 폴링해 cancelled 감지.
+
+        큐가 job_status 를 지원하지 않으면 None 을 돌려준다 — 러너는 그때 기존
+        subprocess.run 경로(취소 감시 없음)를 그대로 쓴다. 이렇게 해야 subprocess.run
+        을 목킹하는 기존 워커 테스트가 Popen 경로로 새지 않는다(하위호환).
+        조회가 실패하면 cancel_observed(None)=False → '계속'(오탐으로 정상 잡 안 죽임)."""
+        status_of = getattr(self.queue, "job_status", None)
+        if not callable(status_of):
+            return None
+
+        def check() -> bool:
+            try:
+                return cancel_observed(status_of(job_id))
+            except Exception:  # noqa: BLE001 — 조회 실패는 '계속'(오탐 금지)
+                return False
+
+        return check
+
     def _busy_badge_env(self, job: Mapping[str, Any], agent_label: str) -> dict[str, str]:
         """이슈 E: 브라우저 '자동화 사용중' 배지용 env — os.environ 상속 + 배지 2키."""
         import os
@@ -1167,6 +1427,18 @@ class FleetWorker:
             except ValueError:
                 raise
             except Exception as exc:  # noqa: BLE001 — 네트워크/HTTP 일시 장애
+                # #196 Codex V2 2R F3: release 는 where status='running' 이라, 그 사이
+                # owner 가 취소해 잡이 이미 'cancelled'(또는 다른 terminal)면 RPC 가
+                # 'running 없음'으로 실패한다. 이건 고아가 아니라 '취소가 이겼다' —
+                # 상태를 재확인해 running 이 아니면 재시도·고아경보 없이 조용히 종료한다.
+                status_of = getattr(self.queue, "job_status", None)
+                if callable(status_of):
+                    try:
+                        current = status_of(job_id)
+                    except Exception:  # noqa: BLE001 — 확인 실패 시 기존 재시도 경로로
+                        current = "running"
+                    if current is not None and current != "running":
+                        return None
                 last_exc = exc
                 if attempt < _RELEASE_RETRY_ATTEMPTS - 1:
                     backoff = _RELEASE_RETRY_BACKOFF[
@@ -1270,8 +1542,16 @@ class FleetWorker:
                 # 이슈 E(사장님 라벨 승인): raw_cdp 배지가 실제 작업명을 보여주도록
                 # 서브프로세스 env 에 VH_BUSY_TASK/VH_BUSY_AGENT 주입(프로세스 스코프 —
                 # 잡 종료와 함께 소멸, 다음 잡 잔존 없음). 주입 러너 계약(2인자)은 불변.
+                # #196: 실행 중 owner 취소를 감지하는 cancel_check 를 넘긴다 — 러너가
+                # 서브프로세스를 프로세스그룹째 죽이고 JobCancelled 를 던진다.
                 raw = runner(prompt, self.timeout,
-                             env=self._busy_badge_env(job, agent_label))
+                             env=self._busy_badge_env(job, agent_label),
+                             cancel_check=self._cancel_check_for(job_id))
+        except JobCancelled:
+            # DB 는 이미 cancelled(owner 취소) — finish_job(where status='running')은
+            # no-op 이 되므로 재release 하지 않는다(경합 안전, 취소가 이긴다).
+            self._notify(job, f"🛑 잡 #{job_id} 실행 중지됨 (owner 취소, {self.machine}).")
+            return "cancelled"
         except subprocess.TimeoutExpired:
             # V1 반증 수용: 선택된 엔진 이름으로 표기(codex 잡을 claude 로 오표기 금지)
             self._release(job, job_id, "failed", error=f"{agent_label} 타임아웃({self.timeout}s)")
@@ -1294,6 +1574,14 @@ class FleetWorker:
             self._release(job, job_id, "failed", error=f"러너 반환형 계약 위반: {exc}")
             self._notify(job, f"❌ 잡 #{job_id} 실패 — 러너 반환형 계약 위반: {exc}")
             return "failed"
+        # #196 Codex V2 F4: 완료-취소 경합 — 서브프로세스가 취소 폴 직전에 정상 종료했는데
+        # 그 사이 owner 가 취소해 DB 가 이미 'cancelled' 라면, done/failed 로 보고하지
+        # 않는다. release(done)은 where status='running' 이라 no-op → 3회 재시도 후
+        # 거짓 '고아' 경보가 뜨고 완료 알림·후속잡까지 새는 걸 막는다. cancelled 로 종결.
+        cancel_check = self._cancel_check_for(job_id)
+        if cancel_check is not None and cancel_check():
+            self._notify(job, f"🛑 잡 #{job_id} 실행 중지됨 (owner 취소, {self.machine}).")
+            return "cancelled"
         result = parse_worker_output(stdout, code, stderr=stderr)
         if result["status"] == "paused_for_human":
             # 이슈 #107(SOT29 INV9, 사장님 지시): 사람 개입 신호 = '1분 양보' —
