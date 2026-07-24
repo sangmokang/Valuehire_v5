@@ -9340,6 +9340,8 @@ Example format, not a real contact:
                 "relogin-needed",
                 # 함대 작업 큐 명령(단계 C) — 전부 슬래시라 Message Content intent 불필요는 유지.
                 "fleet-run", "fleet-resume", "fleet-status", "fleet-cancel",
+                # 엔진·모델 선택(2026-07-24 사장님 /st) — 슬래시 전용.
+                "model",
                 # 검색 스킬 직접 명령도 슬래시 옵션만 사용하고 fleet-run으로 정규화한다.
                 "url", "aisearch", "humansearch",
                 # AC-1 단일 봇 콘솔 명령 — 역시 슬래시 전용(자유문장 분류는 AC-5 별도).

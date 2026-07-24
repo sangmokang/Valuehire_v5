@@ -22,7 +22,9 @@ from typing import Any
 from .fleet_dispatch import FLEET_COMMANDS
 from .job_queue import FLEET_MACHINES, FLEET_SKILLS, FOLLOWUP_SKILLS
 
-FLEET_ARG_COMMANDS: tuple[str, ...] = FLEET_COMMANDS
+# model 은 dispatch 가 engine/model 옵션으로 직접 처리하고 parse_fleet_args 를 거치지
+# 않는다 — fleet_args 파싱 대상(및 Hermes plugin FLEET_PLUGIN_COMMANDS)에서 제외한다.
+FLEET_ARG_COMMANDS: tuple[str, ...] = tuple(c for c in FLEET_COMMANDS if c != "model")
 
 # fleet-run 전용 완화 규칙(2026-07-13 사장님 요청) — "/fleet-run <url>" 만 줘도 동작하게.
 _FLEET_RUN_DEFAULT_SKILL = "aisearch"
