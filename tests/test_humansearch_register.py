@@ -48,7 +48,8 @@ def _runner_dict(**over) -> dict:
         "headline": "Backend Engineer",
         "education": "부산대학교 학사",
         "score": 82,
-        "breakdown": {"education": 24, "role_fit": 40, "profile_logic": 10, "job_stability": 8},
+        "breakdown": {f"D{i}": 4 for i in range(1, 9)},
+        "contract_version": "candidate-match-v2-2026-07-24",
         "why_fit": ["must-have 직결: python"],
         "why_not": [],
         "screenshot": "/x/1.png",
@@ -572,6 +573,19 @@ def test_eligible_excludes_low_tier_school_on_portal() -> None:
 def test_eligible_keeps_clean_passer() -> None:
     r = _runner_dict(score=85, visible_text="backend engineer", summary="부산대 8년 안정적")
     assert eligible([r], "saramin") == [r]
+
+
+def test_eligible_rejects_legacy_direct_total_without_contract_version() -> None:
+    r = _runner_dict(score=99, visible_text="backend engineer", summary="부산대")
+    r.pop("contract_version")
+    r["breakdown"] = {
+        "education": 30,
+        "role_fit": 50,
+        "profile_logic": 10,
+        "job_stability": 9,
+    }
+
+    assert eligible([r], "saramin") == []
 
 
 def test_eligible_low_tier_school_kept_on_linkedin() -> None:
