@@ -175,8 +175,13 @@ class FakeChannel:
         self._calls = calls
         self.id = int(channel_id)
 
-    async def send(self, content: str) -> None:
+    async def send(self, content: str = "", **kwargs) -> None:
+        # #200: 실제 send 는 allowed_mentions 등 kwarg 를 받는다. 기존 assertIn(
+        # "channel.send") 이 그대로 통과하도록 항상 "channel.send" 를 남기고,
+        # 멘션 억제(F4)를 검증할 수 있게 kwarg 마커도 함께 남긴다.
         self._calls.append("channel.send")
+        if "allowed_mentions" in kwargs:
+            self._calls.append("channel.send:allowed_mentions")
 
 
 class FakeGuild:
@@ -703,9 +708,9 @@ class TextMessageTests(_NotifySilencedCase):
 
         original_send = message.channel.send
 
-        async def ordered_send(content: str) -> None:
+        async def ordered_send(content: str = "", **kwargs) -> None:
             order.append(f"send:{content}")
-            await original_send(content)
+            await original_send(content, **kwargs)
 
         message.channel.send = ordered_send
 

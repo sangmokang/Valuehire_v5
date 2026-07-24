@@ -88,3 +88,46 @@ def test_production_factory_builds_callable_when_configured():
         env={"CLICKUP_API_TOKEN": "tok", "CLICKUP_POSITIONS_LIST_ID": "901814621569"})
     assert callable(factory)
     assert callable(factory())  # 팩토리() → searcher 콜러블
+
+
+# ── Codex V2 봉인 ────────────────────────────────────────────────────────
+
+
+def test_f5_list_id_path_traversal_rejected():
+    urlopen, _ = _capture_urlopen({"tasks": []})
+    search = clickup_search.make_clickup_search_tasks("tok", urlopen=urlopen)
+    with pytest.raises(ValueError):
+        search(list_id="../team/123", query="x", parent=None)
+
+
+def test_f5_factory_none_for_nonnumeric_list_id():
+    assert clickup_search.production_nl_searcher_factory(
+        env={"CLICKUP_API_TOKEN": "tok",
+             "CLICKUP_POSITIONS_LIST_ID": "../team/9"}) is None
+
+
+def test_f2_task_with_unsafe_id_is_dropped():
+    urlopen, _ = _capture_urlopen({"tasks": [
+        {"id": "86abc", "name": "good"},
+        {"id": "../../evil", "name": "bad"},
+        {"id": "", "name": "empty"},
+    ]})
+    search = clickup_search.make_clickup_search_tasks("tok", urlopen=urlopen)
+    ids = [t["id"] for t in search(list_id="1", query="x", parent=None)]
+    assert ids == ["86abc"]
+
+
+def test_f1_adapter_error_sanitized_no_token_or_url():
+    def boom_urlopen(req, timeout=None):
+        raise RuntimeError(f"connect to {req.full_url} with tok_SECRET failed")
+
+    factory = clickup_search.production_nl_searcher_factory(
+        env={"CLICKUP_API_TOKEN": "tok_SECRET",
+             "CLICKUP_POSITIONS_LIST_ID": "901814621569"},
+        urlopen=boom_urlopen)
+    searcher = factory()
+    with pytest.raises(RuntimeError) as ei:
+        searcher("clickup", "PM")
+    msg = str(ei.value)
+    assert "tok_SECRET" not in msg and "api.clickup.com" not in msg
+    assert "ClickUp" in msg  # 일반 안내만

@@ -571,9 +571,23 @@ class _CommandTextShim:
         return getattr(self._origin, name)
 
 
+def _no_mentions() -> Any:
+    """Codex V2 F4: 동적 텍스트(ClickUp 태스크 이름 등)에 @everyone·<@id> 가 섞여도
+    실제 멘션이 발사되지 않게 모든 멘션을 억제한다."""
+    try:
+        return discord.AllowedMentions.none()
+    except Exception:  # noqa: BLE001 — discord 목킹 환경 등에서 없으면 None(그냥 미지정)
+        return None
+
+
 async def _send_text(message: Any, text: str) -> None:
     try:
-        await message.channel.send(text[:_RESPONSE_CHAR_LIMIT])
+        mentions = _no_mentions()
+        if mentions is not None:
+            await message.channel.send(text[:_RESPONSE_CHAR_LIMIT],
+                                       allowed_mentions=mentions)
+        else:
+            await message.channel.send(text[:_RESPONSE_CHAR_LIMIT])
     except Exception:  # noqa: BLE001
         logger.warning("discord_direct_gateway: channel.send 실패(nl)")
 
@@ -648,7 +662,13 @@ async def handle_text_message(
     response = result.get("response")
     if response:
         try:
-            await message.channel.send(response[:_RESPONSE_CHAR_LIMIT])
+            # Codex V2 F4: 응답에 동적 텍스트가 섞일 수 있어 멘션 억제.
+            mentions = _no_mentions()
+            if mentions is not None:
+                await message.channel.send(response[:_RESPONSE_CHAR_LIMIT],
+                                           allowed_mentions=mentions)
+            else:
+                await message.channel.send(response[:_RESPONSE_CHAR_LIMIT])
         except Exception:  # noqa: BLE001
             logger.warning(
                 "discord_direct_gateway: channel.send 실패 event_id=%s", envelope.event_id)
