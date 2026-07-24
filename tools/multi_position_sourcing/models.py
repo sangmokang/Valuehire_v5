@@ -137,7 +137,7 @@ class PositionMatch:
     why_fit: tuple[str, ...]
     why_not: tuple[str, ...]
     evidence_paths: tuple[str, ...]
-    score_breakdown: dict[str, int]
+    score_breakdown: dict[str, int | str]
     contract_version: str = ""
 
 

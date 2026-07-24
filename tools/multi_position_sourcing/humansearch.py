@@ -435,7 +435,7 @@ def score_humansearch_contract(
         if isinstance(gate, dict) and gate.get("verdict") != "pass"
     )[:4]
     breakdown = {
-        dimension_id: 0 if item["score"] == "not_applicable" else item["score"]
+        dimension_id: "N/A" if item["score"] == "not_applicable" else item["score"]
         for dimension_id, item in dimensions.items()
         if isinstance(item, dict)
     }

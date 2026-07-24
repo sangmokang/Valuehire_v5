@@ -21,7 +21,6 @@ _TOP_LEVEL_KEYS = {
     "gates",
     "dimensions",
     "total_years",
-    "school_weight_enabled",
 }
 _VERDICTS = {"pass", "fail", "uncertain"}
 _NOT_APPLICABLE_DIMENSIONS = {"D2", "D6"}
@@ -57,6 +56,8 @@ def _nonblank(value: object, *, field: str) -> str:
 def _validate_gates(value: object) -> tuple[dict[str, str], ...]:
     if not isinstance(value, list):
         raise MatchingContractError("gates must be a list")
+    if not value:
+        raise MatchingContractError("gates must contain at least one must-have")
     gates: list[dict[str, str]] = []
     seen: set[str] = set()
     for index, item in enumerate(value):
@@ -150,10 +151,18 @@ def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
 def _score_band(score: int, bands: Mapping[str, object]) -> str:
     for name in ("strong", "candidate", "conditional", "reject"):
         bounds = bands.get(name)
+        if not isinstance(bounds, dict):
+            raise MatchingContractError(f"score band {name} is malformed")
+        minimum = bounds.get("min")
+        maximum = bounds.get("max")
         if (
-            isinstance(bounds, dict)
-            and bounds.get("min") <= score <= bounds.get("max")
+            isinstance(minimum, bool)
+            or isinstance(maximum, bool)
+            or not isinstance(minimum, int)
+            or not isinstance(maximum, int)
         ):
+            raise MatchingContractError(f"score band {name} bounds are malformed")
+        if minimum <= score <= maximum:
             return name
     raise MatchingContractError(f"score {score} is outside configured bands")
 
@@ -163,8 +172,7 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
 
     if not isinstance(payload, Mapping) or set(payload) - _TOP_LEVEL_KEYS:
         raise MatchingContractError("payload contains unknown fields")
-    required = _TOP_LEVEL_KEYS - {"school_weight_enabled"}
-    if not required.issubset(payload):
+    if not _TOP_LEVEL_KEYS.issubset(payload):
         raise MatchingContractError("payload is missing required fields")
     if payload["contract_version"] != CONTRACT_VERSION:
         raise MatchingContractError("contract_version mismatch")
@@ -177,10 +185,6 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
         or total_years < 0
     ):
         raise MatchingContractError("total_years must be a finite non-negative number")
-    school_weight_enabled = payload.get("school_weight_enabled", True)
-    if not isinstance(school_weight_enabled, bool):
-        raise MatchingContractError("school_weight_enabled must be boolean")
-
     gates = _validate_gates(payload["gates"])
     dimensions = _validate_dimensions(payload["dimensions"])
     contract = _stage4_contract()
@@ -196,15 +200,14 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
         for dimension_id, weight in redistribution.items():
             weights[dimension_id] += weight
 
-    if school_weight_enabled:
-        if dimensions["D8"]["school_sensitive_client"]:
-            transfer = contract["school_sensitive_client"]
-            weights["D8"] += transfer["D8"]
-            weights["D1"] += transfer["D1"]
-        if total_years >= 10:
-            shift = weights["D8"] // 2
-            weights["D8"] -= shift
-            weights["D1"] += shift
+    if dimensions["D8"]["school_sensitive_client"]:
+        transfer = contract["school_sensitive_client"]
+        weights["D8"] += transfer["D8"]
+        weights["D1"] += transfer["D1"]
+    if total_years >= 10:
+        shift = weights["D8"] // 2
+        weights["D8"] -= shift
+        weights["D1"] += shift
 
     if sum(weights.values()) != 100:
         raise MatchingContractError("applied weights must sum to 100")

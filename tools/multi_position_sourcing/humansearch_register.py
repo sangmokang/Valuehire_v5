@@ -26,7 +26,11 @@ from tools.multi_position_sourcing.humansearch import (
     hard_exclude_reason,
     is_valid_profile_url,
 )
-from tools.multi_position_sourcing.matching_score_contract import CONTRACT_VERSION
+from tools.multi_position_sourcing.matching_score_contract import (
+    CONTRACT_VERSION,
+    MatchingContractError,
+    calculate_final_score,
+)
 from tools.multi_position_sourcing.browser_evidence import complete_evidence_payload
 from tools.multi_position_sourcing.models import CapturedProfile, Channel, EmploymentTenure
 
@@ -180,6 +184,13 @@ def eligible(results: list[dict], channel: Channel) -> list[dict]:
             continue  # 점수 미달·비수치·NaN·inf → 제외 (fail-closed)
         if r.get("contract_version") != CONTRACT_VERSION:
             continue  # legacy/LLM direct total은 최종 등록 금지
+        evaluation = r.get("evaluation")
+        try:
+            calculated = calculate_final_score(evaluation)
+        except (MatchingContractError, TypeError):
+            continue
+        if calculated["score"] != score:
+            continue  # 외부/LLM이 적은 총점은 신뢰하지 않고 Stage 4 재계산과 정확히 일치해야 함
         breakdown = r.get("breakdown")
         if not isinstance(breakdown, dict) or set(breakdown) != {
             f"D{index}" for index in range(1, 9)
@@ -393,6 +404,8 @@ def _candidate_spec(result: Mapping[str, object], channel: Channel) -> dict[str,
         "profile_url": str(result.get("url") or result.get("profile_url") or ""),
         "channel": channel,
         "score": result.get("score"),
+        "contract_version": result.get("contract_version"),
+        "evaluation": result.get("evaluation"),
         "summary": str(result.get("summary", "") or ""),
         "headline": str(result.get("headline", "") or ""),
         "visible_text": visible_text,
@@ -565,6 +578,14 @@ def candidate_spec_hook_reason(event: object) -> str | None:
     score = spec.get("score")
     if not (isinstance(score, (int, float)) and math.isfinite(score) and score >= PASS_THRESHOLD):
         return "candidate_score_invalid"
+    if spec.get("contract_version") != CONTRACT_VERSION:
+        return "candidate_contract_version_invalid"
+    try:
+        calculated = calculate_final_score(spec.get("evaluation"))
+    except (MatchingContractError, TypeError):
+        return "candidate_evaluation_invalid"
+    if calculated["score"] != score:
+        return "candidate_score_mismatch"
     if spec.get("saved_profile_evidence") in (None, "", "missing"):
         return "candidate_evidence_missing"
     visible_text = str(spec.get("visible_text", "") or "")
