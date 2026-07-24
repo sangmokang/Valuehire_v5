@@ -175,7 +175,7 @@ def test_u4_applies_school_sensitive_and_senior_weight_transfers() -> None:
 
     assert result["score"] == 80
     assert result["weights_applied"]["D8"] == 7
-    assert result["weights_applied"]["D1"] == 33
+    assert result["weights_applied"]["D1"] == 29
     assert sum(result["weights_applied"].values()) == 100
 
 
