@@ -69,6 +69,13 @@ def gateway_subprocess_env(
     child = {str(key): str(value) for key, value in environ.items()}
     for key in _SERVICE_ENV_KEYS:
         child.pop(key, None)
+    gateway_url = (
+        child.get("DISCORD_GATEWAY_SUPABASE_URL", "").strip()
+        or child.get("SUPABASE_URL", "").strip()
+        or child.get("NEXT_PUBLIC_SUPABASE_URL", "").strip()
+    )
+    if gateway_url:
+        child["DISCORD_GATEWAY_SUPABASE_URL"] = gateway_url
     child.update({
         "DISCORD_GATEWAY_WORKER_MACHINE": "winpc",
         "DISCORD_GATEWAY_SYNC_COMMANDS": "0",

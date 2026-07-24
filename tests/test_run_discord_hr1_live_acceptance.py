@@ -88,11 +88,13 @@ def test_runner_is_directly_executable_from_repo_root() -> None:
 def test_gateway_child_gets_minimal_key_but_no_service_role(tmp_path: Path) -> None:
     child = gateway_subprocess_env({
         "DISCORD_GATEWAY_SUPABASE_KEY": "anon-value",
+        "NEXT_PUBLIC_SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_SERVICE_ROLE_KEY": "service-value",
         "SERVICE_ROLE_KEY": "second-service-value",
         "DISCORD_BOT_TOKEN": "isolated-value",
     }, tmp_path / "events.jsonl")
     assert child["DISCORD_GATEWAY_SUPABASE_KEY"] == "anon-value"
+    assert child["DISCORD_GATEWAY_SUPABASE_URL"] == "https://example.supabase.co"
     assert child["DISCORD_GATEWAY_SYNC_COMMANDS"] == "0"
     assert child["DISCORD_HR1_REPLAY_FIRST_ENQUEUED"] == "1"
     assert "SUPABASE_SERVICE_ROLE_KEY" not in child
