@@ -110,8 +110,10 @@ class FakeFollowup:
         self._calls = calls
         self._sent = sent
 
-    async def send(self, content: str = "", *, ephemeral: bool = False) -> None:
+    async def send(self, content: str = "", *, ephemeral: bool = False, **kwargs) -> None:
         self._calls.append(f"followup.send(ephemeral={ephemeral})")
+        if "allowed_mentions" in kwargs:
+            self._calls.append("followup.send:allowed_mentions")
         self._sent.append({"content": content, "ephemeral": ephemeral})
 
 
@@ -123,8 +125,10 @@ class FakeInteractionEditor:
         self._sent = sent
         self._edits = edits
 
-    async def __call__(self, *, content: str = "") -> None:
+    async def __call__(self, *, content: str = "", **kwargs) -> None:
         self._calls.append("edit_original_response")
+        if "allowed_mentions" in kwargs:
+            self._calls.append("edit_original_response:allowed_mentions")
         self._edits.append(content)
         replacement = {"content": content, "ephemeral": True}
         if self._sent:

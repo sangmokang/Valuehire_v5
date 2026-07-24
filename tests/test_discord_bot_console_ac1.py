@@ -89,7 +89,7 @@ class FakeFollowup:
     def __init__(self, calls: list[str], sent: list[dict]) -> None:
         self._calls, self._sent = calls, sent
 
-    async def send(self, content: str = "", *, ephemeral: bool = False) -> None:
+    async def send(self, content: str = "", *, ephemeral: bool = False, **kwargs) -> None:
         self._calls.append("followup.send")
         self._sent.append({"content": content})
 
@@ -98,7 +98,7 @@ class FakeEditor:
     def __init__(self, calls: list[str], sent: list[dict]) -> None:
         self._calls, self._sent = calls, sent
 
-    async def __call__(self, *, content: str = "") -> None:
+    async def __call__(self, *, content: str = "", **kwargs) -> None:
         self._calls.append("edit_original_response")
         replacement = {"content": content}
         if self._sent:

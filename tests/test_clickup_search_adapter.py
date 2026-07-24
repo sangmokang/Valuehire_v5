@@ -117,6 +117,27 @@ def test_f2_task_with_unsafe_id_is_dropped():
     assert ids == ["86abc"]
 
 
+def test_f2r_task_url_field_not_trusted_canonical_link_built():
+    """Codex V2 2R — task['url'] 이 악성이어도 검증된 id 로 만든 정식 링크로 대체."""
+    urlopen, _ = _capture_urlopen({"tasks": [
+        {"id": "86exwz89j", "name": "PM", "url": "https://evil.example.com/x"}]})
+    search = clickup_search.make_clickup_search_tasks("tok", urlopen=urlopen)
+    task = search(list_id="1", query="x", parent=None)[0]
+    assert task["url"] == "https://app.clickup.com/t/86exwz89j"
+    assert "evil.example.com" not in task["url"]
+
+
+def test_f2r_task_name_sanitized_for_display():
+    """Codex V2 2R — 이름의 개행·마크다운/멘션 트리거를 안전화(표시 주입 차단)."""
+    urlopen, _ = _capture_urlopen({"tasks": [
+        {"id": "86a", "name": "PM\n@everyone [click](http://x)"}]})
+    search = clickup_search.make_clickup_search_tasks("tok", urlopen=urlopen)
+    name = search(list_id="1", query="x", parent=None)[0]["name"]
+    assert "\n" not in name  # 개행 제거(멀티라인 주입 차단)
+    assert "\\@everyone" in name  # @ 이스케이프(멘션 트리거 무력화)
+    assert "](" not in name  # 마크다운 링크 문법 깨짐(] · ( 각각 이스케이프)
+
+
 def test_f1_adapter_error_sanitized_no_token_or_url():
     def boom_urlopen(req, timeout=None):
         raise RuntimeError(f"connect to {req.full_url} with tok_SECRET failed")

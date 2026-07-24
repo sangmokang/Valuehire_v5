@@ -20,6 +20,16 @@ _CLICKUP_API = "https://api.clickup.com/api/v2"
 # ClickUp list id 는 숫자. task id 는 영숫자(예: 86exwz89j). 경로/URL 안전 문자만 허용.
 _LIST_ID_RE = re.compile(r"^[0-9]+$")
 _TASK_ID_RE = re.compile(r"^[A-Za-z0-9]+$")
+# Codex V2 2R: Discord 마크다운/멘션 트리거 문자를 표시 이름에서 이스케이프한다.
+_MD_SPECIAL = set(r"\*_~`|>[]()#@:")
+
+
+def _sanitize_name(raw: Any) -> str:
+    """태스크 이름을 한 줄로 접고 마크다운/멘션 특수문자를 이스케이프(표시 안전).
+
+    매칭은 토큰(영숫자·한글) 기준이라 특수문자 이스케이프의 영향을 받지 않는다."""
+    text = " ".join(str(raw or "").split())  # 개행·연속공백 → 단일 공백(멀티라인 주입 차단)
+    return "".join("\\" + ch if ch in _MD_SPECIAL else ch for ch in text)
 
 
 def make_clickup_search_tasks(
@@ -50,10 +60,22 @@ def make_clickup_search_tasks(
         tasks = payload.get("tasks") if isinstance(payload, Mapping) else None
         if not isinstance(tasks, list):
             return []
-        # Codex V2 F2: id 가 영숫자가 아닌 태스크는 버린다 — 이후 t/{id} URL 이 항상
-        # 깨끗한 app.clickup.com 링크가 되게(임의 URL 조작 벡터 차단).
-        return [t for t in tasks
-                if isinstance(t, Mapping) and _TASK_ID_RE.match(str(t.get("id") or ""))]
+        # Codex V2 F2/2R: id 가 영숫자인 태스크만 남기고, url 을 검증된 id 로 만든
+        # 정식 링크로 *덮어쓴다* — task['url'] 을 신뢰하면 악성 태스크가 임의 URL 을
+        # position_url 로 주입할 수 있다(_task_url 이 task['url'] 우선). 표시 이름도
+        # 마크다운/멘션 안전하게 정규화한다.
+        out: list[dict[str, Any]] = []
+        for t in tasks:
+            if not isinstance(t, Mapping):
+                continue
+            task_id = str(t.get("id") or "")
+            if not _TASK_ID_RE.match(task_id):
+                continue
+            safe = dict(t)
+            safe["url"] = f"https://app.clickup.com/t/{task_id}"
+            safe["name"] = _sanitize_name(t.get("name"))
+            out.append(safe)
+        return out
 
     return search_tasks
 

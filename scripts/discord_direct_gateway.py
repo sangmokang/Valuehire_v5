@@ -402,11 +402,14 @@ async def _safe_first_reply(interaction: Any, content: str, *, event_id: str) ->
     전송 실패가 게이트웨이를 죽이면 안 되므로 예외는 로그로만 남긴다.
     """
     try:
+        # Codex V2 2R: 슬래시 회신도 동적 텍스트(예: /jobs 목록)를 담을 수 있어 멘션 억제.
+        mentions = _no_mentions()
+        mkw = {"allowed_mentions": mentions} if mentions is not None else {}
         editor = getattr(interaction, "edit_original_response", None)
         if callable(editor):
-            await editor(content=content)
+            await editor(content=content, **mkw)
         else:
-            await interaction.followup.send(content, ephemeral=True)
+            await interaction.followup.send(content, ephemeral=True, **mkw)
     except Exception:  # noqa: BLE001 — 전송 실패를 게이트웨이 크래시로 번지게 하지 않는다.
         logger.warning("discord_direct_gateway: 회신 전송 실패 event_id=%s", event_id)
 
