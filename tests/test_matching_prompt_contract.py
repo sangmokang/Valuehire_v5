@@ -9,6 +9,16 @@ from tools.multi_position_sourcing.matching_score_contract import (
     MatchingContractError,
     calculate_final_score,
 )
+from tools.multi_position_sourcing.humansearch import (
+    eligible_matches_for_send,
+    score_humansearch_contract,
+)
+from tools.multi_position_sourcing.models import (
+    CapturedProfile,
+    EmploymentTenure,
+    Position,
+    PositionMatch,
+)
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -225,3 +235,49 @@ def test_u4_rejects_inputs_outside_the_contract(mutate) -> None:
 
     with pytest.raises(MatchingContractError):
         calculate_final_score(payload)
+
+
+def test_u2_humansearch_builds_only_versioned_final_matches() -> None:
+    profile = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/contract",
+        source_channel="linkedin_rps",
+        visible_text="Python API 4년, 처리량 30% 개선",
+        summary="backend engineer",
+        captured_at="2026-07-24T00:00:00+09:00",
+        years_experience=4,
+        evidence_paths=("profile.png",),
+        employment_history=(EmploymentTenure("A", "2022-01", "present"),),
+    )
+    position = Position(
+        position_id="P1",
+        company_name="B",
+        role_title="Backend Engineer",
+        jd_text="Python 3년 이상",
+        seniority_min=3,
+        seniority_max=7,
+        must_haves=("Python 3년",),
+        nice_to_haves=(),
+    )
+    evaluation = _payload(score=4)
+
+    match = score_humansearch_contract(profile, position, evaluation)
+
+    assert match.score == 80
+    assert match.contract_version == CONTRACT_VERSION
+    assert set(match.score_breakdown) == {f"D{i}" for i in range(1, 9)}
+    assert eligible_matches_for_send((match,)) == (match,)
+
+
+def test_u2_send_gate_rejects_legacy_or_unversioned_total() -> None:
+    legacy = PositionMatch(
+        candidate_url="https://www.linkedin.com/in/legacy",
+        profile_summary="legacy direct total",
+        position_id="P1",
+        score=99,
+        why_fit=("legacy",),
+        why_not=(),
+        evidence_paths=("legacy.png",),
+        score_breakdown={"education": 30, "role_fit": 50},
+    )
+
+    assert eligible_matches_for_send((legacy,)) == ()
