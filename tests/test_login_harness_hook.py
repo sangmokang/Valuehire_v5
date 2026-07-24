@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from tools.multi_position_sourcing.fleet_worker import build_job_prompt
+
 
 REPO = Path(__file__).resolve().parents[1]
 GUARD = REPO / ".claude" / "hooks" / "guards" / "login.py"
@@ -120,3 +122,23 @@ def test_login_skill_points_to_the_prompt_and_hook() -> None:
     text = SKILL.read_text(encoding="utf-8")
     assert "docs/prompts/login-search-execution-contract.md" in text
     assert ".claude/hooks/guards/login.py" in text
+
+
+def test_fleet_search_prompts_require_login_barrier_before_execution() -> None:
+    for skill in ("aisearch", "humansearch", "url"):
+        prompt = build_job_prompt(
+            {
+                "id": 205,
+                "skill": skill,
+                "machine": "macmini",
+                "position_url": "https://app.clickup.com/t/example",
+                "requested_by": "814353841088757800:owner",
+                "role": "owner",
+                "params": {},
+            }
+        )
+        assert "docs/prompts/login-search-execution-contract.md" in prompt
+        assert "LOGIN_BARRIER=PASS" in prompt
+        assert prompt.index("LOGIN_BARRIER=PASS") < prompt.index(
+            f"{skill} 스킬의 검색·URL 작업"
+        )
