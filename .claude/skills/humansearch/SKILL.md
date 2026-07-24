@@ -1,6 +1,6 @@
 ---
 name: humansearch
-description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn Recruiter/RPS·사람인·잡코리아)를 순회해 후보를 채점·등록하는 스킬. 트리거 — \"humansearch\", \"휴먼서치\", \"/humansearch\", \"이 검색 URL로 후보 찾아\", \"이 화면 순회해서 후보 솎아줘\", \"리스팅 돌면서 채점\", 반조립 서치 URL+포지션(ClickUp task/텍스트/URL, 복수 가능)을 주며 \"서치해라\" 할 때 발동. 검색어 생성·필터 입력은 하지 않는다(그건 aisearch) — 걸어둔 결과의 순회·채점(학력30·직무50·논리10·이직안정10, 합격 70+)·ClickUp FY26AI_Search(901818680208) 부모 Task+후보 Subtask 등록·전부 저장(스크린샷→텍스트+DB)·Discord 채널 814353841088757800 중간/완료 보고까지 한 턴에 끝낸다. 요청 시 핵심 후보 1명에게 개인화 제안(InMail) 문구를 골든샘플(references/inmail-golden-sample.md) 기준으로 만든다 — 이력 요약·전화통화 요청·과장 금지, 개인화 오프너+회사브리핑+JD 구조, 저장 또는 채팅창 제공까지. 제안 발송(Send)은 절대 자동으로 누르지 않는다 — 사장님 수동 게이트."
+description: "사람이 미리 걸어둔 LinkedIn Recruiter/RPS·사람인·잡코리아 검색결과를 순회해 후보를 필수요건 게이트와 근거 기반 D1~D8 계약으로 채점·등록하는 스킬. 트리거 — \"humansearch\", \"휴먼서치\", \"/humansearch\", \"이 검색 URL로 후보 찾아\", \"이 화면 순회해서 후보 솎아줘\", \"리스팅 돌면서 채점\". 검색어 생성·필터 입력은 aisearch 범위다. ClickUp FY26AI_Search 부모 Task+후보 Subtask 등록·전부 저장·Discord 보고를 수행하며, 제안 Send는 자동으로 누르지 않는다."
 ---
 
 # humansearch — Claude Code 발동 심(로컬)
@@ -13,7 +13,10 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
 발동 즉시, 작업 전에 반드시 읽는다:
 1. `skills/humansearch/SKILL.md` — 절차 정본(순회·채점·발송 + **확장 스펙 2026-07-02** 5요건 + 실행 함정)
 2. `skills/humansearch/humansearch.config.json` — 설정 단일 출처(가중치·합격선·하드제외·`position_inputs`·`clickup_registration`·`persistence`·`reporting`)
-3. 메모리 — humansearch-run-method(러너 포지션 하드코딩 → 스크래치패드 런타임 오버라이드),
+3. `docs/sot/24-position-jd-sot.json` — 매칭 프롬프트
+   `candidate-match-v2-2026-07-24` 정본. LLM은 gate+D1~D8만 내고
+   총점·등급은 Stage 4 코드만 계산한다.
+4. 메모리 — humansearch-run-method(러너 포지션 하드코딩 → 스크래치패드 런타임 오버라이드),
    humansearch-runner-skips-hard-exclude, humansearch-english-school-name-underscore,
    linkedin-rps-harvest-background-tab, humansearch-profile-url-no-hand-retype
 
