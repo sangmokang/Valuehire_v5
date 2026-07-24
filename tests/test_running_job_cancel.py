@@ -294,6 +294,32 @@ def test_native_run_cancels_even_if_child_never_reads_stdin(tmp_path):
     assert _t.time() - start < 10
 
 
+def test_kill_group_reaps_survivor_when_leader_already_dead(tmp_path):
+    """Codex V2 6R — 리더가 먼저 죽고 자식만 남아도 그룹 SIGKILL 로 자식을 정리한다."""
+    import os
+    import subprocess as _sp
+    import sys
+    import time as _t
+
+    child_pid_file = tmp_path / "survivor.pid"
+    # 리더: 자식(그룹 내)을 하나 띄우고 자기는 즉시 종료 → 리더 reap 후 자식만 생존.
+    leader = _sp.Popen(
+        [sys.executable, "-c",
+         "import subprocess,sys,os\n"
+         f"c=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])\n"
+         f"open({str(child_pid_file)!r},'w').write(str(c.pid))\n"],
+        start_new_session=True)
+    leader.wait(timeout=10)  # 리더 종료 + reap
+    _t.sleep(0.3)
+    child_pid = int(child_pid_file.read_text().strip())
+    os.kill(child_pid, 0)  # 아직 살아있음(예외 없어야)
+    # 리더가 이미 죽었지만 그룹(pgid==leader.pid) SIGKILL 로 자식을 잡아야 한다.
+    fleet_worker._kill_process_group_posix(leader)
+    _t.sleep(0.5)
+    with pytest.raises(OSError):
+        os.kill(child_pid, 0)  # 자식도 죽음
+
+
 def test_release_tolerates_already_cancelled_no_orphan_alarm():
     """Codex V2 2R F3 — release 직전 취소가 반영돼 RPC 가 'running 없음'으로 실패해도,
     상태가 cancelled 면 재시도·고아경보 없이 조용히 종료(None)."""
