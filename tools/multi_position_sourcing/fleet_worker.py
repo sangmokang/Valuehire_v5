@@ -1413,6 +1413,9 @@ class FleetWorker:
         # skill=login && role=owner 일 때만(Codex V2 F1 위조 방어).
         env["VALUEHIRE_JOB_SKILL"] = str(job.get("skill") or "")
         env["VALUEHIRE_JOB_ROLE"] = str(job.get("role") or "")
+        # job.params.model → 실행 엔진(claude/codex) 모델 플래그 전달(사장님 /st).
+        # 빈값이면 각 실행 함수가 플래그를 붙이지 않아 기존 기본 모델 유지(fail-safe).
+        env["VALUEHIRE_AGENT_MODEL"] = str((job.get("params") or {}).get("model") or "")
         if job.get("skill") == OWNER_AGENT_SKILL:
             params = job.get("params") or {}
             env["VALUEHIRE_OWNER_AGENT_JOB"] = "1"
