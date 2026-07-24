@@ -622,6 +622,17 @@ def test_eligible_recomputes_and_rejects_forged_llm_total() -> None:
     assert eligible([forged], "saramin") == []
 
 
+def test_eligible_rejects_forged_dimension_breakdown() -> None:
+    forged = _runner_dict(
+        score=80,
+        breakdown={**{f"D{i}": 4 for i in range(1, 9)}, "D1": 5},
+        visible_text="backend engineer",
+        summary="부산대 8년 안정적",
+    )
+
+    assert eligible([forged], "saramin") == []
+
+
 def test_eligible_low_tier_school_kept_on_linkedin() -> None:
     """링크드인은 학교 하드제외 미적용(portal 채널만) — 회귀 보호."""
     r = _runner_dict(

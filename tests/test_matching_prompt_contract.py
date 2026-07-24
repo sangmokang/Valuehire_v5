@@ -8,6 +8,7 @@ import pytest
 from tools.multi_position_sourcing.matching_score_contract import (
     MatchingContractError,
     calculate_final_score,
+    default_tier_maps,
     evaluate_candidate_contract,
 )
 from tools.multi_position_sourcing.humansearch import (
@@ -67,6 +68,12 @@ def test_u1_sot24_owns_complete_llm_subscore_contract() -> None:
         "D8": 9,
     }
     assert stage4["gate_caps"] == {"fail": 49, "uncertain_2_plus": 69}
+    assert stage4["senior_10_years_plus"] == {
+        "minimum_total_years": 10,
+        "source_dimension": "D8",
+        "target_dimension": "D1",
+        "transfer": "floor_half_current_weight",
+    }
     assert stage4["score_bands"] == {
         "strong": {"min": 85, "max": 100},
         "candidate": {"min": 70, "max": 84},
@@ -377,6 +384,13 @@ def test_u3_live_evaluator_runs_stage_1_to_3_and_returns_stage_4_input() -> None
     assert calculate_final_score(evaluation)["score"] == 80
 
 
+def test_u3_default_tier_maps_are_grounded_and_nonempty() -> None:
+    company_tiers, school_tiers = default_tier_maps()
+
+    assert company_tiers["naver"] == "high"
+    assert school_tiers["서울대"] == "high"
+
+
 def test_u3_active_humansearch_runner_wires_live_v2_evaluator() -> None:
     source = (
         Path(__file__).resolve().parents[1]
@@ -386,6 +400,7 @@ def test_u3_active_humansearch_runner_wires_live_v2_evaluator() -> None:
     assert "evaluate_candidate_with_claude" in source
     assert "evaluation_client=evaluate_candidate_with_claude" in source
     assert "evaluation_client=evaluation_client" in source
+    assert "evaluation_stage_check" in source
     assert '"evaluation": evaluation' in source
 
 
