@@ -676,6 +676,7 @@ class DirectGatewayClient(discord.Client):
         queue_factory: Callable[[], Any],
         audit: Optional[Callable[[dict[str, Any]], Any]] = None,
         owner_user_ids: Sequence[str] = OWNER_USER_IDS,
+        nl_searcher_factory: Optional[Callable[[], Any]] = None,
     ) -> None:
         super().__init__(intents=discord.Intents.default())
         self._authorized_users = authorized_users
@@ -683,6 +684,8 @@ class DirectGatewayClient(discord.Client):
         self._queue_factory = queue_factory
         self._audit = audit if audit is not None else _default_audit
         self._owner_user_ids = owner_user_ids
+        # #200: 자연어 해소기 팩토리. None 이면 NL 비활성(정형 명령 경로 불변).
+        self._nl_searcher_factory = nl_searcher_factory
 
     async def setup_hook(self) -> None:  # pragma: no cover — 실 기동 전용
         await self._sync_commands()
@@ -740,6 +743,7 @@ class DirectGatewayClient(discord.Client):
             message, bot_user_id=bot_user_id, queue_factory=self._queue_factory,
             authorized_users=self._authorized_users, config=self._config, audit=self._audit,
             owner_user_ids=self._owner_user_ids,
+            nl_searcher_factory=self._nl_searcher_factory,  # #200: 자연어 배선
         )
 
 
@@ -947,11 +951,17 @@ def _build_client() -> DirectGatewayClient:  # pragma: no cover — 실 기동 �
     # 안에서는 일관되게 만든다 — FLEET_OWNER_DISCORD_IDS 로 owner 를 바꾸고 싶다면
     # fleet_dispatch/direct_receiver 쪽까지 같이 배선하는 별도 작업이 필요하다(한계로
     # verdict 에 명시).
+    # #200: 자연어 해소기(ClickUp 포지션 검색) 배선 — 미설정이면 None(NL 비활성).
+    from tools.multi_position_sourcing.clickup_search import (
+        production_nl_searcher_factory,
+    )
+    nl_searcher_factory = production_nl_searcher_factory(os.environ)
     return DirectGatewayClient(
         authorized_users=authorized_users, config=config,
         queue_factory=_minimal_privilege_queue_factory(),
         audit=_default_audit,
         owner_user_ids=OWNER_USER_IDS,
+        nl_searcher_factory=nl_searcher_factory,
     )
 
 
