@@ -44,6 +44,9 @@ begin
   if not found then
     raise exception 'queued/running/paused_for_human 상태의 잡 % 가 없습니다', p_job_id;
   end if;
+  -- #196 Codex V2 2R: running 잡 취소 시 account_lock 을 반드시 해제한다(release_job 과
+  -- 동일). 안 하면 그 account_key 가 영구 점유돼 이후 claim 이 막힌다.
+  delete from public.account_locks where job_id = p_job_id;
   return query select * from public.jobs where id = p_job_id;
 end;
 $function$;

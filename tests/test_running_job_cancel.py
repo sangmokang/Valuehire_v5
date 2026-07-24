@@ -185,31 +185,84 @@ def test_worker_completion_race_ends_cancelled(monkeypatch):
     assert released == []
 
 
-def test_native_agent_run_kills_real_process_on_cancel():
-    """Codex V2 F6 — 실제 서브프로세스를 취소 신호로 프로세스그룹째 종료(통합)."""
+def test_native_agent_run_kills_real_process_group_on_cancel(tmp_path):
+    """Codex V2 F6/2R — 리더가 띄운 자식(손자)까지 프로세스그룹째 종료됨을 실증.
+
+    스크립트: 자식 sleep 프로세스를 하나 fork 하고 그 pid 를 파일에 쓴 뒤 리더도
+    잔다. 취소 시 killpg 로 리더+자식 둘 다 죽어야 한다."""
     import os
-    import signal
     import sys
     import time as _t
 
+    child_pid_file = tmp_path / "child.pid"
+    script = (
+        "import subprocess,sys,time,os\n"
+        f"c=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])\n"
+        f"open({str(child_pid_file)!r},'w').write(str(c.pid))\n"
+        "sys.stderr.write('up');sys.stderr.flush()\n"
+        "time.sleep(120)\n"
+    )
     flips = {"n": 0}
 
     def cancel_check():
         flips["n"] += 1
-        return flips["n"] >= 2  # 첫 폴은 계속, 두 번째 폴에서 취소
+        return flips["n"] >= 2
 
-    # 자기 프로세스그룹에 자식을 하나 더 두고 오래 자는 프로세스 — killpg 로 둘 다 죽어야.
-    script = ("import time,sys,os\n"
-              "sys.stderr.write('up'); sys.stderr.flush()\n"
-              "time.sleep(120)\n")
     start = _t.time()
     with pytest.raises(fleet_worker.JobCancelled):
         fleet_worker._native_agent_run(
             [sys.executable, "-c", script], cwd=".", env=None,
             input_text="", timeout=60, cancel_check=cancel_check,
             poll_seconds=0.05)
-    # 120초 sleep 인데 취소로 즉시(≤10초) 끝나야 한다.
-    assert _t.time() - start < 10
+    assert _t.time() - start < 10  # 120초 sleep 이 취소로 즉시 종료
+    # 자식(손자) 프로세스도 죽었는지 확인 — killpg 가 그룹 전체를 잡았는가.
+    _t.sleep(0.5)
+    child_pid = int(child_pid_file.read_text().strip())
+    with pytest.raises(OSError):  # 살아있으면 signal 0 이 통과(예외 없음) → 실패
+        os.kill(child_pid, 0)
+
+
+def test_release_tolerates_already_cancelled_no_orphan_alarm():
+    """Codex V2 2R F3 — release 직전 취소가 반영돼 RPC 가 'running 없음'으로 실패해도,
+    상태가 cancelled 면 재시도·고아경보 없이 조용히 종료(None)."""
+    notes = []
+
+    class _Q:
+        def job_status(self, job_id):
+            return "cancelled"
+
+        def release(self, *a, **k):
+            raise RuntimeError("running 상태의 잡 9 가 없습니다")
+
+    w = fleet_worker.FleetWorker(
+        machine="macmini", queue=_Q(), notifier=lambda j, t: notes.append(t))
+    assert w._release({"id": 9}, 9, "done") is None
+    assert not any("고아" in n for n in notes)  # 거짓 고아경보 없음
+
+
+def test_release_still_alarms_on_genuine_failure_when_still_running():
+    """회귀 방지 — 잡이 여전히 running 인데 release 가 계속 실패하면 고아경보 유지."""
+    notes = []
+
+    class _Q:
+        def job_status(self, job_id):
+            return "running"
+
+        def release(self, *a, **k):
+            raise RuntimeError("일시 네트워크 장애")
+
+    w = fleet_worker.FleetWorker(
+        machine="macmini", queue=_Q(), notifier=lambda j, t: notes.append(t))
+    # 재시도 backoff 를 0 으로(테스트 속도) — time.sleep 를 무력화.
+    import tools.multi_position_sourcing.fleet_worker as fw
+    orig = fw.time.sleep
+    fw.time.sleep = lambda _s: None
+    try:
+        with pytest.raises(RuntimeError):
+            w._release({"id": 9}, 9, "done")
+    finally:
+        fw.time.sleep = orig
+    assert any("고아" in n for n in notes)
 
 
 def test_migration_allows_running_to_cancelled():

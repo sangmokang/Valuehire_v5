@@ -882,7 +882,9 @@ def _native_agent_run(
 
 
 def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
-                    env: Mapping[str, str] | None) -> tuple[str, str, int]:
+                    env: Mapping[str, str] | None,
+                    cancel_check: Callable[[], bool] | None = None,
+                    poll_seconds: float = 3.0) -> tuple[str, str, int]:
     """윈도우 .cmd/.bat shim(shell=True) 경로 전용 실행기.
 
     subprocess.run 이 아니라 Popen+communicate 를 직접 써서, 타임아웃 시 cmd.exe
@@ -891,11 +893,37 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
     고아로 남긴다). encoding='utf-8' 을 명시해 비-UTF-8 Windows 로케일에서도 한글
     프롬프트/출력이 깨지지 않게 한다(Codex Rescue V2 발견).
     """
+    creationflags = 0
+    if cancel_check is not None and sys.platform == "win32":
+        # #196 Codex V2 2R: 취소 시 트리 종료(taskkill /T)가 cmd.exe 자식까지 잡도록
+        # 새 프로세스그룹으로 띄운다(윈도우도 취소 감시 경로를 태운다).
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     proc = subprocess.Popen(
         cmd, shell=True, cwd=cwd, env=dict(env) if env is not None else None,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8",
+        text=True, encoding="utf-8", creationflags=creationflags,
     )
+    if cancel_check is not None:
+        # 취소 감시 경로: prompt 를 stdin 으로 넣고 닫은 뒤, communicate 를 짧은 timeout
+        # 으로 반복 폴링하며 취소를 확인한다. 취소면 트리 종료 후 JobCancelled.
+        try:
+            if proc.stdin is not None:
+                proc.stdin.write(prompt)
+                proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        started = time.monotonic()
+        while True:
+            try:
+                stdout, stderr = proc.communicate(timeout=poll_seconds)
+                return (stdout or ""), (stderr or ""), proc.returncode
+            except subprocess.TimeoutExpired:
+                if cancel_check():
+                    _terminate_process_tree_windows(proc.pid)
+                    raise JobCancelled()
+                if (time.monotonic() - started) > timeout:
+                    _terminate_process_tree_windows(proc.pid)
+                    raise
     try:
         stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -938,7 +966,8 @@ def _run_claude(prompt: str, timeout: int,
     base_args.append("-p")
     cmd, use_shell = _agent_argv("claude", base_args)
     if use_shell:
-        return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+        return _run_via_shell(cmd, prompt, timeout, str(REPO), env,
+                              cancel_check=cancel_check)
     if cancel_check is not None:
         # #196: owner_agent 는 stdin(-p), 일반은 argv 말미 prompt — 둘 다 stdin 으로
         # 통일해 취소 감지 경로를 태운다(claude 는 -p 와 stdin 모두 프롬프트를 받는다).
@@ -1020,7 +1049,8 @@ def _run_codex(prompt: str, timeout: int,
         raise ValueError(f"Codex 실행파일이 아닙니다: {codex_name!r}")
     cmd, use_shell = _agent_argv(codex_name, build_codex_exec_args(env))
     if use_shell:
-        return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+        return _run_via_shell(cmd, prompt, timeout, str(REPO), env,
+                              cancel_check=cancel_check)
     if cancel_check is not None:
         # #196: 실행 중 owner 취소를 감지·종료 가능한 경로.
         return _native_agent_run(
@@ -1321,6 +1351,18 @@ class FleetWorker:
             except ValueError:
                 raise
             except Exception as exc:  # noqa: BLE001 — 네트워크/HTTP 일시 장애
+                # #196 Codex V2 2R F3: release 는 where status='running' 이라, 그 사이
+                # owner 가 취소해 잡이 이미 'cancelled'(또는 다른 terminal)면 RPC 가
+                # 'running 없음'으로 실패한다. 이건 고아가 아니라 '취소가 이겼다' —
+                # 상태를 재확인해 running 이 아니면 재시도·고아경보 없이 조용히 종료한다.
+                status_of = getattr(self.queue, "job_status", None)
+                if callable(status_of):
+                    try:
+                        current = status_of(job_id)
+                    except Exception:  # noqa: BLE001 — 확인 실패 시 기존 재시도 경로로
+                        current = "running"
+                    if current is not None and current != "running":
+                        return None
                 last_exc = exc
                 if attempt < _RELEASE_RETRY_ATTEMPTS - 1:
                     backoff = _RELEASE_RETRY_BACKOFF[
