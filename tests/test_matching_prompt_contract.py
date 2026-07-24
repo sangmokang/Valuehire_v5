@@ -8,6 +8,7 @@ import pytest
 from tools.multi_position_sourcing.matching_score_contract import (
     MatchingContractError,
     calculate_final_score,
+    evaluate_candidate_contract,
 )
 from tools.multi_position_sourcing.humansearch import (
     eligible_matches_for_send,
@@ -314,6 +315,76 @@ def test_u2_humansearch_builds_only_versioned_final_matches() -> None:
     assert match.contract_version == CONTRACT_VERSION
     assert set(match.score_breakdown) == {f"D{i}" for i in range(1, 9)}
     assert eligible_matches_for_send((match,)) == (match,)
+
+
+def test_u3_live_evaluator_runs_stage_1_to_3_and_returns_stage_4_input() -> None:
+    profile = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/contract",
+        source_channel="linkedin_rps",
+        visible_text="A사 Python API 4년, 처리량 30% 개선",
+        summary="backend engineer",
+        captured_at="2026-07-24T00:00:00+09:00",
+        years_experience=4,
+        education="부산대학교 학사",
+    )
+    position = Position(
+        position_id="P1",
+        company_name="B",
+        role_title="Backend Engineer",
+        jd_text="Python 3년 이상",
+        must_haves=("Python 3년",),
+    )
+    responses = [
+        {
+            "position_title": "Backend Engineer",
+            "must_have": [
+                {"type": "skill", "requirement": "Python 3년", "min_years": 3}
+            ],
+            "nice_to_have": [],
+        },
+        {"total_years": 4, "careers": [], "skills": [], "achievements": []},
+        {
+            "gates": [
+                {
+                    "requirement": "Python 3년",
+                    "verdict": "pass",
+                    "evidence": "A사 Python API 4년",
+                }
+            ],
+            "dimensions": _payload(score=4)["dimensions"],
+            "one_line_verdict": "직무 직결",
+        },
+    ]
+    prompts: list[str] = []
+
+    def fake_llm(prompt: str) -> dict:
+        prompts.append(prompt)
+        return responses.pop(0)
+
+    evaluation = evaluate_candidate_contract(
+        profile,
+        position,
+        llm_json_client=fake_llm,
+        company_tier_map={},
+        school_tier_map={},
+    )
+
+    assert len(prompts) == 3
+    assert "총점을 계산하지 마세요" in prompts[2]
+    assert evaluation["contract_version"] == CONTRACT_VERSION
+    assert evaluation["total_years"] == 4
+    assert calculate_final_score(evaluation)["score"] == 80
+
+
+def test_u3_active_humansearch_runner_wires_live_v2_evaluator() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "tools/multi_position_sourcing/humansearch_cdp_run.py"
+    ).read_text()
+
+    assert "evaluate_candidate_with_claude" in source
+    assert "evaluation_client=evaluate_candidate_with_claude" in source
+    assert '"evaluation": evaluation' in source
 
 
 def test_u2_send_gate_rejects_legacy_or_unversioned_total() -> None:
