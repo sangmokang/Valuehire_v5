@@ -162,5 +162,53 @@ class PlanHelperIsExposed(unittest.TestCase):
         self.assertIsNone(message_to_envelope(msg, bot_user_id="123456789012345678"))
 
 
+class ClientForwardsSearcher(unittest.TestCase):
+    """#200 — 운영 클라이언트가 nl_searcher_factory 를 on_message 로 전달해야 NL 이 산다."""
+
+    def test_direct_gateway_client_stores_and_forwards_factory(self):
+        from scripts.discord_direct_gateway import DirectGatewayClient
+        sentinel = lambda: _searcher(("PM", CU + "86a"))
+        client = DirectGatewayClient(
+            authorized_users=(), config=DiscordAccessConfig(allow_dm=True),
+            queue_factory=lambda: FakeQueue(),
+            nl_searcher_factory=sentinel)
+        # 저장돼 on_message 가 handle_text_message 로 넘길 수 있어야 한다.
+        self.assertIs(client._nl_searcher_factory, sentinel)
+
+
+class SecuritySeals(unittest.TestCase):
+    """Codex V2 — 미인가자는 ClickUp 조회를 못 부르고, 답장은 멘션을 억제한다."""
+
+    def test_f3_stranger_never_triggers_searcher(self):
+        calls = []
+
+        def spy_searcher(locus, target):
+            calls.append((locus, target))
+            return [nl_shell.Candidate("PM", CU + "86a")]
+
+        queue = FakeQueue()
+        msg = FakeMessage(message_id="1529267252160927100",
+                          author_id="999999999999999999",
+                          content="클릭업에서 번개장터 PM 서치해")
+        asyncio.run(handle_text_message(
+            msg, bot_user_id="123456789012345678", queue=queue,
+            authorized_users=(), config=DiscordAccessConfig(allow_dm=True),
+            nl_searcher_factory=lambda: spy_searcher))
+        self.assertEqual(calls, [], "미인가자의 메시지가 ClickUp 조회를 발동했다")
+        self.assertEqual(queue.enqueued, [])
+
+    def test_f4_reply_suppresses_mentions(self):
+        # 후보 여러 건 → 답장. 그 send 에 allowed_mentions 가 실려야 한다.
+        queue = FakeQueue()
+        msg = FakeMessage(message_id="1529267252160927101", author_id=OWNER,
+                          content="클릭업에서 번개장터 PM 서치해")
+        _run(msg, queue, _searcher(("@everyone PM(Core)", CU + "86a"),
+                                   ("PM(BD)", CU + "86b")))
+        sends = [c for c in msg.calls if c.startswith("channel.send")]
+        self.assertTrue(sends, "답장이 없었다")
+        self.assertTrue(any("allowed_mentions" in c for c in sends),
+                        "답장이 멘션 억제 없이 나갔다")
+
+
 if __name__ == "__main__":
     unittest.main()
