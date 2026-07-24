@@ -26,6 +26,7 @@ from tools.multi_position_sourcing.humansearch import (
     hard_exclude_reason,
     is_valid_profile_url,
 )
+from tools.multi_position_sourcing.matching_score_contract import CONTRACT_VERSION
 from tools.multi_position_sourcing.browser_evidence import complete_evidence_payload
 from tools.multi_position_sourcing.models import CapturedProfile, Channel, EmploymentTenure
 
@@ -177,6 +178,13 @@ def eligible(results: list[dict], channel: Channel) -> list[dict]:
         # NaN/inf 는 '<threshold' 를 통과(NaN 비교 False, inf>=t True) → 유한 수치 + 양수형(>=)으로 판정.
         if not (isinstance(score, (int, float)) and math.isfinite(score) and score >= PASS_THRESHOLD):
             continue  # 점수 미달·비수치·NaN·inf → 제외 (fail-closed)
+        if r.get("contract_version") != CONTRACT_VERSION:
+            continue  # legacy/LLM direct total은 최종 등록 금지
+        breakdown = r.get("breakdown")
+        if not isinstance(breakdown, dict) or set(breakdown) != {
+            f"D{index}" for index in range(1, 9)
+        }:
+            continue  # D1-D8 근거 계약 미완료 → fail-closed
         # register 스키마 URL 키는 'url'. 하류(build_message·clickup) 도 r['url'] 을 읽으므로 여기서 'url' 로 통일한다.
         if not is_valid_profile_url(r.get("url")):
             continue  # URL 무효/결손 → 제외
