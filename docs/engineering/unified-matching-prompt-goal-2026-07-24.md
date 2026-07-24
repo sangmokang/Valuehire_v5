@@ -45,10 +45,9 @@ No later unit starts until its dependency's focused verification passes.
 
 ## Input domain and exception table
 
-The explicit input is `{gates, dimensions, total_years}` plus configuration
-`school_weight_enabled` and the versioned weight map. The implicit inputs are
-the prompt-contract version and tier maps. Time, DB state, channel, and model
-vendor must not affect Stage 4.
+The explicit input is `{gates, dimensions, total_years}` plus the versioned
+weight map. The implicit inputs are the prompt-contract version and tier maps.
+Time, DB state, channel, and model vendor must not affect Stage 4.
 
 | Input class | Required handling | Test |
 |---|---|---|
@@ -63,7 +62,7 @@ vendor must not affect Stage 4.
 | Empty/null payload or missing D key | reject | schema guard |
 | Score outside 0-5, non-integer, unknown verdict/type | reject | malformed guard |
 | Duplicate gate requirements | reject (ambiguous evidence identity) | duplicate guard |
-| Tier map missing a company/school | D6/D8 evidence must say unknown; D6 may be N/A, D8 uses score 1 only for unclear degree data | missing-tier cases |
+| Tier map missing a company/school | D6 evidence must say unknown and may be N/A; live runners load repository-owned company/school maps | missing-tier cases |
 | Repeated identical input | identical output, no state mutation | retry/idempotence |
 | External LLM/tier-map failure before Stage 4 | no inferred score; explicit incomplete result | failure fixture |
 | Concurrent/out-of-order evaluations | pure Stage 4 remains order-independent | permutation test |
@@ -137,7 +136,8 @@ npm run strict:exit-gate
 - [x] SOT-30 strict contract and recurrence ledger read.
 - [x] v4 SOT-17 and v5 SOT-24/25 current scoring definitions recovered.
 - [x] Existing v4 reverse prompts and v5 scoring entrypoints recovered.
-- [ ] U1-U5 focused gates pass.
-- [ ] No test deletion, skip/only/todo addition, or assertion weakening.
-- [ ] Claude/Codex mirrors and hashes checked.
-- [ ] Independent adversarial verdict and generator re-attack recorded.
+- [x] U1-U5 focused gates pass (v5 350 passed/3 xfailed; v4 22 relevant tests passed).
+- [x] No test deletion, skip/only/todo addition, or assertion weakening.
+- [x] Claude/Codex mirrors and hashes checked; skill validator passed all eight repository adapters.
+- [x] Independent adversarial verdict and generator re-attack recorded in
+  `docs/engineering/unified-matching-prompt.verdict.json`.
