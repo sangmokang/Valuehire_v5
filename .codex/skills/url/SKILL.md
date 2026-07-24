@@ -24,7 +24,10 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 - 관련 SOT: `docs/sot/22`(필터·결과수 트리) · `docs/sot/23`(채널 DOM 셀렉터) · `docs/sot/26`(포털 로그인)
 - 검색식 규칙: `skills/search/references/boolean-strategy.md` (Title+Skill+Domain, 3단 정밀·표준·확장 — **복제 말고 재사용**)
 - RPS 관례: `.claude/skills/aisearch/vendor/linkedin-rps-jd-set-builder.md` (§0 R3~R5 세션·양보·봇차단 규칙)
-- 다운스트림 계약: `skills/humansearch/SKILL.md` + `skills/humansearch/humansearch.config.json` (이 스킬의 산출물을 humansearch 가 소비)
+- 다운스트림 계약: `skills/humansearch/SKILL.md` +
+  `docs/sot/24-position-jd-sot.json`의
+  `candidate-match-v2-2026-07-24`(이 스킬은 채점하지 않지만, 검색 링크·JD
+  handoff가 후속 humansearch의 동일 gate+D1~D8 계약으로 들어가야 함)
 - 과거 메모리(아래 "메모리" 절)
 
 먼저 보고할 5가지: 읽은 경로 · 기존 구현 진입점 · 재사용/확장할 파일·함수 · 새 파일 필요 여부와 이유 · 외부 쓰기(ClickUp·RPS) 여부와 승인 게이트.

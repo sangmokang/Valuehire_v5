@@ -784,7 +784,7 @@ def build_message(passers: list[dict]) -> str:
     head = (
         f"📋 **AI Search 후보 브리핑 — {POSITION_NAME}**\n"
         f"채널: LinkedIn Recruiter(RPS) · 합격선 {PASS_THRESHOLD}점 · 합격 {len(passers)}명\n"
-        f"(채점: 학력30·직무50·논리10·이직안정10 / 🟢=Open to work)\n"
+        f"(채점: 필수요건 gate + 근거 기반 D1~D8 / 🟢=Open to work)\n"
         "──────────────"
     )
     blocks = []
@@ -796,7 +796,7 @@ def build_message(passers: list[dict]) -> str:
             note = " ⚠️('Berkeley College'=명문대 오탐, 학력 재판단 요)"
         blocks.append(
             f"**{i}. {r['name']} — {r['score']}/100**{otw} · {_school(r.get('education',''))}{note}\n"
-            f"  학력{b.get('education','?')}/직무{b.get('role_fit','?')}/논리{b.get('profile_logic','?')}/안정{b.get('job_stability','?')}\n"
+            f"  D1~D8: {'/'.join(str(b.get(f'D{n}', '?')) for n in range(1, 9))}\n"
             f"  {r['url']}"
         )
     return head + "\n" + "\n".join(blocks)
@@ -820,13 +820,13 @@ def post_discord(message: str) -> int:
 
 def clickup_comment_body(passers: list[dict]) -> str:
     lines = [f"🔎 **AI Search 결과 — LinkedIn RPS · 합격 {len(passers)}명** (합격선 {PASS_THRESHOLD}점, 🟢=Open to work)",
-             "_채점: 학력30·직무50·논리10·이직안정10_", ""]
+             "_채점: 필수요건 gate + 근거 기반 D1~D8_", ""]
     for i, r in enumerate(passers, 1):
         b = r.get("breakdown", {})
         otw = " 🟢" if r.get("otw") else ""
         note = " ⚠️('Berkeley College'=명문대 오탐, 학력 재판단)" if "berkeley college" in (r.get("education","").lower()) else ""
         lines.append(f"{i}. **{r['name']}** ({r['score']}/100){otw} · {_school(r.get('education',''))}{note}")
-        lines.append(f"   학력{b.get('education','?')}/직무{b.get('role_fit','?')}/논리{b.get('profile_logic','?')}/안정{b.get('job_stability','?')} · [프로필 열기]({r['url']})")
+        lines.append(f"   D1~D8: {'/'.join(str(b.get(f'D{n}', '?')) for n in range(1, 9))} · [프로필 열기]({r['url']})")
     return "\n".join(lines)
 
 

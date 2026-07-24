@@ -31,7 +31,7 @@ from .scoring import (
 )
 
 # ── 사장님 확정 상수 (config JSON 과 단일 출처로 일치해야 함; H2/H3 가 교차검증) ──
-SCORING_WEIGHTS: dict[str, float] = {
+LEGACY_PREFILTER_WEIGHTS: dict[str, float] = {
     "education": 0.30,
     "role_fit": 0.50,
     "profile_logic": 0.10,
@@ -369,9 +369,15 @@ def score_humansearch(profile: CapturedProfile, position: Position) -> PositionM
     }
     # 합격선 경계 정확도: 항목별 round() 누적은 raw 69.2 를 70 으로 부풀린다(합격 오판).
     # → raw 가중합을 *한 번만* 반올림해 총점을 낸다. breakdown 은 표시용(합 != score 일 수 있음).
-    raw = sum(SCORING_WEIGHTS[key] * subs[key] for key in SCORING_WEIGHTS)
+    raw = sum(
+        LEGACY_PREFILTER_WEIGHTS[key] * subs[key]
+        for key in LEGACY_PREFILTER_WEIGHTS
+    )
     score = max(0, min(100, round(100 * raw)))
-    breakdown = {key: round(100 * SCORING_WEIGHTS[key] * subs[key]) for key in SCORING_WEIGHTS}
+    breakdown = {
+        key: round(100 * LEGACY_PREFILTER_WEIGHTS[key] * subs[key])
+        for key in LEGACY_PREFILTER_WEIGHTS
+    }
 
     why_fit: list[str] = []
     why_not: list[str] = []
