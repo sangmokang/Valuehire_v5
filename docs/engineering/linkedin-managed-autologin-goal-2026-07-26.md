@@ -14,6 +14,9 @@ Issue: #210
 - 첫 라이브 시도는 프로세스 2개 모호성으로 중단했고, 두 번째 시도는
   `SELECTOR_DRIFT(inputs=0, forms=0, buttons=["새로고침"])`로 중단했다.
   기존 탭의 자격증명 제출은 0회였다.
+- 수정 후 공용 Keychain을 직접 읽는 실제 실행은 보안문자/CAPTCHA를 제출 0회
+  `HUMAN_AUTH`로 판정했다. 정확한 창 표시 시 visible marker 설치가 실패해
+  브라우저를 focus하지 않고 종료했으며, 사람 인증 완료는 아직 미실증이다.
 - 재발 장부 관련 행: `로그인 지시 미이행`, `로그인창 못 찾고 배회`
   (`valuehire_v4/docs/sot/31-strict-recurrence-ledger.md`). 두 항목 모두 반복 2회다.
 
@@ -100,5 +103,5 @@ make strict-exit-gate
 - [x] SOT-26 INV5: raw CDP exact target
 - [x] SOT-30 R3: 손 조작은 정식 runner만 수행
 - [x] 재발 원장의 로그인 미이행·창 배회 사례를 회귀 검사로 승격
-- [ ] SOT-26/Claude/Codex 스킬 동기화
+- [x] SOT-26/Claude/Codex 스킬 동기화
 - [ ] 전체 검증·적대 검증·라이브 실증·배송

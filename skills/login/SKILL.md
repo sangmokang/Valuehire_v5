@@ -159,8 +159,8 @@ export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 
 1. 세 사이트의 기존 탭과 로그인 마커를 읽기 전용으로 확인한다.
 2. 로그인된 채널은 그대로 보존하고 다시 로그인하지 않는다.
-3. 로그아웃 채널은 동일한 raw CDP target에서 공식 로그인 화면으로 이동한다. 새 page/context/browser를 만들지 않는다.
-4. 저장 자격증명은 실행 프로세스 안에서만 읽고 동일 target의 폼에 1회 제출한다. 비밀값을 stdout, shell 인자, 산출물, 모델 대화에 넣지 않는다.
+3. 로그아웃 채널의 현재 target에 검증된 로그인 폼이 있으면 그대로 사용한다. 특히 LinkedIn `/uas/login-cap`에 username/password 필드가 모두 있으면 깨진 `/uas/login`으로 강제 이동하지 않는다. 현재 폼이 없을 때만 동일 target에서 공식 로그인 화면으로 1회 이동하며 새 page/context/browser를 만들지 않는다.
+4. 저장 자격증명은 공용 macOS Keychain 서비스 `valuehire.portal_credentials`에서 실행 프로세스 안으로만 읽고 동일 target의 폼에 1회 제출한다. `.env.local`은 Keychain 초기 적재용이며, 실행 때 shell 인자로 자격증명을 다시 주입하지 않는다. 비밀값을 stdout, shell 인자, 산출물, 모델 대화에 넣지 않는다.
 5. 제출 직후 fresh DOM과 URL을 읽어 보안 챌린지를 먼저 판정한다. captcha/2FA/checkpoint/이상 접근이면 즉시 `HUMAN_AUTH`로 바꾸고 제출·클릭을 멈춘다. LinkedIn 세션 충돌이면 창을 표면화하지 않고 terminal `AUTH_CONFLICT`로 중단한다.
 6. 챌린지를 한 번 표면화한 뒤 `HUMAN_AUTH`로 진입한다. `HUMAN_AUTH` 중 navigate/reload/back/click/type/submit/popup-close/close/focus/new-page는 금지다. 현재 URL·fresh 로그인 마커·OS idle을 읽는 것 외에는 하지 않는다.
 7. 사람이 해결할 때까지 시간제한 없이 5초 이상 간격으로 읽기 폴링만 한다. 성공 마커와 OS idle 15초를 모두 확인한 뒤 재개한다.
@@ -181,7 +181,16 @@ export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 
 ### 정식 session guard 실행기
 
-사람 인증 인계는 legacy login 함수나 즉석 CDP 스크립트가 아니라 다음 정식 진입점으로 실행한다. 실행기는 site lease를 먼저 획득하고, 위 절차로 찾은 기존 target 하나에만 attach한다. 정확한 target이 여러 개면 `--target-id`로 하나를 명시하고, 없으면 만들지 않는다.
+자동 로그인과 사람 인증 인계는 legacy login 함수나 즉석 CDP 스크립트가 아니라 다음 정식 진입점으로 실행한다. 두 명령 모두 `--agent`만 실제 실행 주체로 바꾸며 Claude·Codex·Hermes가 같은 코드와 Keychain을 쓴다. 실행기는 site lease를 먼저 획득하고, 위 절차로 찾은 기존 target 하나에만 attach한다. 정확한 target이 여러 개면 `--target-id`로 하나를 명시하고, 없으면 만들지 않는다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard auto-login \
+  --site linkedin_rps \
+  --agent Codex \
+  --target-id '<existing-target-id>'
+```
+
+`auto-login`은 로그인된 target이면 조작 0회, 기존 `login-cap` 폼이면 그 폼에서만 자격증명 1회 제출, captcha/2FA/checkpoint면 제출 0회 `HUMAN_AUTH`, 멀티세션이면 `AUTH_CONFLICT`, 연결 오류·필드 실종이면 `SELECTOR_DRIFT`로 종료한다. 같은 실패를 원인 변경 없이 반복하지 않는다. 같은 포트를 선언한 Chrome이 여러 개면 정확한 `127.0.0.1:<port>` LISTEN PID로 LinkedIn 프로세스를 고르고 0개/여러 개면 중단한다.
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \
