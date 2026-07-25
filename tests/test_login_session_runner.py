@@ -9,6 +9,7 @@ import pytest
 from tools.multi_position_sourcing.portal_worker import ProfileLockError
 from tools.multi_position_sourcing.session_guard import (
     _cleanup_keepalive_badge,
+    _load_runtime_login_credentials,
     AuthObservation,
     BrowserTargetRef,
     LoginWindowLocator,
@@ -50,6 +51,31 @@ def _safe(**overrides: object) -> SafeKeepaliveTarget:
     }
     values.update(overrides)
     return SafeKeepaliveTarget(**values)
+
+
+def test_runtime_login_credentials_use_common_keychain_provider_without_secret_output() -> None:
+    class Provider:
+        def load(self, site: str):
+            assert site == "linkedin_rps"
+            return SimpleNamespace(username="stored-user", password="stored-password")
+
+    loaded = _load_runtime_login_credentials(
+        "linkedin_rps",
+        credential_provider=Provider(),
+    )
+
+    assert loaded == ("stored-user", "stored-password")
+
+
+def test_runtime_login_credentials_fail_closed_when_keychain_read_fails() -> None:
+    class Provider:
+        def load(self, _site: str):
+            raise RuntimeError("keychain unavailable")
+
+    assert _load_runtime_login_credentials(
+        "linkedin_rps",
+        credential_provider=Provider(),
+    ) is None
 
 
 def test_resolver_uses_one_managed_endpoint_and_exact_target_never_first_fallback() -> None:
@@ -118,6 +144,54 @@ def test_managed_browser_process_binds_exact_port_profile_and_root_pid() -> None
 
     assert process == ManagedBrowserProcess(222, "/tmp/LinkedIn Profile")
     assert calls == [["ps", "ax", "-o", "pid=,command="]]
+
+
+def test_managed_browser_process_uses_exact_ipv4_listener_when_port_is_declared_twice() -> None:
+    class Result:
+        returncode = 0
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> Result:
+        calls.append(command)
+        assert kwargs == {
+            "capture_output": True,
+            "text": True,
+            "timeout": 15,
+            "check": False,
+        }
+        if command[0] == "ps":
+            return Result(
+                "222 /Applications/Google Chrome "
+                "--remote-debugging-port=9225 "
+                "--user-data-dir=/tmp/LinkedIn Profile --no-first-run\n"
+                "333 /Applications/Google Chrome "
+                "--remote-debugging-port=9225 "
+                "--user-data-dir=/tmp/Saramin Profile --no-first-run\n"
+            )
+        return Result("p222\n")
+
+    process = resolve_managed_browser_process(
+        "linkedin_rps",
+        "http://127.0.0.1:9225",
+        runner=run,
+    )
+
+    assert process == ManagedBrowserProcess(222, "/tmp/LinkedIn Profile")
+    assert calls == [
+        ["ps", "ax", "-o", "pid=,command="],
+        [
+            "lsof",
+            "-nP",
+            "-a",
+            "-iTCP@127.0.0.1:9225",
+            "-sTCP:LISTEN",
+            "-Fp",
+        ],
+    ]
 
 
 @pytest.mark.parametrize(
@@ -221,6 +295,27 @@ def test_resolver_rechecks_browser_process_after_exact_page_selection() -> None:
             browser_process_resolver=lambda _site, _endpoint: next(processes),
             list_pages=lambda _endpoint: [page],
         )
+
+
+def test_resolver_accepts_linkedin_current_uas_login_surface() -> None:
+    page = {
+        "id": "target-exact",
+        "type": "page",
+        "url": (
+            "https://www.linkedin.com/uas/login?"
+            "session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ftalent%2Fhome"
+        ),
+        "webSocketDebuggerUrl": "ws://127.0.0.1:9225/devtools/page/target-exact",
+    }
+
+    ref = resolve_existing_target(
+        "linkedin_rps",
+        target_id="target-exact",
+        managed_endpoint_resolver=lambda _site: "http://127.0.0.1:9225",
+        list_pages=lambda _endpoint: [page],
+    )
+
+    assert ref.target_id == "target-exact"
 
 
 @pytest.mark.parametrize(

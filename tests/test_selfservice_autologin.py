@@ -95,6 +95,7 @@ def test_challenge_hands_off_without_submit():
                    CAPTCHA])  # navigate 후 캡차 등장
     r = ssl.perform_autologin(tab, "saramin", creds())
     assert r["state"] == "HUMAN_AUTH"
+    assert r["challenge_markers"] == ["보안문자", "captcha"]
     assert not any("SUBMIT" in e for e in tab.evals), "캡차면 제출 0회"
 
 
@@ -107,6 +108,26 @@ def test_normal_login_fills_once_and_verifies():
     assert len(submits) == 1, "제출은 정확히 1회"
 
 
+def test_linkedin_existing_login_cap_form_is_used_without_navigation():
+    logged_in = {
+        "url": "https://www.linkedin.com/talent/home",
+        "body": "LinkedIn Recruiter /talent",
+    }
+    form = {
+        "url": "https://www.linkedin.com/uas/login-cap",
+        "body": "LinkedIn 로그인 이메일 비밀번호",
+        "on_submit": logged_in,
+    }
+    tab = FakeTab([form])
+
+    result = ssl.perform_autologin(
+        tab, "linkedin_rps", creds(), sleep=lambda _s: None)
+
+    assert result["state"] == "AUTHENTICATED"
+    assert tab.navigations == []
+    assert len([expr for expr in tab.evals if "SUBMIT" in expr]) == 1
+
+
 def test_password_never_in_result():
     tab = FakeTab([{"url": "https://www.saramin.co.kr/zf_user/auth?ut=c", "body": "로그인 아이디"},
                    LOGGED_OUT_FORM])
@@ -114,6 +135,38 @@ def test_password_never_in_result():
     import json
     blob = json.dumps(r, ensure_ascii=False)
     assert "s3cr3t-pw" not in blob and "corp-id" not in blob
+
+
+def test_selector_drift_reports_only_nonsecret_form_shape():
+    class DriftTab(FakeTab):
+        def eval(self, expr):
+            if "readyState:document.readyState" in expr:
+                return {
+                    "readyState": "complete",
+                    "inputs": [
+                        {"type": "email", "name": "", "autocomplete": "username"},
+                    ],
+                    "forms": 0,
+                    "iframes": 1,
+                    "buttons": ["이메일로 로그인"],
+                }
+            if "const sels=" in expr:
+                return False
+            return super().eval(expr)
+
+    tab = DriftTab([
+        {"url": "https://www.linkedin.com/uas/login-cap", "body": "로그인"},
+        {"url": "https://www.linkedin.com/uas/login", "body": "로그인"},
+    ])
+
+    result = ssl.perform_autologin(tab, "linkedin_rps", creds(), sleep=lambda _s: None)
+
+    assert result["state"] == "SELECTOR_DRIFT"
+    assert result["form_shape"]["inputs"] == [
+        {"type": "email", "name": "", "autocomplete": "username"},
+    ]
+    assert "corp-id" not in str(result)
+    assert "s3cr3t-pw" not in str(result)
 
 
 def test_post_submit_2fa_delayed_load_is_human_auth():

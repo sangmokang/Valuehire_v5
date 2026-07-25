@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from .models import Channel
 from .portal_autologin import AUTO_LOGIN_SELECTORS, login_url_for_channel
-from .portal_login import _has_security_challenge
+from .portal_login import _CHALLENGE_TOKENS, _has_security_challenge
 
 # SOT-26 login_state_check: URL 아닌 GNB 마커로 판정.
 _AUTH_MARKERS: dict[str, tuple[str, ...]] = {
@@ -91,6 +91,39 @@ def _read_body(tab: Any) -> str:
     return str(tab.eval("document.body ? document.body.innerText : ''") or "")
 
 
+def _challenge_markers(body: str, url: str) -> list[str]:
+    haystack = f"{body} {url}".casefold()
+    return [token for token in _CHALLENGE_TOKENS if token.casefold() in haystack]
+
+
+def _login_form_shape(tab: Any) -> dict[str, Any]:
+    """Return selector-only drift metadata; never read field values or page text."""
+    result = tab.eval(
+        "(()=>({readyState:document.readyState,"
+        "inputs:[...document.querySelectorAll('input')].map(e=>({"
+        "type:e.getAttribute('type')||'',name:e.getAttribute('name')||'',"
+        "autocomplete:e.getAttribute('autocomplete')||''})),"
+        "forms:document.querySelectorAll('form').length,"
+        "iframes:document.querySelectorAll('iframe').length,"
+        "buttons:[...document.querySelectorAll('button')].slice(0,12).map(e=>"
+        "(e.innerText||e.getAttribute('aria-label')||'').trim()"
+        ".replace(/[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}/g,'[email]')"
+        ".replace(/\\+?\\d[\\d\\s().-]{7,}\\d/g,'[phone]').slice(0,80))"
+        ".filter(Boolean)}))()"
+    )
+    return result if isinstance(result, dict) else {}
+
+
+def _login_fields_present(tab: Any, selectors: Any) -> bool:
+    result = tab.eval(
+        "(()=>{const u=" + json.dumps(list(selectors.username))
+        + ",p=" + json.dumps(list(selectors.password))
+        + ";return u.some(s=>document.querySelector(s))"
+        "&&p.some(s=>document.querySelector(s));})()"
+    )
+    return result is True
+
+
 def perform_autologin(
     tab: Any,
     site: Channel,
@@ -112,26 +145,37 @@ def perform_autologin(
         return {"state": "AUTHENTICATED", "site": site, "mutations": 0,
                 "note": "이미 로그인됨 — 조작 0회"}
 
-    # 로그아웃/폼: 공식 로그인 URL 로 이동(동일 target) 후 재판정.
-    tab.navigate(login_url_for_channel(site))
-    sleep(settle_seconds)
-    body = _read_body(tab)
-    url = tab.current_url()
-    step = decide_login_step(site, body, url)
+    # LinkedIn login-cap에 실제 자격증명 폼이 이미 있으면 그대로 사용한다.
+    # 2026-07-26 현재 /uas/login 직접 이동은 일부 관리 브라우저에서 연결 오류
+    # 화면으로 끝나므로, 검증된 기존 폼을 버리고 재이동하지 않는다.
+    existing_linkedin_form = (
+        site == "linkedin_rps"
+        and "/uas/login-cap" in url
+        and _login_fields_present(tab, selectors)
+    )
+    if not existing_linkedin_form:
+        # 로그아웃/폼: 공식 로그인 URL 로 이동(동일 target) 후 재판정.
+        tab.navigate(login_url_for_channel(site))
+        sleep(settle_seconds)
+        body = _read_body(tab)
+        url = tab.current_url()
+        step = decide_login_step(site, body, url)
 
     if step == "already_authenticated":
         return {"state": "AUTHENTICATED", "site": site, "mutations": 1,
                 "note": "이동 후 기존 세션 확인"}
     if step == "security_challenge":
         return {"state": "HUMAN_AUTH", "site": site, "mutations": 0,
-                "note": "보안 챌린지 감지 — 제출 0회, 사람 인계 필요"}
+                "note": "보안 챌린지 감지 — 제출 0회, 사람 인계 필요",
+                "challenge_markers": _challenge_markers(body, url)}
 
     # 일반 로그인 화면: 자격증명 1회 제출(값은 여기서만 흐름).
     ok_id = tab.eval(_fill_js(selectors.username, creds.username))
     ok_pw = tab.eval(_fill_js(selectors.password, creds.password))
     if not (ok_id and ok_pw):
         return {"state": "SELECTOR_DRIFT", "site": site, "mutations": 0,
-                "note": "로그인 입력 셀렉터 미발견 — 제출 안 함(셀렉터 사전 수리 필요)"}
+                "note": "로그인 입력 셀렉터 미발견 — 제출 안 함(셀렉터 사전 수리 필요)",
+                "form_shape": _login_form_shape(tab)}
     tab.eval(_submit_js(selectors.submit))
 
     # 제출 후 페이지가 안정될 때까지 폴링한다. 2FA/캡차 페이지는 리다이렉트로 늦게 뜨므로

@@ -146,6 +146,7 @@ _SITE_TARGET_PATH_PREFIXES: dict[Site, tuple[str, ...]] = {
     "linkedin_rps": (
         "/talent/",
         "/login",
+        "/uas/login",
         "/uas/login-cap",
         "/checkpoint/",
         "/enterprise-authentication/",
@@ -358,6 +359,32 @@ def resolve_managed_browser_process(
         if pid <= 0:
             continue
         matches.append(ManagedBrowserProcess(pid, profile))
+    if len(matches) > 1:
+        try:
+            listener_result = runner(
+                [
+                    "lsof",
+                    "-nP",
+                    "-a",
+                    f"-iTCP@127.0.0.1:{port}",
+                    "-sTCP:LISTEN",
+                    "-Fp",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except Exception as exc:
+            raise LookupError("managed browser listener inspection failed") from exc
+        if int(getattr(listener_result, "returncode", 1)) != 0:
+            raise LookupError("managed browser listener inspection failed")
+        listener_pids = {
+            int(line[1:])
+            for line in str(getattr(listener_result, "stdout", "") or "").splitlines()
+            if line.startswith("p") and line[1:].isascii() and line[1:].isdigit()
+        }
+        matches = [match for match in matches if match.browser_pid in listener_pids]
     if len(matches) != 1:
         raise LookupError(f"{site} managed browser root process match count was {len(matches)}")
     return matches[0]
@@ -2248,11 +2275,25 @@ def load_safe_keepalive_target(path_value: str | os.PathLike[str]) -> SafeKeepal
     )
 
 
-_AUTO_LOGIN_CRED_ENV = {
-    "saramin": ("SARAMIN_USERNAME", "SARAMIN_PASSWORD"),
-    "jobkorea": ("JOBKOREA_USERNAME", "JOBKOREA_PASSWORD"),
-    "linkedin_rps": ("LINKEDIN_USERNAME", "LINKEDIN_PASSWORD"),
-}
+def _load_runtime_login_credentials(
+    site: Site,
+    *,
+    credential_provider: Any | None = None,
+) -> tuple[str, str] | None:
+    """Read one portal credential pair from the common macOS Keychain store."""
+    if credential_provider is None:
+        from .portal_recovery import MacKeychainPortalCredentialProvider
+
+        credential_provider = MacKeychainPortalCredentialProvider()
+    try:
+        credentials = credential_provider.load(site)
+    except Exception:
+        return None
+    if credentials is None:
+        return None
+    username = str(getattr(credentials, "username", "") or "").strip()
+    password = str(getattr(credentials, "password", "") or "")
+    return (username, password) if username and password else None
 
 
 def run_auto_login_episode(
@@ -2260,6 +2301,7 @@ def run_auto_login_episode(
     *,
     agent: str,
     target_id: str | None = None,
+    _credential_provider: Any | None = None,
 ) -> dict[str, Any]:
     """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
 
@@ -2270,7 +2312,7 @@ def run_auto_login_episode(
     from . import portal_selfservice_login as ssl
     from .owner_activity import detect_owner_activity_snapshot
 
-    if site not in _AUTO_LOGIN_CRED_ENV:
+    if site not in _SITE_DOMAINS:
         return {"status": "unsupported_site", "site": site}
     try:
         snapshot = detect_owner_activity_snapshot()
@@ -2280,12 +2322,14 @@ def run_auto_login_episode(
         return {"status": "human_active", "site": site,
                 "note": "사장님 활동 감지 — 자동 로그인 보류"}
 
-    id_env, pw_env = _AUTO_LOGIN_CRED_ENV[site]
-    username = os.environ.get(id_env, "").strip()
-    password = os.environ.get(pw_env, "")
-    if not username or not password:
+    loaded_credentials = _load_runtime_login_credentials(
+        site,
+        credential_provider=_credential_provider,
+    )
+    if loaded_credentials is None:
         return {"status": "missing_credentials", "site": site,
-                "note": f"{id_env}/{pw_env} 미설정(.env.local 로드 필요)"}
+                "note": "macOS Keychain valuehire.portal_credentials 설정 필요"}
+    username, password = loaded_credentials
 
     lease = _default_login_lease(site)
     if not _acquire_login_lease_read_only(lease, stop_requested=lambda: False, sleep=time.sleep):
