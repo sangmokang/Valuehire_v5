@@ -94,6 +94,7 @@ def test_login_skill_routes_all_agents_through_keychain_autologin_runner() -> No
     assert "Claude·Codex·Hermes가 같은 코드와 Keychain" in canonical
     assert "LinkedIn `/uas/login-cap`" in canonical
     assert "127.0.0.1:<port>` LISTEN PID" in canonical
+    assert "exact_window_presentation_failed" in canonical
 
 
 def test_login_skill_defines_strict_browser_ownership_state_machine() -> None:

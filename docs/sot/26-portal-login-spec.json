@@ -43,7 +43,7 @@
     "title_prefix": "[LOGIN HERE][<agent>][<site>][<target-id-suffix>]",
     "capture_command": "screencapture -x -l <CGWindowID>",
     "capture_policy": "정확한 창만 캡처. 다른 PID의 창 제목·화면·전체 desktop 출력 금지. 캡처는 0700 임시 디렉터리/0600 파일에 두고 표시 후 삭제.",
-    "ambiguity_policy": "preflight PID+bounds 또는 post-marker PID+bounds+title-prefix 결과가 0개/여러 개이거나 CGWindowID가 바뀌면 focus/capture 0회, HUMAN_ACTIVE/HANDOFF로 fail-closed. first window·title contains fallback 금지.",
+    "ambiguity_policy": "preflight PID+bounds 또는 post-marker PID+bounds+title-prefix 결과가 0개/여러 개이거나 CGWindowID가 바뀌면 focus/capture 0회, HUMAN_ACTIVE/HANDOFF로 fail-closed. visible marker 또는 exact window 증명이 실패하면 traceback 대신 handoff_failed/exact_window_presentation_failed를 반환하고 first window·title contains·임의 focus fallback을 금지한다.",
     "max_presentations_per_episode": 1,
     "presentation_timing": "AI_ATTACHED에서 title prefix+badge+exact window 1회 표면화 후 HUMAN_AUTH 진입",
     "allowed_during_wait": ["read_auth_marker", "read_owner_idle", "wait"],
@@ -267,6 +267,11 @@
       "evidence": "초기 session_guard auto-login은 LINKEDIN_USERNAME/PASSWORD env만 읽어 Keychain이 설정돼 있어도 Codex shell에서 command substitution을 별도로 요구",
       "impact": "Codex·Claude 실행 명령이 달라지고 비밀값 shell 전달 위험이 증가",
       "fix": "session_guard가 공용 Keychain provider를 직접 읽고 --agent만 실행 주체별로 바꾼다."
+    },
+    "RC13_captcha_handoff_marker_failure": {
+      "evidence": "2026-07-26 실제 LinkedIn 보안문자/CAPTCHA target의 human-auth에서 visible login-window marker 설치 실패가 RuntimeError traceback으로 노출됨",
+      "impact": "사람 인증 창을 안전하게 표면화하지 못하고 호출자가 비정상 종료를 재시도로 오해할 수 있음",
+      "fix": "presentation 예외를 handoff_failed/exact_window_presentation_failed 구조화 결과로 변환하고, cleanup을 시도한 뒤 WebSocket만 해제한다. marker 증명 없는 임의 focus는 금지."
     }
   },
   "self_check": [
@@ -278,5 +283,6 @@
     ,"같은 port 선언을 실제 endpoint LISTEN PID 확인 없이 모호성으로만 중단했는가? → RC10 재발"
     ,"기존 LinkedIn login-cap 폼을 버리고 /uas/login으로 무조건 이동했는가? → RC11 재발"
     ,"에이전트별 shell에서 자격증명을 env로 재주입했는가? → RC12 재발"
+    ,"visible marker 실패를 traceback으로 노출하거나 임의 focus로 우회했는가? → RC13 재발"
   ]
 }

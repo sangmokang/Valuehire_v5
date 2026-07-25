@@ -199,7 +199,7 @@ PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \
   --target-id '<existing-target-id>'
 ```
 
-이 명령은 lease 충돌이나 `HUMAN_ACTIVE`를 종료 오류로 취급하지 않고 브라우저 무조작 상태로 기다린다. 허용 상태가 되고 일반 로그인·보안 챌린지일 때만 정확한 창을 1회 표시한 뒤 locator JSON을 출력하고, `HUMAN_AUTH` 동안 timeout 없이 읽기 전용으로 기다린다. 세션 충돌이면 창을 표시하지 않고 `AUTH_CONFLICT`로 종료한다. 정상 완료·명시적 stop·Ctrl-C·표시/출력/대기 예외 모두에서 fresh guard로 title/배지 cleanup을 시도하고, 막히면 `cleanup_pending`으로 둔 채 창·탭·프로필은 유지하고 CDP 연결만 해제한다.
+이 명령은 lease 충돌이나 `HUMAN_ACTIVE`를 종료 오류로 취급하지 않고 브라우저 무조작 상태로 기다린다. 허용 상태가 되고 일반 로그인·보안 챌린지일 때만 정확한 창을 1회 표시한 뒤 locator JSON을 출력하고, `HUMAN_AUTH` 동안 timeout 없이 읽기 전용으로 기다린다. 세션 충돌이면 창을 표시하지 않고 `AUTH_CONFLICT`로 종료한다. visible marker나 exact window 증명이 실패하면 traceback·first-window fallback·임의 focus 없이 `handoff_failed`와 `exact_window_presentation_failed`를 반환한다. 정상 완료·명시적 stop·Ctrl-C·표시/출력/대기 예외 모두에서 fresh guard로 title/배지 cleanup을 시도하고, 막히면 `cleanup_pending`으로 둔 채 창·탭·프로필은 유지하고 CDP 연결만 해제한다.
 
 세션 유지는 아래 정식 진입점만 쓴다. `--safe-target-json`은 사람이 사전 감사한 정확한 기존 target의 동일 origin·GET·`_self`·무료 읽기 전용 링크 레코드여야 한다. 최소한 `target_id`, `source_url`, `selector`, `destination_url`, `method`, `target_attr`, `download`, `dedicated_tab`, `clean_form`, `previously_opened_free`, `risk_labels`를 담는다. 레코드가 있어도 실행기가 위험 URL/selector denylist, 동일 origin, fresh DOM link 속성, target id, navigation history 추가·복원을 다시 증명한다. 파일이 없거나 값/증명이 하나라도 틀리면 fail-closed SKIP한다.
 
