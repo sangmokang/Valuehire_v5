@@ -505,6 +505,49 @@ def test_main_records_safe_startup_block_reason(tmp_path: Path, monkeypatch) -> 
     assert client.run_calls == []
 
 
+def test_main_arms_evidence_recorder_with_all_live_secret_values(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from tools.multi_position_sourcing import discord_hr1
+
+    queue = _RuntimeQueue(ready=False)
+    captured: dict[str, tuple[str, ...]] = {}
+
+    class Recorder:
+        def __init__(self, path, *, forbidden_values=()):
+            captured["values"] = tuple(forbidden_values)
+
+        def record(self, kind: str, **fields):
+            return {"kind": kind, **fields}
+
+    class Client:
+        def run(self, token: str) -> None:
+            raise AssertionError("unready gateway must not connect")
+
+        def stop_after_lease_loss(self, exc: Exception) -> None:
+            raise AssertionError(f"unexpected lease loss: {exc}")
+
+    token = _bot_token(BOT)
+    minimal_key = "minimal-key-fixture"
+    service_key = "service-key-fixture"
+    monkeypatch.setattr(discord_hr1, "Hr1EvidenceRecorder", Recorder)
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", lambda: lambda: queue)
+    monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: Client())
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", token)
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+    monkeypatch.setenv("DISCORD_GATEWAY_SYNC_COMMANDS", "0")
+    monkeypatch.setenv("DISCORD_HR1_EVIDENCE_PATH", str(tmp_path / "events.jsonl"))
+    monkeypatch.setenv(gateway.QUEUE_KEY_ENV, minimal_key)
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", service_key)
+
+    with pytest.raises(RuntimeError, match="heartbeat"):
+        gateway.main()
+
+    assert captured["values"] == (token, minimal_key, service_key)
+
+
 def test_gateway_module_has_no_direct_engine_execution() -> None:
     tree = ast.parse((ROOT / "scripts/discord_direct_gateway.py").read_text())
     forbidden = []
