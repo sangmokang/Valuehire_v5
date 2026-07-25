@@ -74,9 +74,6 @@
 - 워크트리: `../Valuehire_v5-profile-archive-first-hook` (branch `task/profile-archive-first-hook`, `make task`).
 
 ## 적대 검증 로그
-(후기록)
-
-## 적대 검증 로그
 
 ### V1 (codex fresh, read-only, 2026-07-26) — FAIL → 전건 봉인
 - CRITICAL: 자동발송 스킬 `clickup-position-talent-matching` 누락 → `_ADVANCE_SKILLS`에 전 발송/등록 스킬 추가.
