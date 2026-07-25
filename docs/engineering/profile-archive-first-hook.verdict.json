@@ -1,0 +1,29 @@
+{
+  "slug": "profile-archive-first-hook",
+  "issue": "후보자 프로필 저장 강제 훅 (SOT-26 failure_policy 2층)",
+  "generator": {
+    "verdict": "PASS",
+    "evidence": [
+      {"command": "pytest tests/test_profile_archive_gate.py -q", "numbers": "31 passed"},
+      {"command": "pytest tests/test_discord_bot_guards.py -q", "numbers": "20 passed"},
+      {"command": "live harness-dispatch bypass reproduction", "numbers": "clickup/Co_Read/candidate_url/percent-encoded 전부 exit 2, humansearch exit 0"}
+    ]
+  },
+  "v1": {
+    "runner": "codex:codex-rescue fresh read-only",
+    "agentId": "a83549a034ab03501",
+    "verdict": "FAIL (6 findings) → 전건 봉인 후 재검증 통과",
+    "findings": [
+      {"sev": "CRITICAL", "claim": "clickup-position-talent-matching 등 자동발송 스킬 _ADVANCE_SKILLS 누락", "resolution": "전 발송/등록 스킬 추가, RED 테스트 test_v1_all_send_skills_blocked"},
+      {"sev": "HIGH", "claim": "jobkorea /Recruit/Co_Read?rNo= 미검출", "resolution": "정규식을 browser_evidence 정본 형식에 맞춤, test_v1_jobkorea_co_read_matched"},
+      {"sev": "HIGH", "claim": "다중 URL 첫번째만 검사", "resolution": "전 URL 전수 검사, test_v1_multiple_urls_block_if_any_unsaved"},
+      {"sev": "HIGH", "claim": "candidate_url·중첩·percent-encoding 우회", "resolution": "tool_input 재귀 스캔 + percent-decode, test_v1_alternate_field/percent_encoded"},
+      {"sev": "MEDIUM", "claim": "trailing slash/query 과잉차단", "resolution": "canonical_url 정규화, test_v1_receipt_matches_despite_trailing_slash_and_query"},
+      {"sev": "MEDIUM", "claim": "import 실패 fail-open", "resolution": "디스패처 기존 계약(fail-open) — 잔존 위험 명시, 정상 환경 차단 실증"}
+    ]
+  },
+  "three_way_agree": false,
+  "status": "v1-fail-then-sealed",
+  "note": "V1 FAIL 6건을 RED 테스트로 고정→봉인→라이브 재현으로 exit 2 차단 확인. import fail-open은 디스패처 공통 계약이라 잔존 위험으로 문서화. V2 미실행(세션 길이) — merge 후 필요시 재검증 권고.",
+  "date": "2026-07-26"
+}
