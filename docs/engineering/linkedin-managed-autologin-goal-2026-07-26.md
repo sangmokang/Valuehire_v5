@@ -104,4 +104,6 @@ make strict-exit-gate
 - [x] SOT-30 R3: 손 조작은 정식 runner만 수행
 - [x] 재발 원장의 로그인 미이행·창 배회 사례를 회귀 검사로 승격
 - [x] SOT-26/Claude/Codex 스킬 동기화
-- [ ] 전체 검증·적대 검증·라이브 실증·배송
+- [x] 전체 2,749개 검사·자체 적대 검증·Mac mini CAPTCHA 라이브 실증
+- [ ] 사람 CAPTCHA 해결 후 AUTHENTICATED 영수증 발급
+- [ ] push·PR·CI·merge 배송

@@ -5,7 +5,7 @@
 - 일반 로그인 화면일 때만 저장 자격증명을 동일 target 폼에 1회 제출.
 - 캡차·2FA·checkpoint·세션충돌은 제출 0회로 HUMAN_AUTH 인계.
 - 이미 로그인돼 있으면 mutation 0회.
-- 비밀번호는 러너 내부(env→creds_provider)에서만 흐르고 반환값·로그·모델 컨텍스트에 넣지 않는다.
+- 비밀번호는 러너 내부(Keychain→creds_provider)에서만 흐르고 반환값·로그·모델 컨텍스트에 넣지 않는다.
 
 호출자(session_guard auto-login)가 lease·owner-idle·정확한 target attach를 책임지고,
 이 모듈은 그 target(duck-typed: .eval/.navigate/.current_url) 위에서만 동작한다.

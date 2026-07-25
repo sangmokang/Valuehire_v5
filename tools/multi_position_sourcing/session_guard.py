@@ -2318,7 +2318,8 @@ def run_auto_login_episode(
     """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
 
     lease·owner-idle 게이트를 먼저 통과하고, 정확한 기존 target 하나에만 attach한다.
-    비밀번호는 이 프로세스 env에서만 읽어 perform_autologin 내부로만 흐른다(반환값 무비밀).
+    비밀번호는 공용 macOS Keychain에서 이 프로세스 안으로만 읽어
+    perform_autologin 내부로만 흐른다(반환값 무비밀).
     캡차·2FA·세션충돌이면 제출 0회로 HUMAN_AUTH를 반환한다. 종료 시 CDP WebSocket만 해제.
     """
     from . import portal_selfservice_login as ssl

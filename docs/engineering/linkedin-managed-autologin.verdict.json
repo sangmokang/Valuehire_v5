@@ -1,0 +1,71 @@
+{
+  "claim_id": "linkedin-managed-autologin-2026-07-26",
+  "mode": "mixed",
+  "risk": "L3",
+  "goal": "docs/engineering/linkedin-managed-autologin-goal-2026-07-26.md",
+  "generator": {
+    "claim": "정식 session_guard auto-login이 같은 port를 선언한 Chrome 중 exact IPv4 LISTEN PID와 기존 LinkedIn login-cap target을 선택하고, 공용 Keychain을 직접 읽으며, captcha/2FA/멀티세션은 제출 없이 중단한다. Claude/Codex/Hermes 스킬은 같은 진입점과 해시를 사용한다.",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "artifact": "2749 passed, 4 xfailed, 105 subtests passed in 176.49s",
+    "focused": "tests/test_login_session_runner.py + tests/test_login_production_runner.py + tests/test_selfservice_autologin.py + tests/test_login_skill_contract.py",
+    "live_evidence": "Mac mini PID 34202 / profile ~/.valuehire/cdp_profiles/linkedin / 127.0.0.1:9225 / existing target에서 Keychain shell 주입 없이 auto-login 실행. 실제 보안문자/CAPTCHA를 challenge_markers=[보안문자,captcha], mutations=0, HUMAN_AUTH로 반환.",
+    "skill_sha256": "8bf48b59d000457e75af135ddb4edeba9d7e78aa22913a284dad5af249124d6d",
+    "mutation_evidence": "duplicate port 후보의 lsof 결과가 p222,p333 두 개면 test_managed_browser_process_rejects_ambiguous_exact_ipv4_listeners가 LookupError를 강제한다. 기존 login-cap 폼 재사용 테스트는 navigate 0회와 submit 정확히 1회를 단언한다.",
+    "test_weakening": "origin/main...HEAD에서 skip/only/todo 추가 0건"
+  },
+  "v1": {
+    "author": "Claude CLI fresh prompt",
+    "verdict": "unavailable",
+    "evidence": "env -u ANTHROPIC_API_KEY claude -p <adversarial prompt>가 180초 동안 stdout 0으로 응답하지 않아 Ctrl-C로 종료. 결함 없음으로 간주하지 않음."
+  },
+  "v2": {
+    "author": "Codex self-adversarial fallback",
+    "verdict": "pass_with_live_human_gate",
+    "attacks": [
+      "동일 port를 선언한 IPv4/IPv6 Chrome 공존",
+      "exact IPv4 LISTEN PID가 0개/여러 개인 경우",
+      "기존 login-cap 폼을 버리고 깨진 /uas/login으로 이동하는 경우",
+      "Keychain 부재/읽기 실패",
+      "captcha에서 credential submit 또는 재시도",
+      "visible marker 실패 traceback 및 임의 focus",
+      "lease ownership loss를 handoff_failed로 삼키는 경우",
+      "Claude/Codex 저장소·전역 스킬 byte drift",
+      "테스트 skip/only/todo 약화",
+      "env 자격증명이라고 남은 stale docstring"
+    ],
+    "findings_fixed": [
+      "presentation 예외 catch가 ProfileLockError까지 삼키던 회귀를 재현해 re-raise로 복원",
+      "Keychain 전환 후 env라고 남은 docstring 2곳을 수정",
+      "전체 suite의 Discord 0.32초 시간 경계 flake를 Barrier 동시성 증명으로 별도 이슈 #212와 회귀 검사로 안정화"
+    ]
+  },
+  "failed_attempts": [
+    {
+      "attempt": "명령행 port만으로 LinkedIn Chrome 선택",
+      "root_cause": "IPv4 LinkedIn과 IPv6 사람인이 모두 --remote-debugging-port=9225를 선언",
+      "result": "managed browser root process match count was 2",
+      "resolution": "exact 127.0.0.1 listener PID로 후보 축소"
+    },
+    {
+      "attempt": "기존 login-cap target에서 /uas/login으로 무조건 이동",
+      "root_cause": "현재 관리 브라우저에서 새 URL이 연결 오류 화면으로 로드",
+      "result": "SELECTOR_DRIFT inputs=0 forms=0 buttons=[새로고침]",
+      "resolution": "현재 login-cap username/password 필드가 있으면 그 폼 보존"
+    },
+    {
+      "attempt": "CAPTCHA exact window 표면화",
+      "root_cause": "visible login-window marker 설치 실패",
+      "result": "기존에는 RuntimeError traceback, 수정 후 handoff_failed/exact_window_presentation_failed",
+      "resolution": "임의 focus 없이 구조화 결과, cleanup 시도, WebSocket만 해제"
+    },
+    {
+      "attempt": "독립 Claude 적대검증",
+      "root_cause": "CLI가 180초 동안 응답 없음",
+      "result": "verdict 미도출",
+      "resolution": "미가용 사실 기록 후 Codex 자체 반례 검증과 전체 기계 검사로 대체"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "T PASS + self-adversarial PASS. 실제 자동 로그인 경로는 CAPTCHA까지 실증했으며 보안정책상 사람 해결 전 AUTHENTICATED를 주장하지 않는다. 외부 V1은 기술적으로 미가용."
+}
