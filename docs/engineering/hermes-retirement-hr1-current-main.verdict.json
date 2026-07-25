@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "engine": "codex",
+    "branch_head": "1079b4341edee6d244ae3d534aed4d90e9139b20",
+    "merged_main": "8b5ed14e500bc254656374a48e5140634f7c90a6",
+    "focused_command": ".venv/bin/python -m pytest -q tests/test_discord_hr1_acceptance.py tests/test_discord_direct_gateway.py tests/test_direct_receiver.py tests/test_engine_select_e2e.py tests/test_discord_bot_console_ac1.py tests/test_run_discord_hr1_live_acceptance.py tests/test_discord_hr1_postgres.py tests/test_discord_bot_guards.py",
+    "focused_result": "181 passed",
+    "verify_command": "./verify.sh",
+    "verify_result": "2792 passed, 4 xfailed, 105 subtests passed; exit 0",
+    "adversarial_command": ".venv/bin/python -m pytest -q tests/test_run_discord_hr1_live_acceptance.py tests/test_discord_hr1_postgres.py tests/test_discord_hr1_acceptance.py tests/test_discord_bot_guards.py tests/test_discord_direct_gateway.py -k 'replay or second_holder or stale or unready or same_hermes_identity or no_direct_engine_execution or raw_secret or minimal_privilege or bypass or unsigned or direct_engine or manual_gateway or atomic or event_id'",
+    "adversarial_result": "18 passed, 116 deselected"
+  },
+  "v1": {
+    "engine": "claude",
+    "verdict": "PASS_WITH_FINDING",
+    "finding": "Intermediate HR-1 JSONL evidence checked secret-like key names but did not scan configured secret values under benign keys.",
+    "disposition": "accepted_and_fixed",
+    "regression_test": "tests/test_discord_hr1_acceptance.py::test_hr1_evidence_recorder_rejects_secret_hidden_under_safe_key"
+  },
+  "v2": {
+    "engine": "claude",
+    "verdict": "PASS",
+    "scope": "local secret-value recorder and production wiring recheck",
+    "residual": "Live HR-1 Discord acceptance was not performed."
+  },
+  "failed_attempts": [
+    {
+      "attempt": "main full verifier",
+      "result": "one nonblocking concurrency timing test failed once and passed on immediate focused rerun"
+    },
+    {
+      "attempt": "focused tests with system python",
+      "result": "pytest unavailable; rerouted to repository .venv interpreter"
+    },
+    {
+      "attempt": "worker readiness cherry-pick",
+      "result": "three configured Windows CLI tests failed; restored explicit configured path resolution and shell compatibility"
+    },
+    {
+      "attempt": "first independent review",
+      "result": "found intermediate evidence secret-value gap; regression test failed before fix and passed after fix"
+    }
+  ],
+  "three_way_agree": false,
+  "status": "LOCAL_PASS_LIVE_BLOCKED",
+  "live_blockers": [
+    "isolated Discord test bot token and matching bot id are absent",
+    "Hermes bot id is absent from the runnable environment",
+    "minimal-privilege gateway key and URL are absent from the runnable environment",
+    "canonical HR-1 receipt is absent"
+  ],
+  "artifacts": {
+    "receipt": "artifacts/discord-cutover/hermes-retirement-receipt.json",
+    "receipt_present": false,
+    "verifier_sha256": "9dba273eecfcbf12e13ddfe9577985d48a928e930eee476ebdbba978eba8832e",
+    "contract_sha256": "9f58c0d8dc630d30909d6afde94c4a70ef67fcf0a9c6be30fea378e129d97aad",
+    "runner_sha256": "225b663e3023fe6f322f310561a0004c839c651b074786ead896fd517408f788"
+  },
+  "exit_gate": {
+    "command": "make strict-exit-gate",
+    "exit_code": 0,
+    "result": "PASS before verdict artifact creation"
+  }
+}
