@@ -87,6 +87,16 @@ def test_login_skill_is_portable_and_has_single_repo_source() -> None:
     assert all(agent in canonical for agent in ("Claude", "Codex", "Hermes"))
 
 
+def test_login_skill_routes_all_agents_through_keychain_autologin_runner() -> None:
+    canonical = _text(CANONICAL)
+    assert "session_guard auto-login" in canonical
+    assert "valuehire.portal_credentials" in canonical
+    assert "Claude·Codex·Hermes가 같은 코드와 Keychain" in canonical
+    assert "LinkedIn `/uas/login-cap`" in canonical
+    assert "127.0.0.1:<port>` LISTEN PID" in canonical
+    assert "exact_window_presentation_failed" in canonical
+
+
 def test_login_skill_defines_strict_browser_ownership_state_machine() -> None:
     text = _text(CANONICAL)
     markers = (
