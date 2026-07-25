@@ -2248,6 +2248,76 @@ def load_safe_keepalive_target(path_value: str | os.PathLike[str]) -> SafeKeepal
     )
 
 
+_AUTO_LOGIN_CRED_ENV = {
+    "saramin": ("SARAMIN_USERNAME", "SARAMIN_PASSWORD"),
+    "jobkorea": ("JOBKOREA_USERNAME", "JOBKOREA_PASSWORD"),
+    "linkedin_rps": ("LINKEDIN_USERNAME", "LINKEDIN_PASSWORD"),
+}
+
+
+def run_auto_login_episode(
+    site: Site,
+    *,
+    agent: str,
+    target_id: str | None = None,
+) -> dict[str, Any]:
+    """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
+
+    lease·owner-idle 게이트를 먼저 통과하고, 정확한 기존 target 하나에만 attach한다.
+    비밀번호는 이 프로세스 env에서만 읽어 perform_autologin 내부로만 흐른다(반환값 무비밀).
+    캡차·2FA·세션충돌이면 제출 0회로 HUMAN_AUTH를 반환한다. 종료 시 CDP WebSocket만 해제.
+    """
+    from . import portal_selfservice_login as ssl
+    from .owner_activity import detect_owner_activity_snapshot
+
+    if site not in _AUTO_LOGIN_CRED_ENV:
+        return {"status": "unsupported_site", "site": site}
+    try:
+        snapshot = detect_owner_activity_snapshot()
+    except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
+        return {"status": "human_active", "site": site, "note": "owner 감지 실패 → 양보"}
+    if snapshot.owner_activity_detected:
+        return {"status": "human_active", "site": site,
+                "note": "사장님 활동 감지 — 자동 로그인 보류"}
+
+    id_env, pw_env = _AUTO_LOGIN_CRED_ENV[site]
+    username = os.environ.get(id_env, "").strip()
+    password = os.environ.get(pw_env, "")
+    if not username or not password:
+        return {"status": "missing_credentials", "site": site,
+                "note": f"{id_env}/{pw_env} 미설정(.env.local 로드 필요)"}
+
+    lease = _default_login_lease(site)
+    if not _acquire_login_lease_read_only(lease, stop_requested=lambda: False, sleep=time.sleep):
+        return {"status": "lease_unavailable", "site": site}
+    try:
+        ref = resolve_existing_target(site, target_id=target_id)
+        tab = _attach_exact_ref({
+            "id": ref.target_id,
+            "type": "page",
+            "url": ref.initial_url,
+            "webSocketDebuggerUrl": ref.websocket_url,
+        }, badge=True)
+        try:
+            outcome = ssl.perform_autologin(
+                tab, site, ssl.PortalCreds(username=username, password=password))
+        finally:
+            try:
+                tab.close()  # raw_cdp.close(): 배지 제거 + WebSocket 해제만(탭/브라우저 보존)
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        try:
+            lease.release()
+        except Exception:  # noqa: BLE001
+            pass
+
+    outcome["site"] = site
+    outcome["target_id"] = ref.target_id
+    outcome["host"] = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+    return outcome
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI for the actual exact-target human-auth and keepalive runners."""
     import argparse
@@ -2278,8 +2348,39 @@ def main(argv: list[str] | None = None) -> int:
     evidence.add_argument("--profile-url", default="")
     evidence.add_argument("--position-id", default="")
     evidence.add_argument("--candidate-index", type=int, default=0)
+    autologin = commands.add_parser(
+        "auto-login",
+        help="이슈 B: 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인",
+    )
+    autologin.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
+    autologin.add_argument("--agent", required=True)
+    autologin.add_argument("--target-id", default=None)
     args = parser.parse_args(argv)
     site: Site = args.site
+
+    if args.command == "auto-login":
+        result = run_auto_login_episode(site, agent=args.agent, target_id=args.target_id)
+        if result.get("state") == "AUTHENTICATED":
+            # 로그인 성공 → 정식 증거 캡처로 login_barrier 영수증까지 발급.
+            evidence_result = run_capture_evidence_episode(
+                site, task="login", mode="evidence", agent=args.agent,
+                target_id=result.get("target_id"))
+            result["evidence"] = evidence_result
+            if evidence_result.get("capture_status") == "saved":
+                from . import login_barrier
+
+                episode = {
+                    "status": "authenticated",
+                    "site": site,
+                    "proof_names": ["gnb_account_marker"],
+                    "evidence": evidence_result,
+                }
+                machine = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+                receipt_path = login_barrier.write_channel_receipt_from_episode(
+                    episode, machine=machine)
+                result["login_receipt_path"] = receipt_path or ""
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("state") == "AUTHENTICATED" else 1
 
     if args.command == "human-auth":
         result = run_human_auth_episode(
