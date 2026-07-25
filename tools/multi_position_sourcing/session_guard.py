@@ -146,6 +146,7 @@ _SITE_TARGET_PATH_PREFIXES: dict[Site, tuple[str, ...]] = {
     "linkedin_rps": (
         "/talent/",
         "/login",
+        "/uas/login",
         "/uas/login-cap",
         "/checkpoint/",
         "/enterprise-authentication/",
@@ -358,6 +359,32 @@ def resolve_managed_browser_process(
         if pid <= 0:
             continue
         matches.append(ManagedBrowserProcess(pid, profile))
+    if len(matches) > 1:
+        try:
+            listener_result = runner(
+                [
+                    "lsof",
+                    "-nP",
+                    "-a",
+                    f"-iTCP@127.0.0.1:{port}",
+                    "-sTCP:LISTEN",
+                    "-Fp",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except Exception as exc:
+            raise LookupError("managed browser listener inspection failed") from exc
+        if int(getattr(listener_result, "returncode", 1)) != 0:
+            raise LookupError("managed browser listener inspection failed")
+        listener_pids = {
+            int(line[1:])
+            for line in str(getattr(listener_result, "stdout", "") or "").splitlines()
+            if line.startswith("p") and line[1:].isascii() and line[1:].isdigit()
+        }
+        matches = [match for match in matches if match.browser_pid in listener_pids]
     if len(matches) != 1:
         raise LookupError(f"{site} managed browser root process match count was {len(matches)}")
     return matches[0]
@@ -1734,6 +1761,18 @@ def run_human_auth_episode(
             )
         except _HumanAuthStopRequested:
             return {"status": "human_auth_stopped", "site": site}
+        except Exception as exc:
+            from .portal_worker import ProfileLockError
+
+            if isinstance(exc, ProfileLockError):
+                raise
+            pending_locator = getattr(tab, "_vh_human_auth_cleanup_locator", None)
+            return {
+                "status": "handoff_failed",
+                "site": site,
+                "reason": "exact_window_presentation_failed",
+                "cleanup_pending": isinstance(pending_locator, LoginWindowLocator),
+            }
         public_locator = _public_locator_payload(locator)
         sink(public_locator)
         observation = waiter(
@@ -2248,6 +2287,94 @@ def load_safe_keepalive_target(path_value: str | os.PathLike[str]) -> SafeKeepal
     )
 
 
+def _load_runtime_login_credentials(
+    site: Site,
+    *,
+    credential_provider: Any | None = None,
+) -> tuple[str, str] | None:
+    """Read one portal credential pair from the common macOS Keychain store."""
+    if credential_provider is None:
+        from .portal_recovery import MacKeychainPortalCredentialProvider
+
+        credential_provider = MacKeychainPortalCredentialProvider()
+    try:
+        credentials = credential_provider.load(site)
+    except Exception:
+        return None
+    if credentials is None:
+        return None
+    username = str(getattr(credentials, "username", "") or "").strip()
+    password = str(getattr(credentials, "password", "") or "")
+    return (username, password) if username and password else None
+
+
+def run_auto_login_episode(
+    site: Site,
+    *,
+    agent: str,
+    target_id: str | None = None,
+    _credential_provider: Any | None = None,
+) -> dict[str, Any]:
+    """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
+
+    lease·owner-idle 게이트를 먼저 통과하고, 정확한 기존 target 하나에만 attach한다.
+    비밀번호는 공용 macOS Keychain에서 이 프로세스 안으로만 읽어
+    perform_autologin 내부로만 흐른다(반환값 무비밀).
+    캡차·2FA·세션충돌이면 제출 0회로 HUMAN_AUTH를 반환한다. 종료 시 CDP WebSocket만 해제.
+    """
+    from . import portal_selfservice_login as ssl
+    from .owner_activity import detect_owner_activity_snapshot
+
+    if site not in _SITE_DOMAINS:
+        return {"status": "unsupported_site", "site": site}
+    try:
+        snapshot = detect_owner_activity_snapshot()
+    except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
+        return {"status": "human_active", "site": site, "note": "owner 감지 실패 → 양보"}
+    if snapshot.owner_activity_detected:
+        return {"status": "human_active", "site": site,
+                "note": "사장님 활동 감지 — 자동 로그인 보류"}
+
+    loaded_credentials = _load_runtime_login_credentials(
+        site,
+        credential_provider=_credential_provider,
+    )
+    if loaded_credentials is None:
+        return {"status": "missing_credentials", "site": site,
+                "note": "macOS Keychain valuehire.portal_credentials 설정 필요"}
+    username, password = loaded_credentials
+
+    lease = _default_login_lease(site)
+    if not _acquire_login_lease_read_only(lease, stop_requested=lambda: False, sleep=time.sleep):
+        return {"status": "lease_unavailable", "site": site}
+    try:
+        ref = resolve_existing_target(site, target_id=target_id)
+        tab = _attach_exact_ref({
+            "id": ref.target_id,
+            "type": "page",
+            "url": ref.initial_url,
+            "webSocketDebuggerUrl": ref.websocket_url,
+        }, badge=True)
+        try:
+            outcome = ssl.perform_autologin(
+                tab, site, ssl.PortalCreds(username=username, password=password))
+        finally:
+            try:
+                tab.close()  # raw_cdp.close(): 배지 제거 + WebSocket 해제만(탭/브라우저 보존)
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        try:
+            lease.release()
+        except Exception:  # noqa: BLE001
+            pass
+
+    outcome["site"] = site
+    outcome["target_id"] = ref.target_id
+    outcome["host"] = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+    return outcome
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI for the actual exact-target human-auth and keepalive runners."""
     import argparse
@@ -2278,8 +2405,41 @@ def main(argv: list[str] | None = None) -> int:
     evidence.add_argument("--profile-url", default="")
     evidence.add_argument("--position-id", default="")
     evidence.add_argument("--candidate-index", type=int, default=0)
+    autologin = commands.add_parser(
+        "auto-login",
+        help="이슈 B: 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인",
+    )
+    autologin.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
+    autologin.add_argument("--agent", required=True)
+    autologin.add_argument("--target-id", default=None)
     args = parser.parse_args(argv)
     site: Site = args.site
+
+    if args.command == "auto-login":
+        result = run_auto_login_episode(site, agent=args.agent, target_id=args.target_id)
+        if result.get("state") == "AUTHENTICATED":
+            # 로그인 성공 → 정식 증거 캡처로 login_barrier 영수증까지 발급.
+            evidence_result = run_capture_evidence_episode(
+                site, task="login", mode="evidence", agent=args.agent,
+                target_id=result.get("target_id"))
+            result["evidence"] = evidence_result
+            if evidence_result.get("capture_status") == "saved":
+                from . import login_barrier
+
+                episode = {
+                    "status": "authenticated",
+                    "site": site,
+                    "target_id": result.get("target_id"),
+                    "proof_names": ["gnb_account_marker"],
+                    "evidence": {**evidence_result,
+                                 "target_id": result.get("target_id")},
+                }
+                machine = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+                receipt_path = login_barrier.write_channel_receipt_from_episode(
+                    episode, machine=machine)
+                result["login_receipt_path"] = receipt_path or ""
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("state") == "AUTHENTICATED" else 1
 
     if args.command == "human-auth":
         result = run_human_auth_episode(

@@ -351,6 +351,37 @@ def test_human_auth_runner_waits_for_lease_conflict_without_browser_action() -> 
     assert trace.index("resolve") > trace.index("lease.acquire:2")
 
 
+def test_human_auth_presentation_failure_returns_structured_handoff_and_disconnects() -> None:
+    trace: list[str] = []
+    lease = _Lease(trace)
+    tab = _Tab(trace)
+
+    result = run_human_auth_episode(
+        "linkedin_rps",
+        agent="Codex",
+        target_id="target-exact",
+        stop_requested=lambda: False,
+        owner_snapshot=_increasing_owner(trace),
+        mutation_sleep=lambda _seconds: None,
+        wait_sleep=lambda _seconds: None,
+        _lease_factory=lambda _site: lease,
+        _target_resolver=lambda *_args, **_kwargs: _ref(),
+        _tab_attacher=lambda *_args, **_kwargs: tab,
+        _auth_reader=_unauthenticated,
+        _presenter=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("badge marker failed")
+        ),
+    )
+
+    assert result == {
+        "status": "handoff_failed",
+        "site": "linkedin_rps",
+        "reason": "exact_window_presentation_failed",
+        "cleanup_pending": False,
+    }
+    assert trace[-2:] == ["tab.disconnect", "lease.release"]
+
+
 def test_linkedin_session_conflict_is_terminal_before_human_auth_presentation() -> None:
     trace: list[str] = []
     emitted: list[dict[str, object]] = []

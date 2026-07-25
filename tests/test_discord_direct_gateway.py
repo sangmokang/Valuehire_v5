@@ -500,14 +500,13 @@ class NonBlockingEventLoopTests(_NotifySilencedCase):
         블로킹 큐 호출이 서로를 기다리지 않고 동시에 진행된다(Codex 2차검증 CRITICAL: 동기
         호출이 이벤트 루프를 막아 다음 인터랙션 응답을 지연시킨다는 지적 반영).
 
-        직접적인 방법 — 지연시간 0.2초짜리 enqueue 2건을 asyncio.gather 로 동시에 돌리고
-        총 소요시간을 잰다. asyncio.to_thread 로 스레드풀에 위임되면 두 블로킹 호출이
-        겹쳐 돌아 총 소요 ≈0.2초(왕복 오버헤드 포함 허용치 이내)여야 한다. 만약 이벤트
-        루프에서 그대로(동기) 실행되면 두 번째 인터랙션의 defer→처리가 첫 번째가 끝날
-        때까지 못 들어가 총 소요가 ≈0.4초로 거의 두 배가 된다 — 이 차이로 판정한다.
+        직접적인 방법 — 두 enqueue가 공유 Barrier에 모두 도착해야 통과시킨다.
+        asyncio.to_thread 로 위임되면 두 worker가 동시에 도착해 barrier가 열린다.
+        이벤트 루프에서 동기 실행되면 첫 호출이 barrier timeout으로 실패한다.
+        벽시계 총 소요시간은 머신 부하에 따라 흔들리므로 판정에 사용하지 않는다.
         """
         import asyncio
-        import time as _time
+        import threading
 
         def _make_interaction(iid: str) -> FakeInteraction:
             return FakeInteraction(
@@ -515,12 +514,18 @@ class NonBlockingEventLoopTests(_NotifySilencedCase):
                 command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
             )
 
+        barrier = threading.Barrier(2, timeout=3.0)
+
+        class BarrierQueue(FakeQueue):
+            def enqueue(self, payload: dict) -> dict:
+                barrier.wait()
+                return super().enqueue(payload)
+
         interaction1 = _make_interaction("818181818181818181")
         interaction2 = _make_interaction("828282828282828282")
-        queue1 = FakeQueue(enqueue_delay=0.2)
-        queue2 = FakeQueue(enqueue_delay=0.2)
+        queue1 = BarrierQueue()
+        queue2 = BarrierQueue()
 
-        started = _time.monotonic()
         await asyncio.gather(
             handle_slash_interaction(
                 interaction1, queue=queue1, authorized_users=AUTHORIZED,
@@ -529,9 +534,9 @@ class NonBlockingEventLoopTests(_NotifySilencedCase):
                 interaction2, queue=queue2, authorized_users=AUTHORIZED,
                 config=DiscordAccessConfig(allow_dm=True)),
         )
-        elapsed = _time.monotonic() - started
-        # 동시 실행이면 ~0.2초, 순차(블로킹)면 ~0.4초 — 중간값 0.32초를 경계로 판정.
-        self.assertLess(elapsed, 0.32, f"두 블로킹 큐 호출이 겹쳐 돌지 않음(순차 실행 의심): {elapsed:.3f}s")
+        self.assertEqual(barrier.n_waiting, 0)
+        self.assertEqual(len(queue1.enqueued), 1)
+        self.assertEqual(len(queue2.enqueued), 1)
 
 
 class HandleSlashInteractionTests(_NotifySilencedCase):
