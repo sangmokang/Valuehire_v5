@@ -1,0 +1,635 @@
+from __future__ import annotations
+
+import asyncio
+import ast
+import base64
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import threading
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from scripts import discord_direct_gateway as gateway
+from tests.test_discord_direct_gateway import FakeMessage
+from tools.multi_position_sourcing.access import DiscordAuthorizedUser
+from tools.multi_position_sourcing.discord_hr1 import (
+    GatewayLeaseGuard,
+    Hr1EvidenceRecorder,
+    Hr1ReceiptError,
+    validate_hr1_receipt,
+)
+from tools.multi_position_sourcing.discord_routing import DiscordAccessConfig
+
+
+ROOT = Path(__file__).resolve().parents[1]
+OWNER = "814353841088757800"
+BOT = "946740848018735114"
+HERMES_BOT = "1512101118543397056"
+POSITION = "https://app.clickup.com/t/9018789656/86eycec3a"
+TOKEN = "isolated-test-token.not-a-live-secret"
+TOKEN_FINGERPRINT = hashlib.sha256(TOKEN.encode()).hexdigest()
+
+
+def _bot_token(bot_id: str) -> str:
+    encoded = base64.urlsafe_b64encode(bot_id.encode()).decode().rstrip("=")
+    return f"{encoded}.fixture.signature"
+
+
+def _job(agent: str, event_id: str, job_id: int, response_id: str) -> dict:
+    return {
+        "agent": agent,
+        "event_id": event_id,
+        "job_id": job_id,
+        "requester_id": OWNER,
+        "transitions": ["queued", "running", "done"],
+        "response_id": response_id,
+        "response_count": 1,
+    }
+
+
+def _valid_receipt() -> dict:
+    return {
+        "schema_version": "discord-hr1/v1",
+        "phase": "HR-1",
+        "git_sha_v4": "a" * 40,
+        "git_sha_v5": "b" * 40,
+        "discord_bot_id": BOT,
+        "hermes_bot_id": HERMES_BOT,
+        "bot_identity_isolated": True,
+        "command_fingerprint": "c" * 64,
+        "direct_gateway_pid": 1234,
+        "direct_gateway_lease_id": "11111111-1111-4111-8111-111111111111",
+        "direct_gateway_generation": 7,
+        "gateway_stopped_after_test": True,
+        "hermes_pid_count": 1,
+        "hermes_launchctl_count": 1,
+        "hermes_pids_before": [4321],
+        "hermes_pids_after": [4321],
+        "readiness": {
+            "minimal_rpc": True,
+            "worker_machine": "winpc",
+            "worker_ready": True,
+            "worker_pid": 4242,
+            "worker_heartbeat_age_seconds": 20,
+            "claude_ready": True,
+            "codex_ready": True,
+            "killswitch_engaged": False,
+        },
+        "readiness_after": {
+            "minimal_rpc": True,
+            "worker_machine": "winpc",
+            "worker_ready": True,
+            "worker_pid": 4242,
+            "worker_heartbeat_age_seconds": 5,
+            "claude_ready": True,
+            "codex_ready": True,
+            "killswitch_engaged": False,
+        },
+        "duplicate_event": {
+            "event_id": "1529267252160927202",
+            "first_job_id": 202,
+            "replay_job_id": 202,
+            "row_count": 1,
+        },
+        "jobs": [
+            _job("claude", "1529267252160927202", 202, "1529267252160927302"),
+            _job("codex", "1529267252160927203", 203, "1529267252160927303"),
+        ],
+        "natural_language": {
+            **_job("claude", "1529267252160927204", 204, "1529267252160927304"),
+            "text_fingerprint": "d" * 64,
+        },
+        "duplicate_response_count": 0,
+        "queue_nonterminal_count": 0,
+        "rollback_tested": True,
+        "claude_job_id": 202,
+        "claude_response_id": "1529267252160927302",
+        "codex_job_id": 203,
+        "codex_response_id": "1529267252160927303",
+        "event_id": "1529267252160927202",
+        "job_id": 202,
+        "agent": "claude",
+        "state_transitions": ["queued", "running", "done"],
+        "verified_at": "2026-07-22T12:00:00+00:00",
+        "verifier_sha256": "e" * 64,
+    }
+
+
+def test_hr1_receipt_requires_complete_live_evidence() -> None:
+    assert validate_hr1_receipt(_valid_receipt())["phase"] == "HR-1"
+
+
+def test_hr1_evidence_recorder_creates_secret_free_jsonl(tmp_path: Path) -> None:
+    path = tmp_path / "hr1.jsonl"
+    recorder = Hr1EvidenceRecorder(path)
+    recorder.record(
+        "discord_delivery",
+        event_id="1529267252160927202",
+        action="enqueued",
+        job_id=202,
+        response_id="1529267252160927302",
+    )
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows[0]["kind"] == "discord_delivery"
+    assert rows[0]["event_id"] == "1529267252160927202"
+    assert rows[0]["recorded_at"].endswith("+00:00")
+
+    with pytest.raises(Hr1ReceiptError, match="secret"):
+        recorder.record("bad", bot_token=TOKEN)
+
+
+def test_hr1_evidence_recorder_refuses_to_mix_existing_runs(tmp_path: Path) -> None:
+    path = tmp_path / "hr1.jsonl"
+    path.write_text("stale\n")
+    with pytest.raises(FileExistsError):
+        Hr1EvidenceRecorder(path)
+
+
+def test_hr1_evidence_recorder_rejects_secret_hidden_under_safe_key(tmp_path: Path) -> None:
+    recorder = Hr1EvidenceRecorder(
+        tmp_path / "events.jsonl",
+        forbidden_values=("live-secret-value",),
+    )
+    with pytest.raises(Hr1ReceiptError, match="secret value"):
+        recorder.record("gateway_started", note="prefix-live-secret-value-suffix")
+
+
+def test_text_delivery_returns_discord_response_and_job_ids(monkeypatch) -> None:
+    class Queue:
+        def enqueue(self, payload):
+            return {"id": 202, "machine": "winpc", "skill": payload["skill"]}
+
+    message = FakeMessage(
+        message_id="1529267252160927202",
+        author_id=OWNER,
+        content=f"/fleet-run url {POSITION} winpc agent:claude",
+    )
+    message.channel.send = AsyncMock(
+        return_value=SimpleNamespace(id=1529267252160927302))
+    result = asyncio.run(gateway.handle_text_message(
+        message,
+        bot_user_id=BOT,
+        queue=Queue(),
+        authorized_users=(DiscordAuthorizedUser(
+            name="owner", alias="owner", email="owner@example.com", discord_id=OWNER),),
+        config=DiscordAccessConfig(allow_dm=True),
+    ))
+    assert result is not None
+    assert result["action"] == "enqueued"
+    assert result["job_id"] == 202
+    assert result["response_id"] == "1529267252160927302"
+
+
+def test_hr1_client_replays_first_enqueued_delivery_without_second_response(tmp_path) -> None:
+    recorder = Hr1EvidenceRecorder(tmp_path / "events.jsonl")
+    client = gateway.DirectGatewayClient(
+        authorized_users=(),
+        config=DiscordAccessConfig(allow_dm=True),
+        queue_factory=lambda: object(),
+        hr1_evidence_recorder=recorder,
+        hr1_replay_first_enqueued=True,
+    )
+    message = FakeMessage(
+        message_id="1529267252160927202",
+        author_id=OWNER,
+        content=f"/fleet-run url {POSITION} winpc agent:claude",
+    )
+    message.author.bot = False
+    first = {
+        "action": "enqueued",
+        "job_id": 202,
+        "response_id": "1529267252160927302",
+    }
+    replay = {"action": "duplicate", "job_id": 202}
+    with pytest.MonkeyPatch.context() as patcher:
+        handler = AsyncMock(side_effect=(first, replay))
+        patcher.setattr(gateway, "handle_text_message", handler)
+        asyncio.run(client.on_message(message))
+    assert handler.await_count == 2
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert [row["delivery"] for row in rows] == ["original", "replay"]
+    assert [row["action"] for row in rows] == ["enqueued", "duplicate"]
+    assert rows[0]["response_id"] == "1529267252160927302"
+    assert "response_id" not in rows[1]
+    assert rows[0]["content_fingerprint"] == rows[1]["content_fingerprint"]
+
+
+def test_hr1_replay_passes_nl_searcher_factory_to_both_deliveries(tmp_path) -> None:
+    """원본·replay 두 전달 모두 #200 자연어 검색기 팩토리를 받아야 한다.
+
+    (병합 회귀 방지: replay 호출에서 nl_searcher_factory 가 빠지면 자연어 요청의
+    replay 가 검색기 없이 nl_reply 로 변해 HR-1 중복-무응답 계약이 깨진다.)
+    """
+    sentinel = lambda: object()
+    client = gateway.DirectGatewayClient(
+        authorized_users=(),
+        config=DiscordAccessConfig(allow_dm=True),
+        queue_factory=lambda: object(),
+        nl_searcher_factory=sentinel,
+        hr1_evidence_recorder=Hr1EvidenceRecorder(tmp_path / "events.jsonl"),
+        hr1_replay_first_enqueued=True,
+    )
+    message = FakeMessage(
+        message_id="1529267252160927202",
+        author_id=OWNER,
+        content=f"이 포지션으로 후보 찾아줘 {POSITION}",
+    )
+    message.author.bot = False
+    seen_factories: list = []
+
+    async def _recorder(*_args, **kwargs):
+        seen_factories.append(kwargs.get("nl_searcher_factory"))
+        return {"action": "enqueued", "job_id": 202}
+
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(gateway, "handle_text_message", _recorder)
+        asyncio.run(client.on_message(message))
+    assert seen_factories == [sentinel, sentinel]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda r: r.update(bot_identity_isolated=False),
+        lambda r: r.update(gateway_stopped_after_test=False),
+        lambda r: r["readiness"].update(worker_heartbeat_age_seconds=301),
+        lambda r: r["readiness"].update(worker_pid=0),
+        lambda r: r["readiness"].update(claude_ready=False),
+        lambda r: r["readiness"].pop("codex_ready"),
+        lambda r: r["readiness"].update(killswitch_engaged=True),
+        lambda r: r["readiness_after"].update(codex_ready=False),
+        lambda r: r["readiness_after"].update(worker_pid=9999),
+        lambda r: r.update(hermes_pids_after=[9999]),
+        lambda r: r.update(queue_nonterminal_count=1),
+        lambda r: r.update(rollback_tested=False),
+        lambda r: r.update(claude_job_id=999),
+        lambda r: r["jobs"][0].update(transitions=["queued", "done"]),
+        lambda r: r["jobs"][1].update(response_count=2),
+        lambda r: r["duplicate_event"].update(replay_job_id=999),
+        lambda r: r.update(duplicate_response_count=1),
+    ),
+)
+def test_hr1_receipt_fails_closed(mutate) -> None:
+    receipt = _valid_receipt()
+    mutate(receipt)
+    with pytest.raises(Hr1ReceiptError):
+        validate_hr1_receipt(receipt)
+
+
+class _RuntimeQueue:
+    def __init__(self, *, ready: bool = True, claude_ready: bool = True,
+                 codex_ready: bool = True, killswitch: bool = False,
+                 acquire: bool = True) -> None:
+        self.ready = ready
+        self.claude_ready = claude_ready
+        self.codex_ready = codex_ready
+        self.killswitch = killswitch
+        self.acquire = acquire
+        self.calls: list[tuple] = []
+
+    def gateway_readiness(
+        self, token_fingerprint: str, machine: str, max_age_seconds: int,
+    ) -> dict:
+        self.calls.append(("ready", token_fingerprint, machine, max_age_seconds))
+        return {
+            "minimal_rpc": True,
+            "worker_machine": machine,
+            "worker_ready": self.ready,
+            "worker_pid": 4242,
+            "worker_heartbeat_age_seconds": 10 if self.ready else 999,
+            "claude_ready": self.claude_ready,
+            "codex_ready": self.codex_ready,
+            "killswitch_engaged": self.killswitch,
+        }
+
+    def acquire_gateway_lease(
+        self, token_fingerprint: str, holder_identity: str, pid: int,
+        machine: str, ttl_seconds: int,
+    ) -> dict:
+        self.calls.append((
+            "acquire", token_fingerprint, holder_identity, pid, machine, ttl_seconds,
+        ))
+        return {
+            "acquired": self.acquire,
+            "lease_id": (
+                "11111111-1111-4111-8111-111111111111" if self.acquire else None
+            ),
+            "generation": 7 if self.acquire else None,
+        }
+
+    def renew_gateway_lease(
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        pid: int, generation: int, ttl_seconds: int,
+    ) -> dict:
+        self.calls.append((
+            "renew", lease_id, token_fingerprint, holder_identity, pid,
+            generation, ttl_seconds,
+        ))
+        return {"renewed": True, "lease_id": lease_id, "generation": generation}
+
+    def release_gateway_lease(
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        pid: int, generation: int,
+    ) -> dict:
+        self.calls.append((
+            "release", lease_id, token_fingerprint, holder_identity, pid, generation,
+        ))
+        return {"released": True}
+
+
+def test_gateway_guard_checks_readiness_acquires_and_releases() -> None:
+    queue = _RuntimeQueue()
+    guard = GatewayLeaseGuard(
+        queue,
+        token_fingerprint=TOKEN_FINGERPRINT,
+        bot_id=BOT,
+        hermes_bot_id=HERMES_BOT,
+        machine="winpc",
+        pid=1234,
+    )
+    with guard:
+        assert guard.lease_id and guard.generation == 7
+    assert [call[0] for call in queue.calls] == ["ready", "acquire", "release"]
+    assert queue.calls[0][1] == TOKEN_FINGERPRINT
+    assert TOKEN not in repr(queue.calls)
+
+
+def test_gateway_guard_never_acquires_when_worker_is_stale() -> None:
+    queue = _RuntimeQueue(ready=False)
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
+    with pytest.raises(RuntimeError, match="heartbeat"):
+        guard.start()
+    assert [call[0] for call in queue.calls] == ["ready"]
+
+
+@pytest.mark.parametrize("missing", ("claude", "codex"))
+def test_gateway_guard_never_acquires_when_agent_cli_is_unready(missing: str) -> None:
+    queue = _RuntimeQueue(
+        claude_ready=missing != "claude", codex_ready=missing != "codex",
+    )
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
+    with pytest.raises(RuntimeError, match=missing):
+        guard.start()
+    assert [call[0] for call in queue.calls] == ["ready"]
+
+
+def test_gateway_guard_blocks_killswitch_and_same_hermes_identity() -> None:
+    queue = _RuntimeQueue(killswitch=True)
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
+    with pytest.raises(RuntimeError, match="killswitch"):
+        guard.start()
+    assert [call[0] for call in queue.calls] == ["ready"]
+
+    with pytest.raises(ValueError, match="Hermes"):
+        GatewayLeaseGuard(
+            _RuntimeQueue(), token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+            hermes_bot_id=BOT, machine="winpc", pid=1234,
+        )
+
+
+def test_gateway_guard_blocks_second_holder_before_connect() -> None:
+    queue = _RuntimeQueue(acquire=False)
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+    )
+    with pytest.raises(RuntimeError, match="already held"):
+        guard.start()
+    assert [call[0] for call in queue.calls] == ["ready", "acquire"]
+
+
+def test_gateway_guard_disconnects_after_consecutive_renew_failures() -> None:
+    class RenewFailureQueue(_RuntimeQueue):
+        def renew_gateway_lease(self, *args) -> dict:
+            self.calls.append(("renew", *args))
+            return {"renewed": False}
+
+    queue = RenewFailureQueue()
+    lost = threading.Event()
+    guard = GatewayLeaseGuard(
+        queue, token_fingerprint=TOKEN_FINGERPRINT, bot_id=BOT,
+        hermes_bot_id=HERMES_BOT, machine="winpc", pid=1234,
+        renew_interval_seconds=0.01, max_consecutive_renew_failures=2,
+        on_lease_lost=lambda _exc: lost.set(),
+    )
+    guard.start()
+    assert lost.wait(0.5)
+    guard.stop()
+    assert [call[0] for call in queue.calls].count("renew") == 2
+    assert [call[0] for call in queue.calls][-1] == "release"
+
+
+def test_main_never_connects_when_killswitch_is_engaged(monkeypatch) -> None:
+    queue = _RuntimeQueue(killswitch=True)
+
+    class Client:
+        run_calls: list[str] = []
+
+        def run(self, token: str) -> None:
+            self.run_calls.append(token)
+
+        def stop_after_lease_loss(self, exc: Exception) -> None:
+            raise AssertionError(f"unexpected lease loss: {exc}")
+
+    client = Client()
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", lambda: lambda: queue)
+    monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: client)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", _bot_token(BOT))
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+    with pytest.raises(RuntimeError, match="killswitch"):
+        gateway.main()
+    assert client.run_calls == []
+
+
+def test_main_rejects_token_identity_disguised_by_different_client_id(monkeypatch) -> None:
+    def unexpected_queue_factory():
+        raise AssertionError("identity mismatch must stop before readiness")
+
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", unexpected_queue_factory)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", _bot_token(HERMES_BOT))
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+
+    with pytest.raises(SystemExit, match="identity"):
+        gateway.main()
+
+
+def test_main_records_safe_startup_block_reason(tmp_path: Path, monkeypatch) -> None:
+    queue = _RuntimeQueue(ready=False)
+
+    class Client:
+        run_calls: list[str] = []
+
+        def run(self, token: str) -> None:
+            self.run_calls.append(token)
+
+        def stop_after_lease_loss(self, exc: Exception) -> None:
+            raise AssertionError(f"unexpected lease loss: {exc}")
+
+    client = Client()
+    evidence = tmp_path / "blocked.jsonl"
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", lambda: lambda: queue)
+    monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: client)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", _bot_token(BOT))
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+    monkeypatch.setenv("DISCORD_GATEWAY_SYNC_COMMANDS", "0")
+    monkeypatch.setenv("DISCORD_HR1_EVIDENCE_PATH", str(evidence))
+
+    with pytest.raises(RuntimeError, match="heartbeat"):
+        gateway.main()
+
+    rows = [json.loads(line) for line in evidence.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "gateway_startup_blocked"
+    assert rows[0]["reason_code"] == "worker_heartbeat_stale"
+    assert _bot_token(BOT) not in evidence.read_text()
+    assert client.run_calls == []
+
+
+def test_main_arms_evidence_recorder_with_all_live_secret_values(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from tools.multi_position_sourcing import discord_hr1
+
+    queue = _RuntimeQueue(ready=False)
+    captured: dict[str, tuple[str, ...]] = {}
+
+    class Recorder:
+        def __init__(self, path, *, forbidden_values=()):
+            captured["values"] = tuple(forbidden_values)
+
+        def record(self, kind: str, **fields):
+            return {"kind": kind, **fields}
+
+    class Client:
+        def run(self, token: str) -> None:
+            raise AssertionError("unready gateway must not connect")
+
+        def stop_after_lease_loss(self, exc: Exception) -> None:
+            raise AssertionError(f"unexpected lease loss: {exc}")
+
+    token = _bot_token(BOT)
+    minimal_key = "minimal-key-fixture"
+    service_key = "service-key-fixture"
+    monkeypatch.setattr(discord_hr1, "Hr1EvidenceRecorder", Recorder)
+    monkeypatch.setattr(gateway, "_minimal_privilege_queue_factory", lambda: lambda: queue)
+    monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: Client())
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", token)
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "winpc")
+    monkeypatch.setenv("DISCORD_GATEWAY_SYNC_COMMANDS", "0")
+    monkeypatch.setenv("DISCORD_HR1_EVIDENCE_PATH", str(tmp_path / "events.jsonl"))
+    monkeypatch.setenv(gateway.QUEUE_KEY_ENV, minimal_key)
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", service_key)
+
+    with pytest.raises(RuntimeError, match="heartbeat"):
+        gateway.main()
+
+    assert captured["values"] == (token, minimal_key, service_key)
+
+
+def test_gateway_module_has_no_direct_engine_execution() -> None:
+    tree = ast.parse((ROOT / "scripts/discord_direct_gateway.py").read_text())
+    forbidden = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            rendered = ast.unparse(node.func)
+            if rendered in {"subprocess.run", "subprocess.Popen", "os.system", "os.execv"}:
+                forbidden.append(rendered)
+    assert forbidden == []
+
+
+def test_canonical_gateway_entrypoint_reaches_configuration_gate() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/discord_direct_gateway.py"],
+        cwd=ROOT,
+        env={"PATH": str(Path(sys.executable).parent)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "DISCORD_BOT_TOKEN" in output
+    assert "No module named 'tools'" not in output
+
+
+def test_receipt_rejects_raw_secret_values() -> None:
+    receipt = _valid_receipt()
+    receipt["diagnostic"] = TOKEN
+    with pytest.raises(Hr1ReceiptError, match="secret"):
+        validate_hr1_receipt(receipt, forbidden_values=(TOKEN, "service-role-test-value"))
+
+
+def test_minimal_privilege_sql_defines_hr1_runtime_rpcs() -> None:
+    sql = (ROOT / "supabase/migrations/20260722_discord_gateway_hr1_runtime.sql").read_text()
+    for marker in (
+        "discord_gateway_readiness",
+        "discord_gateway_acquire_lease",
+        "discord_gateway_renew_lease",
+        "discord_gateway_release_lease",
+        "discord_gateway_killswitches",
+        "token_fingerprint",
+        "holder_identity",
+        "holder_pid",
+        "generation",
+        "released_at",
+        "grant execute",
+        "to anon",
+    ):
+        assert marker in sql
+    assert "pg_advisory_xact_lock" in sql
+    assert "idempotency_key is required" in sql
+    assert "create unique index if not exists jobs_discord_idempotency_key_uidx" not in sql
+
+
+def test_plain_natural_url_reaches_queue_without_clickup_searcher() -> None:
+    class Queue:
+        def __init__(self) -> None:
+            self.enqueued: list[dict] = []
+
+        def enqueue(self, payload: dict) -> dict:
+            self.enqueued.append(payload)
+            return {**payload, "id": 501}
+
+    queue = Queue()
+    message = FakeMessage(
+        message_id="1529267252160927401",
+        author_id=OWNER,
+        content=f"이 포지션으로 후보 찾아줘 {POSITION}",
+    )
+    asyncio.run(gateway.handle_text_message(
+        message,
+        bot_user_id=BOT,
+        queue=queue,
+        authorized_users=(DiscordAuthorizedUser(
+            name="owner", alias="owner", email="owner@example.com", discord_id=OWNER),),
+        config=DiscordAccessConfig(allow_dm=True),
+    ))
+    assert len(queue.enqueued) == 1
+    assert queue.enqueued[0]["skill"] == "aisearch"
+    assert queue.enqueued[0]["position_url"] == POSITION
+    assert queue.enqueued[0]["params"]["idempotency_key"] == (
+        "discord:1529267252160927401"
+    )

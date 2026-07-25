@@ -62,6 +62,10 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 import discord
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in os.sys.path:
+    os.sys.path.insert(0, _REPO_ROOT)
+
 from tools.multi_position_sourcing.access import (
     DiscordAuthorizedUser,
     is_authorized_discord_dm,
@@ -112,6 +116,20 @@ _UNSUPPORTED_SKILL_MSG = (
 
 QUEUE_URL_ENV = "DISCORD_GATEWAY_SUPABASE_URL"
 QUEUE_KEY_ENV = "DISCORD_GATEWAY_SUPABASE_KEY"
+
+
+def _hr1_startup_block_reason(exc: Exception) -> str:
+    """Map startup failures to secret-free evidence codes; never persist raw errors."""
+    message = str(exc).casefold()
+    if "heartbeat" in message:
+        return "worker_heartbeat_stale"
+    if "killswitch" in message:
+        return "killswitch_engaged"
+    if "lease" in message or "already held" in message:
+        return "gateway_lease_unavailable"
+    if "readiness" in message or "rpc" in message or "http" in message:
+        return "minimal_rpc_unavailable"
+    return "startup_gate_error"
 
 
 def backup_current_discord_commands(
@@ -544,11 +562,13 @@ def _nl_envelope(message: Any, *, bot_user_id: str, searcher_factory):
     ``/fleet-run …`` 문자열을 **기존 파서(message_to_envelope)에 다시 태워**, 기존
     인증·멱등·명령 처리를 그대로 통과시킨다(SOT-32 §3 원칙 3).
     """
-    if searcher_factory is None:
-        return None, None
     content = getattr(message, "content", "") or ""
     try:
-        searcher = searcher_factory()
+        if searcher_factory is None:
+            def searcher(_locus: str, _target: str) -> Any:
+                raise RuntimeError("ClickUp 대상 조회기가 운영 게이트웨이에 연결되지 않았습니다")
+        else:
+            searcher = searcher_factory()
         plan = nl_plan_for_text(content, searcher=searcher,
                                 message_id=str(getattr(message, "id", "")))
     except Exception:  # noqa: BLE001 — 자연어 해석 실패가 기존 명령 경로를 죽이면 안 된다
@@ -668,10 +688,15 @@ async def handle_text_message(
             # Codex V2 F4: 응답에 동적 텍스트가 섞일 수 있어 멘션 억제.
             mentions = _no_mentions()
             if mentions is not None:
-                await message.channel.send(response[:_RESPONSE_CHAR_LIMIT],
-                                           allowed_mentions=mentions)
+                sent = await message.channel.send(response[:_RESPONSE_CHAR_LIMIT],
+                                                  allowed_mentions=mentions)
             else:
-                await message.channel.send(response[:_RESPONSE_CHAR_LIMIT])
+                sent = await message.channel.send(response[:_RESPONSE_CHAR_LIMIT])
+            # HR-1: 회신 메시지 id 를 영수증 증거(response_id)로 포착.
+            response_id = str(getattr(sent, "id", "") or "")
+            if _SNOWFLAKE_RE.fullmatch(response_id):
+                result = dict(result)
+                result["response_id"] = response_id
         except Exception:  # noqa: BLE001
             logger.warning(
                 "discord_direct_gateway: channel.send 실패 event_id=%s", envelope.event_id)
@@ -700,7 +725,11 @@ class DirectGatewayClient(discord.Client):
         audit: Optional[Callable[[dict[str, Any]], Any]] = None,
         owner_user_ids: Sequence[str] = OWNER_USER_IDS,
         nl_searcher_factory: Optional[Callable[[], Any]] = None,
+        hr1_evidence_recorder: Any = None,
+        hr1_replay_first_enqueued: bool = False,
     ) -> None:
+        if hr1_replay_first_enqueued and hr1_evidence_recorder is None:
+            raise ValueError("HR-1 replay requires an evidence recorder")
         super().__init__(intents=discord.Intents.default())
         self._authorized_users = authorized_users
         self._config = config
@@ -709,9 +738,47 @@ class DirectGatewayClient(discord.Client):
         self._owner_user_ids = owner_user_ids
         # #200: 자연어 해소기 팩토리. None 이면 NL 비활성(정형 명령 경로 불변).
         self._nl_searcher_factory = nl_searcher_factory
+        self._hr1_evidence_recorder = hr1_evidence_recorder
+        self._hr1_replay_first_enqueued = bool(hr1_replay_first_enqueued)
+        self._hr1_replayed = False
+
+    def _record_hr1_delivery(
+        self, message: Any, result: Optional[Mapping[str, Any]], *, delivery: str,
+    ) -> None:
+        recorder = self._hr1_evidence_recorder
+        if recorder is None or not isinstance(result, Mapping):
+            return
+        from tools.multi_position_sourcing.discord_hr1 import gateway_token_fingerprint
+
+        fields: dict[str, Any] = {
+            "delivery": delivery,
+            "event_id": str(getattr(message, "id", "") or ""),
+            "requester_id": str(getattr(getattr(message, "author", None), "id", "") or ""),
+            "action": str(result.get("action") or ""),
+            "content_fingerprint": gateway_token_fingerprint(
+                str(getattr(message, "content", "") or "")),
+        }
+        for name in ("job_id", "response_id"):
+            value = result.get(name)
+            if value not in (None, ""):
+                fields[name] = value
+        recorder.record("discord_delivery", **fields)
 
     async def setup_hook(self) -> None:  # pragma: no cover — 실 기동 전용
+        if os.environ.get("DISCORD_GATEWAY_SYNC_COMMANDS", "1").strip().casefold() in {
+            "0", "false", "no", "off",
+        }:
+            logger.info("discord_direct_gateway: command sync disabled for isolated text smoke")
+            return
         await self._sync_commands()
+
+    async def on_ready(self) -> None:  # pragma: no cover — live lifecycle evidence
+        recorder = self._hr1_evidence_recorder
+        if recorder is not None:
+            recorder.record(
+                "gateway_connected",
+                discord_bot_id=str(getattr(self.user, "id", "") or ""),
+            )
 
     async def _sync_commands(self) -> None:  # pragma: no cover — 실 네트워크 진입점
         """명령 소유권 일치(goal §3) — FLEET_COMMANDS 교집합만 실제로 등록한다.
@@ -762,12 +829,38 @@ class DirectGatewayClient(discord.Client):
             return
         bot_user = self.user
         bot_user_id = str(bot_user.id) if bot_user is not None else ""
-        await handle_text_message(
+        result = await handle_text_message(
             message, bot_user_id=bot_user_id, queue_factory=self._queue_factory,
             authorized_users=self._authorized_users, config=self._config, audit=self._audit,
             owner_user_ids=self._owner_user_ids,
             nl_searcher_factory=self._nl_searcher_factory,  # #200: 자연어 배선
         )
+        self._record_hr1_delivery(message, result, delivery="original")
+        if (
+            self._hr1_replay_first_enqueued
+            and not self._hr1_replayed
+            and isinstance(result, Mapping)
+            and result.get("action") == "enqueued"
+        ):
+            self._hr1_replayed = True
+            replay = await handle_text_message(
+                message, bot_user_id=bot_user_id, queue_factory=self._queue_factory,
+                authorized_users=self._authorized_users, config=self._config, audit=self._audit,
+                owner_user_ids=self._owner_user_ids,
+                nl_searcher_factory=self._nl_searcher_factory,  # #200: replay 도 동일 자연어 배선(누락 수정)
+            )
+            self._record_hr1_delivery(message, replay, delivery="replay")
+
+    def stop_after_lease_loss(self, exc: Exception) -> None:  # pragma: no cover - live lifecycle
+        """A failed renewal must disconnect this client before the lease expires."""
+        logger.error("discord_direct_gateway: lease renewal failed; disconnecting (%s)",
+                     type(exc).__name__)
+        try:
+            loop = self.loop
+            if loop.is_running() and not loop.is_closed():
+                asyncio.run_coroutine_threadsafe(self.close(), loop)
+        except Exception:  # noqa: BLE001 - the process exits after client.run returns/fails.
+            logger.exception("discord_direct_gateway: lease-loss disconnect scheduling failed")
 
 
 class MinimalPrivilegeQueueClient:
@@ -899,7 +992,11 @@ class MinimalPrivilegeQueueClient:
                 if existing is not None:
                     return existing
             raise JobQueueConflictError(f"enqueue 실패(HTTP {exc.code})") from None
-        return rows[0] if isinstance(rows, list) and rows else rows
+        row = rows[0] if isinstance(rows, list) and rows else rows
+        if isinstance(row, dict) and isinstance(row.get("created"), bool):
+            row = dict(row)
+            row["_discord_duplicate"] = row.pop("created") is False
+        return row
 
     def job_by_idempotency_key(self, key: str) -> Optional[dict[str, Any]]:
         rows = self._rpc("discord_gateway_job_by_idempotency_key", {"p_key": str(key)})
@@ -908,6 +1005,70 @@ class MinimalPrivilegeQueueClient:
     def recent(self, limit: int = 10) -> list[dict[str, Any]]:
         rows = self._rpc("discord_gateway_recent_jobs", {"p_limit": max(1, min(int(limit), 50))})
         return rows if isinstance(rows, list) else []
+
+    @staticmethod
+    def _one_rpc_row(rows: Any, name: str) -> dict[str, Any]:
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+            raise RuntimeError(f"{name} RPC returned an invalid shape")
+        return rows[0]
+
+    def gateway_readiness(
+        self, token_fingerprint: str, machine: str, max_age_seconds: int = 300,
+    ) -> dict[str, Any]:
+        rows = self._rpc("discord_gateway_readiness", {
+            "p_token_fingerprint": str(token_fingerprint),
+            "p_machine": str(machine),
+            "p_max_age_seconds": int(max_age_seconds),
+        })
+        return self._one_rpc_row(rows, "discord_gateway_readiness")
+
+    def acquire_gateway_lease(
+        self, token_fingerprint: str, holder_identity: str, holder_pid: int,
+        machine: str, ttl_seconds: int = 90,
+    ) -> dict[str, Any]:
+        rows = self._rpc("discord_gateway_acquire_lease", {
+            "p_token_fingerprint": str(token_fingerprint),
+            "p_holder_identity": str(holder_identity),
+            "p_holder_pid": int(holder_pid),
+            "p_machine": str(machine),
+            "p_ttl_seconds": int(ttl_seconds),
+        })
+        return self._one_rpc_row(rows, "discord_gateway_acquire_lease")
+
+    def renew_gateway_lease(
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        holder_pid: int, generation: int, ttl_seconds: int = 90,
+    ) -> dict[str, Any]:
+        rows = self._rpc("discord_gateway_renew_lease", {
+            "p_lease_id": str(lease_id),
+            "p_token_fingerprint": str(token_fingerprint),
+            "p_holder_identity": str(holder_identity),
+            "p_holder_pid": int(holder_pid),
+            "p_generation": int(generation),
+            "p_ttl_seconds": int(ttl_seconds),
+        })
+        return self._one_rpc_row(rows, "discord_gateway_renew_lease")
+
+    def release_gateway_lease(
+        self, lease_id: str, token_fingerprint: str, holder_identity: str,
+        holder_pid: int, generation: int,
+    ) -> dict[str, Any]:
+        rows = self._rpc("discord_gateway_release_lease", {
+            "p_lease_id": str(lease_id),
+            "p_token_fingerprint": str(token_fingerprint),
+            "p_holder_identity": str(holder_identity),
+            "p_holder_pid": int(holder_pid),
+            "p_generation": int(generation),
+        })
+        return self._one_rpc_row(rows, "discord_gateway_release_lease")
+
+    def gateway_queue_nonterminal_count(self) -> int:
+        rows = self._rpc("discord_gateway_queue_nonterminal_count", {})
+        if isinstance(rows, int) and not isinstance(rows, bool):
+            return rows
+        if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], int):
+            return rows[0]
+        raise RuntimeError("discord_gateway_queue_nonterminal_count RPC returned an invalid shape")
 
     def resume(self, job_id: int) -> Any:
         """v2 보안 경계: 이 최소권한 경로는 resume 을 지원하지 않는다(클래스 docstring
@@ -960,7 +1121,11 @@ def _minimal_privilege_queue_factory() -> Callable[[], Any]:  # pragma: no cover
     return lambda: MinimalPrivilegeQueueClient(url=url, key=key)
 
 
-def _build_client() -> DirectGatewayClient:  # pragma: no cover — 실 기동 조립부
+def _build_client(
+    *, queue_factory: Optional[Callable[[], Any]] = None,
+    hr1_evidence_recorder: Any = None,
+    hr1_replay_first_enqueued: bool = False,
+) -> DirectGatewayClient:  # pragma: no cover — 실 기동 조립부
     config = load_discord_access_config()
     authorized_users = load_authorized_discord_users()
     # Codex 2차검증 재재현 CRITICAL: owner_user_ids_from_env()(FLEET_OWNER_DISCORD_IDS)
@@ -981,10 +1146,12 @@ def _build_client() -> DirectGatewayClient:  # pragma: no cover — 실 기동 �
     nl_searcher_factory = production_nl_searcher_factory(os.environ)
     return DirectGatewayClient(
         authorized_users=authorized_users, config=config,
-        queue_factory=_minimal_privilege_queue_factory(),
+        queue_factory=queue_factory or _minimal_privilege_queue_factory(),
         audit=_default_audit,
         owner_user_ids=OWNER_USER_IDS,
         nl_searcher_factory=nl_searcher_factory,
+        hr1_evidence_recorder=hr1_evidence_recorder,
+        hr1_replay_first_enqueued=hr1_replay_first_enqueued,
     )
 
 
@@ -992,8 +1159,111 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
     token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
     if not token:
         raise SystemExit("DISCORD_BOT_TOKEN 환경변수가 필요합니다")
-    client = _build_client()
-    client.run(token)
+    bot_id = os.environ.get("DISCORD_CLIENT_ID", "").strip()
+    if not bot_id:
+        raise SystemExit("DISCORD_CLIENT_ID 환경변수가 필요합니다")
+    hermes_bot_id = os.environ.get("HERMES_DISCORD_BOT_ID", "").strip()
+    if not hermes_bot_id:
+        raise SystemExit("HERMES_DISCORD_BOT_ID 환경변수가 필요합니다")
+    worker_machine = os.environ.get("DISCORD_GATEWAY_WORKER_MACHINE", "").strip()
+    if not worker_machine:
+        raise SystemExit("DISCORD_GATEWAY_WORKER_MACHINE 환경변수가 필요합니다")
+    from tools.multi_position_sourcing.discord_hr1 import (
+        GatewayLeaseGuard,
+        Hr1EvidenceRecorder,
+        discord_bot_id_from_token,
+        gateway_token_fingerprint,
+    )
+
+    try:
+        token_bot_id = discord_bot_id_from_token(token)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    if token_bot_id != bot_id:
+        raise SystemExit(
+            "Discord token identity does not match DISCORD_CLIENT_ID"
+        )
+
+    evidence_path = os.environ.get("DISCORD_HR1_EVIDENCE_PATH", "").strip()
+    replay_first = os.environ.get(
+        "DISCORD_HR1_REPLAY_FIRST_ENQUEUED", "",
+    ).strip().casefold() in {"1", "true", "yes", "on"}
+    if replay_first and not evidence_path:
+        raise SystemExit("DISCORD_HR1_REPLAY_FIRST_ENQUEUED requires evidence path")
+    if evidence_path and os.environ.get(
+        "DISCORD_GATEWAY_SYNC_COMMANDS", "1",
+    ).strip().casefold() not in {"0", "false", "no", "off"}:
+        raise SystemExit("HR-1 isolated evidence mode requires command sync disabled")
+    recorder = (
+        Hr1EvidenceRecorder(
+            evidence_path,
+            forbidden_values=tuple(filter(None, (
+                token,
+                os.environ.get(QUEUE_KEY_ENV, "").strip(),
+                os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
+            ))),
+        )
+        if evidence_path else None
+    )
+    token_fingerprint = gateway_token_fingerprint(token)
+    queue = _minimal_privilege_queue_factory()()
+    client = _build_client(
+        queue_factory=lambda: queue,
+        hr1_evidence_recorder=recorder,
+        hr1_replay_first_enqueued=replay_first,
+    )
+
+    guard = GatewayLeaseGuard(
+        queue,
+        token_fingerprint=token_fingerprint,
+        bot_id=bot_id,
+        hermes_bot_id=hermes_bot_id,
+        machine=worker_machine,
+        pid=os.getpid(),
+        renew_interval_seconds=30,
+        max_consecutive_renew_failures=2,
+        on_lease_lost=client.stop_after_lease_loss,
+    )
+    try:
+        guard.start()
+    except Exception as exc:
+        if recorder is not None:
+            recorder.record(
+                "gateway_startup_blocked",
+                reason_code=_hr1_startup_block_reason(exc),
+                error_type=type(exc).__name__,
+            )
+        raise
+    lease_id = guard.lease_id
+    generation = guard.generation
+    if recorder is not None:
+        recorder.record(
+            "gateway_started",
+            discord_bot_id=bot_id,
+            hermes_bot_id=hermes_bot_id,
+            direct_gateway_pid=os.getpid(),
+            direct_gateway_lease_id=lease_id,
+            direct_gateway_generation=generation,
+            readiness=guard.readiness,
+        )
+    released = False
+    try:
+        os.environ["VALUEHIRE_DIRECT_GATEWAY_PROCESS"] = "1"
+        logger.info("discord_direct_gateway: startup gates passed lease_id=%s", guard.lease_id)
+        client.run(token)
+    finally:
+        try:
+            guard.stop()
+            released = True
+        finally:
+            if recorder is not None:
+                recorder.record(
+                    "gateway_stopped",
+                    direct_gateway_pid=os.getpid(),
+                    direct_gateway_lease_id=lease_id,
+                    direct_gateway_generation=generation,
+                    released=released,
+                )
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -188,16 +188,23 @@ def dispatch_fleet_command(
         if payload is None:
             return {"action": "error", "reason": "잡 페이로드 무효(스킬/URL/머신 확인)"}
         job = q.enqueue(payload)
-        try:
-            from .fleet_worker import discord_notify
-            discord_notify(
-                job if isinstance(job, Mapping) else payload,
-                f"📥 job enqueue 완료 — job #{(job or {}).get('id', '?')} "
-                f"machine={payload['machine']} skill={payload['skill']}",
-            )
-        except Exception:
-            # Queue success is authoritative; notification failures remain fail-soft.
-            pass
+        if isinstance(job, Mapping) and job.get("_discord_duplicate") is True:
+            return {"action": "duplicate", "job": job}
+        # The direct gateway sends the one requester-facing enqueue response on the
+        # originating Discord channel.  Calling the shared notifier here as well can
+        # create a second bot message for the same event.  Legacy/Hermes dispatchers
+        # retain their existing notification because they do not set this process badge.
+        if os.environ.get("VALUEHIRE_DIRECT_GATEWAY_PROCESS") != "1":
+            try:
+                from .fleet_worker import discord_notify
+                discord_notify(
+                    job if isinstance(job, Mapping) else payload,
+                    f"📥 job enqueue 완료 — job #{(job or {}).get('id', '?')} "
+                    f"machine={payload['machine']} skill={payload['skill']}",
+                )
+            except Exception:
+                # Queue success is authoritative; notification failures remain fail-soft.
+                pass
         return {"action": "enqueued", "job": job}
 
     if invocation.command_name == "fleet-status":

@@ -718,12 +718,54 @@ def _agent_argv(name: str, base_args: list[str]) -> tuple[list[str], bool]:
         return [name, *base_args], False
     resolved = shutil.which(name)
     exe = resolved or name
-    needs_shell = bool(resolved) and exe.lower().endswith((".cmd", ".bat"))
+    needs_shell = exe.lower().endswith((".cmd", ".bat"))
     if needs_shell:
         exe = _quote_for_cmd_exe(exe)
     return [exe, *base_args], needs_shell
 
 
+def _configured_agent_name(name: str, env: Mapping[str, str] | None = None) -> str:
+    """Resolve an explicitly configured CLI before falling back to PATH.
+
+    Windows scheduled tasks often do not inherit the interactive user's npm PATH.
+    The worker may therefore receive VALUEHIRE_CLAUDE_BIN (or CODEX_BIN) through
+    its task environment/.env.local without weakening the fail-closed subprocess
+    boundary.
+    """
+    source = env or os.environ
+    key = "VALUEHIRE_CLAUDE_BIN" if name == "claude" else "VALUEHIRE_CODEX_BIN"
+    configured = str(source.get(key) or "").strip()
+    if not configured:
+        configured = _load_env_line(key)
+    return configured or name
+
+
+def probe_agent_cli(
+    name: str, *, env: Mapping[str, str] | None = None, timeout: int = 10,
+) -> bool:
+    """Return true only when the worker can execute one bounded CLI version probe.
+
+    Paths and command output are intentionally neither returned nor logged.  A probe failure must
+    remain visible through heartbeat capability booleans without killing the heartbeat thread.
+    """
+    if name not in ("claude", "codex"):
+        raise ValueError(f"unsupported agent CLI: {name!r}")
+    cmd, use_shell = _agent_argv(
+        _configured_agent_name(name, env), ["--version"],
+    )
+    try:
+        if use_shell:
+            _stdout, _stderr, exit_code = _run_via_shell(
+                cmd, "", timeout, str(REPO), env,
+            )
+            return exit_code == 0
+        proc = subprocess.run(
+            cmd, cwd=str(REPO), capture_output=True, text=True, encoding="utf-8",
+            timeout=timeout, env=dict(env) if env is not None else None,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 def _terminate_process_tree_windows(pid: int) -> None:
     """Codex Rescue V2 발견 — shell=True(cmd.exe) 경로에서 타임아웃 시 cmd.exe 프로세스만
     죽이면, cmd.exe 가 띄운 실제 에이전트 자식 프로세스는 고아로 남아 계속 돈다.
@@ -1022,10 +1064,12 @@ def _run_claude(prompt: str, timeout: int,
         # job.params.model → 실행 모델 선택(사장님 /st). 미지정이면 기존 기본 유지(fail-safe).
         base_args.extend(["--model", _model])
     base_args.append("-p")
-    cmd, use_shell = _agent_argv("claude", base_args)
+    cmd, use_shell = _agent_argv(_configured_agent_name("claude", env), base_args)
     if use_shell:
-        return _run_via_shell(cmd, prompt, timeout, str(REPO), env,
-                              cancel_check=cancel_check)
+        if cancel_check is None:
+            return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+        return _run_via_shell(
+            cmd, prompt, timeout, str(REPO), env, cancel_check=cancel_check)
     if cancel_check is not None:
         # #196: owner_agent 는 stdin(-p), 일반은 argv 말미 prompt — 둘 다 stdin 으로
         # 통일해 취소 감지 경로를 태운다(claude 는 -p 와 stdin 모두 프롬프트를 받는다).
@@ -1105,14 +1149,16 @@ def _run_codex(prompt: str, timeout: int,
     이슈 F: 윈도우 .cmd shim 경로는 `codex exec -`(stdin 소스 명시) + input=prompt.
     """
     import ntpath
-    codex_name = str((env or {}).get("VALUEHIRE_CODEX_BIN") or "codex").strip()
+    codex_name = _configured_agent_name("codex", env)
     basename = ntpath.basename(codex_name).lower()
     if basename not in ("codex", "codex.exe", "codex.cmd", "codex.bat"):
         raise ValueError(f"Codex 실행파일이 아닙니다: {codex_name!r}")
     cmd, use_shell = _agent_argv(codex_name, build_codex_exec_args(env))
     if use_shell:
-        return _run_via_shell(cmd, prompt, timeout, str(REPO), env,
-                              cancel_check=cancel_check)
+        if cancel_check is None:
+            return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+        return _run_via_shell(
+            cmd, prompt, timeout, str(REPO), env, cancel_check=cancel_check)
     if cancel_check is not None:
         # #196: 실행 중 owner 취소를 감지·종료 가능한 경로.
         return _native_agent_run(
@@ -1740,16 +1786,29 @@ class FleetWorker:
         """단계 G: 자기 머신 심장박동을 남긴다(fail-soft — watchdog 이 stale 감지).
 
         이슈 D: 로컬 포털 상태 파일에서 LinkedIn 로그인 여부를 읽어 동봉한다.
-        마이그레이션 전 DB(3인자 RPC 없음)면 기존 2인자 RPC 로 폴백 — 라우팅 정보는
-        못 실어도 심장박동 자체는 절대 끊기지 않는다.
+        Claude/Codex CLI 는 bounded --version 으로 실제 실행 가능성을 확인해 boolean 만
+        동봉한다. 마이그레이션 전 DB면 3인자, 다시 2인자 RPC 로 폴백 — 심장박동은
+        계속 남지만 새 readiness 마이그레이션이 없는 DB는 HR-1을 통과할 수 없다.
         """
         import os
         try:
             flag = read_linkedin_login_flag(REPO, now_epoch=int(time.time()))
         except Exception:  # noqa: BLE001 — 상태 파일 문제로 heartbeat 를 막지 않는다
             flag = False
+        claude_ready = probe_agent_cli("claude")
+        codex_ready = probe_agent_cli("codex")
         try:
             self.queue._call(  # noqa: SLF001 — 내부 RPC 재사용(재발명 금지)
+                "POST", "/rpc/record_heartbeat",
+                {"p_machine": self.machine, "p_worker_pid": os.getpid(),
+                 "p_linkedin_rps_logged_in": bool(flag),
+                 "p_claude_ready": claude_ready,
+                 "p_codex_ready": codex_ready})
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[fleet] heartbeat(5인자) 실패 — 레거시 폴백: {exc}", file=sys.stderr)
+        try:
+            self.queue._call(  # noqa: SLF001
                 "POST", "/rpc/record_heartbeat",
                 {"p_machine": self.machine, "p_worker_pid": os.getpid(),
                  "p_linkedin_rps_logged_in": bool(flag)})
