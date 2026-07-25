@@ -1194,7 +1194,17 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
         "DISCORD_GATEWAY_SYNC_COMMANDS", "1",
     ).strip().casefold() not in {"0", "false", "no", "off"}:
         raise SystemExit("HR-1 isolated evidence mode requires command sync disabled")
-    recorder = Hr1EvidenceRecorder(evidence_path) if evidence_path else None
+    recorder = (
+        Hr1EvidenceRecorder(
+            evidence_path,
+            forbidden_values=tuple(filter(None, (
+                token,
+                os.environ.get(QUEUE_KEY_ENV, "").strip(),
+                os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
+            ))),
+        )
+        if evidence_path else None
+    )
     token_fingerprint = gateway_token_fingerprint(token)
     queue = _minimal_privilege_queue_factory()()
     client = _build_client(

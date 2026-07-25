@@ -150,6 +150,15 @@ def test_hr1_evidence_recorder_refuses_to_mix_existing_runs(tmp_path: Path) -> N
         Hr1EvidenceRecorder(path)
 
 
+def test_hr1_evidence_recorder_rejects_secret_hidden_under_safe_key(tmp_path: Path) -> None:
+    recorder = Hr1EvidenceRecorder(
+        tmp_path / "events.jsonl",
+        forbidden_values=("live-secret-value",),
+    )
+    with pytest.raises(Hr1ReceiptError, match="secret value"):
+        recorder.record("gateway_started", note="prefix-live-secret-value-suffix")
+
+
 def test_text_delivery_returns_discord_response_and_job_ids(monkeypatch) -> None:
     class Queue:
         def enqueue(self, payload):

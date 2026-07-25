@@ -88,8 +88,16 @@ class Hr1EvidenceRecorder:
     two attempts being combined into a receipt that neither attempt earned.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        forbidden_values: tuple[str, ...] = (),
+    ) -> None:
         self.path = Path(path)
+        self._forbidden_values = tuple(
+            value for value in forbidden_values if isinstance(value, str) and value
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(
             self.path,
@@ -107,7 +115,7 @@ class Hr1EvidenceRecorder:
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             **fields,
         }
-        _secret_free(payload)
+        _secret_free(payload, forbidden_values=self._forbidden_values)
         encoded = json.dumps(
             payload,
             ensure_ascii=False,
