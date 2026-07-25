@@ -101,7 +101,8 @@ def test_build_job_prompt_contains_contract():
     assert "로그아웃" in p and "삭제" in p
     assert "발동하지 말" in p
     assert "params.search_urls" in p
-    assert "local secret store" in p
+    assert "검증된 exact-target 어댑터" in p
+    assert "session_guard human-auth" in p
     assert "FLEET_SEARCH_RECEIPT:" in p
     assert "session_guard capture-evidence" in p
     # 스킬 경로 금지 — 발동 문구 방식만
@@ -116,7 +117,8 @@ def test_url_prompt_has_executable_login_machine_and_pause_contract():
     assert "현재 배정 머신은 macmini" in prompt
     assert "로그인된 브라우저와 RPS 세션을 실제 URL·DOM으로 검증할 것" in prompt
     assert "검증하지 말" not in prompt
-    assert "규칙 6을 포함해 이 잡 전체에서 최대 1회" in prompt
+    assert "어댑터만 이 잡 전체에서 최대 1회" in prompt
+    assert "session_guard human-auth" in prompt
     assert "checkpoint" in prompt
     assert "다른 머신을 원격 조작하지 말" in prompt
     assert "fleet-status의 linkedin_ready" in prompt
@@ -125,8 +127,8 @@ def test_url_prompt_has_executable_login_machine_and_pause_contract():
 
     non_linkedin = build_job_prompt(_job(skill="humansearch"))
     assert "linkedin_ready" not in non_linkedin
-    assert "정상 로그인을 시도하되" in non_linkedin
-    assert "최대 1회" not in non_linkedin
+    assert "검증된 exact-target 어댑터" in non_linkedin
+    assert "이 잡 전체에서 최대 1회" not in non_linkedin
 
 
 def test_capture_prompt_is_specific_to_each_skill() -> None:
@@ -839,6 +841,10 @@ def _pass_login_gate(monkeypatch):
         ],
     }
     monkeypatch.setattr(fw, "_read_login_receipt", lambda: receipt)
+    # #639: 1층 게이트가 채널별 login_barrier 영수증으로 승격 — 이 파일의 관심사가
+    # 아니므로 장벽은 통과로 주입(장벽 자체는 test_fleet_worker_login_barrier.py 가 검증).
+    monkeypatch.setattr(fw.login_barrier, "job_block_reason",
+                        lambda job, **kw: None)
     # #190: 실행 직전 URL 공인 DNS 재검증도 주입 — 폐쇄망(오프라인) 테스트 환경에서
     # 실 DNS 에 의존하지 않게 한다(hermetic). 차단 동작 자체는
     # tests/test_discord_gateway_login_path.py 가 별도로 검사한다.

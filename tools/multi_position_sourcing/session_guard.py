@@ -2288,6 +2288,24 @@ def main(argv: list[str] | None = None) -> int:
             target_id=args.target_id,
             locator_sink=lambda payload: print(json.dumps(payload, ensure_ascii=False)),
         )
+        # #639 login-first: AUTHENTICATED + 증거 저장 확인 시에만 로그인 영수증 기록.
+        # 이 파일이 검색 장벽(login_barrier)이 인정하는 유일한 통과 증거다.
+        if (
+            result.get("status") == "authenticated"
+            and result.get("capture_status") == "saved"
+        ):
+            from . import login_barrier
+
+            machine = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+            receipt_path = login_barrier.write_channel_receipt_from_episode(
+                result, machine=machine)
+            if receipt_path:
+                result["login_receipt_path"] = receipt_path
+            else:
+                result["login_receipt_path"] = ""
+                result["login_receipt_error"] = (
+                    "영수증 기록 실패 — VALUEHIRE_MACHINE 미설정 또는 증거 필드 불완전"
+                )
     elif args.command == "keepalive":
         target = load_safe_keepalive_target(args.safe_target_json)
         result = run_safe_keepalive_episode(site, target, agent=args.agent)

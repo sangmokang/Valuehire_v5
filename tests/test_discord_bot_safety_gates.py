@@ -21,7 +21,6 @@ from unittest.mock import patch
 
 from tools.multi_position_sourcing.fleet_worker import (
     FleetWorker,
-    _run_login_preflight,
     login_gate_block_reason,
 )
 
@@ -96,25 +95,9 @@ class LoginGateReasonTests(unittest.TestCase):
         self.assertIsNotNone(login_gate_block_reason(payload, _job(), NOW))
 
 
-class LoginPreflightRunnerTests(unittest.TestCase):
-    def test_url_preflight_uses_only_linkedin_and_never_waits_for_human(self) -> None:
-        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with patch(
-            "tools.multi_position_sourcing.fleet_worker.subprocess.run",
-            return_value=completed,
-        ) as runner:
-            self.assertTrue(_run_login_preflight(_job(skill="url")))
-        command = runner.call_args.args[0]
-        self.assertEqual(command[command.index("--channels") + 1], "linkedin_rps")
-        self.assertIn("--no-human-intervention", command)
-
-    def test_preflight_failure_is_fail_closed(self) -> None:
-        completed = SimpleNamespace(returncode=1, stdout="", stderr="secret upstream detail")
-        with patch(
-            "tools.multi_position_sourcing.fleet_worker.subprocess.run",
-            return_value=completed,
-        ):
-            self.assertFalse(_run_login_preflight(_job()))
+# LoginPreflightRunnerTests 는 #639 에서 제거 — 레거시 portal_login 자동 preflight 는
+# login 스킬 계약(legacy_unsafe) 위반이라 삭제됐다. 새 장벽 배선 검증은
+# tests/test_fleet_worker_login_barrier.py 가 대체한다.
 
 
 class WorkerFakeQueue:
@@ -137,63 +120,16 @@ class WorkerFakeQueue:
 
 
 class LoginGateWiringTests(unittest.TestCase):
+    """#639: 영수증 기반 배선 검증은 tests/test_fleet_worker_login_barrier.py 로 승격.
+
+    여기에는 주입 러너 하위호환(게이트 미적용) 계약만 남긴다.
+    """
+
     def setUp(self) -> None:
         from tools.multi_position_sourcing import fleet_worker
         patcher = patch.object(fleet_worker, "discord_notify", lambda job, text: None)
         patcher.start()
         self.addCleanup(patcher.stop)
-
-    def _run(self, tmp_receipt, job, *, receipt_after_preflight=None,
-             preflight_ok=False):
-        from tools.multi_position_sourcing import fleet_worker as fw
-        calls = []
-        preflights = []
-        receipt_reads = iter((tmp_receipt, receipt_after_preflight))
-
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            return SimpleNamespace(stdout="ok", stderr="", returncode=0)
-
-        notes = []
-        with patch.object(fw.subprocess, "run", fake_run), \
-             patch.object(
-                 fw, "_read_login_receipt",
-                 lambda: next(receipt_reads, receipt_after_preflight)), \
-             patch.object(
-                 fw, "_run_login_preflight",
-                 lambda current_job: preflights.append(current_job) or preflight_ok):
-            q = WorkerFakeQueue(job)
-            w = FleetWorker(machine="macmini", queue=q,
-                            notifier=lambda j, t: notes.append(t))
-            status = w.run_once()
-        return status, q, calls, notes, preflights
-
-    def test_search_job_without_receipt_runs_login_first_then_pauses(self) -> None:
-        status, q, calls, notes, preflights = self._run(None, _job())
-        self.assertEqual(status, "paused_for_human")
-        self.assertEqual(calls, [], "러너(subprocess)가 실행되면 안 됨")
-        self.assertEqual(len(preflights), 1)
-        self.assertEqual(q.released[-1][1], "paused_for_human")
-        self.assertTrue(any("로그인" in n for n in notes), notes)
-
-    def test_auto_login_success_continues_same_search_job(self) -> None:
-        status, q, calls, notes, preflights = self._run(
-            None,
-            _job(params={"agent": "claude"}),
-            receipt_after_preflight=_receipt(),
-            preflight_ok=True,
-        )
-        self.assertGreaterEqual(len(preflights), 1)
-        self.assertGreaterEqual(len(calls), 1, "로그인 뒤 검색 러너가 이어서 실행돼야 함")
-        self.assertNotEqual(status, "paused_for_human")
-        self.assertTrue(any("로그인" in n for n in notes), notes)
-
-    def test_search_job_with_fresh_receipt_runs(self) -> None:
-        status, q, calls, _notes, preflights = self._run(
-            _receipt(), _job(params={"agent": "claude"}))
-        # 러너는 실행됐다(영수증 통과). 결과 상태는 출력 계약에 따름 — 여기선 실행 여부만.
-        self.assertGreaterEqual(len(calls), 1)
-        self.assertEqual(preflights, [])
 
     def test_injected_runner_keeps_legacy_behavior(self) -> None:
         # 주입 러너(테스트 하위호환) — 게이트 미적용으로 기존 스위트가 계속 성립.

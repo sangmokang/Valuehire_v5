@@ -29,6 +29,7 @@ from tools.codex_skill_sync.sync import (
 )
 
 from .fleet_heartbeat import read_linkedin_login_flag
+from . import login_barrier
 from .job_queue import (
     FLEET_MACHINES,
     FLEET_SKILLS,
@@ -141,40 +142,6 @@ def _receipt_block_reason(payload: Any, required: tuple[str, ...],
         if entry.get("ready") is not True:
             return f"{channel} 로그인 not-ready"
     return None
-
-
-def _run_login_preflight(job: Mapping[str, Any]) -> bool:
-    """검색 전에 정식 포털 로그인 준비 러너를 한 번 실행한다.
-
-    저장 자격증명으로 복구 가능한 세션만 자동 복구한다. 캡차·2FA·checkpoint는
-    ``--no-human-intervention`` 계약에 따라 즉시 not-ready 영수증으로 남고, 호출부가
-    검색을 시작하지 않은 채 사람에게 넘긴다.
-    """
-    channels = login_gate_required_channels(job)
-    if not channels:
-        return True
-    command = [
-        sys.executable,
-        "-m",
-        "tools.multi_position_sourcing.portal_login",
-        "--channels",
-        ",".join(channels),
-        "--worker-id",
-        str(job.get("machine") or "default"),
-        "--no-human-intervention",
-    ]
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=REPO,
-            capture_output=True,
-            text=True,
-            timeout=max(60, 240 * len(channels)),
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return completed.returncode == 0
 
 
 CLAUDE_TIMEOUT_SECONDS = 2400  # 40분
@@ -414,6 +381,14 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             f"출력할 것. ready 가 아닌 채널이 있으면 이 마커 대신 규칙 3의 PAUSE 마커로 "
             f"종료할 것(거짓 ready 금지).\n"
         )
+    login_barrier_rule = (
+        "0. `docs/prompts/login-search-execution-contract.md`를 먼저 읽고 그대로 실행할 것. "
+        "워커가 필요한 사이트 전부의 `artifacts/portal_session_status_latest.json` "
+        "영수증과 exact target 로그인 마커를 정식 게이트로 검증해 "
+        "`LOGIN_BARRIER=PASS` 영수증이 나온 뒤에만 "
+        f"{skill} 스킬의 검색·URL 작업을 시작할 것. BLOCKED이면 검색을 시작하지 말고 "
+        "사이트별 상태와 브라우저 보존 결과를 보고할 것.\n"
+    )
     url_login_rule = ""
     capture_rule = ""
     if skill == "url":
@@ -423,8 +398,9 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             "linkedin_rps_logged_in=true인 머신을 먼저 찾아 이 잡에 배정한다. 현재 배정 머신은 "
             f"{assigned_machine}이다. 이 머신의 영속 크롬 프로필에서 브라우저를 직접 탐색하고, "
             "로그인된 브라우저와 RPS 세션을 실제 URL·DOM으로 검증할 것. 검증 전에는 검색을 "
-            "시작하지 말 것. 단순 로그아웃이면 규칙 6을 포함해 이 잡 전체에서 최대 1회만 "
-            "local secret store 자동 로그인을 시도할 것. 캡차·2FA·checkpoint가 뜨거나 로그인 "
+            "시작하지 말 것. 단순 로그아웃이어도 LOGIN_BARRIER 계약의 검증된 exact-target "
+            "어댑터만 이 잡 전체에서 최대 1회 허용한다. 어댑터가 없으면 session_guard human-auth로 "
+            "인계할 것. 캡차·2FA·checkpoint가 뜨거나 로그인 "
             "세션을 찾지 못하면 다른 머신을 원격 조작하지 말 것. 운영자가 fleet-status의 "
             "linkedin_ready로 재배정할 수 있도록 다음 형식의 문장을 마지막 줄에 남기고 즉시 "
             f"종료할 것: '{_PAUSE_MARKER} portal=linkedin_rps machine={assigned_machine} "
@@ -457,6 +433,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"{params_line}"
         f"- 결과: 한국어로 요약해 stdout 에 출력할 것 (워커가 Discord 로 전달함)\n"
         f"규칙:\n"
+        f"{login_barrier_rule}"
         f"1. {skill} 외의 서치·수집 스킬을 발동하지 말 것.\n"
         f"2. 아웃리치·메시지·메일 발송은 어떤 경우에도 하지 말 것 (발송 게이트 SOT28).\n"
         f"3. 로그인된 크롬 프로필을 로그아웃·삭제·초기화하지 말 것.\n"
@@ -464,8 +441,9 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력하고 즉시 종료할 것.\n"
         f"5. params.search_urls가 있으면 그 URL들을 사람이 준비한 검색 결과로 사용하고 "
         f"포지션 URL과 혼동하지 말 것.\n"
-        f"6. 보호 포털이 로그아웃 상태면 이 머신의 전용 프로필과 local secret store로 "
-        f"정상 로그인을 시도하되, 비밀번호·쿠키·토큰을 출력하지 말 것.\n"
+        f"6. 보호 포털이 로그아웃 상태면 LOGIN_BARRIER 계약의 검증된 exact-target 어댑터만 "
+        f"최대 1회 허용한다. 어댑터가 없으면 session_guard human-auth로 인계하고, "
+        f"비밀번호·쿠키·토큰을 출력하지 말 것.\n"
         f"7. aisearch는 ClickUp JD에서 국문·영문·띄어쓰기·약어 변형 검색어를 만들고, "
         f"사람인 OR/AND/NOT 및 잡코리아 키워드 칩·경력 필터를 UI에 직접 입력할 것.\n"
         f"8. 후보 목록은 1페이지에서 끝내지 말고 최소 10페이지 또는 마지막 페이지까지 "
@@ -1507,24 +1485,27 @@ class FleetWorker:
                 self._release(job, job_id, "failed", error=url_reason)
                 self._notify(job, f"❌ 잡 #{job_id} 실패 — {url_reason}")
                 return "failed"
-        # AC-3 G4(1층): 검색 스킬은 로그인 영수증이 유효할 때만 실행. 기본 러너 경로 한정
-        # — 주입 러너(테스트/시뮬레이션)는 브라우저를 안 여니 기존 계약 유지.
+        # AC-3 G4(1층) + #639 login-first: 검색 스킬은 채널별 로그인 영수증(풍부 스키마 —
+        # 상태·host·target·화면 증거 파일·SHA-256)이 코드 검증을 통과할 때만 실행한다.
+        # 모델 출력 문구("LOGIN_BARRIER=PASS")는 신뢰하지 않는다. 레거시 portal_login
+        # 자동 preflight 는 login 스킬 계약(legacy_unsafe) 위반이라 제거 — 정식 사람
+        # 조치는 session_guard human-auth 뿐(자동 자격증명 어댑터는 이슈 B로 분리).
         if not self._runner_injected and job.get("skill") in FLEET_SKILLS:
-            reason = login_gate_block_reason(_read_login_receipt(), job, int(time.time()))
+            reason = login_barrier.job_block_reason(
+                job, machine=self.machine, now_epoch=time.time())
             if reason is not None:
-                self._notify(job, (
-                    f"🔐 잡 #{job_id} 로그인 준비를 먼저 확인합니다 — "
-                    f"skill={job.get('skill')}"))
-                _run_login_preflight(job)
-                reason = login_gate_block_reason(
-                    _read_login_receipt(), job, int(time.time()))
-            if reason is not None:
+                required = login_barrier.job_required_channels(job)
+                action = "\n".join(
+                    f"  python3 -m tools.multi_position_sourcing.session_guard "
+                    f"human-auth --site {ch} --agent fleet" for ch in required)
                 self._release(job, job_id, "paused_for_human",
-                              error=f"로그인 선행 게이트: {reason}")
+                              error=f"로그인 선행 장벽: {reason}")
                 self._notify(job, (
-                    f"⏸️ 잡 #{job_id} 대기(paused_for_human) — {reason}\n"
-                    f"사장님, /login 으로 포털 로그인을 먼저 완료해 주세요. "
-                    f"영수증 갱신 후 fleet-resume 로 재개됩니다."))
+                    f"⏸️ 잡 #{job_id} 대기(paused_for_human) — LOGIN_BARRIER=BLOCKED\n"
+                    f"machine={self.machine}, skill={job.get('skill')}\n"
+                    f"사유: {reason}\n"
+                    f"필요한 사람 조치(정확한 채널만):\n{action}\n"
+                    f"검색 executor 호출 0회 — 로그인 영수증 갱신 후 fleet-resume 로 재개됩니다."))
                 return "paused_for_human"
         if job.get("skill") == OWNER_AGENT_SKILL:
             try:

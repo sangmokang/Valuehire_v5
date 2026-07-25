@@ -29,6 +29,9 @@ FLEET_ENV = {"VH_BUSY_TASK": "fleet #7 (humansearch)", "VH_BUSY_AGENT": "claude"
 
 def _dispatch(payload: dict, *, fleet: bool = True, project_dir: pathlib.Path | None = None):
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir or ROOT))
+    # #639: 영수증 정본은 채널별 파일 — 테스트는 실사용자 홈이 아닌 결정적 경로만 본다.
+    env["VH_LOGIN_RECEIPT_DIR"] = str((project_dir or ROOT) / "login_receipts")
+    env["VALUEHIRE_MACHINE"] = "macmini"
     env.pop("VH_BUSY_TASK", None)
     if fleet:
         env.update(FLEET_ENV)
@@ -42,16 +45,21 @@ def _tool(name: str, **kw) -> dict:
 
 
 def _write_receipt(root: pathlib.Path, *, ready=True, age_seconds=60) -> None:
-    gen = (datetime.datetime.now(datetime.timezone.utc)
-           - datetime.timedelta(seconds=age_seconds)).isoformat()
-    payload = {
-        "kind": "portal_session_preflight", "generated_at": gen, "ready": ready,
-        "portal_sessions": [{"channel": c, "ready": ready}
-                            for c in ("saramin", "jobkorea", "linkedin_rps")],
-    }
-    (root / "artifacts").mkdir(parents=True, exist_ok=True)
-    (root / "artifacts/portal_session_status_latest.json").write_text(
-        json.dumps(payload), encoding="utf-8")
+    """#639: 채널별 login_barrier 영수증(2층 훅이 보는 요약 필드)을 기록."""
+    ts = (datetime.datetime.now(datetime.timezone.utc)
+          - datetime.timedelta(seconds=age_seconds)).isoformat()
+    rdir = root / "login_receipts"
+    rdir.mkdir(parents=True, exist_ok=True)
+    for c in ("saramin", "jobkorea", "linkedin_rps"):
+        payload = {
+            "schema_version": 1, "channel": c,
+            "state": "AUTHENTICATED" if ready else "AUTH_LOST",
+            "ready": ready, "host": "macmini", "target_id": "T1",
+            "last_verified_at": ts, "owner_activity_detected": False,
+            "proof_names": ["marker"], "mutation_count": 0,
+            "capture_status": "saved",
+        }
+        (rdir / f"{c}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 class SkillWhitelistHookTests(unittest.TestCase):
@@ -103,6 +111,83 @@ class LoginGateHookTests(unittest.TestCase):
             code, _ = _dispatch(_tool("Skill", skill="login"),
                                 project_dir=pathlib.Path(td))
             self.assertEqual(code, 0)
+
+
+class LoginReceiptForgeryHookTests(unittest.TestCase):
+    """#639 V2 실증 우회 봉인 — 영수증 위조(쓰기 도구·shell·링크) 차단, 읽기 통과."""
+
+    def test_blocks_shell_write_and_symlink(self) -> None:
+        for cmd in ("echo '{}' > ~/.valuehire/login_receipts/saramin.json",
+                    "ln -sf /tmp/forged.json ~/.valuehire/login_receipts/saramin.json",
+                    "cp /tmp/fake.json ~/.valuehire/login_receipts/jobkorea.json"):
+            code, err = _dispatch(_tool("Bash", command=cmd), fleet=False)
+            self.assertEqual(code, 2, cmd)
+            self.assertIn("login-receipt-forgery", err)
+
+    def test_blocks_write_tool_to_receipt_path(self) -> None:
+        code, err = _dispatch(_tool(
+            "Write", file_path="/Users/x/.valuehire/login_receipts/saramin.json",
+            content="{}"), fleet=False)
+        self.assertEqual(code, 2)
+        self.assertIn("login-receipt-forgery", err)
+
+    def test_allows_reads_and_other_paths(self) -> None:
+        code, _ = _dispatch(_tool(
+            "Bash", command="cat ~/.valuehire/login_receipts/saramin.json"), fleet=False)
+        self.assertEqual(code, 0)
+        code, _ = _dispatch(_tool(
+            "Write", file_path="/tmp/notes.md", content="x"), fleet=False)
+        self.assertEqual(code, 0)
+
+
+class ProfileArchiveFirstHookTests(unittest.TestCase):
+    """후보자 저장 강제 — 영수증 없으면 제안/등록 차단, 검색·읽기 통과."""
+
+    _SARAMIN = "https://hiring.saramin.co.kr/applicant-view/position/resume/19452507"
+
+    def _dispatch_pa(self, payload, *, db_path, with_row=False):
+        import sqlite3
+        import tempfile
+        con = sqlite3.connect(db_path)
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS profile_archive_receipts(id INTEGER PRIMARY KEY,"
+            " profile_url TEXT, channel TEXT, position_id TEXT, captured_at REAL,"
+            " UNIQUE(position_id,profile_url))")
+        if with_row:
+            con.execute("INSERT OR IGNORE INTO profile_archive_receipts"
+                        "(profile_url,channel,position_id,captured_at) VALUES(?,?,?,?)",
+                        (self._SARAMIN, "saramin", "", 1.0))
+        con.commit(); con.close()
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(ROOT),
+                   VH_PROFILE_ARCHIVE_DB=str(db_path))
+        env.pop("VH_BUSY_TASK", None)
+        p = subprocess.run(["python3", str(DISPATCH)], input=json.dumps(payload),
+                           capture_output=True, text=True, env=env, cwd=str(ROOT))
+        return p.returncode, p.stderr
+
+    def test_advance_without_receipt_blocks(self):
+        import tempfile
+        db = pathlib.Path(tempfile.mkdtemp()) / "pa.sqlite3"
+        code, err = self._dispatch_pa(_tool(
+            "Skill", skill="jdbuilder", request_text=f"이 후보 {self._SARAMIN} 제안"),
+            db_path=db)
+        self.assertEqual(code, 2)
+        self.assertIn("profile-archive-first", err)
+
+    def test_advance_with_receipt_passes(self):
+        import tempfile
+        db = pathlib.Path(tempfile.mkdtemp()) / "pa.sqlite3"
+        code, _ = self._dispatch_pa(_tool(
+            "Skill", skill="jdbuilder", request_text=f"이 후보 {self._SARAMIN} 제안"),
+            db_path=db, with_row=True)
+        self.assertEqual(code, 0)
+
+    def test_search_skill_passes(self):
+        import tempfile
+        db = pathlib.Path(tempfile.mkdtemp()) / "pa.sqlite3"
+        code, _ = self._dispatch_pa(_tool(
+            "Skill", skill="humansearch", request_text=self._SARAMIN), db_path=db)
+        self.assertEqual(code, 0)
 
 
 class SendHookTests(unittest.TestCase):

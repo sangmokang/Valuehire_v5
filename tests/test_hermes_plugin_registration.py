@@ -137,7 +137,7 @@ def test_pending_aisearch_followup_rewrites_to_fixed_fleet_skill() -> None:
     }
 
 
-def test_url_followup_uses_position_context_and_routes_to_humansearch(monkeypatch) -> None:
+def test_url_followup_routes_to_url_skill(monkeypatch) -> None:
     plugin = _load_plugin_module()
     ctx = FakeCtx()
     plugin.register(ctx)
@@ -169,11 +169,10 @@ def test_url_followup_uses_position_context_and_routes_to_humansearch(monkeypatc
     followup.text = "https://www.jobkorea.co.kr/Search/?stext=kotlin 경력7년 서울"
     result = hook(event=followup)
     assert result["action"] == "rewrite"
-    assert result["text"].startswith(
-        "/fleet-run humansearch https://app.clickup.com/t/abc "
-        "https://www.jobkorea.co.kr/Search/?stext=kotlin"
-    )
-    assert "channels:jobkorea" in result["text"]
+    # #639: /url 은 skill=url 로 enqueue 된다(기존 humansearch 고정은 스킬 의미 위반이라 수정).
+    assert result["text"].startswith("/fleet-run url ")
+    assert "https://www.jobkorea.co.kr/Search/?stext=kotlin" in result["text"]
+    assert "humansearch" not in result["text"]
     assert "idempotency:discord:1512503999999999988" in result["text"]
 
 

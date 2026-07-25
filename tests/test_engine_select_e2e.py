@@ -108,7 +108,9 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(stdout=_receipt_stdout(), stderr="", returncode=0)
 
         with patch.object(fw.subprocess, "run", fake_run), \
-             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt), \
+             patch.object(fw.login_barrier, "job_block_reason",
+                          lambda job, **kw: None):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: None)
@@ -127,7 +129,9 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(stdout=_receipt_stdout(), stderr="", returncode=0)
 
         with patch.object(fw.subprocess, "run", fake_run), \
-             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt), \
+             patch.object(fw.login_barrier, "job_block_reason",
+                          lambda job, **kw: None):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: None)
@@ -148,7 +152,9 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
 
         notes: list[str] = []
         with patch.object(fw.subprocess, "run", fake_run), \
-             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt), \
+             patch.object(fw.login_barrier, "job_block_reason",
+                          lambda job, **kw: None):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: notes.append(text))
@@ -168,7 +174,9 @@ class EngineEndToEndTests(unittest.IsolatedAsyncioTestCase):
             raise subprocess.TimeoutExpired(cmd=cmd, timeout=9)
 
         with patch.object(fw.subprocess, "run", fake_run), \
-             patch.object(fw, "_read_login_receipt", _ready_login_receipt):
+             patch.object(fw, "_read_login_receipt", _ready_login_receipt), \
+             patch.object(fw.login_barrier, "job_block_reason",
+                          lambda job, **kw: None):
             q = WorkerFakeQueue(row)
             worker = FleetWorker(machine=row["machine"], queue=q,
                                  notifier=lambda job, text: None)
