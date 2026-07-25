@@ -140,6 +140,56 @@ class LoginReceiptForgeryHookTests(unittest.TestCase):
         self.assertEqual(code, 0)
 
 
+class ProfileArchiveFirstHookTests(unittest.TestCase):
+    """후보자 저장 강제 — 영수증 없으면 제안/등록 차단, 검색·읽기 통과."""
+
+    _SARAMIN = "https://hiring.saramin.co.kr/applicant-view/position/resume/19452507"
+
+    def _dispatch_pa(self, payload, *, db_path, with_row=False):
+        import sqlite3
+        import tempfile
+        con = sqlite3.connect(db_path)
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS profile_archive_receipts(id INTEGER PRIMARY KEY,"
+            " profile_url TEXT, channel TEXT, position_id TEXT, captured_at REAL,"
+            " UNIQUE(position_id,profile_url))")
+        if with_row:
+            con.execute("INSERT OR IGNORE INTO profile_archive_receipts"
+                        "(profile_url,channel,position_id,captured_at) VALUES(?,?,?,?)",
+                        (self._SARAMIN, "saramin", "", 1.0))
+        con.commit(); con.close()
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(ROOT),
+                   VH_PROFILE_ARCHIVE_DB=str(db_path))
+        env.pop("VH_BUSY_TASK", None)
+        p = subprocess.run(["python3", str(DISPATCH)], input=json.dumps(payload),
+                           capture_output=True, text=True, env=env, cwd=str(ROOT))
+        return p.returncode, p.stderr
+
+    def test_advance_without_receipt_blocks(self):
+        import tempfile
+        db = pathlib.Path(tempfile.mkdtemp()) / "pa.sqlite3"
+        code, err = self._dispatch_pa(_tool(
+            "Skill", skill="jdbuilder", request_text=f"이 후보 {self._SARAMIN} 제안"),
+            db_path=db)
+        self.assertEqual(code, 2)
+        self.assertIn("profile-archive-first", err)
+
+    def test_advance_with_receipt_passes(self):
+        import tempfile
+        db = pathlib.Path(tempfile.mkdtemp()) / "pa.sqlite3"
+        code, _ = self._dispatch_pa(_tool(
+            "Skill", skill="jdbuilder", request_text=f"이 후보 {self._SARAMIN} 제안"),
+            db_path=db, with_row=True)
+        self.assertEqual(code, 0)
+
+    def test_search_skill_passes(self):
+        import tempfile
+        db = pathlib.Path(tempfile.mkdtemp()) / "pa.sqlite3"
+        code, _ = self._dispatch_pa(_tool(
+            "Skill", skill="humansearch", request_text=self._SARAMIN), db_path=db)
+        self.assertEqual(code, 0)
+
+
 class SendHookTests(unittest.TestCase):
     def test_blocks_sendish_bash_in_fleet_job(self) -> None:
         for cmd in ("python3 tools/x.py --send", "echo hi | sendmail a@b.c",
