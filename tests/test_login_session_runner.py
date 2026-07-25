@@ -194,6 +194,31 @@ def test_managed_browser_process_uses_exact_ipv4_listener_when_port_is_declared_
     ]
 
 
+def test_managed_browser_process_rejects_ambiguous_exact_ipv4_listeners() -> None:
+    class Result:
+        returncode = 0
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def run(command: list[str], **_kwargs: object) -> Result:
+        if command[0] == "ps":
+            return Result(
+                "222 /Applications/Google Chrome --remote-debugging-port=9225 "
+                "--user-data-dir=/tmp/LinkedIn-A --no-first-run\n"
+                "333 /Applications/Google Chrome --remote-debugging-port=9225 "
+                "--user-data-dir=/tmp/LinkedIn-B --no-first-run\n"
+            )
+        return Result("p222\np333\n")
+
+    with pytest.raises(LookupError, match="match count was 2"):
+        resolve_managed_browser_process(
+            "linkedin_rps",
+            "http://127.0.0.1:9225",
+            runner=run,
+        )
+
+
 @pytest.mark.parametrize(
     "command",
     [

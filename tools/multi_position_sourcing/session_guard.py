@@ -1761,6 +1761,14 @@ def run_human_auth_episode(
             )
         except _HumanAuthStopRequested:
             return {"status": "human_auth_stopped", "site": site}
+        except Exception:
+            pending_locator = getattr(tab, "_vh_human_auth_cleanup_locator", None)
+            return {
+                "status": "handoff_failed",
+                "site": site,
+                "reason": "exact_window_presentation_failed",
+                "cleanup_pending": isinstance(pending_locator, LoginWindowLocator),
+            }
         public_locator = _public_locator_payload(locator)
         sink(public_locator)
         observation = waiter(
