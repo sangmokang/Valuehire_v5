@@ -38,10 +38,17 @@
 | 2 | 동일 + 영수증 有(신선) | 통과 |
 | 3 | tool=Skill, skill ∈ {aisearch, humansearch, url, login} | 통과(저장은 이 러너가 수행) |
 | 4 | tool=Bash 읽기(cat/rg/grep/ls), 검색, 로그인 | 통과 |
-| 5 | 후보 식별자 파싱 불가(tool_input에 profile_url 없음) | 통과(이 게이트 대상 아님 — 다른 게이트 소관) |
+| 5 | 후보 식별자 파싱 불가(tool_input 어디에도 프로필 URL 없음) | 통과(이 게이트 대상 아님) |
 | 6 | 영수증 DB 파일 없음/열기 실패 | fail-closed 차단(전진성 도구에 한해) |
-| 7 | position_id 없이 profile_url만 | profile_url 단독 매칭 시도, 없으면 차단 |
-| 8 | **그 외 전부** | 통과(과잉 차단 금지 — 이 게이트는 전진성 도구만 좁게) |
+| 7 | position_id 없이 profile_url만 | profile_url canonical 단독 매칭, 없으면 차단 |
+| 8 | URL이 중첩 필드/대체 필드명(candidate_url 등)에 숨음 | **재귀 스캔으로 검출·차단**(V1 봉인) |
+| 9 | URL 전체 percent-encoding | **최대 3회 디코드 후 검출·차단**(V1 봉인) |
+| 10 | 여러 후보 URL 중 일부만 저장 | **전수 검사 — 하나라도 미저장이면 차단**(V1 봉인) |
+| 11 | 저장 URL과 쿼리/트레일링슬래시만 다름 | canonical 정규화로 **동일 취급**(과잉차단 방지, V1 봉인) |
+| 12 | jobkorea Co_Read?rNo / linkedin talent/hire/../profile | browser_evidence 정본 형식 반영해 검출 |
+| 13 | **그 외 전부** | 통과(좁은 게이트 — 전진성 스킬 + 프로필 URL 있을 때만) |
+
+> 주의: tool_input 문자열은 **고정 필드가 아니라 전 중첩 값 재귀 스캔**한다(§goal V1 반영).
 
 ## 4. 예외 케이스 표 (R1)
 
@@ -68,3 +75,15 @@
 
 ## 적대 검증 로그
 (후기록)
+
+## 적대 검증 로그
+
+### V1 (codex fresh, read-only, 2026-07-26) — FAIL → 전건 봉인
+- CRITICAL: 자동발송 스킬 `clickup-position-talent-matching` 누락 → `_ADVANCE_SKILLS`에 전 발송/등록 스킬 추가.
+- HIGH: jobkorea `/Recruit/Co_Read?rNo=` 미검출 → 정규식을 browser_evidence 정본 형식(corp/person·/person/·searchfirm·co_read·resume)에 맞춤.
+- HIGH: 다중 URL 첫 번째만 검사 → 전 문자열의 모든 URL 전수, 하나라도 미저장이면 차단.
+- HIGH: candidate_url·중첩 필드·전체 percent-encoding 우회 → tool_input 전 값 재귀 스캔 + 최대 3회 percent-decode.
+- MEDIUM: trailing slash/query 차이 과잉차단 → canonical_url 정규화로 양측 대조.
+- MEDIUM: import 실패 fail-open → 디스패처 기존 계약(fail-open)이라 잔존 위험으로 명시(정상 환경 8가드 로드·차단 실증).
+- 라이브 재현: 우회 4건(clickup/Co_Read/candidate_url/percent-encoded) 전부 exit 2 차단 확인, 정상 검색 exit 0. gate 31 + 훅 회귀 20 green.
+- V1 판정 본문/agentId는 verdict.json 참조.

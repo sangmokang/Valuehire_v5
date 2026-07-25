@@ -104,6 +104,88 @@ def test_advance_without_profile_url_passes():
         has_receipt=lambda u, p: False) is None
 
 
+# ── V1 적대검증 봉인: 우회 6건 ────────────────────────────────────────
+
+NO_RECEIPT = lambda u, p: False
+
+
+def test_v1_clickup_matching_skill_blocks():
+    # CRITICAL: 자동발송 스킬이 차단 목록에 있어야 한다.
+    r = pag.block_reason("Skill", {
+        "skill": "clickup-position-talent-matching",
+        "request_text": "https://www.linkedin.com/talent/profile/UNSAVED 제안 발송"},
+        has_receipt=NO_RECEIPT)
+    assert r is not None
+
+
+@pytest.mark.parametrize("skill", [
+    "clickup-position-talent-matching", "saramin-talent-sourcing",
+    "jobkorea-talent-sourcing", "pos-fill", "recruit-post-builder"])
+def test_v1_all_send_skills_blocked(skill):
+    r = pag.block_reason("Skill", {
+        "skill": skill, "request_text": "이 후보 https://www.linkedin.com/talent/profile/X 제안"},
+        has_receipt=NO_RECEIPT)
+    assert r is not None, skill
+
+
+def test_v1_jobkorea_co_read_matched():
+    # HIGH: 저장 코드가 인정하는 잡코리아 형식(/Recruit/Co_Read?rNo=)을 잡아야 한다.
+    r = pag.block_reason("Skill", {
+        "skill": "jobkorea-talent-sourcing",
+        "request_text": "https://www.jobkorea.co.kr/Recruit/Co_Read?rNo=123 제안 발송"},
+        has_receipt=NO_RECEIPT)
+    assert r is not None
+
+
+def test_v1_multiple_urls_block_if_any_unsaved():
+    # HIGH: 여러 URL 중 하나라도 미저장이면 차단.
+    saved = "https://hiring.saramin.co.kr/applicant-view/position/resume/19452507"
+    unsaved = "https://www.linkedin.com/talent/profile/UNSAVED"
+    r = pag.block_reason("Skill", {
+        "skill": "saramin-talent-sourcing",
+        "request_text": f"둘 다 등록: {saved} 그리고 {unsaved}"},
+        has_receipt=lambda u, p: u == saved)
+    assert r is not None
+
+
+def test_v1_alternate_field_blocked():
+    # HIGH: candidate_url / 중첩 필드에 숨겨도 잡아야 한다.
+    r = pag.block_reason("Skill", {
+        "skill": "pos-fill",
+        "candidate_url": "https://www.linkedin.com/talent/profile/HIDDEN"},
+        has_receipt=NO_RECEIPT)
+    assert r is not None
+    r2 = pag.block_reason("Skill", {
+        "skill": "pos-fill",
+        "params": {"candidate": {"profile_url": "https://www.linkedin.com/talent/profile/NEST"}}},
+        has_receipt=NO_RECEIPT)
+    assert r2 is not None
+
+
+def test_v1_percent_encoded_url_blocked():
+    # HIGH: 전체 percent-encoding 우회 봉인.
+    enc = "https%3A%2F%2Fwww.linkedin.com%2Ftalent%2Fprofile%2FENC"
+    r = pag.block_reason("Skill", {
+        "skill": "saramin-talent-sourcing", "request_text": f"등록 {enc}"},
+        has_receipt=NO_RECEIPT)
+    assert r is not None
+
+
+def test_v1_receipt_matches_despite_trailing_slash_and_query(tmp_path):
+    # MEDIUM: 저장은 canonical(쿼리 없음), 입력에 쿼리/슬래시 붙어도 매칭.
+    canonical = "https://hiring.saramin.co.kr/applicant-view/position/resume/19452507"
+    db = _make_db(tmp_path, [(canonical, "61")])
+    assert pag.receipt_exists(db, profile_url=canonical + "/?utm=x", position_id="61") is True
+
+
+def test_v1_linkedin_talent_hire_profile_matched():
+    r = pag.block_reason("Skill", {
+        "skill": "linkedin-rps-jd-set-builder",
+        "request_text": "https://www.linkedin.com/talent/hire/123/discover/applicants/profile/AAA 제안"},
+        has_receipt=NO_RECEIPT)
+    assert r is not None
+
+
 def test_extract_profile_url_variants():
     for u in (SARAMIN_URL,
               "https://www.jobkorea.co.kr/Corp/Person/Resume?rIdx=123",
