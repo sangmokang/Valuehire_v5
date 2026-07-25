@@ -1761,7 +1761,11 @@ def run_human_auth_episode(
             )
         except _HumanAuthStopRequested:
             return {"status": "human_auth_stopped", "site": site}
-        except Exception:
+        except Exception as exc:
+            from .portal_worker import ProfileLockError
+
+            if isinstance(exc, ProfileLockError):
+                raise
             pending_locator = getattr(tab, "_vh_human_auth_cleanup_locator", None)
             return {
                 "status": "handoff_failed",
