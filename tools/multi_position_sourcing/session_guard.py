@@ -2372,8 +2372,10 @@ def main(argv: list[str] | None = None) -> int:
                 episode = {
                     "status": "authenticated",
                     "site": site,
+                    "target_id": result.get("target_id"),
                     "proof_names": ["gnb_account_marker"],
-                    "evidence": evidence_result,
+                    "evidence": {**evidence_result,
+                                 "target_id": result.get("target_id")},
                 }
                 machine = os.environ.get("VALUEHIRE_MACHINE", "").strip()
                 receipt_path = login_barrier.write_channel_receipt_from_episode(
