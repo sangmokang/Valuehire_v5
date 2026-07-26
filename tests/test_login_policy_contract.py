@@ -33,6 +33,11 @@ AI_SEARCH_SKILL_PATHS = (
     ROOT / ".codex/skills/ai-search/SKILL.md",
     ROOT / ".claude/skills/aisearch/SKILL.md",
 )
+HUMANSEARCH_SKILL_PATHS = (
+    ROOT / "skills/humansearch/SKILL.md",
+    ROOT / ".codex/skills/humansearch/SKILL.md",
+    ROOT / ".claude/skills/humansearch/SKILL.md",
+)
 POLICY_ENTRYPOINTS = (
     ROOT / "CLAUDE.md",
     ROOT / "docs/sot/25-ai-search-execution-process.json",
@@ -44,6 +49,7 @@ POLICY_ENTRYPOINTS = (
     ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
     ROOT / ".codex/skills/ai-search/SKILL.md",
     ROOT / ".claude/skills/aisearch/SKILL.md",
+    *HUMANSEARCH_SKILL_PATHS,
     ROOT / "skills/multisearch/SKILL.md",
     ROOT / ".codex/skills/multisearch/SKILL.md",
     ROOT / ".codex/skills/url/SKILL.md",
@@ -419,6 +425,29 @@ def test_search_access_cannot_authorize_linkedin_password_login() -> None:
         "AUTH_CONFLICT",
     ):
         assert required in text
+
+
+def test_humansearch_entrypoints_preserve_handoff_vs_conflict() -> None:
+    for path in HUMANSEARCH_SKILL_PATHS:
+        text = _text(path)
+        for forbidden in (
+            "target/profile/endpoint가 맞지 않으면 `AUTH_CONFLICT`",
+            "target/profile/endpoint 불일치는 `AUTH_CONFLICT`",
+            "캡차·2FA·세션충돌이면 STOP",
+        ):
+            assert forbidden not in text, (path, forbidden)
+        for required in (
+            POLICY_ID,
+            "APP 17",
+            "APP 30/31",
+            "LINKEDIN_LI_AT",
+            "인증 기기 수 미증명",
+            "HANDOFF",
+            "인증 기기 2개 이상",
+            "AUTH_CONFLICT",
+            "HUMAN_AUTH",
+        ):
+            assert required in text, (path, required)
 
 
 def test_ai_search_status_vocabulary_matches_the_login_policy() -> None:
