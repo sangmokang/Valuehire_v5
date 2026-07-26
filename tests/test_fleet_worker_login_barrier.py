@@ -17,7 +17,9 @@ import pytest
 
 from tools.multi_position_sourcing import fleet_worker as fw
 from tools.multi_position_sourcing import login_barrier as lb
+from tools.multi_position_sourcing import session_guard
 from tools.multi_position_sourcing.fleet_worker import FleetWorker
+from tools.multi_position_sourcing.session_guard import BrowserTargetRef
 
 NOW = int(datetime(2026, 7, 25, 12, 0, 0, tzinfo=timezone.utc).timestamp())
 PNG = base64.b64decode(
@@ -71,6 +73,10 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
             "candidate_index": 0,
             "archive_row_id": None,
             "archive_db_path": "",
+            "endpoint": "http://127.0.0.1:9311",
+            "profile_path": str(Path.cwd().resolve()),
+            "browser_pid": 4242,
+            "target_id": "T1",
         }
         manifest.write_text(json.dumps(evidence), encoding="utf-8")
         (rdir / f"{ch}.json").write_text(json.dumps({
@@ -81,7 +87,7 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
             "host": "macmini",
             "target_id": "T1",
             "endpoint": "http://127.0.0.1:9311",
-            "profile_path": str((tmp_path / f"{ch}-profile").resolve()),
+            "profile_path": str(Path.cwd().resolve()),
             "browser_pid": 4242,
             "last_verified_at": (
                 datetime.fromtimestamp(NOW, tz=timezone.utc) - timedelta(seconds=30)
@@ -118,7 +124,24 @@ class FakeQueue:
 
 
 @pytest.fixture(autouse=True)
-def _quiet_notify():
+def _quiet_notify(monkeypatch):
+    monkeypatch.setattr(
+        session_guard,
+        "resolve_existing_target",
+        lambda site, *, target_id=None, **_kwargs: BrowserTargetRef(
+            site=site,
+            endpoint="http://127.0.0.1:9311",
+            target_id=str(target_id or ""),
+            websocket_url=f"ws://127.0.0.1:9311/devtools/page/{target_id}",
+            initial_url={
+                "saramin": "https://www.saramin.co.kr/zf_user/",
+                "jobkorea": "https://www.jobkorea.co.kr/",
+                "linkedin_rps": "https://www.linkedin.com/talent/",
+            }[site],
+            profile_path=str(Path.cwd().resolve()),
+            browser_pid=4242,
+        ),
+    )
     with patch.object(fw, "discord_notify", lambda job, text: None):
         yield
 

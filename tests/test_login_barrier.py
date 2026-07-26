@@ -17,11 +17,34 @@ from types import SimpleNamespace
 import pytest
 
 from tools.multi_position_sourcing import login_barrier as lb
+from tools.multi_position_sourcing import session_guard
+from tools.multi_position_sourcing.session_guard import BrowserTargetRef
 
 NOW = int(datetime(2026, 7, 25, 12, 0, 0, tzinfo=timezone.utc).timestamp())
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+
+
+@pytest.fixture(autouse=True)
+def _exact_live_browser_binding(monkeypatch):
+    monkeypatch.setattr(
+        session_guard,
+        "resolve_existing_target",
+        lambda site, *, target_id=None, **_kwargs: BrowserTargetRef(
+            site=site,
+            endpoint="http://127.0.0.1:9311",
+            target_id=str(target_id or ""),
+            websocket_url=f"ws://127.0.0.1:9311/devtools/page/{target_id}",
+            initial_url={
+                "saramin": "https://www.saramin.co.kr/zf_user/",
+                "jobkorea": "https://www.jobkorea.co.kr/",
+                "linkedin_rps": "https://www.linkedin.com/talent/",
+            }[site],
+            profile_path=str(Path.cwd().resolve()),
+            browser_pid=4242,
+        ),
+    )
 
 
 def _iso(seconds_ago: int) -> str:
@@ -60,6 +83,10 @@ def make_evidence(tmp_path: Path, channel: str) -> dict:
         "candidate_index": 0,
         "archive_row_id": None,
         "archive_db_path": "",
+        "endpoint": "http://127.0.0.1:9311",
+        "profile_path": str(Path.cwd().resolve()),
+        "browser_pid": 4242,
+        "target_id": "TARGET123",
     }
     manifest.write_text(json.dumps(evidence), encoding="utf-8")
     return evidence
@@ -76,7 +103,7 @@ def make_receipt(tmp_path: Path, channel: str = "saramin", **overrides) -> dict:
         "host": "macmini",
         "target_id": "TARGET123",
         "endpoint": "http://127.0.0.1:9311",
-        "profile_path": str((tmp_path / f"{channel}-profile").resolve()),
+        "profile_path": str(Path.cwd().resolve()),
         "browser_pid": 4242,
         "last_verified_at": _iso(60),
         "owner_activity_detected": False,
@@ -274,6 +301,44 @@ def test_arbitrary_existing_files_are_not_login_evidence(tmp_path):
     ) is not None
 
 
+def test_browser_evidence_binding_cannot_be_reused_for_another_target(tmp_path):
+    receipt = make_receipt(tmp_path)
+    forged = {
+        "endpoint": "http://127.0.0.1:65535",
+        "profile_path": str(Path.cwd().resolve()),
+        "browser_pid": 999999,
+        "target_id": "TARGET-FORGED",
+    }
+    receipt.update(forged)
+    receipt["evidence"].update(forged)
+    Path(receipt["manifest_path"]).write_text(
+        json.dumps(receipt["evidence"]), encoding="utf-8"
+    )
+    assert lb.validate_channel_receipt(
+        receipt, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
+def test_browser_binding_is_re_resolved_at_validation_time(tmp_path, monkeypatch):
+    receipt = make_receipt(tmp_path)
+    monkeypatch.setattr(
+        session_guard,
+        "resolve_existing_target",
+        lambda *_args, **_kwargs: BrowserTargetRef(
+            site="saramin",
+            endpoint="http://127.0.0.1:9311",
+            target_id="DIFFERENT-TARGET",
+            websocket_url="ws://127.0.0.1:9311/devtools/page/DIFFERENT-TARGET",
+            initial_url="https://www.saramin.co.kr/zf_user/",
+            profile_path=str(Path.cwd().resolve()),
+            browser_pid=4242,
+        ),
+    )
+    assert lb.validate_channel_receipt(
+        receipt, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
 def test_linkedin_auto_login_never_reads_username_or_password(monkeypatch):
     from tools.multi_position_sourcing import owner_activity
     from tools.multi_position_sourcing import session_guard
@@ -375,7 +440,7 @@ def test_write_channel_receipt_roundtrip(tmp_path, monkeypatch):
         "site": "saramin",
         "target_id": "TARGET123",
         "endpoint": "http://127.0.0.1:9311",
-        "profile_path": str((tmp_path / "saramin-profile").resolve()),
+        "profile_path": str(Path.cwd().resolve()),
         "browser_pid": 4242,
         "proof_names": ["gnb_profile_badge"],
         "evidence": evidence,
