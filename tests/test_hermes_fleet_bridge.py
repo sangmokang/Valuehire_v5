@@ -429,6 +429,29 @@ def test_natural_humansearch_message_rewrites_with_urls_and_win_alias() -> None:
     )
 
 
+def test_natural_machine_alias_uses_shared_canonical_identity() -> None:
+    rewritten = natural_fleet_command_text(
+        "humansearch https://app.clickup.com/t/abc macbook_pro"
+    )
+    assert rewritten is not None
+    command, raw_args = rewritten.removeprefix("/").split(" ", 1)
+    assert parse_hermes_fleet_args(command, raw_args)["machine"] == "macbook"
+
+
+@pytest.mark.parametrize("machine_text", ("MACBOOK", "macbook winpc"))
+def test_natural_machine_input_does_not_guess_ambiguous_identity(
+    machine_text: str,
+) -> None:
+    rewritten = natural_fleet_command_text(
+        f"humansearch https://app.clickup.com/t/abc {machine_text}"
+    )
+    if rewritten is None:
+        return
+    command, raw_args = rewritten.removeprefix("/").split(" ", 1)
+    with pytest.raises(HermesFleetBridgeError):
+        parse_hermes_fleet_args(command, raw_args)
+
+
 def test_portal_url_or_win_without_position_context_does_not_enqueue() -> None:
     assert natural_fleet_command_text(
         "https://www.saramin.co.kr/zf_user/memcom/talent-pool/main/search"

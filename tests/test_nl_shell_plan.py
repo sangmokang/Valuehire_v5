@@ -18,6 +18,7 @@ from __future__ import annotations
 import unittest
 
 from tools.multi_position_sourcing import nl_shell
+from tools.multi_position_sourcing.bot_intent import ClassifyOutcome, ClassifyResult
 
 CU = "https://app.clickup.com/t/"
 
@@ -48,6 +49,34 @@ class Enqueues(unittest.TestCase):
             searcher=_searcher(("공고", "https://bunjang.career.greetinghr.com/o/1")))
         self.assertEqual(plan.action, "enqueue")
         self.assertIn("jdintake", plan.command_text)
+
+    def test_bot_intent_machine_alias_is_canonicalized(self):
+        result = ClassifyResult(
+            outcome=ClassifyOutcome.CONFIDENT,
+            command="humansearch",
+            args={"url": CU + "86a", "machine": "macbook_pro"},
+        )
+        plan = nl_shell.plan_from_text(
+            "ignored by injected classifier",
+            searcher=_searcher(),
+            _classifier=lambda _message: result,
+        )
+        self.assertEqual(plan.action, "enqueue")
+        self.assertIn("machine:macbook", plan.command_text)
+
+    def test_bot_intent_ambiguous_machine_whitespace_is_rejected(self):
+        result = ClassifyResult(
+            outcome=ClassifyOutcome.CONFIDENT,
+            command="humansearch",
+            args={"url": CU + "86a", "machine": " macbook"},
+        )
+        plan = nl_shell.plan_from_text(
+            "ignored by injected classifier",
+            searcher=_searcher(),
+            _classifier=lambda _message: result,
+        )
+        self.assertEqual(plan.action, "reply")
+        self.assertEqual(plan.command_text, "")
 
 
 class OffersChoices(unittest.TestCase):
