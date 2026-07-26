@@ -6,6 +6,7 @@ import random
 
 import pytest
 
+from tools.multi_position_sourcing.machine_identity import CANONICAL_MACHINE_IDS
 from tools.multi_position_sourcing.slot_scheduler import (
     Dispatch,
     Job,
@@ -115,7 +116,10 @@ def test_requester_fifo_uses_created_at_then_job_id():
     jobs = [job("a", 30, 2), job("a", 20, 1), job("a", 10, 1)]
     plan = plan_dispatches(
         jobs,
-        [slot(f"s{i}", f"m{i}") for i in range(3)],
+        [
+            slot(f"s{i}", machine)
+            for i, machine in enumerate(CANONICAL_MACHINE_IDS)
+        ],
         requester_states=states("a"),
         account_capacities={"portal:saramin": 3},
     )
@@ -184,7 +188,7 @@ def test_challenge_blocks_same_account_across_all_slots(challenge_fresh):
         [
             slot(
                 "challenged",
-                "m1",
+                "macmini",
                 resource_class="linkedin_rps",
                 account_key="portal:linkedin_rps",
                 state="challenge",
@@ -192,11 +196,11 @@ def test_challenge_blocks_same_account_across_all_slots(challenge_fresh):
             ),
             slot(
                 "ready-rps",
-                "m2",
+                "macbook",
                 resource_class="linkedin_rps",
                 account_key="portal:linkedin_rps",
             ),
-            slot("ready-saramin", "m3"),
+            slot("ready-saramin", "winpc"),
         ],
         requester_states=states("rps", "saramin"),
         account_capacities={"portal:linkedin_rps": 1, "portal:saramin": 1},
@@ -227,7 +231,14 @@ def test_existing_account_usage_reduces_available_capacity():
 
 def test_shuffle_inputs_one_hundred_times_has_identical_plan():
     jobs = [job(name, i, i // 2, requirements={"portal": "saramin"}) for i, name in enumerate("aabbccdd", 1)]
-    slots = [slot(f"s{i}", f"m{i % 3}", capabilities={"portal": "saramin", "rank": i}) for i in range(1, 6)]
+    slots = [
+        slot(
+            f"s{i}",
+            CANONICAL_MACHINE_IDS[i % len(CANONICAL_MACHINE_IDS)],
+            capabilities={"portal": "saramin", "rank": i},
+        )
+        for i in range(1, 6)
+    ]
     kwargs = dict(
         requester_states=states("a", "b", "c", "d"),
         account_capacities={"portal:saramin": 5},
@@ -247,7 +258,7 @@ def test_planner_does_not_mutate_nested_inputs():
     slots = [
         slot(
             "s",
-            "m",
+            "macmini",
             capabilities={"portal": ["saramin", {"paid": False}]},
         )
     ]
@@ -268,9 +279,9 @@ def test_planner_does_not_mutate_nested_inputs():
 def test_stale_parked_and_unknown_capability_slots_fail_closed():
     jobs = [job("a", 1, 1, requirements={"portal": "saramin"})]
     slots = [
-        slot("stale", "m1", capabilities={"portal": "saramin"}, fresh=False),
-        slot("parked", "m2", capabilities={"portal": "saramin"}, state="parked"),
-        slot("unknown", "m3", capabilities={}),
+        slot("stale", "macmini", capabilities={"portal": "saramin"}, fresh=False),
+        slot("parked", "macbook", capabilities={"portal": "saramin"}, state="parked"),
+        slot("unknown", "winpc", capabilities={}),
     ]
     assert plan_dispatches(
         jobs,
@@ -283,13 +294,13 @@ def test_stale_parked_and_unknown_capability_slots_fail_closed():
 @pytest.mark.parametrize(
     "jobs,slots,requester_states,capacities",
     [
-        ([job("", 1, 1)], [slot("s", "m")], {}, {"portal:saramin": 1}),
-        ([job("a", 0, 1)], [slot("s", "m")], states("a"), {"portal:saramin": 1}),
-        ([job("a", 1, 1), job("b", 1, 2)], [slot("s", "m")], states("a", "b"), {"portal:saramin": 1}),
-        ([job("a", 1, 1)], [slot("s", "m"), slot("s", "m2")], states("a"), {"portal:saramin": 1}),
-        ([job("a", 1, 1)], [slot("", "m")], states("a"), {"portal:saramin": 1}),
+        ([job("", 1, 1)], [slot("s", "macmini")], {}, {"portal:saramin": 1}),
+        ([job("a", 0, 1)], [slot("s", "macmini")], states("a"), {"portal:saramin": 1}),
+        ([job("a", 1, 1), job("b", 1, 2)], [slot("s", "macmini")], states("a", "b"), {"portal:saramin": 1}),
+        ([job("a", 1, 1)], [slot("s", "macmini"), slot("s", "macbook")], states("a"), {"portal:saramin": 1}),
+        ([job("a", 1, 1)], [slot("", "macmini")], states("a"), {"portal:saramin": 1}),
         ([job("a", 1, 1)], [slot("s", "")], states("a"), {"portal:saramin": 1}),
-        ([job("a", 1, 1)], [slot("s", "m")], states("a"), {"portal:saramin": 0}),
+        ([job("a", 1, 1)], [slot("s", "macmini")], states("a"), {"portal:saramin": 0}),
     ],
 )
 def test_malformed_or_duplicate_input_is_rejected(jobs, slots, requester_states, capacities):
@@ -300,24 +311,31 @@ def test_malformed_or_duplicate_input_is_rejected(jobs, slots, requester_states,
 def test_missing_requester_state_and_account_capacity_fail_closed():
     assert plan_dispatches(
         [job("missing", 1, 1)],
-        [slot("s", "m")],
+        [slot("s", "macmini")],
         requester_states={},
         account_capacities={"portal:saramin": 1},
     ) == ()
     assert plan_dispatches(
         [job("a", 1, 1, account_key="unknown")],
-        [slot("s", "m", account_key="unknown")],
+        [slot("s", "macmini", account_key="unknown")],
         requester_states=states("a"),
         account_capacities={},
     ) == ()
 
 
-def test_seeded_ten_thousand_scenarios_have_no_collision_or_starvation():
+def test_seeded_ten_thousand_three_machine_scenarios_have_no_collision_or_starvation():
     rng = random.Random(10_000)
     for seed in range(10_000):
-        requesters = ("a", "b", "c", "d")
-        backlog = [job(r, seed * 100 + n * 4 + i + 1, n) for n in range(3) for i, r in enumerate(requesters)]
-        slots = [slot(f"{seed}:s{i}", f"m{i}") for i in range(4)]
+        requesters = ("a", "b", "c")
+        backlog = [
+            job(r, seed * 100 + n * 3 + i + 1, n)
+            for n in range(3)
+            for i, r in enumerate(requesters)
+        ]
+        slots = [
+            slot(f"{seed}:s{i}", machine)
+            for i, machine in enumerate(CANONICAL_MACHINE_IDS)
+        ]
         rng.shuffle(backlog)
         rng.shuffle(slots)
         plan = plan_dispatches(
@@ -337,7 +355,7 @@ def test_seeded_ten_thousand_scenarios_have_no_collision_or_starvation():
 def test_active_count_and_last_dispatch_sequence_drive_requester_order():
     plan = plan_dispatches(
         [job("a", 1, 1), job("b", 2, 2), job("c", 3, 3)],
-        [slot("s", "m")],
+        [slot("s", "macmini")],
         requester_states={
             "a": RequesterState(active_count=1, last_dispatch_seq=0),
             "b": RequesterState(active_count=0, last_dispatch_seq=10),
@@ -357,12 +375,12 @@ def test_busy_sibling_slot_blocks_new_machine_dispatch(busy_fresh):
         [
             slot(
                 "already-writing",
-                "m1",
+                "macmini",
                 account_key="portal:other",
                 state="busy",
                 fresh=busy_fresh,
             ),
-            slot("ready-sibling", "m1"),
+            slot("ready-sibling", "macmini"),
         ],
         requester_states=states("a"),
         account_capacities={"portal:saramin": 1, "portal:other": 1},
@@ -376,8 +394,8 @@ def test_human_active_sibling_blocks_entire_machine(human_fresh):
     plan = plan_dispatches(
         [job("a", 1, 1)],
         [
-            slot("human", "m1", state="human_active", fresh=human_fresh),
-            slot("ready", "m1"),
+            slot("human", "macmini", state="human_active", fresh=human_fresh),
+            slot("ready", "macmini"),
         ],
         requester_states=states("a"),
         account_capacities={"portal:saramin": 1},
@@ -389,8 +407,8 @@ def test_busy_slots_are_a_lower_bound_for_account_running_count():
     plan = plan_dispatches(
         [job("a", 1, 1)],
         [
-            slot("busy", "m1", state="busy"),
-            slot("ready", "m2"),
+            slot("busy", "macmini", state="busy"),
+            slot("ready", "macbook"),
         ],
         requester_states=states("a"),
         account_capacities={"portal:saramin": 1},
@@ -403,8 +421,8 @@ def test_stale_observation_blocks_same_account_globally(stale_state):
     plan = plan_dispatches(
         [job("a", 1, 1)],
         [
-            slot("stale", "m1", state=stale_state, fresh=False),
-            slot("ready", "m2"),
+            slot("stale", "macmini", state=stale_state, fresh=False),
+            slot("ready", "macbook"),
         ],
         requester_states=states("a"),
         account_capacities={"portal:saramin": 1},
@@ -418,8 +436,8 @@ def test_linkedin_rps_capacity_cannot_be_raised_by_caller():
         job("b", 2, 2, resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
     ]
     rps_slots = [
-        slot("rps-1", "m1", resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
-        slot("rps-2", "m2", resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
+        slot("rps-1", "macmini", resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
+        slot("rps-2", "macbook", resource_class="linkedin_rps", account_key="portal:linkedin_rps"),
     ]
     with pytest.raises(ValueError):
         plan_dispatches(
@@ -441,7 +459,7 @@ def test_linkedin_rps_resource_and_account_key_are_canonical_pair(resource_class
     with pytest.raises(ValueError):
         plan_dispatches(
             [job("a", 1, 1, resource_class=resource_class, account_key=account_key)],
-            [slot("s", "m", resource_class=resource_class, account_key=account_key)],
+            [slot("s", "macmini", resource_class=resource_class, account_key=account_key)],
             requester_states=states("a"),
             account_capacities={account_key: capacity},
         )
@@ -449,32 +467,38 @@ def test_linkedin_rps_resource_and_account_key_are_canonical_pair(resource_class
 
 def test_unconstrained_job_does_not_strand_requested_machine_job():
     plan = plan_dispatches(
-        [job("a", 1, 1), job("b", 2, 2, requested_machine="m1")],
-        [slot("s1", "m1"), slot("s2", "m2")],
+        [job("a", 1, 1), job("b", 2, 2, requested_machine="macmini")],
+        [slot("s1", "macmini"), slot("s2", "macbook")],
         requester_states=states("a", "b"),
         account_capacities={"portal:saramin": 2},
     )
-    assert [(d.job_id, d.machine_id) for d in plan] == [(1, "m2"), (2, "m1")]
+    assert [(d.job_id, d.machine_id) for d in plan] == [
+        (1, "macbook"),
+        (2, "macmini"),
+    ]
 
 
 def test_unconstrained_job_does_not_strand_capability_job():
     plan = plan_dispatches(
         [job("a", 1, 1), job("b", 2, 2, requirements={"only": "yes"})],
         [
-            slot("special", "m1", capabilities={"only": "yes"}),
-            slot("general", "m2", capabilities={"x": 1, "y": 2}),
+            slot("special", "macmini", capabilities={"only": "yes"}),
+            slot("general", "macbook", capabilities={"x": 1, "y": 2}),
         ],
         requester_states=states("a", "b"),
         account_capacities={"portal:saramin": 2},
     )
-    assert [(d.job_id, d.machine_id) for d in plan] == [(1, "m2"), (2, "m1")]
+    assert [(d.job_id, d.machine_id) for d in plan] == [
+        (1, "macbook"),
+        (2, "macmini"),
+    ]
 
 
 def test_next_dispatch_sequence_must_advance_existing_state():
     with pytest.raises(ValueError):
         plan_dispatches(
             [job("a", 1, 1)],
-            [slot("s", "m")],
+            [slot("s", "macmini")],
             requester_states={"a": RequesterState(active_count=0, last_dispatch_seq=10)},
             account_capacities={"portal:saramin": 1},
             next_dispatch_seq=10,
@@ -484,7 +508,7 @@ def test_next_dispatch_sequence_must_advance_existing_state():
 def test_capability_values_match_with_exact_json_types():
     assert plan_dispatches(
         [job("a", 1, 1, requirements={"human_idle": True})],
-        [slot("s", "m", capabilities={"human_idle": 1})],
+        [slot("s", "macmini", capabilities={"human_idle": 1})],
         requester_states=states("a"),
         account_capacities={"portal:saramin": 1},
     ) == ()
@@ -492,14 +516,14 @@ def test_capability_values_match_with_exact_json_types():
     with pytest.raises(ValueError):
         plan_dispatches(
             [job("a", 1, 1)],
-            [slot("s", "m", capabilities={"opaque": object()})],
+            [slot("s", "macmini", capabilities={"opaque": object()})],
             requester_states=states("a"),
             account_capacities={"portal:saramin": 1},
         )
 
 
 def test_unhashable_slot_state_is_rejected_as_malformed_input():
-    malformed = slot("s", "m")
+    malformed = slot("s", "macmini")
     object.__setattr__(malformed, "state", [])
     with pytest.raises(ValueError):
         plan_dispatches(
@@ -513,8 +537,17 @@ def test_unhashable_slot_state_is_rejected_as_malformed_input():
 @pytest.mark.parametrize(
     "jobs,slots",
     [
-        ([job("a", index + 1, index) for index in range(513)], [slot("s", "m")]),
-        ([job("a", 1, 1)], [slot(f"s{index}", f"m{index}") for index in range(17)]),
+        ([job("a", index + 1, index) for index in range(513)], [slot("s", "macmini")]),
+        (
+            [job("a", 1, 1)],
+            [
+                slot(
+                    f"s{index}",
+                    CANONICAL_MACHINE_IDS[index % len(CANONICAL_MACHINE_IDS)],
+                )
+                for index in range(17)
+            ],
+        ),
     ],
 )
 def test_planner_rejects_unbounded_work_sets(jobs, slots):
@@ -535,16 +568,16 @@ def test_slot_choice_preserves_maximum_future_matching_capacity():
             job("c", 3, 2, requirements={"y": 0}),
         ],
         [
-            slot("s0", "m0", capabilities={"x": 0}),
-            slot("s1", "m1", capabilities={"x": 1, "y": 0}),
-            slot("s2", "m2", capabilities={"y": 0}),
+            slot("s0", "macmini", capabilities={"x": 0}),
+            slot("s1", "macbook", capabilities={"x": 1, "y": 0}),
+            slot("s2", "winpc", capabilities={"y": 0}),
         ],
         requester_states=states("a", "b", "c"),
         account_capacities={"portal:saramin": 3},
     )
     assert len(plan) == 3
     assert [(d.job_id, d.machine_id) for d in plan] == [
-        (1, "m1"),
-        (2, "m0"),
-        (3, "m2"),
+        (1, "macbook"),
+        (2, "macmini"),
+        (3, "winpc"),
     ]
