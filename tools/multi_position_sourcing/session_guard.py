@@ -2660,6 +2660,8 @@ def main(argv: list[str] | None = None) -> int:
     keepalive.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     keepalive.add_argument("--agent", required=True)
     keepalive.add_argument("--safe-target-json", required=True)
+    keepalive.add_argument("--last-verified-at", type=float, default=None)
+    keepalive.add_argument("--last-keepalive-at", type=float, default=None)
     evidence = commands.add_parser(
         "capture-evidence",
         help="save private screenshot/text/manifest from one exact existing target",
@@ -2756,8 +2758,13 @@ def main(argv: list[str] | None = None) -> int:
                     "영수증 기록 실패 — VALUEHIRE_MACHINE 미설정 또는 증거 필드 불완전"
                 )
     elif args.command == "keepalive":
-        target = load_safe_keepalive_target(args.safe_target_json)
-        result = run_safe_keepalive_episode(site, target, agent=args.agent)
+        from .login_session_lifecycle import coordinate_lifecycle
+        result = coordinate_lifecycle(
+            operation="keepalive", site=site, now=time.time(),
+            last_verified_at=args.last_verified_at,
+            last_keepalive_at=args.last_keepalive_at,
+            safe_target_path=args.safe_target_json, agent=args.agent,
+        )
     else:
         result = run_capture_evidence_episode(
             site,
