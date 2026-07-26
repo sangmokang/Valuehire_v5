@@ -1,4 +1,4 @@
-"""디스코드 직결 게이트웨이 조각 C (goal: docs/prompts/discord-direct-connect-goal-2026-07-17.md §5C)
+﻿"""디스코드 직결 게이트웨이 조각 C (goal: docs/prompts/discord-direct-connect-goal-2026-07-17.md §5C)
 
 인수 기준(기계 단언), Codex Rescue 2차 적대검증(NEEDS-FIX 5건) 반영 후 재봉인:
 - 명령 소유권 일치: 등록 대상 슬래시 명령 = fleet_dispatch.FLEET_COMMANDS 처리 로직이
@@ -256,7 +256,7 @@ class InteractionEnvelopeTests(unittest.TestCase):
                 interaction_id=f"41{index:016d}",
                 user_id=OWNER_ID,
                 command=command,
-                options=[{"name": "url", "value": CLICKUP_URL}],
+                options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
             )
             envelope = interaction_to_envelope(interaction)
             assert envelope is not None
@@ -264,6 +264,7 @@ class InteractionEnvelopeTests(unittest.TestCase):
             tokens = shlex.split(envelope.raw_args)
             self.assertIn(f"skill:{command}", tokens)
             self.assertIn(f"url:{CLICKUP_URL}", tokens)
+            self.assertIn("machine:macmini", tokens)
             self.assertIn(f"idempotency:discord:{interaction.id}", tokens)
 
     def test_direct_alias_cannot_override_fixed_skill(self) -> None:
@@ -285,7 +286,7 @@ class InteractionEnvelopeTests(unittest.TestCase):
     def test_guild_context_preserved_not_dm_locked(self) -> None:
         interaction = FakeInteraction(
             interaction_id="111111111111111111", user_id=MEMBER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
             guild_id="666666666666666666", channel_id="777777777777777777",
             role_ids=("888888888888888888",),
         )
@@ -333,7 +334,7 @@ class IdempotencyKeyInjectionTests(unittest.TestCase):
         def _make() -> str:
             interaction = FakeInteraction(
                 interaction_id="343434343434343434", user_id=OWNER_ID,
-                command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+                command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
             )
             return interaction_to_envelope(interaction).raw_args
 
@@ -344,11 +345,11 @@ class IdempotencyKeyInjectionTests(unittest.TestCase):
     def test_different_events_get_different_idempotency_keys(self) -> None:
         interaction1 = FakeInteraction(
             interaction_id="353535353535353535", user_id=OWNER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
         interaction2 = FakeInteraction(
             interaction_id="363636363636363636", user_id=OWNER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
         raw1 = interaction_to_envelope(interaction1).raw_args
         raw2 = interaction_to_envelope(interaction2).raw_args
@@ -375,7 +376,7 @@ class IdempotencyKeyInjectionTests(unittest.TestCase):
     def test_text_message_fleet_run_gets_idempotency_key(self) -> None:
         message = FakeMessage(
             message_id="383838383838383838", author_id=OWNER_ID,
-            content=f"/fleet-run url:{CLICKUP_URL}",
+            content=f"/fleet-run url:{CLICKUP_URL} machine:macmini",
         )
         envelope = message_to_envelope(message, bot_user_id="999999999999999999")
         self.assertIn("idempotency:discord:383838383838383838", envelope.raw_args)
@@ -408,7 +409,7 @@ class ThreeSecondDeferTests(_NotifySilencedCase):
     async def test_defer_called_before_queue_touched(self) -> None:
         interaction = FakeInteraction(
             interaction_id="444444444444444444", user_id=MEMBER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
         order: list[str] = []
 
@@ -438,7 +439,7 @@ class ThreeSecondDeferTests(_NotifySilencedCase):
     async def test_defer_is_first_call_even_when_denied(self) -> None:
         interaction = FakeInteraction(
             interaction_id="555555555555555555", user_id=STRANGER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
             guild_id="666666666666666666", channel_id="777777777777777777",
         )
         queue = FakeQueue()
@@ -454,7 +455,7 @@ class ThreeSecondDeferTests(_NotifySilencedCase):
         defer 는 이미 끝난 뒤라 3초 규칙이 깨지지 않고, 게이트웨이도 죽지 않는다."""
         interaction = FakeInteraction(
             interaction_id="565656565656565656", user_id=OWNER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
 
         def failing_factory():
@@ -484,7 +485,7 @@ class ThreeSecondDeferTests(_NotifySilencedCase):
         )
         interaction = FakeInteraction(
             interaction_id="676767676767676767", user_id=OWNER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
         import discord as _discord
         interaction.type = _discord.InteractionType.application_command
@@ -511,7 +512,7 @@ class NonBlockingEventLoopTests(_NotifySilencedCase):
         def _make_interaction(iid: str) -> FakeInteraction:
             return FakeInteraction(
                 interaction_id=iid, user_id=OWNER_ID,
-                command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+                command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
             )
 
         barrier = threading.Barrier(2, timeout=3.0)
@@ -540,13 +541,13 @@ class NonBlockingEventLoopTests(_NotifySilencedCase):
 
 
 class HandleSlashInteractionTests(_NotifySilencedCase):
-    async def test_each_direct_search_alias_enqueues_its_fixed_skill(self) -> None:
+    async def test_each_direct_search_alias_routes_its_fixed_skill(self) -> None:
         for index, command in enumerate(("url", "aisearch", "humansearch"), start=1):
             interaction = FakeInteraction(
                 interaction_id=f"61{index:016d}",
                 user_id=OWNER_ID,
                 command=command,
-                options=[{"name": "url", "value": CLICKUP_URL}],
+                options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
             )
             queue = FakeQueue()
             result = await handle_slash_interaction(
@@ -555,9 +556,13 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
                 authorized_users=AUTHORIZED,
                 config=DiscordAccessConfig(allow_dm=True),
             )
-            self.assertEqual(result["action"], "enqueued")
-            self.assertEqual(len(queue.enqueued), 1)
-            self.assertEqual(queue.enqueued[0]["skill"], command)
+            if command == "url":
+                self.assertEqual(result["action"], "error")
+                self.assertEqual(queue.enqueued, [])
+            else:
+                self.assertEqual(result["action"], "enqueued")
+                self.assertEqual(len(queue.enqueued), 1)
+                self.assertEqual(queue.enqueued[0]["skill"], command)
 
     async def test_direct_alias_missing_url_does_not_enqueue(self) -> None:
         interaction = FakeInteraction(
@@ -599,7 +604,7 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
     async def test_authorized_fleet_run_enqueues_and_replies_once(self) -> None:
         interaction = FakeInteraction(
             interaction_id="666666666666666666", user_id=OWNER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
         queue = FakeQueue()
         result = await handle_slash_interaction(
@@ -618,7 +623,7 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
     async def test_unauthorized_guild_channel_silent_generic_ack(self) -> None:
         interaction = FakeInteraction(
             interaction_id="777777777777777777", user_id=STRANGER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
             guild_id="666666666666666666", channel_id="999999999999999999",
         )
         queue = FakeQueue()
@@ -634,7 +639,7 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
 
         interaction2 = FakeInteraction(
             interaction_id="898989898989898989", user_id=STRANGER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
         result2 = await handle_slash_interaction(
             interaction2, queue=FakeQueue(), authorized_users=(),
@@ -675,7 +680,7 @@ class HandleSlashInteractionTests(_NotifySilencedCase):
     async def test_followup_send_failure_does_not_raise(self) -> None:
         interaction = FakeInteraction(
             interaction_id="121212121212121212", user_id=OWNER_ID,
-            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}],
+            command="fleet-run", options=[{"name": "url", "value": CLICKUP_URL}, {"name": "machine", "value": "macmini"}],
         )
 
         async def broken_edit(*, content: str = "") -> None:
@@ -712,7 +717,7 @@ class TextMessageTests(_NotifySilencedCase):
         order: list[str] = []
         message = FakeMessage(
             message_id="707070707070707070", author_id=OWNER_ID,
-            content=f"/aisearch url:{CLICKUP_URL}",
+            content=f"/aisearch url:{CLICKUP_URL} machine:macmini",
         )
 
         original_send = message.channel.send
@@ -740,7 +745,7 @@ class TextMessageTests(_NotifySilencedCase):
             message = FakeMessage(
                 message_id=f"71{index:016d}",
                 author_id=OWNER_ID,
-                content=f"/{command} url:{CLICKUP_URL}",
+                content=f"/{command} url:{CLICKUP_URL} machine:macmini",
             )
             envelope = message_to_envelope(message, bot_user_id="999999999999999999")
             assert envelope is not None
@@ -748,6 +753,7 @@ class TextMessageTests(_NotifySilencedCase):
             tokens = shlex.split(envelope.raw_args)
             self.assertIn(f"skill:{command}", tokens)
             self.assertIn(f"url:{CLICKUP_URL}", tokens)
+            self.assertIn("machine:macmini", tokens)
 
     def test_message_to_envelope_preserves_guild_context(self) -> None:
         message = FakeMessage(
@@ -774,7 +780,7 @@ class TextMessageTests(_NotifySilencedCase):
     async def test_owner_dm_text_command_enqueues(self) -> None:
         message = FakeMessage(
             message_id="151515151515151515", author_id=OWNER_ID,
-            content=f"/fleet-run url:{CLICKUP_URL}",
+            content=f"/fleet-run url:{CLICKUP_URL} machine:macmini",
         )
         queue = FakeQueue()
         result = await handle_text_message(
@@ -790,7 +796,7 @@ class TextMessageTests(_NotifySilencedCase):
         """친구/연락처로 등록된 사용자는 DM 텍스트 명령도 큐에 넣을 수 있어야 한다."""
         message = FakeMessage(
             message_id="171717171717171717", author_id=MEMBER_ID,
-            content=f"/fleet-run url:{CLICKUP_URL}",
+            content=f"/fleet-run url:{CLICKUP_URL} machine:macmini",
         )
         queue = FakeQueue()
         result = await handle_text_message(
@@ -955,7 +961,11 @@ class MinimalPrivilegeQueueClientRpcOnlyTests(unittest.TestCase):
         def fake_urlopen_with_row(req, timeout=30):
             urls.append(req.full_url)
             import json as _json
-            return FakeHTTPResponse(_json.dumps([{"id": 1, "status": "queued"}]).encode())
+            return FakeHTTPResponse(
+                _json.dumps(
+                    [{"id": 1, "status": "queued", "machine": "macmini"}]
+                ).encode()
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen_with_row), \
              patch(
@@ -1055,7 +1065,9 @@ class MinimalPrivilegeQueueClientRpcOnlyTests(unittest.TestCase):
         def fake_urlopen_capture(req, timeout=30):
             captured_bodies.append(req.data)
             import json as _json
-            return FakeHTTPResponse(_json.dumps([{"id": 1}]).encode())
+            return FakeHTTPResponse(
+                _json.dumps([{"id": 1, "machine": "macmini"}]).encode()
+            )
 
         with patch("urllib.request.urlopen", side_effect=fake_urlopen_capture), \
              patch(
