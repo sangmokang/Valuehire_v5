@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 
@@ -8,8 +9,33 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "docs/sot/26-portal-login-spec.json"
 CONTROL_PATH = ROOT / "skills/login/browser-control-contract.json"
 SKILL_PATH = ROOT / "skills/login/SKILL.md"
-WORKER_PATH = ROOT / "tools/multi_position_sourcing/fleet_worker.py"
 POLICY_ID = "26-portal-login-spec@1.5.0"
+HISTORICAL_MARKER = "historical_input_not_executable"
+
+LOGIN_SKILL_PATHS = (
+    ROOT / "skills/login/SKILL.md",
+    ROOT / ".codex/skills/login/SKILL.md",
+    ROOT / ".claude/skills/login/SKILL.md",
+)
+CONTROL_PATHS = (
+    ROOT / "skills/login/browser-control-contract.json",
+    ROOT / ".codex/skills/login/browser-control-contract.json",
+    ROOT / ".claude/skills/login/browser-control-contract.json",
+)
+POLICY_ENTRYPOINTS = (
+    ROOT / "CLAUDE.md",
+    ROOT / "docs/sot/25-ai-search-execution-process.json",
+    ROOT / "docs/prompts/goal-full-codebase-review.md",
+    ROOT / "docs/ai-search/three-mac-account-coordinator-goal-prompt.md",
+    ROOT / "skills/ai-search/references/spec-procedure.md",
+    ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
+    ROOT / ".codex/skills/url/SKILL.md",
+    ROOT / ".claude/skills/url/SKILL.md",
+)
+SUPERSEDED_PROMPTS = (
+    ROOT / "docs/prompts/hermes-login-gate-before-search-skills-2026-07-21.md",
+    ROOT / "docs/prompts/linkedin-rps-login-session-fix-2026-07-18.md",
+)
 
 
 def _json(path: Path) -> dict[str, object]:
@@ -18,6 +44,10 @@ def _json(path: Path) -> dict[str, object]:
 
 def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_site_authentication_methods_are_explicit_and_mutation_bounded() -> None:
@@ -112,11 +142,12 @@ def test_li_at_cannot_enter_logs_receipts_or_model_output() -> None:
 
 def test_active_instructions_forbid_legacy_linkedin_form_login_and_logout() -> None:
     active = "\n".join(
-        (
-            _text(POLICY_PATH),
-            _text(CONTROL_PATH),
-            _text(SKILL_PATH),
-            _text(WORKER_PATH),
+        _text(path)
+        for path in (
+            POLICY_PATH,
+            *CONTROL_PATHS,
+            *LOGIN_SKILL_PATHS,
+            *POLICY_ENTRYPOINTS,
         )
     )
     forbidden_phrases = (
@@ -125,6 +156,7 @@ def test_active_instructions_forbid_legacy_linkedin_form_login_and_logout() -> N
         "기존 `login-cap` 폼이면 그 폼에서만 자격증명 1회 제출",
         "linkedin_rps_logged_in=true인 머신을 먼저 찾아 이 잡에 배정",
         "저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것",
+        "3사 자동 로그인을 막지 않는다",
     )
     assert not [phrase for phrase in forbidden_phrases if phrase in active]
 
@@ -152,21 +184,37 @@ def test_policy_supersedes_historical_prompts_without_new_hermes_runtime() -> No
     assert route == ["Discord", "queue", "worker", "Codex_or_Claude"]
     assert "Hermes" not in route
 
+    for prompt in SUPERSEDED_PROMPTS:
+        text = _text(prompt)
+        first_screen = "\n".join(text.splitlines()[:20])
+        assert HISTORICAL_MARKER in first_screen, prompt
+        assert POLICY_ID in first_screen, prompt
+        assert "실행 금지" in first_screen, prompt
+
 
 def test_login_and_search_entrypoints_reference_the_new_policy() -> None:
-    entrypoints = (
-        WORKER_PATH,
-        SKILL_PATH,
-        ROOT / "skills/ai-search/references/spec-procedure.md",
-        ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
-    )
-    for path in entrypoints:
+    for path in (*LOGIN_SKILL_PATHS, *POLICY_ENTRYPOINTS):
         text = _text(path)
-        assert "26-portal-login-spec" in text, path
+        assert POLICY_ID in text, path
 
-    worker = _text(WORKER_PATH)
-    skill = _text(SKILL_PATH)
-    assert POLICY_ID in worker
-    assert POLICY_ID in skill
-    assert "APP 30/31" in worker
-    assert "APP 30/31" in skill
+    for path in LOGIN_SKILL_PATHS:
+        assert "APP 30/31" in _text(path), path
+
+
+def test_policy_contract_mirrors_are_byte_identical() -> None:
+    assert len({_sha256(path) for path in CONTROL_PATHS}) == 1
+    assert len({_sha256(path) for path in LOGIN_SKILL_PATHS}) == 1
+
+
+def test_app01_does_not_implement_forbidden_runtime_scope() -> None:
+    briefing = _text(
+        ROOT
+        / "docs/engineering/login-machine-browser-decomposition-briefing-2026-07-26.html"
+    )
+    goal = _text(
+        ROOT
+        / "docs/engineering/login-machine-browser-implementation-goal-2026-07-26.md"
+    )
+    assert 'forbid: ["로그인 코드 구현", "실제 쿠키 입력"' in briefing
+    assert "실제 자격증명 또는 `li_at` 읽기·입력" in goal
+    assert "함대 조사·기기 자동 선택" in goal
