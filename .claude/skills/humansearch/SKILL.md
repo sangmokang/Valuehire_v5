@@ -8,7 +8,7 @@ description: "사람이 미리 걸어둔 LinkedIn Recruiter/RPS·사람인·잡�
 정본(SOT)은 레포에 있다. **이 파일은 발동용 심** — 절차·규칙·설정을 여기 복제하지 않는다.
 
 ## ⛔ 시작 게이트 (생략 금지)
-0. **/login 먼저 (2026-07-20 사장님 지시)**: 브라우저에 붙기 전 `login` 스킬(`skills/login/SKILL.md`)을 먼저 적용한다 — 기존 CDP 브라우저·정확한 기존 탭만 재사용(새 창 0·새 탭 0), 로그인 마커 증명 후에만 순회 시작. 로그아웃이면 login 스킬 절차로 복구하고, 캡차·2FA·세션충돌이면 STOP.
+0. **/login 먼저 (2026-07-20 사장님 지시)**: 브라우저에 붙기 전 `login` 스킬(`skills/login/SKILL.md`)과 `26-portal-login-spec@1.5.0`을 먼저 적용한다 — 기존 CDP 브라우저·정확한 기존 탭만 재사용(새 창 0·새 탭 0), 로그인 마커 증명 후에만 순회 시작. 캡차·2FA·봇 차단은 `HUMAN_AUTH`, 인증 기기 수 미증명이나 target/profile/endpoint 불일치는 `HANDOFF`, 봉인된 조사로 인증 기기 2개 이상 또는 복수 세션이 증명된 경우만 `AUTH_CONFLICT`다.
 
 발동 즉시, 작업 전에 반드시 읽는다:
 1. `skills/humansearch/SKILL.md` — 절차 정본(순회·채점·발송 + **확장 스펙 2026-07-02** 5요건 + 실행 함정)
@@ -26,7 +26,7 @@ description: "사람이 미리 걸어둔 LinkedIn Recruiter/RPS·사람인·잡�
   `/login`이 증명한 기존 target id를 `exact_target_id`로 고정해
   `R.main(..., target_id=exact_target_id)`로 반드시 전달한다. 없거나 바뀌면 추측 없이 STOP.
   포지션이 복수면 1차 채점 후 raw 필드로 `score_humansearch` 재채점(재오픈 금지).
-- 프리플라이트(fail-closed): `assert_live_or_abort` — 카드 0/로그인/캡차/세션충돌이면 즉시 STOP.
+- 프리플라이트(fail-closed): `assert_live_or_abort` — 카드 0이면 중단하고, 로그인·캡차·세션 상태는 위 정책 상태로 분기한다.
   수확 전 `Page.bringToFront` + `Emulation.setFocusEmulationEnabled` 필수.
 - 등록: ClickUp MCP(부모 검색→없으면 생성→Subtask+댓글 1개). 보고는 **사장님 DM** —
   `scripts/dm_report.py`(hermes_v5 봇, 유저 814353841088757800 → DM 채널 1512503041448743092,
@@ -36,8 +36,14 @@ description: "사람이 미리 걸어둔 LinkedIn Recruiter/RPS·사람인·잡�
 
 ## LinkedIn RPS 세션 문맥 보존 (`SESSION_CONTEXT_PRESERVATION`, #156)
 
-- 이미 인증된 정확한 RPS target 하나만 재사용한다. 다른 Chrome 프로필의 RPS 세션 신호나
-  target/profile/endpoint 불일치는 `AUTH_CONFLICT`이며 새 탭·두 번째 로그인 없이 중단한다.
+- 사람인·잡코리아는 저장된 아이디·비밀번호를 정확한 기존 target 하나에 최대 1회만 입력하며,
+  정확한 target 하나가 증명되지 않으면 `HANDOFF`한다.
+- LinkedIn 인증 기기 1개는 정확한 RPS target 하나만 무변경 재사용한다. 인증 기기 0개는 소유자 승인과
+  `APP 17`의 동일 기기 후보 target 1개 결정 뒤 `APP 30/31`이 `LINKEDIN_LI_AT`을 그 target에만
+  최대 1회 주입하도록 결정한 경우만 다음 단계로 넘긴다.
+- 인증 기기 수 미증명 또는 target/profile/endpoint 불일치는 `HANDOFF`다. 봉인된 조사로 인증 기기
+  2개 이상 또는 복수 세션이 증명된 경우만 `AUTH_CONFLICT`이며, 새 탭·자동 로그아웃·두 번째 로그인을
+  하지 않는다.
 - 수확 JSON은 canonical `profile_url`과 query 포함 원본 `navigation_url`을 둘 다 보존한다. 이동은
   `navigation_url`, 저장·중복제거는 `profile_url`만 사용한다.
 - 이동 직후 차단 검사를 추출·스크린샷·DB 저장·채점보다 먼저 한다. 세션 충돌은 terminal이며

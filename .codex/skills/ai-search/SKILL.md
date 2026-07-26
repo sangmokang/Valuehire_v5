@@ -62,14 +62,15 @@ Do not start from `skills/search/SKILL.md` alone. That file is a legacy/fresh-lo
 - Do not search on your own initiative. AI Search may start only from a user-provided position ID, ClickUp task URL, hiring URL, JD text, or an explicit instruction to run a specific stage.
 - Do not run generic web search, portal search, ChatGPT Search, LinkedIn/Saramin/Jobkorea search, or candidate discovery before stage 0-4 have established scope, channel state, JD source, and keyword strategy.
 - Do not replace the SOT with convenience judgment. If the SOT and a shortcut conflict, the SOT wins; if the tool path is unavailable, stop and report the blocker.
-- Do not silently downgrade live search into unofficial manual search. If a required channel is `OCCUPIED` or `BLOCKED`, mark it that way and do not improvise around the gate.
+- Do not silently downgrade live search into unofficial manual search. Preserve each required channel as `READY`, `OCCUPIED`, `HUMAN_AUTH`, `HANDOFF`, or `AUTH_CONFLICT`; do not collapse a terminal or handoff state into a generic pause.
 - Use only Valuehire v5 for AI Search execution. Do not run v4 code or npm scripts.
 - Follow `docs/sot/25-ai-search-execution-process.json` stage order unless the user explicitly limits the scope.
-- Before portal actions, classify each channel as `READY`, `OCCUPIED`, or `BLOCKED`.
+- Before portal actions, classify each channel as `READY`, `OCCUPIED`, `HUMAN_AUTH`, `HANDOFF`, or `AUTH_CONFLICT`.
 - If the owner is using Chrome, perform zero automation actions and resume only after it is clear.
-- Apply the `login` skill before all live portal work. Reuse an already-authenticated exact target; do not create a
-  second browser/profile session. Auto-login is allowed only for a proven ordinary logout on that same exact target
-  with no other Recruiter session signal.
+- Apply the `login` skill before all live portal work. Saramin and Jobkorea may submit stored credentials at most once
+  only on the single exact existing target. LinkedIn count one means zero-authentication-mutation reuse; count zero
+  requires current-turn owner authorization, APP 17 route agreement, the single exact existing target, and APP 30/31
+  `LINKEDIN_LI_AT`; 인증 기기 수 미증명 is `HANDOFF`, and count two or more is terminal `AUTH_CONFLICT`.
 - LinkedIn `enterprise-authentication/sessions`, `multiple sign-ins`, and `Only one session` are terminal
   `AUTH_CONFLICT`, not ordinary logout. Never auto-login, click Continue/Confirm, create a tab, or retry navigation.
 - `SESSION_CONTEXT_PRESERVATION` (#156): keep each Recruiter card's exact query-bearing `navigation_url`; use the bare

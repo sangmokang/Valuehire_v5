@@ -11,7 +11,10 @@
     "docs/prompts/hermes-login-gate-before-search-skills-2026-07-21.md": "historical_input_not_executable",
     "docs/prompts/linkedin-rps-login-session-fix-2026-07-18.md": "historical_input_not_executable",
     "docs/engineering/linkedin-managed-autologin-goal-2026-07-26.md": "historical_input_not_executable",
-    "docs/engineering/login-policy-recement-goal-2026-07-08.md": "historical_input_not_executable"
+    "docs/engineering/login-policy-recement-goal-2026-07-08.md": "historical_input_not_executable",
+    "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md": "historical_input_not_executable",
+    "docs/ai-search/three-mac-account-coordinator-goal-prompt.md": "historical_input_not_executable",
+    "docs/ai-search/portal-login-live-search-runbook-2026-06-17.md": "historical_input_not_executable"
   },
   "current_execution_route": ["Discord", "queue", "worker", "Codex_or_Claude"],
   "implementation_boundary": {

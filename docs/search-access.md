@@ -64,21 +64,18 @@ SUPABASE_SERVICE_ROLE_KEY=<redacted>
 
 ## External Search Accounts
 
-**SOT invariant — auto-login is never disabled.** All three protected portals — Saramin,
-Jobkorea, **and LinkedIn RPS** — auto-login from the secret store (`.env.local` / `~/.secrets`
-/ Mac Keychain): the runner enters id/password and submits, then runs the search through to
-result-card collection. Do not re-introduce a "LinkedIn is session-reuse / human-login only"
-restriction. The only guardrails are the safety boundaries below.
+The login authority is `docs/sot/26-portal-login-spec.json`
+(`26-portal-login-spec@1.5.0`). Authentication is site-specific:
 
-| Service | Login / account | Secret storage |
+| Service | Allowed authentication | Fail-closed result |
 | --- | --- | --- |
-| Jobkorea / Saramin | valueconnect | Store password outside git as `JOB_PORTAL_PASSWORD` (or per-portal keys) |
-| LinkedIn RPS | sangmokang@valueconnect.kr | Store password outside git as `LINKEDIN_PASSWORD`; the runner auto-logs in like the other portals |
+| Jobkorea / Saramin | Submit the site's stored username/password at most once only when exactly one existing target matches | Missing/non-unique target or unavailable provider → `HANDOFF`; captcha/2FA/checkpoint → `HUMAN_AUTH` |
+| LinkedIn RPS | Proven count one → reuse the one authenticated machine and exact target with 인증 조작 0회. Proven count zero → current-turn owner authorization and APP 17 route decision must select the same machine, with one exact target; only APP 30/31 may apply the `LINKEDIN_LI_AT` reference once | 인증 기기 수 미증명 or unavailable APP 30/31 → `HANDOFF` with zero authentication mutations; count two or more/multi-session → terminal `AUTH_CONFLICT` |
 
-**Safety boundaries (these never change):** a captcha / 2FA / 보안문자 / IP보안 / checkpoint /
-이상접근 is never auto-bypassed — on detection the automation stops and alerts a human. Credentials
-are loaded only from the secret store (never hardcoded/plaintext). Auto-login + search/collect is
-always allowed; external sending (candidate send / InMail / email) stays behind the human approval gate.
+LinkedIn username/password form submission is forbidden. Do not open the official login URL, create a
+target, log out another machine, click Continue/Confirm, choose a machine by reliability, or retry a
+terminal conflict. Secret originals and derived values never enter arguments, stdout, stderr, logs,
+receipts, artifacts, or model messages. External sending remains behind its separate approval gate.
 
 Optional local env shape:
 
@@ -93,10 +90,9 @@ JOBKOREA_PASSWORD=<redacted>
 JOB_PORTAL_USERNAME=valueconnect
 JOB_PORTAL_PASSWORD=<redacted>
 
-# LinkedIn RPS auto-logs in from the secret store, like Saramin/Jobkorea.
-# A captcha / 2FA / checkpoint is never bypassed — it pauses for human resolution.
-LINKEDIN_USERNAME=sangmokang@valueconnect.kr
-LINKEDIN_PASSWORD=<redacted>
+# LinkedIn RPS has no username/password fallback.
+# APP 30 resolves the LINKEDIN_LI_AT reference without exposing its value;
+# APP 31 alone may consume it under the zero-machine decision branch.
 ```
 
 ## Saramin Talent Pool Search

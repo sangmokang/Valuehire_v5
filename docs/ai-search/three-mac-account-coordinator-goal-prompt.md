@@ -1,3 +1,11 @@
+# 실행 금지 — 과거 Goal Prompt
+
+`historical_input_not_executable`
+
+이 문서는 과거 설계 입력이며 새 구현 세션에 붙여 넣으면 안 됩니다. 현재 로그인 정책은
+`26-portal-login-spec@1.5.0`입니다. LinkedIn 폼 로그인 선택지는 폐기됐고 APP 17과
+APP 30/31의 `LINKEDIN_LI_AT` 결정표만 유효합니다.
+
 # Goal Prompt — AI Search 맥 3대 안전 운영(중앙 계정 코디네이터)
 
 작성일: 2026-06-16 · 대상: harness 게이트로 실행하는 코딩 에이전트

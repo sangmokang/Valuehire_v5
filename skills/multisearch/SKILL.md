@@ -1,6 +1,6 @@
 ---
 name: multisearch
-description: "Use when running Valuehire multi-position candidate sourcing from Discord/Hermes: group active positions, search Saramin/Jobkorea/LinkedIn RPS/public web fail-closed, deduplicate profiles, score candidates across positions, and record eligible saved profiles in ClickUp FY26AI_Search list 901818680208 as position parent Tasks plus candidate Subtasks."
+description: "Use when running Valuehire multi-position candidate sourcing from Discord queue workers (Claude/Codex): group active positions, search Saramin/Jobkorea/LinkedIn RPS/public web fail-closed, deduplicate profiles, score candidates across positions, and record eligible saved profiles in ClickUp FY26AI_Search list 901818680208 as position parent Tasks plus candidate Subtasks."
 ---
 
 # Valuehire Multisearch — Multi-Position Portal Sourcing Layer
@@ -26,7 +26,7 @@ description: "Use when running Valuehire multi-position candidate sourcing from 
 
 Use when:
 - 사용자가 “multisearch”, “멀티서치”, “여러 포지션 서치”, “포털 소싱 레이어”, “사람인/잡코리아/LinkedIn RPS 같이 돌려”라고 요청할 때
-- Discord에서 Hermes를 호출해 Valuehire 후보자 AI Search를 실행하려 할 때
+- Discord 큐에서 Claude 또는 Codex 워커로 Valuehire 후보자 AI Search를 실행하려 할 때
 - 한 후보를 여러 ClickUp 포지션에 reverse-match하고 싶을 때
 - 포털별 키워드, 큐, 중복 제거, ClickUp FY26AI_Search Task/Subtask 기록 형식을 함께 점검해야 할 때
 
@@ -41,6 +41,7 @@ Don't use for:
 이 Skill은 다음 문서를 기준으로 합니다.
 
 - **`docs/sot/22-talent-search-filters.md` (+ `.json`) — 3채널 인재검색 필터·DOM SSOT. 사람인·잡코리아·LinkedIn RPS별 키워드/필터를 만들기 전에 반드시 먼저 읽는다.** URL·입력법·결과수 임계가 채널마다 다르므로 **절대 섞지 않는다**(R5: 채널을 직무로 가르지 않음). 셀렉터·결과수 판단 트리·완화 폴백 전체는 같은 폴더 `.json`.
+- **로그인 정책: `docs/sot/26-portal-login-spec.json` (`26-portal-login-spec@1.5.0`).**
 - `docs/ai-search/multi-position-sourcing-layer-2026-06-08.md`
 - `docs/search-access.md`
 - `skills/search/SKILL.md`
@@ -82,7 +83,7 @@ Don't use for:
 
 ## Discord Personal DM Routing
 
-Discord에서 Hermes를 개인톡으로 호출할 수 있는 사용자는 `docs/search-access.md`의 `Discord Contacts` 표를 기준으로 합니다.
+Discord 개인톡에서 큐 작업을 요청할 수 있는 사용자는 `docs/search-access.md`의 `Discord Contacts` 표를 기준으로 합니다. 실행 에이전트는 Claude 또는 Codex입니다.
 
 현재 문서 기준 허용 사용자:
 - 이상혁 / Rogan / `1404643716320329728`
@@ -142,33 +143,31 @@ python3 -m unittest tests/test_multi_position_sourcing.py -v
 - `tools/multi_position_sourcing/grouping.py`
 - `tools/multi_position_sourcing/keywords.py`
 
-## Portal Credential Preflight
+## Portal Login Preflight
 
-`docs/search-access.md`와 `.env.local` 기준으로 사람인·잡코리아·LinkedIn RPS 자격증명 설정 여부를 점검합니다(비밀값은 절대 출력하지 않습니다). **SOT 불변식: 3사 모두 자동 로그인합니다 — 절대 막지 않습니다.** 세션 preflight는 기존 로그인 세션이 있으면 그대로 사용하고, 없으면 **사람인·잡코리아·LinkedIn RPS 모두 `.env.local`/Keychain 자격증명으로 자동 로그인(아이디·비밀번호 입력·제출)** 합니다. 자격증명이 설정돼 있지 않으면 `credentials_not_configured`로 보고합니다. 단 **캡차/2FA/IP보안/checkpoint 같은 보안 챌린지는 절대 자동 우회하지 않고** visible browser에서 사람이 해결할 때까지 기다립니다(우회 시 계정 잠금 위험). LinkedIn도 자동 로그인이 보안 챌린지에 막히면 정지 후 사람 개입으로 폴백합니다. 운영 복구에서는 검증 스냅샷 재주입이 먼저이며, 3사 자동 재로그인은 스냅샷 복구 실패 후에만 Mac Keychain 자격증명으로 수행합니다(LinkedIn은 복구 실패 시 정지+Discord 알림).
+로그인은 `26-portal-login-spec@1.5.0`의 사이트별 결정만 따릅니다.
 
-자격증명 존재 확인만으로 큐를 실행하면 안 됩니다. 사람인, 잡코리아, LinkedIn RPS는 보호 채널로 취급하고, 워커별 persistent profile 또는 LinkedIn CDP attach 세션에서 로그인 마커가 확인된 경우에만 큐 항목을 처리합니다. 세션이 확인되지 않으면 해당 항목은 pending으로 유지하고 resume 사유를 남깁니다.
+- 사람인·잡코리아: 정확한 기존 target 후보가 1개일 때만 사이트별 저장 아이디·비밀번호를 최대 1회 제출합니다. 후보 0개/복수 또는 제공자 부재는 인증 조작 0회 `HANDOFF`입니다.
+- LinkedIn 인증 기기 1개: 그 기기의 유일한 target을 인증 조작 0회로 재사용합니다.
+- LinkedIn 인증 기기 0개: 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리키고 정확 후보가 1개일 때만 APP 30/31의 `LINKEDIN_LI_AT` 참조 적용을 최대 1회 허용합니다.
+- LinkedIn 인증 기기 수 미증명 또는 APP 30/31 미준비: 인증 조작 0회 `HANDOFF`입니다.
+- LinkedIn 인증 기기 2개 이상·멀티세션: terminal `AUTH_CONFLICT`입니다. 다른 기기 자동 로그아웃·Continue/Confirm·신뢰도 선택·재시도는 금지합니다.
+- 실제 captcha·2FA·checkpoint는 `HUMAN_AUTH`이며 이 경우에만 사람 개입 대기를 사용합니다.
 
-## 운영 안정성 (자동 복구 동작)
+비밀 원문과 파생값은 입력, 명령행, stdout, stderr, 로그, 영수증, 산출물, 모델 메시지에 넣지 않습니다. 모든 필수 채널이 `READY`일 때만 큐 항목을 검색 단계로 넘깁니다.
 
-로그인은 한 번 풀려도 대부분 자동으로 회복됩니다. 워커가 가진 안정 장치(코드에 구현됨):
+## 운영 안정성 (로그인 외 안전 장치)
 
-- **재로그인 지수 백오프**: 세션이 끊겨 자동 재로그인할 때 네트워크/타임아웃 같은 *일시적 오류*가 나면 곧바로 포기하지 않고 텀을 늘려가며(1초→2초…) 최대 3회 다시 시도합니다. 단, **보안 챌린지(캡차/2FA/checkpoint)로 막힌 경우(깨끗한 실패)는 절대 재시도하지 않고 한 번에 멈춥니다** — 계정 잠금을 막기 위함. (`recover_after_reauth`, `relogin_backoff_base_seconds`)
 - **검색 시간제한**: 검색 1건이 멈춘 페이지에 영원히 매달리지 않도록 기본 60초 시간제한을 둡니다. 초과하면 그 항목은 에러로 정리하고 큐는 계속 진행합니다. (`run_one_search`, `PortalWorkerConfig.search_timeout_seconds`)
-- **셀렉터 드리프트 감지**: 포털이 로그인 화면 HTML을 바꿔 입력칸 위치가 안 맞으면, 조용히 실패하지 않고 어떤 항목(아이디/비번/제출)이 사라졌는지 보고합니다 → 운영자가 셀렉터를 고칠 수 있습니다. (`login_selector_preflight`)
-- **크롬 잔재 잠금 정리**: 크롬이 비정상 종료되며 남긴 단일실행 잠금 파일(SingletonLock 등)을, 워커가 프로필 잠금을 확보한 상태에서만 정리해 재시작 실패를 막습니다. **저장된 로그인(쿠키 등)은 절대 건드리지 않습니다.** (`clear_stale_singleton_locks`)
+- **셀렉터 드리프트 감지**: 포털이 화면 HTML을 바꿔 입력칸 위치가 안 맞으면 조용히 실패하지 않고 사라진 항목을 보고합니다. (`login_selector_preflight`)
+- **크롬 잔재 잠금 정리**: 크롬이 비정상 종료되며 남긴 단일실행 잠금 파일(SingletonLock 등)을 워커가 프로필 잠금을 확보한 상태에서만 정리합니다. 저장된 로그인과 쿠키는 건드리지 않습니다. (`clear_stale_singleton_locks`)
 
-**SOT 불변식 재확인**: 위 어떤 동작도 **보안 챌린지를 자동 우회하거나 반복해서 두드리지 않습니다.** 보안 챌린지가 뜨면 멈추고 visible browser에서 사람이 해결한 뒤 같은 세션을 재검증합니다.
+## 로그인 결과 소비 경계
 
-## 사람이 직접 로그인하면 — 절대 끄지 마라 / 세션 유지 (SOT, 사장님 지시 2026-06-17)
-
-> **표준 프로세스 전문(런북): `docs/ai-search/portal-login-live-search-runbook-2026-06-17.md`** — 로그인→수집→선별→URL검증→codex/Claude 적대검증→디스코드까지 검증된 전 절차. 3사 로그인을 건드리는 모든 작업은 이 런북을 따른다.
-
-사장님이 visible browser에서 **직접 로그인하거나 보안챌린지를 해결하면, 그 로그인 세션을 절대 닫거나 버리지 않는다.** 운영자 개입은 비싸고 드물다 — 한 번 들어온 로그인은 최대한 오래 살린다.
-
-지킬 것:
-1. **사람 개입 대기를 시간가드로 자르지 마라.** preflight의 channel-level timeout이 human-intervention 대기보다 짧으면 사장님이 로그인하는 도중 창이 강제 종료된다(2026-06-17 실제 발생: `--channel-timeout-seconds 180` < `--human-timeout-seconds 240` → 180초에 잘림). 사람 개입이 켜져 있으면 channel timeout은 사람 timeout보다 길거나 `0`(비활성)이어야 한다. 포지션 로그인은 `--channel-timeout-seconds 0` + 충분한 `--human-timeout-seconds`로 띄운다.
-2. **human_intervention_ok 이후 세션을 유지한다.** 사람인/잡코리아 영속 프로필(`launch_persistent_context`)은 쿠키가 `~/.valuehire/portal_profiles/<site>/<worker>`에 디스크로 저장되어 다음 실행에 그대로 재사용된다 — 검색 워커는 이 저장 세션을 다시 연다(재로그인 강요 금지).
-3. **세션은 CDP(사장님 크롬, 9222) attach가 가장 안전하다.** CDP attach는 연결만 끊고 브라우저/탭은 닫지 않는다(링크드인이 이미 이 방식). 사람인·잡코리아 창도 사장님이 띄워둔 채 유지하려면 같은 프로세스에서 열고, 끝나도 `context.close()`를 호출하지 않는다(프로세스가 살아있는 동안 창 유지). 끄지마 = 디스크 세션 보존 + 가능하면 창도 유지.
+로그인 정책 정본은 `docs/sot/26-portal-login-spec.json`의 `26-portal-login-spec@1.5.0`입니다.
+multisearch는 `login` 스킬이 반환한 로그인 판정 결과만 소비합니다. 브라우저·탭·프로필을
+시작·종료·재시작하지 않고, 로그인 입력·쿠키 주입·스냅샷 복구·자동 로그아웃을 실행하지 않습니다.
+`HUMAN_AUTH`, `HANDOFF`, `AUTH_CONFLICT`는 검색 불가 상태로 그대로 보고하며 다른 상태로 바꾸지 않습니다.
 
 ## 라이브 수집 안정성 (검증된 교훈 2026-06-17)
 
@@ -177,150 +176,10 @@ python3 -m unittest tests/test_multi_position_sourcing.py -v
 - 채널이 막혀 0건이면 "후보 없음"이 아니라 **"채널 제한으로 미확보"**로 보고한다(원인 단정 금지 — 0건이 selector 탓인지 결과없음인지 증거 없이 단정하지 않는다).
 - 보낼 후보는 원시 수집 그대로가 아니라 **직무·지역·연차로 선별**해서만 내보낸다(원시 결과엔 직무 무관 후보가 섞인다). 보내는 모든 profile URL은 **실제로 열어 이름이 페이지에 있는지 확인**한 것만 쓴다(URL 절대 오류 금지).
 
-Mac Keychain 자격증명 계정:
-- 사람인: `valuehire.portal_credentials` / `saramin:username`, `saramin:password`
-- 잡코리아: `valuehire.portal_credentials` / `jobkorea:username`, `jobkorea:password`
-- LinkedIn RPS: `valuehire.portal_credentials` / `linkedin_rps:username`, `linkedin_rps:password` (env: `LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD`)
-
-구현 파일:
-- `tools/multi_position_sourcing/access.py`의 `portal_credential_status()`
-- `tools/multi_position_sourcing/portal_session.py`
-- `tools/multi_position_sourcing/portal_worker.py`
-- `tools/multi_position_sourcing/portal_snapshot.py`
-- `tools/multi_position_sourcing/portal_ops.py`
-- `tools/multi_position_sourcing/portal_autologin.py`
-- `tools/multi_position_sourcing/portal_runtime.py`
-- `tools/multi_position_sourcing/portal_live_check.py`
-- `tools/multi_position_sourcing/portal_login.py`
-
-운영 세션 준비 명령:
-```bash
-python3 -m tools.multi_position_sourcing.portal_live_check init-session-key \
-  --output artifacts/portal_session_key_init_latest.json
-
-python3 -m tools.multi_position_sourcing.portal_live_check init-portal-credentials \
-  --channels saramin,jobkorea,linkedin_rps \
-  --output artifacts/portal_credentials_init_latest.json
-
-python3 -m tools.multi_position_sourcing.portal_live_check init-discord-webhook \
-  --output artifacts/discord_webhook_init_latest.json
-
-python3 -m tools.multi_position_sourcing.portal_live_check readiness \
-  --output artifacts/portal_live_readiness_latest.json
-
-python3 -m tools.multi_position_sourcing.portal_live_check supabase-access-check \
-  --output artifacts/portal_supabase_access_latest.json
-
-python3 -m tools.multi_position_sourcing.portal_login \
-  --channels saramin,jobkorea,linkedin_rps \
-  --profile-root ~/.valuehire/portal_profiles \
-  --worker-id default \
-  --chrome-cdp-endpoint http://127.0.0.1:9222 \
-  --output artifacts/portal_session_status_latest.json
-```
-
-`init-session-key`는 Mac Keychain 세션 암호화 키를 생성/검증하되 키 값은 출력하지 않습니다. `init-portal-credentials`는 사람인/잡코리아/LinkedIn RPS env 자격증명을 모두 Mac Keychain으로 적재하되 값은 출력하지 않습니다. `init-discord-webhook`은 Discord 재인증 webhook env 값을 Mac Keychain으로 적재하되 URL은 출력하지 않습니다. `readiness`는 실제 포털/Discord에 접속하지 않지만 Supabase REST/RPC 접근 probe를 수행해 서비스 역할 키 거부를 live DoD 전에 실패시킵니다. readiness와 `supabase-access-check`는 HTTP status/error type, safe HTTP error hint, JWT role/expiry/ref-match 같은 safe key diagnostics만 기록하며 응답 본문, URL, 키 값은 출력하지 않습니다. `supabase-access-check`는 `reauth_events`, `latest_validated_session_snapshot`, `validated_session_snapshots`, `reauth_weekly_counts` 접근을 별도로 probe합니다. `portal_login`은 비밀값을 출력하지 않고 채널별 `ready`, `login`, `note`, `url`만 기록합니다. 사람인/잡코리아는 `launch_persistent_context`의 `userDataDir`를 1차 영속 계층으로 쓰며, `storage_state` launch 옵션을 쓰지 않습니다. LinkedIn은 열린 headed Chrome에 CDP로 attach하고, 기존 세션이 없으면 `.env.local`/Keychain 자격증명으로 자동 로그인하며, `worker_id=default` 단일 프로필만 허용하고 그 프로필도 OS 파일락으로 직렬화합니다. 보안문자, 2FA, checkpoint, 이상 접근이 나오면 자동 우회하지 않고 visible browser에서 사람이 해결할 때까지 대기합니다. 사람이 해결하고 검색 화면 또는 RPS 세션이 재확인되면 `human_intervention_ok`로 저장하고, 제한 시간 안에 해결되지 않으면 `human_intervention_timeout`으로 남깁니다.
-
-운영 live restart persistence 검증 명령:
-```bash
-python3 -m tools.multi_position_sourcing.portal_live_check restart-smoke \
-  --channel saramin \
-  --keyword "백엔드 개발자" \
-  --profile-root ~/.valuehire/portal_profiles \
-  --worker-id default \
-  --output artifacts/portal_restart_smoke_saramin.json
-python3 -m tools.multi_position_sourcing.portal_live_check restart-smoke \
-  --channel jobkorea \
-  --keyword "백엔드 개발자" \
-  --profile-root ~/.valuehire/portal_profiles \
-  --worker-id default \
-  --output artifacts/portal_restart_smoke_jobkorea.json
-python3 -m tools.multi_position_sourcing.portal_live_check restart-smoke \
-  --channel linkedin_rps \
-  --keyword "백엔드 개발자" \
-  --profile-root ~/.valuehire/portal_profiles \
-  --worker-id default \
-  --chrome-cdp-endpoint http://127.0.0.1:9222 \
-  --output artifacts/portal_restart_smoke_linkedin_rps.json
-```
-
-이 명령은 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, Mac Keychain의 `valuehire.session_state/session_state_v2` 암호화 키를 사용해 두 번의 별도 worker lifecycle에서 paced search, validated encrypted snapshot 저장, reauth event 기록, 스냅샷 재주입, 사람인/잡코리아 keychain auto-relogin fallback, LinkedIn Discord alert fallback을 검증합니다. `passed=true`는 두 lifecycle 모두 `reauth_cause` 없이 `status=searched`일 때만 기록됩니다. 프로필 손상 DoD는 검증 스냅샷을 먼저 만들고 해당 프로필의 활성 워커를 멈춘 뒤 `--delete-profile-before-start --confirm-delete-profile ~/.valuehire/portal_profiles/<site>/<worker_id> --disable-auto-relogin`로 실행합니다. 삭제 경로는 `.profile.lock`이 잡힌 프로필을 거부합니다. 이후 `reauth_cause=profile_corrupt`, `recovery.recovered_by=snapshot_reinject`를 확인합니다.
-
-로그인 성공 직후 validated snapshot 캡처:
-```bash
-python3 -m tools.multi_position_sourcing.portal_live_check capture-snapshot \
-  --channel saramin \
-  --profile-root ~/.valuehire/portal_profiles \
-  --worker-id default \
-  --output artifacts/portal_snapshot_capture_saramin.json
-```
-
-LinkedIn Discord 재인증 알림 및 계측 확인:
-```bash
-python3 -m tools.multi_position_sourcing.portal_live_check discord-alert-test \
-  --record-reauth-event \
-  --output artifacts/portal_discord_alert_test_latest.json
-```
-이 명령은 LinkedIn `forced_logout` synthetic alert를 실제 Discord webhook으로 보내고, Supabase `reauth_events`에 `linkedin_rps/default/forced_logout/human` row를 기록합니다. 출력은 delivery/recording status와 비밀값 없는 이벤트 metadata만 포함합니다.
-
-주간 reauth 계측 확인:
-```bash
-python3 -m tools.multi_position_sourcing.portal_live_check reauth-weekly-counts \
-  --week-start 2026-06-08T00:00:00+00:00 \
-  --output artifacts/portal_reauth_weekly_counts_latest.json
-
-python3 -m tools.multi_position_sourcing.portal_live_check reauth-weekly-trend \
-  --latest-week-start 2026-06-08T00:00:00+00:00 \
-  --weeks 4 \
-  --output artifacts/portal_reauth_weekly_trend_latest.json
-```
-출력은 `site`, `worker_id`, `cause`, `recovered_by`, `count` 집계와 최신/직전 주 총계, 주간 delta, zero-event week 수만 포함하며 비밀값과 raw session state를 포함하지 않습니다.
-
-Supabase snapshot metadata 확인:
-```bash
-python3 -m tools.multi_position_sourcing.portal_live_check snapshot-metadata \
-  --channel saramin \
-  --worker-id default \
-  --output artifacts/portal_snapshot_metadata_saramin.json
-python3 -m tools.multi_position_sourcing.portal_live_check snapshot-metadata \
-  --channel jobkorea \
-  --worker-id default \
-  --output artifacts/portal_snapshot_metadata_jobkorea.json
-```
-이 출력은 `encrypted_envelope=VHSS1`, `encrypted_bytes`, validation metadata만 포함하고 encrypted payload나 raw session state는 포함하지 않습니다.
-앱은 Supabase RPC 호출 전에 `VHSS1` encrypted envelope가 아닌 snapshot payload를 거부하고, DB schema도 같은 envelope constraint를 적용합니다.
-
-DoD 산출물 감사:
-```bash
-python3 -m tools.multi_position_sourcing.portal_dod_audit \
-  --session-status artifacts/portal_session_status_latest.json \
-  --restart-smoke-artifact artifacts/portal_restart_smoke_saramin.json \
-  --restart-smoke-artifact artifacts/portal_restart_smoke_jobkorea.json \
-  --restart-smoke-artifact artifacts/portal_restart_smoke_linkedin_rps.json \
-  --profile-recovery-artifact artifacts/portal_live_check_saramin_profile_loss.json \
-  --profile-recovery-artifact artifacts/portal_live_check_jobkorea_profile_loss.json \
-  --snapshot-metadata-artifact artifacts/portal_snapshot_metadata_saramin.json \
-  --snapshot-metadata-artifact artifacts/portal_snapshot_metadata_jobkorea.json \
-  --discord-alert artifacts/portal_discord_alert_test_latest.json \
-  --weekly-counts artifacts/portal_reauth_weekly_counts_latest.json \
-  --weekly-trend artifacts/portal_reauth_weekly_trend_latest.json \
-  --secret-scan-path artifacts \
-  --output artifacts/portal_session_dod_audit_latest.json
-```
-이 감사는 safe JSON artifact, 로컬 파일락/poison snapshot probe, `artifacts/` 아래 plaintext Playwright storage state 잔존 여부를 확인합니다. `passed=false`이면 live DoD 완료로 보지 않습니다.
-
-검증 예시:
-```bash
-python3 -m unittest tests/test_multi_position_sourcing.py -v
-```
-
-운영 메모:
-- 잡코리아는 `https://www.jobkorea.co.kr/Corp/Person/Find` 접근 후 로그인 링크가 보이면 `https://www.jobkorea.co.kr/Login/Login_Tot.asp`에서 로그인한다.
-- 사람인은 반드시 기업회원 로그인 경로를 사용한다: `https://www.saramin.co.kr/zf_user/auth?ut=c&url=https%3A%2F%2Fwww.saramin.co.kr%2Fzf_user%2Fmemcom%2Ftalent-pool%2Fmain%2Fsearch`.
-- 기업회원 로그인 성공 확인 신호: `로그인` 링크 0개, `로그아웃` 표시 1개, `input.search_input`, `#career_min`, `#career_max`가 검색 화면에 존재한다.
-- `ut=c` 없이 로그인하면 개인회원 흐름으로 빠질 수 있으므로 사람인 multisearch에서는 실패로 취급하고 기업회원 URL로 재시도한다.
-- 캡차, 2단계 인증, 보안문자, 이상 접근 경고가 나오면 자동 우회하지 말고 visible browser에서 사람 개입을 기다린다. 시간초과 또는 headless 모드에서는 채널 제한/중단으로 보고한다.
-- LinkedIn은 계정/비밀번호를 자동 입력하지 않는다. 기존 세션 확인과 만료 감지만 수행하고, checkpoint 또는 로그인 요구가 보이면 수동 재로그인 필요 상태로 보고한다.
+APP 01은 실제 비밀 읽기·입력이나 로그인 실행 명령을 제공하지 않습니다. multisearch는
+`skills/login/SKILL.md`의 로그인 판정 결과만 소비할 뿐이며, 과거 자동 로그인·스냅샷 재주입·
+프로필 재시작·로그인 URL 이동·재인증 알림 시험을 대체 실행하지 않습니다. 안전한 제공자·적용기·
+함대 증거가 준비되지 않으면 브라우저를 그대로 보존하고 `HANDOFF`합니다.
 
 ## Portal Search Rules
 
@@ -416,7 +275,7 @@ Profile URL: {{profile_url}}
 
 ## Queue Behavior
 
-Hermes는 브라우저를 즉흥 조작하지 않고 공유 큐를 claim/resume하는 방식으로 동작합니다.
+Discord 요청은 공유 큐를 거쳐 Claude 또는 Codex 워커가 claim/resume합니다. 브라우저를 즉흥 조작하지 않습니다.
 
 큐 항목:
 ```json

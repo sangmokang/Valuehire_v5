@@ -97,7 +97,7 @@
   "state_machine": {
     "DISCOVER": {
       "allowed_actions": ["read_processes", "read_cdp_endpoints", "read_targets", "read_owner_idle"],
-      "next": ["HUMAN_ACTIVE", "AI_ATTACHED", "AUTH_CONFLICT"]
+      "next": ["HUMAN_ACTIVE", "AI_ATTACHED", "AUTH_CONFLICT", "HANDOFF"]
     },
     "HUMAN_ACTIVE": {
       "allowed_actions": ["read_owner_idle", "wait"],

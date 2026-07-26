@@ -351,6 +351,13 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     params = job.get("params") or {}
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
+    login_terminal_rule = (
+        "실제 캡차/2FA/checkpoint 양성만 HUMAN_AUTH다. HUMAN_AUTH에서만 "
+        f"PAUSED_FOR_HUMAN 마커를 출력한다. HANDOFF와 AUTH_CONFLICT는 "
+        "PAUSED_FOR_HUMAN·완료 영수증 없이 terminal 종료하고 시간 재개하지 말 것. "
+        "비밀 원문·파생값을 인자·stdout·stderr·로그·영수증·산출물·모델 메시지에 "
+        "넣지 말 것.\n"
+    )
     if skill == "login":
         # APP01 정책 연결만 담당한다. 인증 제공자·적용기·기기 판정 로직은 후속 APP 범위다.
         machine = str(job.get("machine") or "(미상)")
@@ -372,13 +379,13 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             f"않았거나 인증 기기 수 미증명·부정확이면 인증 조작 0회 HANDOFF한다.\n"
             f"4. LinkedIn 인증 기기가 2개 이상이거나 멀티세션이면 terminal AUTH_CONFLICT다. "
             f"다른 기기 자동 로그아웃·Continue/Confirm·신뢰도 기반 선택·재시도는 0회다.\n"
-            f"5. 캡차/2FA/checkpoint가 양성 확인되면 그 브라우저 창을 앞으로 띄워 두고 "
+            f"5. 실제 캡차/2FA/checkpoint 양성을 확인한 HUMAN_AUTH에서만 그 브라우저 "
+            f"창을 앞으로 띄워 두고 "
             f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력한 뒤 즉시 종료할 것"
             f"(자동 우회 금지).\n"
             f"6. 브라우저 보존: 창·탭·프로필 종료 0건 — 로그인된 크롬 프로필을 "
             f"로그아웃·삭제·초기화하지 말 것.\n"
-            f"7. 비밀번호·쿠키·토큰·비밀 원문이나 파생값을 인자·stdout·stderr·로그·영수증·"
-            f"모델 메시지에 출력하지 말 것.\n"
+            f"7. {login_terminal_rule}"
             f"8. 검색·수집·발송은 이 잡 범위 밖 — 시작하지 말 것.\n"
             f"9. 모든 채널이 정책에 맞게 READY로 증명된 경우에만 영수증"
             f"(artifacts/portal_session_status_latest.json)을 확인하고, 마지막 줄에 "
@@ -444,10 +451,11 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"- 결과: 한국어로 요약해 stdout 에 출력할 것 (워커가 Discord 로 전달함)\n"
         f"규칙:\n"
         f"{login_barrier_rule}"
+        f"0-1. {login_terminal_rule}"
         f"1. {skill} 외의 서치·수집 스킬을 발동하지 말 것.\n"
         f"2. 아웃리치·메시지·메일 발송은 어떤 경우에도 하지 말 것 (발송 게이트 SOT28).\n"
         f"3. 로그인된 크롬 프로필을 로그아웃·삭제·초기화하지 말 것.\n"
-        f"4. 캡차/2FA/본인확인을 만나면 조작을 멈추고 "
+        f"4. 실제 캡차/2FA/checkpoint 양성을 확인한 HUMAN_AUTH에서만 조작을 멈추고 "
         f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력하고 즉시 종료할 것.\n"
         f"5. params.search_urls가 있으면 그 URL들을 사람이 준비한 검색 결과로 사용하고 "
         f"포지션 URL과 혼동하지 말 것.\n"
@@ -456,7 +464,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"1개면 인증 조작 0회 재사용하고, 0개로 증명됐을 때만 현재 턴 승인·APP 17 경로 결정·"
         f"정확 후보 1개·APP 30/31 LINKEDIN_LI_AT 조건을 모두 요구한다. 인증 기기 수 미증명은 "
         f"인증 조작 0회 HANDOFF, 2개 이상은 AUTH_CONFLICT다. 다른 기기 자동 로그아웃·신뢰도 "
-        f"기반 선택은 금지하며 비밀번호·쿠키·토큰을 출력하지 말 것.\n"
+        f"기반 선택은 금지할 것.\n"
         f"7. aisearch는 ClickUp JD에서 국문·영문·띄어쓰기·약어 변형 검색어를 만들고, "
         f"사람인 OR/AND/NOT 및 잡코리아 키워드 칩·경력 필터를 UI에 직접 입력할 것.\n"
         f"8. 후보 목록은 1페이지에서 끝내지 말고 최소 10페이지 또는 마지막 페이지까지 "

@@ -56,12 +56,12 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 - **스스로 검색 시작 금지.** AI Search는 사용자가 준 positionId·ClickUp 태스크 URL·채용 URL·JD 본문, 또는 특정 단계 실행 명시 지시에서만 시작한다.
 - stage 0~4(범위·채널상태·JD출처·키워드전략)가 서기 전엔 일반 웹/포털/ChatGPT/LinkedIn·사람인·잡코리아 검색·후보 발굴을 돌리지 않는다.
 - SOT를 편의 판단으로 대체하지 않는다. SOT와 지름길이 충돌하면 SOT 우선. 도구 경로가 없으면 멈추고 막힌 지점을 보고한다.
-- 라이브 검색을 비공식 수동 검색으로 조용히 강등하지 않는다. 필요한 채널이 `OCCUPIED`/`BLOCKED`면 그대로 표기하고 게이트를 우회하지 않는다.
+- 라이브 검색을 비공식 수동 검색으로 조용히 강등하지 않는다. 필요한 채널은 `READY`·`OCCUPIED`·`HUMAN_AUTH`·`HANDOFF`·`AUTH_CONFLICT` 중 하나로 보존하고, 인계·종결 상태를 일반 대기로 축약하지 않는다.
 - **v5만 사용. v4 코드·npm 금지.**
 - `docs/sot/25` stage 순서를 따른다(사용자가 범위를 명시 제한하지 않는 한).
-- 포털 액션 전 각 채널을 `READY`/`OCCUPIED`/`BLOCKED`로 분류한다.
+- 포털 액션 전 각 채널을 `READY`·`OCCUPIED`·`HUMAN_AUTH`·`HANDOFF`·`AUTH_CONFLICT`로 분류한다.
 - **사장님이 크롬 사용 중이면 자동화 액션 0, 손 떼면 자동 재개**(INV2).
-- 캡차·2FA·봇차단·로그인캡·LinkedIn 멀티세션락 → 해당 채널 STOP. 우회·반복재시도 금지(INV4).
+- 캡차·2FA·봇차단은 `HUMAN_AUTH`, 일반 로그인캡은 `AUTH_LOST` 후보, LinkedIn 멀티세션락은 terminal `AUTH_CONFLICT`다. LinkedIn 인증 기기 1개는 인증 조작 0회 재사용하고, 0개는 현재 턴 승인·APP 17 경로 결정·정확 후보 1개·APP 30/31 `LINKEDIN_LI_AT`을 모두 요구한다. 인증 기기 수 미증명은 `HANDOFF`다. 우회·반복재시도 금지(INV4).
 - **LinkedIn 세션 문맥 보존(`SESSION_CONTEXT_PRESERVATION`, #156)**: 이미 인증된 exact target 하나만
   재사용하고 다른 Chrome 프로필에 RPS 세션 신호가 있으면 `AUTH_CONFLICT`로 중단한다. 새 탭·두 번째
   로그인·Continue/Confirm은 0회다. 카드의 query 포함 `navigation_url`로 이동하고 canonical

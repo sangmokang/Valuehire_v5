@@ -1,3 +1,11 @@
+# 실행 금지 — 과거 QA 입력
+
+`historical_input_not_executable`
+
+이 문서는 과거 조사 기록이며 현재 로그인 지시로 실행하면 안 됩니다. 현재 정책은
+`26-portal-login-spec@1.5.0`입니다. LinkedIn 아이디·비밀번호 자동 로그인 주장은
+폐기됐으며 APP 17·APP 30/31의 `LINKEDIN_LI_AT` 결정표만 유효합니다.
+
 # QA 이슈: LinkedIn 자동로그인 금지 revert (SOT 위반) — 전면 복구 + 로직 체크
 
 - **등록일**: 2026-06-09 KST

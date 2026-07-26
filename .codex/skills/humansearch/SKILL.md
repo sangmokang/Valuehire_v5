@@ -79,23 +79,32 @@ description: 사장님이 채용 사이트(LinkedIn Recruiter/RPS·사람인·�
 - **제안·메일 "보내기"는 절대 자동으로 누르지 않는다(SOT 3).** humansearch 는 후보 "브리핑"만 보낸다.
 - **사장님이 크롬을 쓰는 동안에는 즉시 양보**하고, 손을 떼면 자동으로 다시 이어 한다(SOT 2 / R4).
   봇처럼 창 여닫기·URL 연타·알람 후 무한 재시도 하지 않는다.
-- **보안 챌린지(캡차·봇차단·로그인 리다이렉트) 감지 시 즉시 STOP.** retry 금지(계정 잠금).
+- 로그인 판단은 `26-portal-login-spec@1.5.0`을 따른다. 캡차·2FA·봇 차단은 `HUMAN_AUTH`로
+  멈추고, 로그인 리다이렉트나 인증 소실은 아래 사이트별 상태 판정으로 되돌린다. retry 금지(계정 잠금).
 - 행동 전 **DOM 덤프**로 셀렉터를 확인한다(SOT23 evidence-first). 추측 셀렉터 금지.
 - 브라우저는 **raw CDP 단일탭이 주력**(위 "브라우저 드라이버" 절). MCP claude-in-chrome 는 폴백.
 
 ### LinkedIn RPS 세션 문맥 보존 (`SESSION_CONTEXT_PRESERVATION`, #156)
 
-- `/login`을 먼저 적용해 **이미 인증된 정확한 RPS target 하나**를 재사용한다. 다른 Chrome 프로필에서
-  RPS 세션이 보이거나 target/profile/endpoint가 맞지 않으면 `AUTH_CONFLICT`로 중단한다. 새 브라우저·
+- `/login`을 먼저 적용하며 `26-portal-login-spec@1.5.0`이 로그인 판단의 유일한 기준이다.
+  사람인·잡코리아는 저장된 아이디·비밀번호를 정확한 기존 target 하나에 최대 1회만 입력하고,
+  정확한 target이 하나로 증명되지 않으면 `HANDOFF`한다.
+- LinkedIn 인증 기기 수 미증명은 `HANDOFF`다. 인증 기기 1개면 그 기기·프로필·endpoint의 정확한
+  RPS target 하나를 무변경 재사용한다. 인증 기기 0개는 현재 실행의 소유자 승인이 있고, `APP 17`이
+  같은 기기의 후보 target을 하나로 확정했으며, `APP 30/31`이 `LINKEDIN_LI_AT`을 그 target에만
+  최대 1회 주입하도록 결정한 경우에만 다음 단계로 넘긴다.
+- 봉인된 조사로 인증 기기 2개 이상 또는 복수 인증 세션이 증명된 경우만 `AUTH_CONFLICT`다.
+  target/profile/endpoint가 없거나 맞지 않는 것만으로는 충돌을 추정하지 않고 `HANDOFF`한다.
+  `AUTH_CONFLICT`에서는 Continue/Confirm·자동 로그아웃·자동 로그인을 하지 않는다. 새 브라우저·
   새 창·새 탭·두 번째 프로필 로그인은 0회다.
 - `/login`이 증명한 기존 target id를 `exact_target_id`로 고정하고, 스크래치패드 드라이버도
   `R.main(..., target_id=exact_target_id)`로 넘긴다. 값이 없거나 실행 직전 target/profile/endpoint가
-  달라지면 추측·fallback 없이 중단한다.
+  달라지면 추측·fallback 없이 `HANDOFF`한다.
 - 수확 시 카드의 query 포함 원본 href를 `navigation_url`로, query를 제거한 canonical URL을
   `profile_url`/`url`로 함께 저장한다. bare `profile_url`은 저장·중복제거에만 쓰고 브라우저 이동에는 쓰지 않는다.
 - 각 프로필은 원본 `navigation_url`로 이동하며, 이동 직후 `assert_not_blocked_or_abort`를 **추출·스크린샷·
   아카이브·채점보다 먼저** 실행한다. `enterprise-authentication/sessions`를 후보 화면으로 저장하면 안 된다.
-- 세션 충돌은 로그인 만료와 다르다. Continue/Confirm·자동 로그인·reload/navigation retry를 하지 않으며,
+- 증명된 세션 충돌은 로그인 만료와 다르다. Continue/Confirm·자동 로그인·reload/navigation retry를 하지 않으며,
   사람이 한 번 해결한 같은 실행에서 재발해도 두 번째 로그인 안내 없이 그 채널을 영구 중단한다.
 
 ## 입력
