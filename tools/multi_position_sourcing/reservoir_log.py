@@ -13,6 +13,8 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from .machine_identity import require_machine_id
+
 # 5라인 경계.
 RESERVOIR_LINES: tuple[str, ...] = ("harvest", "index", "match", "calibrate", "send")
 RESERVOIR_STATUSES: tuple[str, ...] = ("ok", "fail", "skip")
@@ -54,10 +56,11 @@ def make_reservoir_log_record(
     latency_ms: int = 0,
 ) -> dict:
     """12필드를 모두 가진 로그 레코드(dict)를 만든다. 키워드 강제로 필드 누락을 막는다."""
+    canonical_machine = require_machine_id(machine)
     return {
         "ts": ts,
         "run_id": run_id,
-        "machine": machine,
+        "machine": canonical_machine,
         "segment_id": segment_id,
         "site": site,
         "line": line,

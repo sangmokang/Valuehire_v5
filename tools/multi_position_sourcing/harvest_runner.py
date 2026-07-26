@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from itertools import cycle
 
 from .harvest_policy import HARVEST_SITES, worker_should_yield
+from .machine_identity import MachineId, require_machine_id
 from .models import Channel, SegmentId, utc_now_iso
 from .reservoir_log import (
     append_reservoir_log,
@@ -30,10 +31,13 @@ class HarvestItem:
 
     segment_id: SegmentId
     channel: Channel
-    machine: str
+    machine: MachineId
     status: str = "pending"
     attempts: int = 0
     last_error: str = ""
+
+    def __post_init__(self) -> None:
+        require_machine_id(self.machine)
 
 
 @dataclass(frozen=True)
@@ -54,7 +58,7 @@ SaveRail = Callable[[object], None]
 def build_harvest_queue(
     segments: Iterable[SegmentId],
     *,
-    machines: tuple[str, ...],
+    machines: tuple[MachineId, ...],
     sites: tuple[Channel, ...] = HARVEST_SITES,
 ) -> tuple[HarvestItem, ...]:
     """세그먼트만으로 (segment × site) 일감을 만들어 활성 머신에 라운드로빈 배정한다(결정론).
@@ -65,7 +69,8 @@ def build_harvest_queue(
     segment_tuple = tuple(segments)
     if not machines:
         return ()
-    rotor = cycle(machines)
+    canonical_machines = tuple(require_machine_id(machine) for machine in machines)
+    rotor = cycle(canonical_machines)
     items: list[HarvestItem] = []
     for segment_id in segment_tuple:
         for site in sites:

@@ -17,10 +17,15 @@ from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
 
+from .machine_identity import (
+    CANONICAL_MACHINE_IDS,
+    MachineId,
+    require_machine_id,
+)
 from .models import Channel
 
 # 가동 시작 우선순위 순서(맥미니 먼저).
-HARVEST_MACHINES: tuple[str, ...] = ("macmini", "macbook", "macair")
+HARVEST_MACHINES: tuple[MachineId, ...] = CANONICAL_MACHINE_IDS
 # 모든 머신이 도는 두 사이트(전담 없음).
 HARVEST_SITES: tuple[Channel, ...] = ("saramin", "jobkorea")
 
@@ -32,6 +37,7 @@ def startup_priority() -> tuple[str, ...]:
 
 def sites_for_machine(machine: str) -> tuple[Channel, ...]:
     """머신이 도는 사이트. 전담 고정이 없으므로 셋 다 사람인+잡코리아."""
+    require_machine_id(machine)
     return HARVEST_SITES
 
 
@@ -47,7 +53,7 @@ def linkedin_rps_operator(*, owner_present: bool) -> str:
 
 def rps_session_conflict(operators: Iterable[str]) -> bool:
     """동시에 서로 다른 두 머신 이상이 RPS 세션을 점유하면 충돌(금지)."""
-    return len({operator for operator in operators}) > 1
+    return len({require_machine_id(operator) for operator in operators}) > 1
 
 
 # ── 봇방지 페이싱 primitive (PC-E1) ────────────────────────────────────
