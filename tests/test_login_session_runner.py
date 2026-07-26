@@ -1081,6 +1081,54 @@ def test_presentation_is_once_per_episode_but_new_episode_is_allowed() -> None:
     assert tab.mutations.count("focus") == 2
 
 
+def test_presentation_returns_verified_badge_receipt_and_exact_limit_code() -> None:
+    tab = _PresentationTab()
+    kwargs = {
+        "agent": "Codex",
+        "task": "login",
+        "job_id": "job-8",
+        "episode_id": "episode-badge",
+        "mutation_gate": lambda: None,
+        "window_resolver": _window,
+        "window_capture": lambda _window_id: b"png",
+        "application_activator": lambda _pid: True,
+    }
+    locator = present_exact_login_window_once(tab, _ref(), **kwargs)
+    receipt = locator.badge_receipt
+    assert receipt is not None
+    assert receipt.verified is True
+    assert receipt.pointer_events_none is True
+    assert receipt.mutation_count == 1
+    assert receipt.job_id == "job-8"
+
+    before = tab.mutations.count("focus")
+    with pytest.raises(RuntimeError, match="PRESENTATION_LIMIT_REACHED"):
+        present_exact_login_window_once(tab, _ref(), **kwargs)
+    assert tab.mutations.count("focus") == before
+
+
+def test_badge_injection_failure_has_code_and_no_browser_mutation() -> None:
+    class MissingBadgeTab(_PresentationTab):
+        def mark_busy(self, label: str, *, expected_url: str) -> bool:
+            return False
+
+    tab = MissingBadgeTab()
+    with pytest.raises(RuntimeError, match="BADGE_MISSING"):
+        present_exact_login_window_once(
+            tab,
+            _ref(),
+            agent="Codex",
+            task="login",
+            job_id="job-8",
+            episode_id="missing-badge",
+            mutation_gate=lambda: None,
+            window_resolver=_window,
+            window_capture=lambda _window_id: b"png",
+            application_activator=lambda _pid: True,
+        )
+    assert tab.mutations == []
+
+
 def test_inactive_tab_marker_is_resolved_after_page_bring_to_front() -> None:
     tab = _PresentationTab()
     marked_resolves = 0
