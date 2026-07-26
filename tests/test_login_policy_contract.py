@@ -77,12 +77,16 @@ def test_site_authentication_methods_are_explicit_and_mutation_bounded() -> None
         "provider": "stored_username_password",
         "max_submissions_per_episode": 1,
         "exact_existing_target_required": True,
+        "exact_target_candidate_count": 1,
+        "otherwise": "HANDOFF",
         "challenge_action": "HUMAN_AUTH",
     }
     assert methods["jobkorea"] == {
         "provider": "stored_username_password",
         "max_submissions_per_episode": 1,
         "exact_existing_target_required": True,
+        "exact_target_candidate_count": 1,
+        "otherwise": "HANDOFF",
         "challenge_action": "HUMAN_AUTH",
     }
     linkedin = methods["linkedin_rps"]
@@ -90,6 +94,8 @@ def test_site_authentication_methods_are_explicit_and_mutation_bounded() -> None
     assert linkedin["secret_reference"] == "LINKEDIN_LI_AT"
     assert linkedin["max_cookie_applications_per_episode"] == 1
     assert linkedin["exact_existing_target_required"] is True
+    assert linkedin["exact_target_candidate_count"] == 1
+    assert linkedin["otherwise"] == "HANDOFF"
     assert linkedin["username_password_submit"] is False
     assert linkedin["auto_logout_other_machine"] is False
     assert linkedin["new_target"] is False
