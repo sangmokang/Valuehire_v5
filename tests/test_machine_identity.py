@@ -289,3 +289,55 @@ def test_no_machine_identity_copy_can_drift() -> None:
         is fleet_args.parse_fleet_args
     )
 
+
+def test_harvest_machine_copy_matches_canonical_source() -> None:
+    identity = _identity()
+    from tools.multi_position_sourcing.harvest_policy import HARVEST_MACHINES
+
+    assert HARVEST_MACHINES == identity.CANONICAL_MACHINE_IDS
+
+
+def test_harvest_queue_rejects_alias_internal_machine() -> None:
+    identity = _identity()
+    from tools.multi_position_sourcing.harvest_runner import (
+        build_harvest_queue,
+    )
+
+    with pytest.raises(identity.MachineIdentityError):
+        build_harvest_queue(
+            ("it_ai_data",),
+            machines=("macbook_pro",),
+        )
+
+
+def test_harvest_item_rejects_unknown_internal_machine() -> None:
+    identity = _identity()
+    from tools.multi_position_sourcing.harvest_runner import HarvestItem
+
+    with pytest.raises(identity.MachineIdentityError):
+        HarvestItem(
+            segment_id="it_ai_data",
+            channel="saramin",
+            machine="server42",
+        )
+
+
+def test_reservoir_report_rejects_alias_machine() -> None:
+    identity = _identity()
+    from tools.multi_position_sourcing.reservoir_log import (
+        make_reservoir_log_record,
+    )
+
+    with pytest.raises(identity.MachineIdentityError):
+        make_reservoir_log_record(
+            ts="2026-07-27T00:00:00Z",
+            run_id="run",
+            machine="macbook_pro",
+            segment_id="it_ai_data",
+            site="saramin",
+            line="harvest",
+            in_count=1,
+            out_count=1,
+            dropped_count=0,
+            status="ok",
+        )
