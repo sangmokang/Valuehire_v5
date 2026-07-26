@@ -38,12 +38,17 @@ from .job_queue import (
     JobQueueClient,
     _valid_url,
     default_account_key,
-    is_valid_machine_id,
     job_params_match_contract,
     new_job_payload,
     params_contain_secret_keys,
     params_contain_secret_values,
     url_host_resolves_public,
+)
+from .machine_identity import (
+    MachineIdentityError,
+    canonicalize_legacy_machine_id,
+    normalize_machine_id,
+    require_machine_id,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -184,11 +189,12 @@ def sleep_seconds_after(status: str, poll_seconds: int) -> int:
 
 
 def machine_from_env(environ: Mapping[str, str]) -> str:
-    """Require a strict dynamic machine ID; DB registration is checked by RPCs."""
+    """Normalize one exact environment input to a canonical machine ID."""
     raw = environ.get("VALUEHIRE_MACHINE") or ""
-    if not is_valid_machine_id(raw):
+    try:
+        return normalize_machine_id(raw)
+    except MachineIdentityError:
         raise RuntimeError(f"VALUEHIRE_MACHINE 이 유효하지 않습니다: {raw!r}")
-    return raw
 
 
 def _v4_repo(environ: Mapping[str, str] | None = None, repo_root: Path = REPO) -> Path:
@@ -1323,9 +1329,11 @@ class FleetWorker:
         yield_state_path: str | Path | None = None,
         skill_sync: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
-        if not is_valid_machine_id(machine):
+        try:
+            canonical_machine = require_machine_id(machine)
+        except MachineIdentityError:
             raise RuntimeError(f"invalid machine id: {machine!r}")
-        self.machine = machine
+        self.machine = canonical_machine
         self.queue = queue if queue is not None else JobQueueClient()
         # 이슈 B: runner 주입 시 그 러너가 항상 우선(기존 테스트 하위호환).
         # V1 반증 수용: falsy 콜러블도 '주입'이다 — truthiness 아닌 None 판정.
@@ -1405,8 +1413,12 @@ class FleetWorker:
                 if "variant_backlog" in data:
                     raise ValueError("legacy 상태에 variant_backlog가 포함됨")
                 return
+            stored_machine = canonicalize_legacy_machine_id(
+                data.get("machine"),
+                field="state.machine",
+            )
             if isinstance(schema_version, bool) or not isinstance(schema_version, int) \
-                    or schema_version != 2 or data.get("machine") != self.machine:
+                    or schema_version != 2 or stored_machine != self.machine:
                 raise ValueError("상태 schema 또는 machine 불일치")
 
             raw_backlog = data.get("variant_backlog", [])
@@ -1415,6 +1427,12 @@ class FleetWorker:
                 raise ValueError("variant_backlog 형식 또는 개수 제한 위반")
             restored: list[dict[str, Any]] = []
             for item in raw_backlog:
+                item = dict(item) if isinstance(item, dict) else item
+                if isinstance(item, dict) and "machine" in item:
+                    item["machine"] = canonicalize_legacy_machine_id(
+                        item["machine"],
+                        field="variant_backlog.machine",
+                    )
                 if not isinstance(item, dict) or item.get("skill") != "humansearch" \
                         or item.get("status") != "queued" \
                         or item.get("machine") != self.machine:
@@ -1917,7 +1935,8 @@ def default_owner_probe() -> Callable[[], bool] | None:
 
 
 def default_yield_state_path(machine: str) -> Path:
-    return Path.home() / ".valuehire" / "fleet" / f"owner-yield-{machine}.json"
+    canonical = require_machine_id(machine)
+    return Path.home() / ".valuehire" / "fleet" / f"owner-yield-{canonical}.json"
 
 
 def main(argv: list[str] | None = None) -> int:

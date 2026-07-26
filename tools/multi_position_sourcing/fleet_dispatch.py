@@ -21,6 +21,7 @@ from .discord_routing import (
     route_discord_invocation,
 )
 from .job_queue import JobQueueClient, new_job_payload
+from .machine_identity import MachineIdentityError, normalize_machine_id
 
 __all__ = [
     "FLEET_COMMANDS", "OWNER_USER_IDS", "build_fleet_job_payload",
@@ -75,9 +76,10 @@ def build_fleet_job_payload(
         params.setdefault("agent", _emd_default["engine"])
         params.setdefault("model", _emd_default["model"])
     # 다른 스킬의 기존 기본값은 보존한다. LinkedIn URL은 위에서 fail-closed다.
-    machine = options.get("machine")
-    if not machine:
-        machine = "macmini"
+    try:
+        machine = normalize_machine_id(options.get("machine"))
+    except MachineIdentityError:
+        return None
     return new_job_payload(
         machine=machine, skill=skill, position_url=url,
         requested_by=requested_by, role=role, params=params,

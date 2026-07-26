@@ -14,7 +14,13 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from .job_queue import FLEET_MACHINES, is_valid_machine_id
+from .job_queue import FLEET_MACHINES
+from .machine_identity import (
+    MachineId,
+    MachineIdentityError,
+    canonicalize_legacy_machine_id,
+    require_machine_id,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -29,9 +35,11 @@ RUNNING_STALL_SECONDS = 3000
 
 def heartbeat_payload(machine: Any, *, worker_pid: int, now_iso: str,
                       linkedin_rps_logged_in: bool = False) -> dict[str, Any]:
-    if not is_valid_machine_id(machine):
+    try:
+        canonical = require_machine_id(machine)
+    except MachineIdentityError:
         raise ValueError(f"invalid machine id: {machine!r}")
-    return {"machine": machine, "beat_at": now_iso, "worker_pid": int(worker_pid),
+    return {"machine": canonical, "beat_at": now_iso, "worker_pid": int(worker_pid),
             "linkedin_rps_logged_in": bool(linkedin_rps_logged_in)}
 
 
@@ -44,7 +52,6 @@ PORTAL_STATUS_MAX_AGE_SECONDS = 86400
 
 # SOT29 INV8 신뢰도: macmini > winpc > macbook
 _LINKEDIN_MACHINE_PRIORITY: tuple[str, ...] = ("macmini", "winpc", "macbook")
-_LINKEDIN_FALLBACK_MACHINE = "macmini"
 
 
 def _iso_to_epoch(value: Any) -> int | None:
@@ -102,21 +109,26 @@ def read_linkedin_login_flag(
 
 def pick_linkedin_machine(
     rows: Sequence[Mapping[str, Any]], *, now_epoch: int,
-) -> str:
+) -> MachineId | None:
     """heartbeat 행들 중 LinkedIn 로그인 + fresh(STALE_SECONDS 이내)인 머신 선택(순수).
 
     우선순위는 SOT29 INV8 신뢰도(macmini > winpc > macbook).
-    후보 없으면 macmini 폴백(무동작보다 낫다 — 사장님 승인 설계, fail-safe).
+    후보가 없으면 추측하지 않고 None을 반환한다.
     """
     ready: set[str] = set()
     for r in rows or ():
         if not isinstance(r, Mapping):
             continue
-        machine, epoch = r.get("machine"), r.get("beat_at_epoch")
+        raw_machine, epoch = r.get("machine"), r.get("beat_at_epoch")
+        try:
+            machine = canonicalize_legacy_machine_id(raw_machine)
+        except MachineIdentityError:
+            if raw_machine is not None:
+                raise
+            continue
         if (
-            not isinstance(machine, str)
-            or not is_valid_machine_id(machine)
-            or not isinstance(epoch, int)
+            not isinstance(epoch, int)
+            or isinstance(epoch, bool)
         ):
             continue
         if (now_epoch - epoch) > STALE_SECONDS:
@@ -126,10 +138,7 @@ def pick_linkedin_machine(
     for machine in _LINKEDIN_MACHINE_PRIORITY:
         if machine in ready:
             return machine
-    dynamic_ready = sorted(ready.difference(_LINKEDIN_MACHINE_PRIORITY))
-    if dynamic_ready:
-        return dynamic_ready[0]
-    return _LINKEDIN_FALLBACK_MACHINE
+    return None
 
 
 def stale_machines(
@@ -145,14 +154,15 @@ def stale_machines(
     """
     latest: dict[str, int] = {}
     for r in rows:
-        m = r.get("machine")
+        m = canonicalize_legacy_machine_id(r.get("machine"))
         epoch = r.get("beat_at_epoch")
         if m is None or epoch is None:
             continue
         if m not in latest or epoch > latest[m]:
             latest[m] = int(epoch)
     stale: list[str] = []
-    for m in expected:
+    for raw_machine in expected:
+        m = require_machine_id(raw_machine)
         beat = latest.get(m)
         if beat is None or (now_epoch - beat) > STALE_SECONDS:
             stale.append(m)
@@ -194,14 +204,15 @@ def stalled_queued_jobs(
     for r in rows:
         if r.get("status") != "queued":
             continue
+        machine = canonicalize_legacy_machine_id(r.get("machine"))
         created = _created_epoch(r)
         if created is None:
-            stalled.append({"id": r.get("id"), "machine": r.get("machine"),
+            stalled.append({"id": r.get("id"), "machine": machine,
                             "age_seconds": None})
             continue
         age = now_epoch - created
         if age > stall_seconds:
-            stalled.append({"id": r.get("id"), "machine": r.get("machine"),
+            stalled.append({"id": r.get("id"), "machine": machine,
                             "age_seconds": age})
     return stalled
 
@@ -221,6 +232,7 @@ def stalled_running_jobs(
     for r in rows:
         if r.get("status") != "running":
             continue
+        machine = canonicalize_legacy_machine_id(r.get("machine"))
         started = r.get("started_at_epoch")
         if not isinstance(started, int) or isinstance(started, bool):
             iso = r.get("started_at")
@@ -232,12 +244,12 @@ def stalled_running_jobs(
                 except ValueError:
                     started = None
         if started is None:
-            stalled.append({"id": r.get("id"), "machine": r.get("machine"),
+            stalled.append({"id": r.get("id"), "machine": machine,
                             "age_seconds": None})
             continue
         age = now_epoch - started
         if age > stall_seconds:
-            stalled.append({"id": r.get("id"), "machine": r.get("machine"),
+            stalled.append({"id": r.get("id"), "machine": machine,
                             "age_seconds": age})
     return stalled
 
@@ -254,16 +266,21 @@ def heartbeat_ages(
     """
     latest: dict[str, int] = {}
     for r in rows:
-        m = r.get("machine")
+        m = canonicalize_legacy_machine_id(r.get("machine"))
         epoch = r.get("beat_at_epoch")
         if m is None or not isinstance(epoch, int) or isinstance(epoch, bool):
             continue
         if m not in latest or epoch > latest[m]:
             latest[m] = epoch
-    return {m: (now_epoch - latest[m]) if m in latest else None for m in expected}
+    canonical_expected = tuple(require_machine_id(m) for m in expected)
+    return {
+        m: (now_epoch - latest[m]) if m in latest else None
+        for m in canonical_expected
+    }
 
 
 def should_alert(machine: str, *, last_alert_epoch: int | None, now_epoch: int) -> bool:
+    require_machine_id(machine)
     if last_alert_epoch is None:
         return True
     return (now_epoch - last_alert_epoch) > ALERT_SUPPRESS_SECONDS
