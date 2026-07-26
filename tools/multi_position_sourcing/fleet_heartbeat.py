@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import sys
+import unicodedata
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -19,6 +21,26 @@ from .job_queue import FLEET_MACHINES, is_valid_machine_id
 REPO = Path(__file__).resolve().parents[2]
 
 STALE_SECONDS = 300      # 5분 무응답 → stale
+CAPABILITY_ALLOWLIST = frozenset({"saramin", "jobkorea", "linkedin_rps"})
+_MACHINE_PLATFORMS = {
+    "macmini": "macos",
+    "macbook_pro": "macos",
+    "winpc": "windows",
+}
+_HOSTNAME_ALIASES = {
+    "macmini": "macmini",
+    "mac_mini": "macmini",
+    "맥미니": "macmini",
+    "macbook": "macbook_pro",
+    "macbookpro": "macbook_pro",
+    "macbook_pro": "macbook_pro",
+    "맥북": "macbook_pro",
+    "맥북프로": "macbook_pro",
+    "winpc": "winpc",
+    "win_pc": "winpc",
+    "윈pc": "winpc",
+    "윈도우pc": "winpc",
+}
 ALERT_SUPPRESS_SECONDS = 1800  # 30분 중복 경보 억제
 QUEUED_STALL_SECONDS = 600  # SOT31(구 SOT30) S2 — queued 가 10분 초과 미claim 이면 고착 경보
 # QA-1(2026-07-13): claude 잡 상한 2400s(fleet_worker.CLAUDE_TIMEOUT_SECONDS)보다 넉넉히
@@ -45,6 +67,163 @@ PORTAL_STATUS_MAX_AGE_SECONDS = 86400
 # SOT29 INV8 신뢰도: macmini > winpc > macbook
 _LINKEDIN_MACHINE_PRIORITY: tuple[str, ...] = ("macmini", "winpc", "macbook")
 _LINKEDIN_FALLBACK_MACHINE = "macmini"
+
+
+def normalize_machine_hostname(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    key = unicodedata.normalize("NFKC", value).strip().casefold()
+    key = "_".join(key.replace("-", "_").split())
+    return _HOSTNAME_ALIASES.get(key)
+
+
+def _strict_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        return None
+    return parsed
+
+
+def _readiness(
+    *, registered: bool, online: bool, age: int | None,
+    capabilities: list[str], delegation_valid: bool, reason: str | None,
+) -> dict[str, Any]:
+    return {
+        "registered": registered,
+        "online": online,
+        "heartbeat_age_seconds": age,
+        "capabilities": capabilities,
+        "delegation_valid": delegation_valid,
+        "reason": reason,
+    }
+
+
+def evaluate_machine_readiness(
+    row: Mapping[str, Any],
+    *,
+    required_capability: str,
+    request_id: str,
+    now: datetime,
+    alias_conflict: bool = False,
+) -> dict[str, Any]:
+    """등록소+heartbeat 한 행을 선택기 후보로 허용할지 순수 판정한다."""
+    machine_id = row.get("machine_id")
+    canonical_id = normalize_machine_hostname(machine_id)
+    platform = row.get("platform")
+    version = row.get("agent_version")
+    aliases = row.get("hostname_aliases")
+    registered = (
+        isinstance(machine_id, str)
+        and machine_id in _MACHINE_PLATFORMS
+        and platform == _MACHINE_PLATFORMS.get(canonical_id)
+        and isinstance(version, str)
+        and bool(version.strip())
+        and isinstance(aliases, list)
+        and all(isinstance(alias, str) and bool(alias.strip()) for alias in aliases)
+    )
+    raw_capabilities = row.get("capabilities")
+    capabilities = (
+        sorted(set(raw_capabilities))
+        if isinstance(raw_capabilities, list)
+        and all(isinstance(item, str) for item in raw_capabilities)
+        else []
+    )
+    delegation_valid = (
+        canonical_id != "winpc"
+        or (
+            isinstance(request_id, str)
+            and bool(request_id)
+            and row.get("delegated_for_request_id") == request_id
+        )
+    )
+    if not registered:
+        return _readiness(
+            registered=False, online=False, age=None, capabilities=capabilities,
+            delegation_valid=delegation_valid, reason="UNREGISTERED_MACHINE",
+        )
+    if alias_conflict:
+        return _readiness(
+            registered=True, online=False, age=None, capabilities=capabilities,
+            delegation_valid=delegation_valid, reason="MACHINE_ALIAS_CONFLICT",
+        )
+    heartbeat = _strict_utc(row.get("last_heartbeat_at"))
+    if heartbeat is None or now.tzinfo is None or now.utcoffset() != timezone.utc.utcoffset(now):
+        return _readiness(
+            registered=True, online=False, age=None, capabilities=capabilities,
+            delegation_valid=delegation_valid, reason="CLOCK_SKEW",
+        )
+    age = int((now - heartbeat).total_seconds())
+    if age < 0:
+        reason = "CLOCK_SKEW"
+    elif age > STALE_SECONDS:
+        reason = "STALE_HEARTBEAT"
+    elif (
+        required_capability not in CAPABILITY_ALLOWLIST
+        or any(item not in CAPABILITY_ALLOWLIST for item in capabilities)
+        or required_capability not in capabilities
+    ):
+        reason = "CAPABILITY_MISSING"
+    elif not delegation_valid:
+        reason = "WINPC_NOT_DELEGATED"
+    else:
+        reason = None
+    return _readiness(
+        registered=True, online=reason is None, age=age,
+        capabilities=capabilities, delegation_valid=delegation_valid, reason=reason,
+    )
+
+
+def readiness_candidates(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    required_capability: str,
+    request_id: str,
+    now: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """별칭 충돌을 전역 검사한 뒤 ready 행만 기존 선택기 입력으로 보낸다."""
+    alias_owners: dict[str, set[str]] = {}
+    for row in rows:
+        machine_id = row.get("machine_id")
+        aliases = row.get("hostname_aliases")
+        if not isinstance(machine_id, str) or not isinstance(aliases, list):
+            continue
+        for alias in [machine_id, *aliases]:
+            if isinstance(alias, str) and alias.strip():
+                normalized = normalize_machine_hostname(alias)
+                key = normalized or unicodedata.normalize(
+                    "NFKC", alias).strip().casefold()
+                key = "_".join(key.replace("-", "_").split())
+                alias_owners.setdefault(key, set()).add(machine_id)
+    conflicted = {
+        owner
+        for owners in alias_owners.values() if len(owners) > 1
+        for owner in owners
+    }
+    ready: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for row in rows:
+        canonical_id = normalize_machine_hostname(row.get("machine_id"))
+        normalized_row = {
+            **row,
+            "machine_id": canonical_id,
+            "queue_machine": row.get("queue_machine") or row.get("machine_id"),
+        }
+        result = evaluate_machine_readiness(
+            normalized_row, required_capability=required_capability, request_id=request_id,
+            now=now, alias_conflict=row.get("machine_id") in conflicted,
+        )
+        candidate = normalized_row
+        candidate["readiness"] = result
+        candidate["machine"] = normalized_row["queue_machine"]
+        heartbeat = _strict_utc(row.get("last_heartbeat_at"))
+        candidate["beat_at_epoch"] = int(heartbeat.timestamp()) if heartbeat else None
+        (ready if result["online"] else rejected).append(candidate)
+    return ready, rejected
 
 
 def _iso_to_epoch(value: Any) -> int | None:
