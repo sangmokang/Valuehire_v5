@@ -122,8 +122,9 @@ class BadgeJsTests(unittest.TestCase):
         self.assertIn("사용중", js)
         self.assertIn("vh-automation-status", js)
         self.assertIn("aria-label", js)
-        # idempotent: 기존 요소 제거가 들어있어야 중복 배지 안 쌓임
-        self.assertIn("remove", js)
+        # idempotent: 동일 badge node를 갱신하고, 잘못된 tag만 교체한다.
+        self.assertIn("if(!e)", js)
+        self.assertNotIn("if(e){e.remove();}", js)
         self.assertIn("parentElement", js)
         self.assertIn("getBoundingClientRect", js)
         self.assertIn("clipPath", js)
