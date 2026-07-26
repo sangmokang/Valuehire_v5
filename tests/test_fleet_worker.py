@@ -460,21 +460,20 @@ def test_new_job_payload_blocks_injection_at_queue_gate():
 
 # ── 출력 파싱 ────────────────────────────────────────────────────────
 
-def test_parse_paused_for_human_wins_over_exit_code():
+def test_parse_unverified_pause_marker_is_terminal():
     out = "후보 3명 검토\nPAUSED_FOR_HUMAN: 링크드인 캡차 감지\n"
     r = parse_worker_output(out, exit_code=0)
-    assert r["status"] == "paused_for_human"
-    assert "캡차" in r["reason"]
-    # 비정상 종료여도 PAUSED 신호가 우선
+    assert r["status"] == "failed"
+    assert "검증되지 않은" in r["reason"]
+    # 비정상 종료여도 모델의 자기신고가 HUMAN_AUTH 증거를 대신하지 못한다.
     r2 = parse_worker_output(out, exit_code=1)
-    assert r2["status"] == "paused_for_human"
+    assert r2["status"] == "failed"
 
 
-def test_parse_pause_marker_tolerates_trailing_log_lines():
-    # V1 2R: 마커 뒤 후행 로그/stderr 가 붙어도 정당한 PAUSED 를 놓치면 안 된다(미탐 > 오탐 위험)
+def test_parse_pause_marker_with_trailing_logs_stays_unverified():
     out = "후보 검토 중\nPAUSED_FOR_HUMAN: 캡차 감지\n[log] cdp session closed\nTraceback: ..."
-    assert parse_worker_output(out, exit_code=0)["status"] == "paused_for_human"
-    assert parse_worker_output(out, exit_code=1)["status"] == "paused_for_human"
+    assert parse_worker_output(out, exit_code=0)["status"] == "failed"
+    assert parse_worker_output(out, exit_code=1)["status"] == "failed"
 
 
 def test_parse_ignores_quoted_pause_marker():
@@ -625,14 +624,14 @@ def test_run_once_done_path():
     assert "완료" in notes[-1][1]           # 한국어 보고
 
 
-def test_run_once_paused_path():
+def test_run_once_rejects_unverified_pause_path():
     q = FakeQueue(_job())
     notes = []
     w = _worker(q, lambda p, timeout: ("PAUSED_FOR_HUMAN: 캡차", 0), notes)
-    assert w.run_once() == "paused_for_human"
+    assert w.run_once() == "failed"
     jid, status, _, error = q.released[0]
-    assert status == "paused_for_human" and "캡차" in error
-    assert notes and "캡차" in notes[-1][1]
+    assert status == "failed" and "검증되지 않은" in error
+    assert notes and "fleet-resume" not in notes[-1][1]
 
 
 def test_run_once_timeout_becomes_failed():
@@ -744,13 +743,13 @@ def test_run_once_start_notify_before_done():
     assert "✅" in final
 
 
-def test_run_once_start_notify_before_paused():
+def test_run_once_start_notify_before_unverified_pause_failure():
     q = FakeQueue(_job())
     notes = []
     w = _worker(q, lambda p, timeout: ("PAUSED_FOR_HUMAN: 캡차", 0), notes)
-    assert w.run_once() == "paused_for_human"
+    assert w.run_once() == "failed"
     assert notes[0][1].startswith("▶️") and "실행 시작" in notes[0][1]
-    assert "⏸️" in notes[1][1]
+    assert "❌" in notes[1][1]
 
 
 def test_run_once_dry_run_has_no_start_notify():
