@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "docs/sot/26-portal-login-spec.json"
 CONTROL_PATH = ROOT / "skills/login/browser-control-contract.json"
 SKILL_PATH = ROOT / "skills/login/SKILL.md"
+WORKER_PATH = ROOT / "tools/multi_position_sourcing/fleet_worker.py"
 POLICY_ID = "26-portal-login-spec@1.5.0"
 HISTORICAL_MARKER = "historical_input_not_executable"
 
@@ -28,9 +29,13 @@ POLICY_ENTRYPOINTS = (
     ROOT / "docs/prompts/goal-full-codebase-review.md",
     ROOT / "docs/ai-search/three-mac-account-coordinator-goal-prompt.md",
     ROOT / "skills/ai-search/references/spec-procedure.md",
+    ROOT / "skills/ai-search/SKILL.md",
     ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
+    ROOT / ".codex/skills/ai-search/SKILL.md",
+    ROOT / ".claude/skills/aisearch/SKILL.md",
     ROOT / ".codex/skills/url/SKILL.md",
     ROOT / ".claude/skills/url/SKILL.md",
+    WORKER_PATH,
 )
 SUPERSEDED_PROMPTS = (
     ROOT / "docs/prompts/hermes-login-gate-before-search-skills-2026-07-21.md",
@@ -57,6 +62,13 @@ def test_site_authentication_methods_are_explicit_and_mutation_bounded() -> None
     assert policy["policy_id"] == POLICY_ID
     assert control["login_policy_id"] == POLICY_ID
     assert policy["authentication_policy"] == control["authentication_policy"]
+    assert policy["linkedin_session_decision"] == control["linkedin_session_decision"]
+    assert policy["supported_agents"] == control["supported_agents"] == [
+        "claude",
+        "codex",
+    ]
+    assert control["source_priority"][0] == "docs/sot/26-portal-login-spec.json"
+    assert control["policy_authority"] == POLICY_ID
 
     methods = policy["authentication_policy"]
     assert methods["saramin"] == {
@@ -89,11 +101,20 @@ def test_linkedin_machine_decision_table_is_complete_and_fail_closed() -> None:
         "zero_authenticated_machines",
         "one_authenticated_machine",
         "two_or_more_authenticated_machines",
+        "unproven_or_invalid_count",
     }
     assert decisions["zero_authenticated_machines"]["action"] == (
         "apply_li_at_once_on_selected_machine_exact_existing_target"
     )
     assert decisions["zero_authenticated_machines"]["missing_exact_target"] == "HANDOFF"
+    assert decisions["zero_authenticated_machines"]["required_apps"] == [
+        "APP30",
+        "APP31",
+    ]
+    assert (
+        decisions["zero_authenticated_machines"]["provider_or_injector_unavailable"]
+        == "HANDOFF"
+    )
     assert decisions["one_authenticated_machine"] == {
         "action": "reuse_authenticated_machine_and_exact_target",
         "authentication_mutations": 0,
@@ -107,6 +128,10 @@ def test_linkedin_machine_decision_table_is_complete_and_fail_closed() -> None:
         "confirm",
         "choose_by_reliability",
         "retry",
+    }
+    assert decisions["unproven_or_invalid_count"] == {
+        "action": "HANDOFF",
+        "authentication_mutations": 0,
     }
 
 
@@ -157,6 +182,7 @@ def test_active_instructions_forbid_legacy_linkedin_form_login_and_logout() -> N
         "linkedin_rps_logged_in=true인 머신을 먼저 찾아 이 잡에 배정",
         "저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것",
         "3사 자동 로그인을 막지 않는다",
+        "/uas/login-cap current target이면 시크릿 저장소 자동 로그인 1회",
     )
     assert not [phrase for phrase in forbidden_phrases if phrase in active]
 
@@ -201,12 +227,69 @@ def test_login_and_search_entrypoints_reference_the_new_policy() -> None:
         assert "APP 30/31" in _text(path), path
 
 
+def test_worker_generated_prompts_reference_the_new_policy() -> None:
+    from tools.multi_position_sourcing.fleet_worker import build_job_prompt
+
+    login_prompt = build_job_prompt(
+        {
+            "id": 1,
+            "skill": "login",
+            "position_url": "",
+            "requested_by": "owner",
+            "role": "owner",
+            "machine": "macmini",
+        }
+    )
+    url_prompt = build_job_prompt(
+        {
+            "id": 2,
+            "skill": "url",
+            "position_url": "https://app.clickup.com/t/abc123",
+            "requested_by": "owner",
+            "role": "owner",
+            "machine": "macmini",
+        }
+    )
+    for prompt in (login_prompt, url_prompt):
+        assert POLICY_ID in prompt
+        assert "APP 30/31" in prompt
+        assert "LINKEDIN_LI_AT" in prompt
+        assert "자동 로그아웃" in prompt
+    assert "저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것" not in login_prompt
+    assert "linkedin_rps_logged_in=true인 머신을 먼저 찾아" not in url_prompt
+
+
+def test_current_route_does_not_keep_hermes_as_an_active_agent() -> None:
+    policy = _json(POLICY_PATH)
+    assert policy["current_execution_route"] == [
+        "Discord",
+        "queue",
+        "worker",
+        "Codex_or_Claude",
+    ]
+    for path in CONTROL_PATHS:
+        assert _json(path)["supported_agents"] == ["claude", "codex"]
+
+    active = "\n".join(_text(path) for path in (*LOGIN_SKILL_PATHS, POLICY_PATH))
+    forbidden_active_markers = (
+        "Claude, Codex, Hermes",
+        "Claude·Codex·Hermes",
+        "Codex 또는 Hermes",
+        "~/.hermes/skills/login/",
+        "Hermes login preflight",
+        "<Claude|Codex|Hermes>",
+    )
+    assert not [
+        marker for marker in forbidden_active_markers if marker in active
+    ]
+
+
 def test_policy_contract_mirrors_are_byte_identical() -> None:
     assert len({_sha256(path) for path in CONTROL_PATHS}) == 1
     assert len({_sha256(path) for path in LOGIN_SKILL_PATHS}) == 1
 
 
-def test_app01_does_not_implement_forbidden_runtime_scope() -> None:
+def test_app01_forbidden_runtime_scope_is_declared() -> None:
     briefing = _text(
         ROOT
         / "docs/engineering/login-machine-browser-decomposition-briefing-2026-07-26.html"
