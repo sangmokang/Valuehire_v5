@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .machine_identity import MachineIdentityError, require_machine_id
+
 
 _SNOWFLAKE = re.compile(r"^[0-9]{15,22}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -337,7 +339,14 @@ class GatewayLeaseGuard:
             raise ValueError("hermes_bot_id must be a Discord snowflake")
         if str(bot_id) == str(hermes_bot_id):
             raise ValueError("direct bot identity must differ from Hermes")
-        if not machine.strip() or not _positive_int(pid):
+        try:
+            canonical_machine = require_machine_id(
+                machine,
+                field="machine",
+            )
+        except MachineIdentityError as exc:
+            raise ValueError(str(exc)) from None
+        if not _positive_int(pid):
             raise ValueError("machine and pid are required")
         if not 30 <= ttl_seconds <= 300:
             raise ValueError("lease ttl must be between 30 and 300 seconds")
@@ -347,7 +356,7 @@ class GatewayLeaseGuard:
         self.token_fingerprint = str(token_fingerprint)
         self.bot_id = str(bot_id)
         self.hermes_bot_id = str(hermes_bot_id)
-        self.machine = machine.strip()
+        self.machine = canonical_machine
         self.pid = pid
         self.ttl_seconds = ttl_seconds
         self.max_heartbeat_age_seconds = max_heartbeat_age_seconds

@@ -84,6 +84,12 @@ from tools.multi_position_sourcing.discord_routing import (
 )
 from tools.multi_position_sourcing.fleet_dispatch import FLEET_COMMANDS, OWNER_USER_IDS
 from tools.multi_position_sourcing.job_queue import FLEET_SKILLS
+from tools.multi_position_sourcing.machine_identity import (
+    MachineIdentityError,
+    canonicalize_machine_mapping,
+    normalize_machine_id,
+    require_machine_id,
+)
 
 logger = logging.getLogger("discord_direct_gateway")
 # Codex 2차검증 재재현: logger.info() 만으로는 루트 로거에 핸들러가 없으면(기본 파이썬
@@ -1000,11 +1006,24 @@ class MinimalPrivilegeQueueClient:
 
     def job_by_idempotency_key(self, key: str) -> Optional[dict[str, Any]]:
         rows = self._rpc("discord_gateway_job_by_idempotency_key", {"p_key": str(key)})
-        return rows[0] if isinstance(rows, list) and rows else None
+        if not isinstance(rows, list) or not rows:
+            return None
+        return canonicalize_machine_mapping(
+            rows[0],
+            fields=("machine", "requested_machine", "assigned_machine"),
+        )
 
     def recent(self, limit: int = 10) -> list[dict[str, Any]]:
         rows = self._rpc("discord_gateway_recent_jobs", {"p_limit": max(1, min(int(limit), 50))})
-        return rows if isinstance(rows, list) else []
+        if not isinstance(rows, list):
+            return []
+        return [
+            canonicalize_machine_mapping(
+                row,
+                fields=("machine", "requested_machine", "assigned_machine"),
+            )
+            for row in rows
+        ]
 
     @staticmethod
     def _one_rpc_row(rows: Any, name: str) -> dict[str, Any]:
@@ -1015,22 +1034,28 @@ class MinimalPrivilegeQueueClient:
     def gateway_readiness(
         self, token_fingerprint: str, machine: str, max_age_seconds: int = 300,
     ) -> dict[str, Any]:
+        canonical_machine = require_machine_id(machine)
         rows = self._rpc("discord_gateway_readiness", {
             "p_token_fingerprint": str(token_fingerprint),
-            "p_machine": str(machine),
+            "p_machine": canonical_machine,
             "p_max_age_seconds": int(max_age_seconds),
         })
-        return self._one_rpc_row(rows, "discord_gateway_readiness")
+        row = self._one_rpc_row(rows, "discord_gateway_readiness")
+        return canonicalize_machine_mapping(
+            row,
+            fields=("worker_machine",),
+        )
 
     def acquire_gateway_lease(
         self, token_fingerprint: str, holder_identity: str, holder_pid: int,
         machine: str, ttl_seconds: int = 90,
     ) -> dict[str, Any]:
+        canonical_machine = require_machine_id(machine)
         rows = self._rpc("discord_gateway_acquire_lease", {
             "p_token_fingerprint": str(token_fingerprint),
             "p_holder_identity": str(holder_identity),
             "p_holder_pid": int(holder_pid),
-            "p_machine": str(machine),
+            "p_machine": canonical_machine,
             "p_ttl_seconds": int(ttl_seconds),
         })
         return self._one_rpc_row(rows, "discord_gateway_acquire_lease")
@@ -1165,9 +1190,13 @@ def main() -> None:  # pragma: no cover — 실 기동 진입점, 테스트에�
     hermes_bot_id = os.environ.get("HERMES_DISCORD_BOT_ID", "").strip()
     if not hermes_bot_id:
         raise SystemExit("HERMES_DISCORD_BOT_ID 환경변수가 필요합니다")
-    worker_machine = os.environ.get("DISCORD_GATEWAY_WORKER_MACHINE", "").strip()
-    if not worker_machine:
-        raise SystemExit("DISCORD_GATEWAY_WORKER_MACHINE 환경변수가 필요합니다")
+    try:
+        worker_machine = normalize_machine_id(
+            os.environ.get("DISCORD_GATEWAY_WORKER_MACHINE", ""),
+            field="DISCORD_GATEWAY_WORKER_MACHINE",
+        )
+    except MachineIdentityError as exc:
+        raise SystemExit(str(exc)) from None
     from tools.multi_position_sourcing.discord_hr1 import (
         GatewayLeaseGuard,
         Hr1EvidenceRecorder,

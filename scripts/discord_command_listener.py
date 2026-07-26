@@ -28,8 +28,11 @@ sys.path.insert(0, str(REPO))
 
 from tools.multi_position_sourcing.job_queue import (  # noqa: E402
     JobQueueClient,
-    is_valid_machine_id,
     new_owner_agent_job_payload,
+)
+from tools.multi_position_sourcing.machine_identity import (  # noqa: E402
+    MachineIdentityError,
+    normalize_machine_id,
 )
 
 OWNER_ID = "814353841088757800"
@@ -215,9 +218,14 @@ def main(*, queue: JobQueueClient | None = None, machine: str = "") -> None:
     if not acquire_single_instance_lock(LOCK, os.getpid()):
         print("이미 다른 리스너가 실행 중 — 종료(중복 실행 금지)", flush=True)
         return
-    selected_machine = machine or (os.environ.get("VALUEHIRE_MACHINE") or "")
-    if not is_valid_machine_id(selected_machine):
-        raise RuntimeError("VALUEHIRE_MACHINE이 필요합니다")
+    raw_machine = machine or (os.environ.get("VALUEHIRE_MACHINE") or "")
+    try:
+        selected_machine = normalize_machine_id(
+            raw_machine,
+            field="VALUEHIRE_MACHINE",
+        )
+    except MachineIdentityError as exc:
+        raise RuntimeError(str(exc)) from None
     job_queue = queue if queue is not None else JobQueueClient()
     last = _load_last()
     # 시작 시 과거 대화 재실행 방지: last=0 이면 현재 최신 id 로 초기화
