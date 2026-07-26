@@ -62,7 +62,8 @@ description: "사람이 미리 걸어둔 LinkedIn Recruiter/RPS·사람인·잡�
 ## 익스텐션 독립 화면·본문 자동 저장
 
 - 정식 `humansearch_cdp_run.py`는 프로필마다 화면 PNG·보이는 본문·manifest·로컬 DB 영수증을 자동 저장한 뒤에만 다음 후보로 진행한다. 익스텐션 저장 여부는 성공 조건이 아니다.
-- Claude-in-Chrome/MCP로 상세를 연 폴백 경로에서도 채점·다음 화면 이동 전에 동일한 정식 실행기를 호출한다.
+- 증명된 `APP17_PROVEN_CDP_ENDPOINT`와 exact existing target이 없으면 다른 브라우저
+  도구로 우회하지 않고 저장·채점·다음 화면 이동 없이 `HANDOFF`한다.
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence \

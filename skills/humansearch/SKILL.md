@@ -62,7 +62,8 @@ description: 사장님이 채용 사이트(LinkedIn Recruiter/RPS·사람인·�
   참고 메모리 [[portal-debug-chrome-ports]].
 - **Origin 403 우회**: Chrome 이 Origin 헤더 붙은 ws 핸드셰이크를 거부 → `suppress_origin=True`.
   (`--remote-allow-origins` 로 크롬 재기동할 필요 없음.)
-- **폴백 = MCP claude-in-chrome**: 확장이 연결돼 있고 raw CDP 가 불가할 때만.
+- **브라우저 폴백 없음**: `APP17_PROVEN_CDP_ENDPOINT`와 exact existing target이
+  함께 증명되지 않으면 다른 도구·주소·프로필을 추측하지 않고 `HANDOFF`한다.
 - 전용 탭 1개에만 붙는다 — 사장님이 보던 다른 탭은 건드리지 않는다(양보 R4).
 - **🔴 점유 표시 배지 (2026-07-08 사장님 지시 — 모든 서치·Codex 공통).** `raw_cdp.attach()` 하면
   화면 상단 중앙에 **"🤖 <에이전트> 자동화 사용중 · <작업>"** 배지가 자동으로 뜬다(사장님이 "내가
@@ -82,7 +83,7 @@ description: 사장님이 채용 사이트(LinkedIn Recruiter/RPS·사람인·�
 - 로그인 판단은 `26-portal-login-spec@1.5.0`을 따른다. 캡차·2FA·봇 차단은 `HUMAN_AUTH`로
   멈추고, 로그인 리다이렉트나 인증 소실은 아래 사이트별 상태 판정으로 되돌린다. retry 금지(계정 잠금).
 - 행동 전 **DOM 덤프**로 셀렉터를 확인한다(SOT23 evidence-first). 추측 셀렉터 금지.
-- 브라우저는 **raw CDP 단일탭이 주력**(위 "브라우저 드라이버" 절). MCP claude-in-chrome 는 폴백.
+- 브라우저는 위에서 증명된 **raw CDP 단일탭만** 사용한다. 다른 브라우저 도구로 우회하지 않는다.
 
 ### LinkedIn RPS 세션 문맥 보존 (`SESSION_CONTEXT_PRESERVATION`, #156)
 
@@ -255,7 +256,7 @@ description: 사장님이 채용 사이트(LinkedIn Recruiter/RPS·사람인·�
 ## 익스텐션 독립 화면·본문 자동 저장
 
 - 정식 `humansearch_cdp_run.py`는 프로필마다 화면 PNG·보이는 본문·manifest·로컬 DB 영수증을 자동 저장한 뒤에만 다음 후보로 진행한다. 익스텐션 저장 여부는 성공 조건이 아니다.
-- Claude-in-Chrome/MCP로 상세를 연 폴백 경로에서도 채점·다음 화면 이동 전에 동일한 정식 실행기를 호출한다.
+- 증명된 raw CDP exact target이 없으면 저장·채점·다음 화면 이동 없이 `HANDOFF`한다.
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence \
