@@ -1002,6 +1002,19 @@ class MinimalPrivilegeQueueClient:
         if isinstance(row, dict) and isinstance(row.get("created"), bool):
             row = dict(row)
             row["_discord_duplicate"] = row.pop("created") is False
+        if not isinstance(row, dict):
+            raise ValueError("discord_gateway_enqueue returned an invalid row")
+        try:
+            stored_machine = require_machine_id(
+                row.get("machine"),
+                field="database.machine",
+            )
+        except MachineIdentityError as exc:
+            raise ValueError(str(exc)) from None
+        if stored_machine != revalidated["machine"]:
+            raise ValueError("database.machine does not match queued machine")
+        row = dict(row)
+        row["machine"] = stored_machine
         return row
 
     def job_by_idempotency_key(self, key: str) -> Optional[dict[str, Any]]:
