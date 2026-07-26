@@ -24,6 +24,10 @@ CONTROL_PATHS = (
     ROOT / ".codex/skills/login/browser-control-contract.json",
     ROOT / ".claude/skills/login/browser-control-contract.json",
 )
+MULTISEARCH_SKILL_PATHS = (
+    ROOT / "skills/multisearch/SKILL.md",
+    ROOT / ".codex/skills/multisearch/SKILL.md",
+)
 POLICY_ENTRYPOINTS = (
     ROOT / "CLAUDE.md",
     ROOT / "docs/sot/25-ai-search-execution-process.json",
@@ -35,6 +39,8 @@ POLICY_ENTRYPOINTS = (
     ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
     ROOT / ".codex/skills/ai-search/SKILL.md",
     ROOT / ".claude/skills/aisearch/SKILL.md",
+    ROOT / "skills/multisearch/SKILL.md",
+    ROOT / ".codex/skills/multisearch/SKILL.md",
     ROOT / ".codex/skills/url/SKILL.md",
     ROOT / ".claude/skills/url/SKILL.md",
     WORKER_PATH,
@@ -44,6 +50,7 @@ SUPERSEDED_PROMPTS = (
     ROOT / "docs/prompts/linkedin-rps-login-session-fix-2026-07-18.md",
     ROOT / "docs/engineering/linkedin-managed-autologin-goal-2026-07-26.md",
     ROOT / "docs/engineering/login-policy-recement-goal-2026-07-08.md",
+    ROOT / "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md",
 )
 
 
@@ -270,6 +277,9 @@ def test_policy_supersedes_historical_prompts_without_new_hermes_runtime() -> No
         "docs/engineering/login-policy-recement-goal-2026-07-08.md": (
             "historical_input_not_executable"
         ),
+        "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md": (
+            "historical_input_not_executable"
+        ),
     }
     route = policy["current_execution_route"]
     assert route == ["Discord", "queue", "worker", "Codex_or_Claude"]
@@ -327,6 +337,32 @@ def test_login_search_execution_contract_cannot_restore_legacy_login() -> None:
         "HANDOFF·AUTH_CONFLICT에는 사용하지 않는다",
     ):
         assert required in text
+
+
+def test_multisearch_entrypoint_uses_the_site_specific_policy() -> None:
+    for path in MULTISEARCH_SKILL_PATHS:
+        text = _text(path)
+        for forbidden in (
+            "Hermes",
+            "3사 모두 자동 로그인합니다",
+            "`linkedin_rps:username`",
+            "`linkedin_rps:password`",
+            "tools.multi_position_sourcing.portal_login",
+            "LinkedIn은 열린 headed Chrome에 CDP로 attach하고, 기존 세션이 없으면 "
+            "`.env.local`/Keychain 자격증명으로 자동 로그인",
+        ):
+            assert forbidden not in text, (path, forbidden)
+        for required in (
+            POLICY_ID,
+            "APP 17",
+            "APP 30/31",
+            "LINKEDIN_LI_AT",
+            "인증 기기 수 미증명",
+            "인증 조작 0회",
+            "HANDOFF",
+            "AUTH_CONFLICT",
+        ):
+            assert required in text, (path, required)
 
 
 def test_ai_search_status_vocabulary_matches_the_login_policy() -> None:
