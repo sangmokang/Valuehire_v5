@@ -77,7 +77,7 @@ class ReservoirLogContractTests(unittest.TestCase):
 
     def test_bad_status_and_bad_line_rejected(self) -> None:
         base = dict(
-            ts="t", run_id="r", machine="m", segment_id="s", site="saramin",
+            ts="t", run_id="r", machine="macmini", segment_id="s", site="saramin",
             line="harvest", in_count=1, out_count=1, dropped_count=0, status="ok",
             fail_reason="", latency_ms=0,
         )
