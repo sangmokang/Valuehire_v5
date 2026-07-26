@@ -17,11 +17,11 @@
 
   "browser_driver": {
     "primary": "raw_cdp",
-    "primary_note": "주력은 raw CDP 단일탭(tools/multi_position_sourcing/raw_cdp.py) — 사장님 9222 디버그 크롬에 websocket 으로 *한 타깃*에만 붙는다. 탭 과다(수십 개) 환경에서 connectOverCDP 전체 attach hang 을 회피하기 위함(2026-06-26 사장님 지시).",
-    "endpoint": "http://localhost:9222",
+    "primary_note": "주력은 raw CDP 단일탭(tools/multi_position_sourcing/raw_cdp.py)이다. 정책과 기기 선택 작업이 증명한 연결 주소와 exact existing target에만 붙는다.",
+    "endpoint_source": "APP17_PROVEN_CDP_ENDPOINT",
     "origin_workaround": "Chrome 가 Origin 헤더 붙은 ws 핸드셰이크를 403 거부 → websocket-client 의 suppress_origin=True 로 우회(--remote-allow-origins 재기동 불필요).",
-    "fallback": "mcp_claude_in_chrome",
-    "fallback_note": "확장이 연결돼 있고 raw CDP 가 불가할 때만 MCP claude-in-chrome 으로 폴백.",
+    "fallback": "none",
+    "fallback_note": "증명된 연결 주소와 exact existing target이 없으면 HANDOFF로 종료한다. 다른 도구나 주소를 추측하지 않는다.",
     "single_tab_rule": "전용 탭 1개에만 붙는다. 사장님 다른 탭은 건드리지 않는다(양보 R4)."
   },
 
@@ -176,7 +176,7 @@
 
   "safety_invariants": {
     "no_auto_send_offer": "제안·메일 '보내기' 자동 클릭 금지(SOT 3). humansearch 는 '후보 브리핑'만 발송.",
-    "yield_to_owner_chrome": "사장님 chrome 점유 시 즉시 양보 → 손 떼면 자동 재개(SOT 2 / R4). 봇 행동 금지.",
+    "yield_to_owner_chrome": "사장님 chrome 점유 시 즉시 양보한다. HUMAN_AUTH의 양성 증거가 있을 때만 사람 대기 상태로 전환하며, 명시적 재개 승인 전에는 자동 재개하지 않는다.",
     "stop_on_block": "캡차/봇차단/로그인 리다이렉트 감지 시 즉시 STOP, retry 금지(SOT22 R2).",
     "no_channel_routing_by_job": "채널을 직무로 가르지 않음(SOT22 R5).",
     "evidence_first_dom": "행동 전 DOM 덤프 — 셀렉터 추측이 fresh 덤프를 못 이김(SOT23)."

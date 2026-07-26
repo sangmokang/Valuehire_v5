@@ -59,6 +59,10 @@ def build_fleet_job_payload(
     """
     skill = (options.get("skill") or "").strip()
     url = (options.get("url") or "").strip()
+    # APP 17이 발급한 검증 가능한 route proof 저장소가 아직 없다. Discord/caller가
+    # 적은 machine 값은 증거가 아니므로 URL 작업은 그 배선이 생길 때까지 닫아 둔다.
+    if skill == "url":
+        return None
     params = dict(options.get("params") or {})
     # /model 전역 기본 배선: 사장님이 /model 로 **실제 설정했을 때만**(파일 존재) 주입하고,
     # 미설정이면 주입하지 않아 기존 lane별 기본(검색 스킬=claude, owner agent=codex —
@@ -70,10 +74,9 @@ def build_fleet_job_payload(
         _emd_default = emd.get_default(_ENGINE_MODEL_PATH)
         params.setdefault("agent", _emd_default["engine"])
         params.setdefault("model", _emd_default["model"])
-    # LinkedIn(url)은 APP 17이 증명한 기기를 호출자가 명시해야 한다. 그 전에는
-    # heartbeat·신뢰도·기본값으로 추측하지 않는다. 다른 스킬의 기존 기본값은 보존한다.
+    # 다른 스킬의 기존 기본값은 보존한다. LinkedIn URL은 위에서 fail-closed다.
     machine = options.get("machine")
-    if not machine and skill != "url":
+    if not machine:
         machine = "macmini"
     return new_job_payload(
         machine=machine, skill=skill, position_url=url,
