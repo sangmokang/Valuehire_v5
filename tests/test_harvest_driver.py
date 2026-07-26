@@ -184,6 +184,43 @@ def test_main_fake_smoke_exit_zero_and_json_names_executor(tmp_path, capsys) -> 
     assert jsonl_files, "fake 스모크도 reservoir 로그를 남겨야 한다"
 
 
+def test_main_normalizes_external_machine_alias_in_output(tmp_path, capsys) -> None:
+    output_path = tmp_path / "out.json"
+    rc = main(
+        [
+            "--executor", "fake",
+            "--segments", "it_ai_data",
+            "--machine", "macbook_pro",
+            "--run-id", "cli-alias",
+            "--today", "2026-07-27",
+            "--output", str(output_path),
+            "--skip-owner-check",
+        ]
+    )
+    assert rc == 0
+    assert json.loads(output_path.read_text(encoding="utf-8"))["machine"] == "macbook"
+
+
+@pytest.mark.parametrize("machine", ("server42", " MACBOOK", "macbook "))
+def test_main_rejects_unknown_or_ambiguous_external_machine(
+    machine, tmp_path, capsys
+) -> None:
+    output_path = tmp_path / "out.json"
+    rc = main(
+        [
+            "--executor", "fake",
+            "--segments", "it_ai_data",
+            "--machine", machine,
+            "--run-id", "cli-invalid",
+            "--today", "2026-07-27",
+            "--output", str(output_path),
+            "--skip-owner-check",
+        ]
+    )
+    assert rc == 2
+    assert not output_path.exists()
+
+
 def test_main_empty_segments_exit_two(capsys) -> None:
     rc = main(
         [
