@@ -1,8 +1,9 @@
 """Owner-explicit AI Search execution on the current Windows PC.
 
-This entrypoint starts/reuses the WinPC managed portal browser, repairs the
-exact-target login receipt when necessary, and invokes the canonical AI Search
-prompt locally.  It never creates or claims a fleet queue job.
+This entrypoint starts/reuses the WinPC managed portal browser, refreshes the
+exact-target login receipt, derives a bounded keyword from the ClickUp JD, and
+runs the registered portal helper directly. It never creates or claims a fleet
+queue job and never delegates the local action to a nested agent.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .fleet_worker import (
-    _run_codex,
     parse_worker_output,
     validate_aisearch_receipt,
 )
@@ -43,6 +43,26 @@ _CLICKUP_TASK_PATH = re.compile(r"^/t/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?$")
 _CLICKUP_TASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CLICKUP_TASK_API = "https://api.clickup.com/api/v2/task"
 _MAX_CLICKUP_RESPONSE_BYTES = 262_144
+_TECH_KEYWORDS = (
+    "Node.js",
+    "Nest.js",
+    "TypeScript",
+    "Java",
+    "Spring Boot",
+    "Python",
+    "Django",
+    "FastAPI",
+    "Golang",
+    "Kotlin",
+    "C#",
+    ".NET",
+    "React",
+    "Vue.js",
+    "AWS",
+    "Kubernetes",
+    "Terraform",
+    "PostgreSQL",
+)
 _ENV_LINE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>.*)$")
 _SECRET_KEY = re.compile(
     r"(?:password|passwd|cookie|token|secret|authorization|api[_-]?key)",
@@ -382,6 +402,86 @@ def _receipt_from_portal_artifacts(
     }
 
 
+def _derive_local_keywords(task_context: Mapping[str, str]) -> tuple[str, ...]:
+    """Choose one high-signal, shell-free portal term from the fetched JD."""
+
+    description = str(task_context.get("description") or "")
+    for keyword in _TECH_KEYWORDS:
+        if re.search(
+            rf"(?<![0-9A-Za-z]){re.escape(keyword)}(?![0-9A-Za-z])",
+            description,
+            re.IGNORECASE,
+        ):
+            return (keyword,)
+    name = str(task_context.get("name") or "")
+    role = name.rsplit(",", 1)[-1]
+    tokens = re.findall(r"[0-9A-Za-z가-힣+#./-]+", role)
+    ignored = {"포지션", "채용", "경력", "신입"}
+    clean = " ".join(token for token in tokens if token not in ignored).strip()
+    if not clean:
+        raise RuntimeError("ClickUp JD has no safe search keyword")
+    return (clean[:180],)
+
+
+def _execute_local_portals(
+    request: LocalAisearchRequest,
+    *,
+    task_context: Mapping[str, str],
+    run_dir: Path,
+    environ: Mapping[str, str],
+) -> tuple[str, str, int]:
+    """Run the bounded helper directly; no nested agent or shell command policy."""
+
+    keywords = _derive_local_keywords(task_context)
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    for channel in request.channels:
+        output_path = run_dir / f"portal-{channel}.json"
+        command = [
+            sys.executable,
+            "-m",
+            "tools.multi_position_sourcing.winpc_local_portal",
+            "--channel",
+            channel,
+            "--job-id",
+            str(request.job_id),
+        ]
+        for keyword in keywords:
+            command.extend(("--keyword", keyword))
+        command.extend(("--output", str(output_path)))
+        try:
+            process = subprocess.run(
+                command,
+                cwd=str(REPO),
+                env=dict(environ),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=LOCAL_SEARCH_TIMEOUT_SECONDS,
+                shell=False,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "\n".join(stdout_parts), "local portal helper timeout", 124
+        stdout_parts.append(str(process.stdout or "").strip())
+        stderr_parts.append(str(process.stderr or "").strip())
+        if int(process.returncode) != 0:
+            return (
+                "\n".join(part for part in stdout_parts if part),
+                "\n".join(part for part in stderr_parts if part),
+                int(process.returncode),
+            )
+    receipt = _receipt_from_portal_artifacts(run_dir, request)
+    stdout_parts.append(
+        "FLEET_SEARCH_RECEIPT:" + json.dumps(receipt, ensure_ascii=False)
+    )
+    return (
+        "\n".join(part for part in stdout_parts if part),
+        "\n".join(part for part in stderr_parts if part),
+        0,
+    )
+
+
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
@@ -466,18 +566,10 @@ def prepare_local_portals(
     return {"status": "ready", "channels": list(channels), "browsers": states}
 
 
-def _default_runner(
-    prompt: str,
-    timeout: int,
-    *,
-    env: Mapping[str, str],
-) -> tuple[str, str, int]:
-    return _run_codex(prompt, timeout, env=env)
-
-
 Runner = Callable[..., tuple[str, str, int]]
 PortalPreparer = Callable[..., Mapping[str, Any]]
 TaskLoader = Callable[..., Mapping[str, str]]
+PortalExecutor = Callable[..., tuple[str, str, int]]
 
 
 def run_local_aisearch(
@@ -488,8 +580,9 @@ def run_local_aisearch(
     lock_path: str | Path = DEFAULT_LOCK_PATH,
     environ: Mapping[str, str] | None = None,
     portal_preparer: PortalPreparer = prepare_local_portals,
-    runner: Runner = _default_runner,
+    runner: Runner | None = None,
     task_loader: TaskLoader = _fetch_clickup_task_context,
+    portal_executor: PortalExecutor = _execute_local_portals,
     system_name: str | None = None,
 ) -> LocalAisearchResult:
     if (system_name or platform.system()) != "Windows":
@@ -593,11 +686,19 @@ def run_local_aisearch(
             )
 
         try:
-            stdout, stderr, exit_code = runner(
-                prompt,
-                LOCAL_SEARCH_TIMEOUT_SECONDS,
-                env=process_env,
-            )
+            if runner is None:
+                stdout, stderr, exit_code = portal_executor(
+                    request,
+                    task_context=task_context,
+                    run_dir=run_dir,
+                    environ=process_env,
+                )
+            else:
+                stdout, stderr, exit_code = runner(
+                    prompt,
+                    LOCAL_SEARCH_TIMEOUT_SECONDS,
+                    env=process_env,
+                )
         except subprocess.TimeoutExpired:
             stdout, stderr, exit_code = "", "local agent timeout", 124
         except Exception as exc:  # noqa: BLE001 - failure is recorded with secrets removed

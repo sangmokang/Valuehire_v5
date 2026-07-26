@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -244,6 +246,63 @@ def test_production_receipt_is_derived_from_local_helper_artifact(
     assert result.status == "done"
     assert receipt["receipt"]["position_id"] == "86ey90v4k"
     assert set(receipt["receipt"]["channels"]) == {"saramin"}
+
+
+def test_default_local_executor_calls_python_helper_directly_without_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def subprocess_run(command, **kwargs):
+        calls.append(command)
+        output = Path(command[command.index("--output") + 1])
+        output.write_text(
+            json.dumps(
+                {
+                    "status": "done",
+                    "login_verified": True,
+                    "query_verified": True,
+                    "result_count_verified": True,
+                    "pages_visited": 10,
+                    "last_page_reached": False,
+                    "opened_profiles": 0,
+                    "saved_receipts": 0,
+                    "profile_evidence": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout='{"status":"done"}', stderr="")
+
+    monkeypatch.setattr(winpc_local_aisearch.subprocess, "run", subprocess_run)
+    request = winpc_local_aisearch.LocalAisearchRequest(
+        position_url=CLICKUP_URL,
+        channels=("saramin",),
+        job_id=219,
+    )
+    stdout, stderr, exit_code = winpc_local_aisearch._execute_local_portals(
+        request,
+        task_context={
+            "name": "Backend engineer",
+            "description": "Node.js, TypeScript, Nest.js",
+        },
+        run_dir=tmp_path,
+        environ={},
+    )
+
+    assert exit_code == 0
+    assert stderr == ""
+    assert "FLEET_SEARCH_RECEIPT:" in stdout
+    assert len(calls) == 1
+    assert calls[0][0] == sys.executable
+    assert calls[0][1:4] == [
+        "-m",
+        "tools.multi_position_sourcing.winpc_local_portal",
+        "--channel",
+    ]
+    assert calls[0][calls[0].index("--keyword") + 1] == "Node.js"
+    assert all("codex" not in item.casefold() for item in calls[0])
 
 
 def test_dry_run_has_no_browser_login_agent_or_queue_side_effect(
