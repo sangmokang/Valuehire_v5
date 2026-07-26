@@ -27,6 +27,7 @@ from typing import Any
 from .harvest_executor import HarvestSearchExecutor
 from .harvest_policy import deterministic_delay_ms, sites_for_machine
 from .harvest_runner import HarvestItem, arun_harvest_cycle, build_harvest_queue
+from .machine_identity import MachineIdentityError, normalize_machine_id
 from .owner_activity import (
     DEFAULT_OWNER_IDLE_THRESHOLD_SECONDS,
     compute_yield_decision,
@@ -180,6 +181,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-owner-check", action="store_true")
     args = parser.parse_args(argv)
 
+    try:
+        machine = normalize_machine_id(args.machine, field="--machine")
+    except MachineIdentityError as exc:
+        print(
+            json.dumps(
+                {"error": exc.code, "field": exc.field},
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
     segments = tuple(s for s in (seg.strip() for seg in args.segments.split(",")) if s)
     if not segments:
         print(json.dumps({"error": "empty --segments"}), file=sys.stderr)
@@ -214,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             execute_item=execute_item,
             save_rail=save_rail,
             segments=segments,
-            machine=args.machine,
+            machine=machine,
             run_id=args.run_id,
             today=args.today,
             owner_activity_detected=owner_activity_detected,
@@ -225,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     output = {
         "executor": args.executor,
         "run_id": args.run_id,
-        "machine": args.machine,
+        "machine": machine,
         "segments": list(segments),
         "owner_activity_detected": owner_activity_detected,
         "saved_profiles": summary.saved_profiles,
