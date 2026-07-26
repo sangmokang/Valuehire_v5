@@ -23,6 +23,7 @@ from tools.multi_position_sourcing.fleet_dispatch import (
     dispatch_fleet_command,
     is_owner,
 )
+from tools.multi_position_sourcing.job_queue import default_account_key
 
 OWNER_ID = "814353841088757800"
 MEMBER_ID = "999000111222333444"
@@ -274,7 +275,7 @@ def test_url_job_never_queries_heartbeat_or_falls_back(monkeypatch):
     assert not q.linkedin_calls
 
 
-def test_url_job_explicit_machine_not_overridden(monkeypatch):
+def test_url_job_explicit_machine_without_app17_proof_is_rejected(monkeypatch):
     monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
     import time
     now = int(time.time())
@@ -284,9 +285,22 @@ def test_url_job_explicit_machine_not_overridden(monkeypatch):
         _inv("fleet-run", options={"skill": "url", "machine": "macbook",
                                    "url": "https://career.wrtn.io/ko/o/1"}),
         authorized_users=_users(), config=_config(), queue=q)
-    assert result["action"] == "enqueued"
-    assert q.enqueued[0]["machine"] == "macbook"
+    assert result["action"] == "error"
+    assert q.enqueued == []
     assert not q.linkedin_calls, "명시 머신이면 라우팅 조회 안 함"
+
+
+def test_url_payload_builder_rejects_caller_invented_route():
+    payload = build_fleet_job_payload(
+        {
+            "skill": "url",
+            "machine": "invented-route",
+            "url": "https://www.linkedin.com/talent/search",
+        },
+        requested_by="owner",
+        role="owner",
+    )
+    assert payload is None
 
 
 def test_non_url_skill_keeps_existing_default(monkeypatch):
@@ -301,22 +315,10 @@ def test_non_url_skill_keeps_existing_default(monkeypatch):
     assert not q.linkedin_calls
 
 
-def test_url_jobs_share_single_linkedin_seat_lock(monkeypatch):
+def test_url_jobs_share_single_linkedin_seat_lock():
     """APP 17이 증명해 명시한 머신이 달라도 LinkedIn 좌석 락은 하나다."""
-    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
-    q1 = _routing_queue()
-    dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "url", "machine": "winpc",
-                                   "url": "https://career.wrtn.io/ko/o/1"}),
-        authorized_users=_users(), config=_config(), queue=q1)
-    q2 = _routing_queue()
-    dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "url", "machine": "macmini",
-                                   "url": "https://career.wrtn.io/ko/o/2"}),
-        authorized_users=_users(), config=_config(), queue=q2)
-    k1, k2 = q1.enqueued[0]["account_key"], q2.enqueued[0]["account_key"]
-    assert q1.enqueued[0]["machine"] == "winpc"
-    assert q2.enqueued[0]["machine"] == "macmini"
+    k1 = default_account_key("url", "winpc")
+    k2 = default_account_key("url", "macmini")
     assert k1 == k2, f"좌석 락 키가 머신 따라 갈라짐: {k1} vs {k2}"
     assert "linkedin" in k1
 

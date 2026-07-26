@@ -426,6 +426,32 @@ def test_active_humansearch_sources_require_proven_existing_target() -> None:
         assert required in vendor
 
 
+def test_machine_readable_fleet_policy_cannot_restore_login_routing_or_resume() -> None:
+    fleet = _json(ROOT / "docs/sot/29-fleet-control.json")
+    invariants = fleet["invariants"]
+    assert "APP 17" in invariants["INV2_linkedin_single_seat"]
+    assert "AUTH_CONFLICT" in invariants["INV2_linkedin_single_seat"]
+    assert "macmini 폴백" not in invariants["INV2_linkedin_single_seat"]
+    assert "heartbeat" not in invariants["INV2_linkedin_single_seat"]
+    assert "시간 자동 재개 금지" in invariants["INV6_paused_human"]
+    assert "HUMAN_AUTH는 대상이 아님" in invariants["INV9_owner_yield_1min"]
+    assert "APP 17 전 선택 금지" in invariants["INV8_machine_reliability"]
+
+
+def test_humansearch_config_mirrors_are_identical_and_have_no_fallback() -> None:
+    paths = (
+        ROOT / "skills/humansearch/humansearch.config.json",
+        ROOT / ".codex/skills/humansearch/humansearch.config.json",
+    )
+    assert len({path.read_bytes() for path in paths}) == 1
+    for path in paths:
+        browser = _json(path)["browser_driver"]
+        assert browser["endpoint_source"] == "APP17_PROVEN_CDP_ENDPOINT"
+        assert browser["fallback"] == "none"
+        assert "endpoint" not in browser
+        assert "9222" not in json.dumps(browser, ensure_ascii=False)
+
+
 def test_login_search_execution_contract_cannot_restore_legacy_login() -> None:
     text = _text(SEARCH_CONTRACT_PATH)
     for forbidden in (
