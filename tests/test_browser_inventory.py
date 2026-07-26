@@ -44,6 +44,14 @@ def test_collects_multiple_roots_and_spaced_profile_until_next_long_option():
             {"pid": 101, "address": "127.0.0.1", "port": 9223},
             {"pid": 202, "address": "127.0.0.1", "port": 9224},
         ],
+        responses={
+            "http://127.0.0.1:9223": {
+                "version": {"Browser": "Chrome/140"}, "targets": [],
+            },
+            "http://127.0.0.1:9224": {
+                "version": {"Browser": "Chrome/140"}, "targets": [],
+            },
+        },
     )
 
     assert [(item["browser_pid"], item["profile_path"]) for item in report] == [
@@ -117,6 +125,45 @@ def test_duplicate_profile_and_duplicate_listener_are_explicit():
     assert all("DUPLICATE_PROFILE" in item["issues"] for item in report)
 
 
+def test_missing_listener_and_ambiguous_profile_are_explicit():
+    process = _root(101, "/tmp/A", "9223").replace(
+        "--user-data-dir=/tmp/A",
+        "--user-data-dir=/tmp/A --user-data-dir=/tmp/B",
+    )
+
+    report = _collect(process)
+
+    assert report[0]["profile_path"] == ""
+    assert report[0]["listen_pid"] is None
+    assert report[0]["issues"] == [
+        "AMBIGUOUS_PROFILE",
+        "LISTENER_MISSING",
+        "ENDPOINT_DEAD",
+    ]
+
+
+def test_root_without_debug_flags_is_still_inventoried_with_explicit_issues():
+    report = _collect(
+        "101 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    )
+
+    assert report == [
+        {
+            "browser_pid": 101,
+            "executable": (
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            ),
+            "profile_path": "",
+            "declared_port": None,
+            "listen_pid": None,
+            "endpoint": None,
+            "endpoint_live": False,
+            "targets": [],
+            "issues": ["MISSING_PROFILE", "MISSING_DECLARED_PORT"],
+        }
+    ]
+
+
 def test_live_endpoint_collects_sanitized_targets_without_secrets():
     process = _root(101, "/tmp/A", "9223")
     report = _collect(
@@ -130,7 +177,9 @@ def test_live_endpoint_collects_sanitized_targets_without_secrets():
                         "id": "page-1",
                         "type": "page",
                         "url": "https://www.linkedin.com/talent/home?token=secret#private",
-                        "marker_names": ["authenticated_shell", "", 7],
+                        "marker_names": [
+                            "authenticated_shell", "", 7, "token=secret",
+                        ],
                         "webSocketDebuggerUrl": "ws://secret",
                     },
                     {
@@ -161,6 +210,30 @@ def test_live_endpoint_collects_sanitized_targets_without_secrets():
         },
     ]
     assert "secret" not in repr(report)
+
+
+def test_winpc_chrome_exe_and_absolute_spaced_profile_are_supported():
+    report = collect_browser_inventory(
+        local_machine_id="winpc",
+        machine_readiness=READY,
+        process_snapshot=(
+            '101 "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" '
+            "--remote-debugging-port=9223 "
+            "--user-data-dir=C:\\Users\\Value Hire\\Chrome Profile --no-first-run"
+        ),
+        listener_snapshot=[
+            {"pid": 101, "address": "127.0.0.1", "port": 9223},
+        ],
+        endpoint_responses={
+            "http://127.0.0.1:9223": {
+                "version": {"Browser": "Chrome/140"}, "targets": [],
+            },
+        },
+    )
+
+    assert report[0]["executable"].endswith("chrome.exe\"")
+    assert report[0]["profile_path"] == "C:\\Users\\Value Hire\\Chrome Profile"
+    assert report[0]["issues"] == []
 
 
 @pytest.mark.parametrize(
