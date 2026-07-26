@@ -266,7 +266,12 @@ def test_fleet_search_prompts_require_login_barrier_before_execution() -> None:
         assert "docs/prompts/login-search-execution-contract.md" in prompt
         assert "LOGIN_BARRIER=PASS" in prompt
         assert "local secret store 자동 로그인" not in prompt
-        assert "session_guard human-auth" in prompt
+        assert "session_guard human-auth" not in prompt
+        assert "26-portal-login-spec@1.5.0" in prompt
+        assert "APP 17" in prompt and "APP 30/31" in prompt
+        assert "인증 기기 수 미증명" in prompt
+        assert "인증 조작 0회 HANDOFF" in prompt
+        assert "AUTH_CONFLICT" in prompt
         assert "portal_session_status_latest.json" in prompt
         assert prompt.index("LOGIN_BARRIER=PASS") < prompt.index(
             f"{skill} 스킬의 검색·URL 작업"

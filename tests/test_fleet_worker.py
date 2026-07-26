@@ -102,8 +102,12 @@ def test_build_job_prompt_contains_contract():
     assert "로그아웃" in p and "삭제" in p
     assert "발동하지 말" in p
     assert "params.search_urls" in p
-    assert "검증된 exact-target 어댑터" in p
-    assert "session_guard human-auth" in p
+    assert "26-portal-login-spec@1.5.0" in p
+    assert "APP 17" in p and "APP 30/31" in p
+    assert "인증 기기 수 미증명" in p
+    assert "인증 조작 0회 HANDOFF" in p
+    assert "AUTH_CONFLICT" in p
+    assert "session_guard human-auth" not in p
     assert "FLEET_SEARCH_RECEIPT:" in p
     assert "session_guard capture-evidence" in p
     # 스킬 경로 금지 — 발동 문구 방식만
@@ -113,23 +117,24 @@ def test_build_job_prompt_contains_contract():
 def test_url_prompt_has_executable_login_machine_and_pause_contract():
     prompt = build_job_prompt(_job(
         skill="url", machine="macmini", account_key="portal:linkedin_rps"))
-    for machine in ("macmini", "macbook", "winpc"):
-        assert machine in prompt
-    assert "현재 배정 머신은 macmini" in prompt
-    assert "로그인된 브라우저와 RPS 세션을 실제 URL·DOM으로 검증할 것" in prompt
-    assert "검증하지 말" not in prompt
-    assert "어댑터만 이 잡 전체에서 최대 1회" in prompt
-    assert "session_guard human-auth" in prompt
+    assert "현재 배정 기기 macmini" in prompt
+    assert "봉인된 함대 증거" in prompt
+    assert "인증 기기가 정확히 1개" in prompt
+    assert "APP 17" in prompt and "APP 30/31" in prompt
+    assert "LINKEDIN_LI_AT" in prompt
+    assert "인증 기기 수 미증명" in prompt
+    assert "HANDOFF" in prompt and "terminal AUTH_CONFLICT" in prompt
     assert "checkpoint" in prompt
     assert "다른 머신을 원격 조작하지 말" in prompt
-    assert "fleet-status의 linkedin_ready" in prompt
     assert "PAUSED_FOR_HUMAN: portal=linkedin_rps machine=macmini" in prompt
-    assert "마지막 줄" in prompt and "즉시 종료" in prompt
+    assert "HUMAN_AUTH일 때만" in prompt
+    assert "HANDOFF 또는 AUTH_CONFLICT면 PAUSED_FOR_HUMAN 마커" in prompt
 
     non_linkedin = build_job_prompt(_job(skill="humansearch"))
-    assert "linkedin_ready" not in non_linkedin
-    assert "검증된 exact-target 어댑터" in non_linkedin
-    assert "이 잡 전체에서 최대 1회" not in non_linkedin
+    assert "26-portal-login-spec@1.5.0" in non_linkedin
+    assert "APP 17" in non_linkedin and "APP 30/31" in non_linkedin
+    assert "인증 기기 수 미증명" in non_linkedin
+    assert "session_guard human-auth" not in non_linkedin
 
 
 def test_capture_prompt_is_specific_to_each_skill() -> None:
@@ -161,10 +166,14 @@ def test_claude_aisearch_contract_requires_structured_evidence() -> None:
 def test_url_skill_keeps_one_login_attempt_and_security_stop_contract():
     skill = (Path(__file__).resolve().parents[1]
              / ".claude/skills/url/SKILL.md").read_text(encoding="utf-8")
+    assert "26-portal-login-spec@1.5.0" in skill
     assert "단순 로그아웃" in skill
-    assert "자동 로그인" in skill and "1회" in skill
+    assert "APP 17" in skill and "APP 30/31" in skill
+    assert "LINKEDIN_LI_AT" in skill and "최대 1회" in skill
+    assert "인증 기기 수 미증명" in skill and "HANDOFF" in skill
+    assert "AUTH_CONFLICT" in skill
     assert "캡차" in skill and "2FA" in skill and "checkpoint" in skill
-    assert "즉시 STOP" in skill
+    assert "HUMAN_AUTH" in skill
 
 
 def _receipt(*, pages=10, opened=0, saved=0):

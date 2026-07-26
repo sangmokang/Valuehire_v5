@@ -4,8 +4,9 @@
 - (a) skill='login' 잡이 new_job_payload 로 생성된다(position_url 없이 — 로그인은 대상 URL 이 없다).
 - (b) 워커 엔진 선택이 login 잡에서는 params.agent 값과 무관하게 Codex 로 강제된다.
       (사장님 지시 2026-07-24: "로그인은 코덱스, 나머지는 claude|codex 선택")
-- (c) build_job_prompt 가 SOT26 로그인 계약(자동 로그인 항상, 2FA·캡차만 사람,
-      브라우저 보존)을 담고, URL 없는 login 잡을 계약 위반으로 거부하지 않는다.
+- (c) build_job_prompt 가 26-portal-login-spec@1.5.0의 사이트별 인증 결정,
+      미증명 HANDOFF, 복수 인증 기기 AUTH_CONFLICT, 브라우저 보존을 담고
+      URL 없는 login 잡을 계약 위반으로 거부하지 않는다.
 
 기존 계약 보호(회귀 방지):
 - 검색 스킬(humansearch 등)의 engine 선택(claude 기본 / codex 명시)은 그대로다.
@@ -122,14 +123,17 @@ def test_select_engine_search_codex_optin_kept():
 
 def test_build_job_prompt_login_contract():
     prompt = fleet_worker.build_job_prompt(_login_job(agent="codex"))
-    # SOT26 핵심: 자동 로그인은 항상 수행, 사람 개입은 2FA·캡차·checkpoint 뿐.
     assert "login" in prompt
     assert "2FA" in prompt or "캡차" in prompt
-    assert "자동" in prompt
-    # 브라우저 보존(창·탭·프로필 종료 금지) 문구 필수 — 봇 같은 창 증식 금지.
     assert "브라우저" in prompt
-    # 정식 준비 러너(portal_login)를 프롬프트가 안내한다 — 즉석 raw 자동화 금지.
-    assert "portal_login" in prompt
+    assert "26-portal-login-spec@1.5.0" in prompt
+    assert "APP 17" in prompt and "APP 30/31" in prompt
+    assert "LINKEDIN_LI_AT" in prompt
+    assert "인증 기기 수 미증명" in prompt
+    assert "인증 조작 0회 HANDOFF" in prompt
+    assert "terminal AUTH_CONFLICT" in prompt
+    assert "HUMAN_AUTH" in prompt
+    assert "portal_login" not in prompt
 
 
 def test_build_job_prompt_login_does_not_require_url():
