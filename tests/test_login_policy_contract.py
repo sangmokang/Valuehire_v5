@@ -452,6 +452,19 @@ def test_humansearch_config_mirrors_are_identical_and_have_no_fallback() -> None
         assert "9222" not in json.dumps(browser, ensure_ascii=False)
 
 
+def test_humansearch_skill_entrypoints_cannot_restore_browser_fallback() -> None:
+    for path in HUMANSEARCH_SKILL_PATHS:
+        text = _text(path)
+        for forbidden in (
+            "폴백 = MCP claude-in-chrome",
+            "MCP claude-in-chrome 는 폴백",
+            "Claude-in-Chrome/MCP로 상세를 연 폴백 경로",
+        ):
+            assert forbidden not in text, (path, forbidden)
+        for required in (POLICY_ID, "APP 17", "HANDOFF", "AUTH_CONFLICT"):
+            assert required in text, (path, required)
+
+
 def test_login_search_execution_contract_cannot_restore_legacy_login() -> None:
     text = _text(SEARCH_CONTRACT_PATH)
     for forbidden in (
