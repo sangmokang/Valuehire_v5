@@ -34,10 +34,11 @@ from tools.multi_position_sourcing.fleet_worker import (
 
 def test_machine_from_env_requires_valid_machine():
     assert machine_from_env({"VALUEHIRE_MACHINE": "macmini"}) == "macmini"
-    assert machine_from_env({"VALUEHIRE_MACHINE": "office-linux-05"}) == "office-linux-05"
+    assert machine_from_env({"VALUEHIRE_MACHINE": "macbook_pro"}) == "macbook"
     for env in (
         {},
         {"VALUEHIRE_MACHINE": ""},
+        {"VALUEHIRE_MACHINE": "office-linux-05"},
         {"VALUEHIRE_MACHINE": " winpc "},
         {"VALUEHIRE_MACHINE": "MACMINI"},
         {"VALUEHIRE_MACHINE": "bad\n"},
@@ -46,14 +47,15 @@ def test_machine_from_env_requires_valid_machine():
             machine_from_env(env)
 
 
-def test_worker_accepts_dynamic_machine_id():
-    worker = FleetWorker(
-        machine="office-linux-05",
-        queue=object(),
-        runner=lambda prompt, timeout: ("ok", 0),
-        notifier=lambda job, text: None,
-    )
-    assert worker.machine == "office-linux-05"
+def test_worker_requires_canonical_machine_id():
+    for machine in ("office-linux-05", "macbook_pro"):
+        with pytest.raises(RuntimeError, match="machine"):
+            FleetWorker(
+                machine=machine,
+                queue=object(),
+                runner=lambda prompt, timeout: ("ok", 0),
+                notifier=lambda job, text: None,
+            )
 
 
 # ── 실행 문구(프롬프트) 계약 ─────────────────────────────────────────
