@@ -11,6 +11,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -212,6 +213,51 @@ def test_non_mapping_receipt_blocks():
         assert lb.validate_channel_receipt(
             bad, channel="saramin", machine="macmini", now_epoch=NOW
         ) is not None
+
+
+def test_state_names_are_exact_not_substring_matches():
+    reason = "linkedin_rps: state 미인증('NOT_HUMAN_AUTH')"
+    assert lb.classify_job_block_reason(reason) == "HANDOFF"
+    assert lb.human_auth_channels(reason) == ()
+
+
+def test_arbitrary_existing_files_are_not_login_evidence(tmp_path):
+    receipt = make_receipt(tmp_path)
+    source = Path(lb.__file__).resolve()
+    receipt.update({
+        "screenshot_path": str(source),
+        "text_path": str(source),
+        "manifest_path": str(source),
+        "screenshot_sha256": "0" * 64,
+        "text_sha256": "0" * 64,
+    })
+    assert lb.validate_channel_receipt(
+        receipt, channel="saramin", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
+def test_linkedin_auto_login_never_reads_username_or_password(monkeypatch):
+    from tools.multi_position_sourcing import owner_activity
+    from tools.multi_position_sourcing import session_guard
+
+    class Provider:
+        called = False
+
+        def load(self, _site):
+            self.called = True
+            raise RuntimeError("credential provider must not be called for LinkedIn")
+
+    provider = Provider()
+    monkeypatch.setattr(
+        owner_activity,
+        "detect_owner_activity_snapshot",
+        lambda **_kwargs: SimpleNamespace(owner_activity_detected=False),
+    )
+    result = session_guard.run_auto_login_episode(
+        "linkedin_rps", agent="test", _credential_provider=provider
+    )
+    assert result["status"] == "forbidden_linkedin_password_login"
+    assert provider.called is False
 
 
 # ── 전역 장벽 평가 (표 5·9·14·15·18행) ─────────────────────────────────

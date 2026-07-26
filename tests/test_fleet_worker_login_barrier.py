@@ -90,12 +90,12 @@ def _quiet_notify():
         yield
 
 
-def _run_worker(job, receipt_dir, notes=None):
+def _run_worker(job, receipt_dir, notes=None, executor_stdout="ok"):
     calls = []
 
     def fake_run(cmd, **kwargs):
         calls.append([str(c) for c in cmd])
-        return SimpleNamespace(stdout="ok", stderr="", returncode=0)
+        return SimpleNamespace(stdout=executor_stdout, stderr="", returncode=0)
 
     notes = notes if notes is not None else []
     with patch.object(fw.subprocess, "run", fake_run), \
@@ -223,4 +223,18 @@ def test_human_auth_label_without_positive_challenge_proof_is_handoff(tmp_path):
     joined = "\n".join(notes)
     assert "paused_for_human" not in joined
     assert "session_guard human-auth" not in joined
+    assert "fleet-resume" not in joined
+
+
+def test_executor_pause_marker_without_challenge_evidence_is_terminal(tmp_path):
+    rdir = _write_valid_receipts(tmp_path, ["saramin", "jobkorea"])
+    status, q, calls, notes = _run_worker(
+        _job(),
+        rdir,
+        executor_stdout="PAUSED_FOR_HUMAN: unsupported assertion",
+    )
+    assert calls, "로그인 장벽을 통과한 뒤 실제 executor 출력 경로를 검사해야 함"
+    assert status == "failed"
+    assert q.released[-1][1] == "failed"
+    joined = "\n".join(notes)
     assert "fleet-resume" not in joined
