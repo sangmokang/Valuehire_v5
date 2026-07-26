@@ -44,7 +44,7 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
         manifest = tmp_path / f"{ch}.manifest.json"
         for p in (shot, text, manifest):
             p.write_bytes(b"x")
-        (rdir / f"{ch}.json").write_text(json.dumps({
+        receipt = lb.seal_channel_receipt({
             "schema_version": 1,
             "channel": ch,
             "state": "AUTHENTICATED",
@@ -63,7 +63,9 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
             "manifest_path": str(manifest),
             "screenshot_sha256": SHA,
             "text_sha256": SHA,
-        }), encoding="utf-8")
+            "manifest_sha256": SHA,
+        })
+        (rdir / f"{ch}.json").write_text(json.dumps(receipt), encoding="utf-8")
     return rdir
 
 

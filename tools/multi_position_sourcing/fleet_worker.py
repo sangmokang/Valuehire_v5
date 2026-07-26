@@ -1584,6 +1584,20 @@ class FleetWorker:
                 self._release(job, job_id, "failed", error=error)
                 self._notify(job, f"❌ 잡 #{job_id} 실패 — {error}")
                 return "failed"
+        # Re-read from disk at the last barrier before any executor-start signal.
+        # This catches a receipt/evidence replacement after the earlier planning gate.
+        if not self._runner_injected and job.get("skill") in FLEET_SKILLS:
+            reason = login_barrier.job_block_reason(
+                job, machine=self.machine, now_epoch=time.time())
+            if reason is not None:
+                self._release(
+                    job, job_id, "paused_for_human",
+                    error=f"로그인 실행직전 재검증 장벽: {reason}",
+                )
+                self._notify(job, (
+                    f"⏸️ 잡 #{job_id} 실행직전 LOGIN_BARRIER=BLOCKED\n"
+                    f"사유: {reason}\n검색 executor 호출 0회"))
+                return "paused_for_human"
         # 이슈 C(2026-07-15 goal §3): claim~완료 사이 공백 메움 — 실행 직전 1회, fail-soft(_notify)
         self._notify(job, (
             f"▶️ 잡 #{job_id} 실행 시작 ({self.machine}, skill={job.get('skill')}) — "

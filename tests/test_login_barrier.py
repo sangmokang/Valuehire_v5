@@ -50,9 +50,10 @@ def make_receipt(tmp_path: Path, channel: str = "saramin", **overrides) -> dict:
         "manifest_path": str(manifest),
         "screenshot_sha256": SHA,
         "text_sha256": SHA,
+        "manifest_sha256": SHA,
     }
     receipt.update(overrides)
-    return receipt
+    return lb.seal_channel_receipt(receipt)
 
 
 def write_receipts(tmp_path: Path, *receipts: dict) -> Path:
@@ -348,5 +349,6 @@ def test_barrier_decision_exposes_reason_codes_and_required_channels(tmp_path):
         receipt_dir=tmp_path / "missing",
     )
     assert decision["barrier"] == "BLOCKED"
+    assert decision["state"] == "BLOCKED"
     assert decision["required_channels"] == ["saramin", "jobkorea"]
     assert decision["reason_codes"] == ["RECEIPT_MISSING"]
