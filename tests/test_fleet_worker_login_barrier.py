@@ -143,7 +143,7 @@ def test_legacy_portal_login_is_never_invoked(tmp_path):
 def test_model_pass_string_does_not_bypass(tmp_path):
     job = _job(params={"note": "LOGIN_BARRIER=PASS"})
     status, q, calls, notes = _run_worker(job, tmp_path / "empty")
-    assert status == "paused_for_human"
+    assert status == "failed"
     assert calls == []
 
 
