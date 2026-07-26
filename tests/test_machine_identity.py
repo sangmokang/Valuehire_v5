@@ -341,3 +341,33 @@ def test_reservoir_report_rejects_alias_machine() -> None:
             dropped_count=0,
             status="ok",
         )
+
+
+def test_reservoir_storage_rejects_handcrafted_alias_machine(tmp_path) -> None:
+    identity = _identity()
+    from tools.multi_position_sourcing.reservoir_log import (
+        append_reservoir_log,
+        make_reservoir_log_record,
+    )
+
+    record = make_reservoir_log_record(
+        ts="2026-07-27T00:00:00Z",
+        run_id="run",
+        machine="macbook",
+        segment_id="it_ai_data",
+        site="saramin",
+        line="harvest",
+        in_count=1,
+        out_count=1,
+        dropped_count=0,
+        status="ok",
+    )
+    record["machine"] = "macbook_pro"
+
+    with pytest.raises(identity.MachineIdentityError):
+        append_reservoir_log(
+            record,
+            root=tmp_path,
+            today="2026-07-27",
+        )
+    assert not (tmp_path / "logs" / "reservoir" / "2026-07-27.jsonl").exists()
