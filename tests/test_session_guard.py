@@ -58,12 +58,11 @@ def test_auth_probe_returns_only_boolean_evidence_not_body_text() -> None:
             self.script = script
             return {
                 "url": "https://www.linkedin.com/talent/home",
-                "hasChallenge": False,
+                "challengeControl": False,
+                "hasSessionConflict": False,
                 "hasLogout": False,
                 "hasValueConnect": False,
-                "saraminSearch": False,
                 "jobkoreaSearch": False,
-                "linkedinSearch": True,
                 "linkedinAccount": True,
             }
 
@@ -74,12 +73,12 @@ def test_auth_probe_returns_only_boolean_evidence_not_body_text() -> None:
     assert observation.challenge is False
     assert observation.proof_names == (
         "talent_surface",
-        "recruiter_account",
-        "recruiter_search",
+        "recruiter_marker",
     )
     assert "text:" not in tab.script
     assert ".slice(0, 50000)" not in tab.script
-    assert "bodyText" in tab.script  # evaluated inside the page; never returned
+    assert "bodyText" not in tab.script
+    assert "document.body" not in tab.script
     assert "folded.includes('로그아웃')" not in tab.script
     assert "accountControls" in tab.script
 
@@ -89,20 +88,20 @@ def test_resume_body_words_do_not_authenticate_without_account_controls() -> Non
         def eval(self, _script: str):
             return {
                 "url": "https://www.jobkorea.co.kr/corp/person/find/resume/view?rNo=2",
-                "hasChallenge": False,
+                "challengeControl": False,
                 "hasSessionConflict": False,
                 "hasLogout": False,
                 "hasValueConnect": False,
-                "saraminSearch": False,
                 "jobkoreaSearch": False,
-                "linkedinSearch": False,
                 "linkedinAccount": False,
             }
 
     observation = read_auth_observation(Tab(), "jobkorea")
 
     assert observation.authenticated is False
-    assert "profile_detail" in observation.proof_names
+    assert observation.state == "AUTH_LOST"
+    assert observation.proof_names == ()
+    assert observation.block_names == ("logout", "company_account", "talent_search")
 
 
 def test_linkedin_talent_projects_account_marker_is_authenticated_without_search_link() -> None:
@@ -110,19 +109,18 @@ def test_linkedin_talent_projects_account_marker_is_authenticated_without_search
         def eval(self, _script: str):
             return {
                 "url": "https://www.linkedin.com/talent/projects",
-                "hasChallenge": False,
+                "challengeControl": False,
+                "hasSessionConflict": False,
                 "hasLogout": False,
                 "hasValueConnect": False,
-                "saraminSearch": False,
                 "jobkoreaSearch": False,
-                "linkedinSearch": False,
                 "linkedinAccount": True,
             }
 
     observation = read_auth_observation(Tab(), "linkedin_rps")
 
     assert observation.authenticated is True
-    assert observation.proof_names == ("talent_surface", "recruiter_account")
+    assert observation.proof_names == ("talent_surface", "recruiter_marker")
 
 
 @pytest.mark.parametrize(
@@ -143,13 +141,11 @@ def test_linkedin_multiple_signin_is_terminal_auth_conflict_not_human_challenge(
         def eval(self, _script: str):
             return {
                 "url": url,
-                "hasChallenge": False,
+                "challengeControl": False,
                 "hasSessionConflict": multiple_signins or "enterprise-authentication/sessions" in url,
                 "hasLogout": False,
                 "hasValueConnect": False,
-                "saraminSearch": False,
                 "jobkoreaSearch": False,
-                "linkedinSearch": False,
                 "linkedinAccount": False,
             }
 
@@ -158,7 +154,9 @@ def test_linkedin_multiple_signin_is_terminal_auth_conflict_not_human_challenge(
     assert observation.auth_conflict is True
     assert observation.challenge is False
     assert observation.authenticated is False
-    assert observation.proof_names == ("session_conflict",)
+    assert observation.proof_names == ()
+    assert observation.block_names == ("multiple_sign_in",)
+    assert observation.state == "AUTH_CONFLICT"
 
 
 def test_human_auth_wait_returns_session_conflict_without_owner_poll_or_sleep() -> None:

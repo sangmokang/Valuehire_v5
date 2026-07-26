@@ -63,6 +63,12 @@ class AuthObservation:
     url: str
     proof_names: tuple[str, ...] = ()
     auth_conflict: bool = False
+    state: str = "AUTH_UNKNOWN"
+    block_names: tuple[str, ...] = ()
+    observed_at: str = ""
+    target_id: str = ""
+    url_before: str = ""
+    url_after: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,21 +172,6 @@ _SITE_TARGET_PATH_PREFIXES: dict[Site, tuple[str, ...]] = {
         "/enterprise-authentication/",
         "/authwall",
     ),
-}
-_SITE_AUTHENTICATED_PROFILE_PREFIXES: dict[Site, tuple[str, ...]] = {
-    "saramin": (
-        "/zf_user/member/resume-view",
-        "/applicant-view/position/resume/",
-    ),
-    "jobkorea": (
-        "/corp/person/find/resume/view",
-        "/corp/person/detail",
-        "/corp/person/view",
-        "/person/",
-        "/searchfirm/",
-        "/recruit/co_read",
-    ),
-    "linkedin_rps": ("/talent/profile/",),
 }
 _SITE_PROFILE_ENV: dict[Site, str] = {
     "saramin": "SARAMIN_PROFILE",
@@ -567,12 +558,11 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
 
     script = r"""
 (() => {
+  const urlBefore = location.href;
   const visible = (selector) => Array.from(document.querySelectorAll(selector)).some((e) => {
     const s = getComputedStyle(e); const r = e.getBoundingClientRect();
     return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0' && r.width > 0 && r.height > 0;
   });
-  const bodyText = document.body && document.body.innerText || '';
-  const folded = bodyText.toLowerCase();
   const accountControls = [
     ...document.querySelectorAll(
       'header a, header button, nav a, nav button, [class*="gnb"] a, [class*="gnb"] button, '
@@ -587,91 +577,81 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
   ).join(' ').toLowerCase();
   const path = location.pathname.toLowerCase();
   const sessionConflictPath = /\/enterprise-authentication\/sessions(\/|$)/.test(path);
-  const enterpriseChallengePath = /\/enterprise-authentication\//.test(path) && !sessionConflictPath;
-  const challengePath = /\/(checkpoint|uas\/login-cap|authwall)(\/|$)/.test(path) || enterpriseChallengePath;
   const challengeControl = visible(
     'iframe[src*="captcha"], [class*="captcha"], [id*="captcha"], input[name*="captcha"], input[autocomplete="one-time-code"]'
   );
-  const sessionConflictPhrase = folded.includes('multiple sign-ins') ||
-    folded.includes('only one session');
-  const challengePhrase = folded.includes('보안문자') ||
-    folded.includes('인증번호') || folded.includes('2단계 인증');
   return {
-    url: location.href,
-    hasChallenge: challengePath || challengeControl || challengePhrase,
-    hasSessionConflict: sessionConflictPath || sessionConflictPhrase,
+    urlBefore,
+    urlAfter: location.href,
+    challengeControl,
+    hasSessionConflict: sessionConflictPath || visible(
+      '[data-test-session-conflict], [data-test-multiple-sign-ins]'
+    ),
     hasLogout: accountText.includes('로그아웃') || accountText.includes('log out'),
     hasValueConnect: accountText.includes('valueconnect') || accountText.includes('value connect') || accountText.includes('밸류커넥트'),
-    saraminSearch: !!document.querySelector('input.search_input') && !!document.querySelector('#career_min') && !!document.querySelector('#career_max'),
+    saraminSearchInput: !!document.querySelector('input.search_input'),
+    saraminCareerMin: !!document.querySelector('#career_min'),
+    saraminCareerMax: !!document.querySelector('#career_max'),
     jobkoreaSearch: !!document.querySelector("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"),
-    linkedinSearch: visible('a[href*="/talent/search"]'),
     linkedinAccount: visible('[data-test-recruiter-account-menu], [data-test-recruiter-nav-user-menu]')
   };
 })()
 """
+    target_before = _tab_target_id(tab) or "unavailable-target"
     raw = tab.eval(script)
+    target_after = _tab_target_id(tab) or "unavailable-target"
     if not isinstance(raw, Mapping):
         return AuthObservation(False, False, "", ())
-    url = str(raw.get("url") or "")
-    challenge = raw.get("hasChallenge") is True
-    auth_conflict = (
-        site == "linkedin_rps" and raw.get("hasSessionConflict") is True
-    )
-    proofs: list[str] = []
-    authenticated = False
-    try:
-        path = urlsplit(url).path.casefold()
-    except ValueError:
-        path = ""
-    profile_detail = _official_site_url(site, url) and any(
-        path.startswith(prefix) for prefix in _SITE_AUTHENTICATED_PROFILE_PREFIXES[site]
-    )
-    if auth_conflict:
-        proofs.append("session_conflict")
-    elif site == "saramin":
-        account = raw.get("hasLogout") is True or raw.get("hasValueConnect") is True
-        search = raw.get("saraminSearch") is True
-        if account:
-            proofs.append("account_or_logout")
-        if search:
-            proofs.append("talent_search_controls")
-        if profile_detail:
-            proofs.append("profile_detail")
-        authenticated = bool(account and (search or profile_detail) and _official_site_url(site, url))
+    from datetime import datetime, timezone
+    from .auth_classifier import classify_auth_observation
+
+    markers = {
+        "challenge_control": raw.get("challengeControl") is True,
+        "multiple_sign_in": raw.get("hasSessionConflict") is True,
+    }
+    if site == "saramin":
+        markers.update({
+            "account_or_logout": (
+                raw.get("hasLogout") is True or raw.get("hasValueConnect") is True
+            ),
+            "search_input": raw.get("saraminSearchInput") is True,
+            "career_min": raw.get("saraminCareerMin") is True,
+            "career_max": raw.get("saraminCareerMax") is True,
+        })
     elif site == "jobkorea":
-        logout = raw.get("hasLogout") is True
-        account = raw.get("hasValueConnect") is True
-        search = raw.get("jobkoreaSearch") is True
-        if logout and account:
-            proofs.append("logout_and_account")
-        if search:
-            proofs.append("talent_search_controls")
-        if profile_detail:
-            proofs.append("profile_detail")
-        authenticated = bool(
-            logout and account and (search or profile_detail) and _official_site_url(site, url)
-        )
-    elif site == "linkedin_rps":
-        surface = _official_site_url(site, url) and urlsplit(url).path.casefold().startswith("/talent/")
-        account = raw.get("linkedinAccount") is True
-        search = raw.get("linkedinSearch") is True
-        if surface:
-            proofs.append("talent_surface")
-        if account:
-            proofs.append("recruiter_account")
-        if search:
-            proofs.append("recruiter_search")
-        # Recruiter pages such as /talent/projects do not always render a
-        # /talent/search anchor.  The exact official talent surface plus the
-        # recruiter account control is the stable authentication proof; the
-        # search link remains optional corroborating evidence.
-        authenticated = bool(surface and account)
+        markers.update({
+            "logout": raw.get("hasLogout") is True,
+            "company_account": raw.get("hasValueConnect") is True,
+            "talent_search": raw.get("jobkoreaSearch") is True,
+        })
+    else:
+        markers["recruiter_marker"] = raw.get("linkedinAccount") is True
+    result = classify_auth_observation(
+        site=site,
+        target_id_before=target_before,
+        target_id_after=target_after,
+        url_before=str(raw.get("urlBefore") or raw.get("url") or ""),
+        url_after=str(raw.get("urlAfter") or raw.get("url") or ""),
+        markers=markers,
+        observed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    state = result["state"]
+    challenge = (
+        state == "HUMAN_AUTH_REQUIRED"
+        or state == "AUTH_LOST" and "challenge_path" in result["block_names"]
+    )
     return AuthObservation(
-        authenticated=authenticated and not challenge and not auth_conflict,
+        authenticated=state == "AUTHENTICATED",
         challenge=challenge,
-        url=url,
-        proof_names=tuple(proofs),
-        auth_conflict=auth_conflict,
+        url=result["url_after"],
+        proof_names=tuple(result["proof_names"]),
+        auth_conflict=state == "AUTH_CONFLICT",
+        state=state,
+        block_names=tuple(result["block_names"]),
+        observed_at=result["observed_at"],
+        target_id=result["target_id"],
+        url_before=result["url_before"],
+        url_after=result["url_after"],
     )
 
 
