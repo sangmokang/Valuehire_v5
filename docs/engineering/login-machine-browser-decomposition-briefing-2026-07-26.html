@@ -1,0 +1,1577 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>로그인 머신·브라우저 분해 구현 프롬프트 40</title>
+  <style>
+    :root {
+      --paper: #0c0f0e;
+      --panel: #121715;
+      --panel-2: #171d1a;
+      --ink: #edf1e8;
+      --muted: #98a29a;
+      --line: #2b342e;
+      --amber: #ffb000;
+      --lime: #b7f36b;
+      --cyan: #6ed8d4;
+      --red: #ff6b57;
+      --blue: #78a9ff;
+      --shadow: 0 20px 70px rgba(0, 0, 0, .34);
+      --display: "Iowan Old Style", "Bodoni 72", "Times New Roman", serif;
+      --body: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      --mono: "IBM Plex Mono", "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--paper);
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: var(--body);
+      background:
+        linear-gradient(rgba(255, 255, 255, .018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, .018) 1px, transparent 1px),
+        radial-gradient(circle at 13% 4%, rgba(183, 243, 107, .08), transparent 30rem),
+        radial-gradient(circle at 92% 18%, rgba(110, 216, 212, .07), transparent 32rem),
+        var(--paper);
+      background-size: 32px 32px, 32px 32px, auto, auto, auto;
+    }
+
+    button, input { font: inherit; }
+
+    button {
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .shell {
+      width: min(1480px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 80px;
+    }
+
+    .masthead {
+      position: relative;
+      overflow: hidden;
+      min-height: 420px;
+      padding: clamp(28px, 6vw, 78px);
+      border: 1px solid var(--line);
+      border-radius: 4px 4px 28px 4px;
+      background:
+        linear-gradient(116deg, rgba(255, 176, 0, .08), transparent 35%),
+        linear-gradient(160deg, rgba(110, 216, 212, .05), transparent 58%),
+        var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .masthead::before {
+      content: "LOGIN / FLEET / CDP";
+      position: absolute;
+      right: -34px;
+      top: 52px;
+      color: rgba(255, 255, 255, .035);
+      font: 900 clamp(44px, 8vw, 118px)/.8 var(--mono);
+      letter-spacing: -.08em;
+      transform: rotate(6deg);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .eyebrow,
+    .phase-code,
+    .index,
+    .metric-label {
+      font-family: var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .12em;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--lime);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .eyebrow::before {
+      width: 38px;
+      height: 2px;
+      content: "";
+      background: var(--lime);
+    }
+
+    h1 {
+      position: relative;
+      max-width: 940px;
+      margin: 34px 0 22px;
+      font: 700 clamp(44px, 7.3vw, 110px)/.86 var(--display);
+      letter-spacing: -.065em;
+    }
+
+    h1 em {
+      color: var(--amber);
+      font-style: italic;
+      font-weight: 500;
+    }
+
+    .lede {
+      position: relative;
+      max-width: 800px;
+      margin: 0;
+      color: #c7cec8;
+      font-size: clamp(16px, 2vw, 21px);
+      line-height: 1.75;
+      word-break: keep-all;
+    }
+
+    .decision-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 46px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .decision {
+      min-height: 116px;
+      padding: 18px 20px;
+      background: rgba(12, 15, 14, .82);
+    }
+
+    .decision b {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--amber);
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: .07em;
+    }
+
+    .decision span {
+      color: #c6cec7;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .overview {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 18px;
+      margin: 18px 0;
+    }
+
+    .overview-panel {
+      padding: 28px;
+      border: 1px solid var(--line);
+      background: rgba(18, 23, 21, .88);
+    }
+
+    .overview h2,
+    .workspace h2 {
+      margin: 0 0 18px;
+      font: 600 clamp(25px, 3vw, 40px)/1.05 var(--display);
+      letter-spacing: -.03em;
+    }
+
+    .state-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .state-line li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #dbe1db;
+      font: 700 12px/1.4 var(--mono);
+    }
+
+    .state-line li:not(:last-child)::after {
+      content: "→";
+      color: var(--amber);
+    }
+
+    .rule-list {
+      display: grid;
+      gap: 11px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .rule-list li {
+      position: relative;
+      padding-left: 22px;
+      color: #c5cdc6;
+      line-height: 1.6;
+    }
+
+    .rule-list li::before {
+      position: absolute;
+      left: 0;
+      top: .72em;
+      width: 8px;
+      height: 8px;
+      content: "";
+      border: 1px solid var(--lime);
+      transform: rotate(45deg);
+    }
+
+    .workspace {
+      margin-top: 18px;
+      padding: clamp(20px, 4vw, 46px);
+      border: 1px solid var(--line);
+      background: rgba(12, 15, 14, .72);
+      box-shadow: var(--shadow);
+    }
+
+    .workspace-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 22px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+
+    .workspace-head p {
+      max-width: 720px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .progress {
+      min-width: 220px;
+      text-align: right;
+    }
+
+    .progress strong {
+      display: block;
+      font: 700 32px/1 var(--display);
+      color: var(--lime);
+    }
+
+    .progress span {
+      color: var(--muted);
+      font: 700 11px/1 var(--mono);
+      letter-spacing: .1em;
+    }
+
+    .progress-track {
+      height: 4px;
+      margin-top: 10px;
+      background: #29302c;
+    }
+
+    .progress-bar {
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, var(--amber), var(--lime));
+      transition: width .24s ease;
+    }
+
+    .controls {
+      position: sticky;
+      z-index: 10;
+      top: 10px;
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto;
+      gap: 12px;
+      margin: 0 0 20px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: rgba(18, 23, 21, .95);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, .3);
+      backdrop-filter: blur(18px);
+    }
+
+    .search-wrap {
+      position: relative;
+    }
+
+    .search-wrap::before {
+      position: absolute;
+      left: 15px;
+      top: 50%;
+      content: "⌕";
+      color: var(--amber);
+      font: 700 20px/1 var(--mono);
+      transform: translateY(-54%);
+    }
+
+    #search {
+      width: 100%;
+      min-height: 44px;
+      padding: 10px 14px 10px 42px;
+      color: var(--ink);
+      border: 1px solid #39433c;
+      border-radius: 2px;
+      outline: none;
+      background: #0c100e;
+    }
+
+    #search:focus {
+      border-color: var(--amber);
+      box-shadow: 0 0 0 3px rgba(255, 176, 0, .12);
+    }
+
+    .control-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .action,
+    .filter,
+    .copy {
+      min-height: 42px;
+      padding: 9px 13px;
+      border: 1px solid #3b463f;
+      border-radius: 2px;
+      background: #171d1a;
+      font: 700 11px/1.2 var(--mono);
+      letter-spacing: .05em;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    }
+
+    .action:hover,
+    .filter:hover,
+    .copy:hover {
+      border-color: var(--amber);
+      transform: translateY(-1px);
+    }
+
+    .action.primary {
+      color: #0c0f0e;
+      border-color: var(--lime);
+      background: var(--lime);
+    }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .filter[aria-pressed="true"] {
+      color: #0c0f0e;
+      border-color: var(--amber);
+      background: var(--amber);
+    }
+
+    .prompt-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .prompt-card {
+      position: relative;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      transition: border-color .2s ease, transform .2s ease;
+      animation: reveal .35s both;
+      animation-delay: calc(var(--i) * 12ms);
+    }
+
+    .prompt-card:hover {
+      border-color: #4c5a51;
+      transform: translateX(2px);
+    }
+
+    .prompt-card[hidden] { display: none; }
+
+    .prompt-card.done {
+      opacity: .62;
+      border-color: rgba(183, 243, 107, .4);
+    }
+
+    .card-head {
+      display: grid;
+      grid-template-columns: 82px 1fr auto;
+      gap: 18px;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .index {
+      color: var(--amber);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .index strong {
+      display: block;
+      margin-top: 5px;
+      color: var(--ink);
+      font: 700 27px/1 var(--display);
+      letter-spacing: -.03em;
+    }
+
+    .card-title h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      letter-spacing: -.02em;
+    }
+
+    .card-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .complete-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font: 700 10px/1 var(--mono);
+      letter-spacing: .05em;
+    }
+
+    .complete-label input {
+      width: 17px;
+      height: 17px;
+      accent-color: var(--lime);
+    }
+
+    .phase-code {
+      display: inline-block;
+      padding: 4px 7px;
+      color: var(--cyan);
+      border: 1px solid rgba(110, 216, 212, .28);
+      font-size: 9px;
+    }
+
+    details {
+      border-top: 1px solid var(--line);
+    }
+
+    summary {
+      padding: 13px 20px;
+      color: #abb5ad;
+      cursor: pointer;
+      font: 700 11px/1.4 var(--mono);
+      letter-spacing: .05em;
+      list-style: none;
+      user-select: none;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+    summary::before {
+      display: inline-block;
+      width: 20px;
+      content: "+";
+      color: var(--amber);
+    }
+    details[open] summary::before { content: "−"; }
+
+    .prompt-text {
+      max-height: 620px;
+      margin: 0;
+      padding: 24px;
+      overflow: auto;
+      color: #d7ddd7;
+      border-top: 1px solid var(--line);
+      background: #090c0b;
+      font: 12.5px/1.75 var(--mono);
+      white-space: pre-wrap;
+      word-break: break-word;
+      tab-size: 2;
+    }
+
+    .empty {
+      display: none;
+      padding: 48px;
+      color: var(--muted);
+      border: 1px dashed #475249;
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      z-index: 30;
+      right: 24px;
+      bottom: 24px;
+      max-width: min(420px, calc(100vw - 48px));
+      padding: 14px 18px;
+      color: #10140f;
+      border: 1px solid var(--lime);
+      background: var(--lime);
+      box-shadow: var(--shadow);
+      font: 800 12px/1.5 var(--mono);
+      opacity: 0;
+      transform: translateY(14px);
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .footnote {
+      margin: 24px 0 0;
+      color: #7f8981;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    code {
+      color: var(--lime);
+      font-family: var(--mono);
+    }
+
+    @keyframes reveal {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 900px) {
+      .decision-strip { grid-template-columns: 1fr 1fr; }
+      .overview { grid-template-columns: 1fr; }
+      .workspace-head { grid-template-columns: 1fr; }
+      .progress { text-align: left; }
+      .controls { grid-template-columns: 1fr; position: static; }
+      .control-actions { justify-content: flex-start; }
+      .card-head { grid-template-columns: 64px 1fr; }
+      .card-actions { grid-column: 1 / -1; justify-content: space-between; }
+    }
+
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 18px, 1480px); padding-top: 9px; }
+      .masthead { padding: 26px 20px; border-radius: 3px 3px 20px 3px; }
+      .decision-strip { grid-template-columns: 1fr; }
+      .overview-panel, .workspace { padding: 20px; }
+      .card-head { grid-template-columns: 1fr; gap: 10px; }
+      .index strong { display: inline; margin-left: 8px; }
+      .card-actions { grid-column: auto; }
+      .copy { flex: 1; }
+    }
+
+    @media print {
+      body { background: #fff; color: #111; }
+      .shell { width: 100%; padding: 0; }
+      .masthead, .overview-panel, .workspace, .prompt-card {
+        color: #111;
+        border-color: #aaa;
+        background: #fff;
+        box-shadow: none;
+      }
+      .controls, .filters, .copy, .complete-label, .toast { display: none !important; }
+      .prompt-card { break-inside: avoid; }
+      details { display: block; }
+      details > summary { display: none; }
+      .prompt-text {
+        display: block;
+        max-height: none;
+        color: #111;
+        border-color: #bbb;
+        background: #fff;
+        font-size: 9px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="masthead">
+      <div class="eyebrow">2026.07.26 · independent implementation sessions</div>
+      <h1>로그인은 기능이 아니라<br><em>40개의 증명</em>이다.</h1>
+      <p class="lede">
+        Discord·셸 요청에서 시작해 세 기기의 실행 중 브라우저를 조사하고, 정확한 기존 탭 하나에만 붙고,
+        사람 인증을 안전하게 인계한 뒤 검색 화면과 입력값을 확인해야 검색을 시작합니다.
+        아래 카드는 Codex·Claude 새 세션에 순서대로 붙여 넣는 독립 구현 프롬프트입니다.
+      </p>
+      <div class="decision-strip" aria-label="고정 설계 결정">
+        <div class="decision"><b>NO NEW BROWSER</b><span>새 브라우저·창·탭을 만들거나 기존 브라우저를 종료하지 않습니다.</span></div>
+        <div class="decision"><b>ONE EXACT TARGET</b><span>CDP는 확인된 기존 탭 하나에만 붙습니다. 전체 브라우저 연결은 금지합니다.</span></div>
+        <div class="decision"><b>HUMAN AT 2FA</b><span>사람인·잡코리아는 저장 자격증명 1회, 2FA·캡차부터 사람에게 넘깁니다.</span></div>
+        <div class="decision"><b>LINKEDIN ONE SEAT</b><span>기존 로그인 기기를 우선 재사용하며, 다른 기기 자동 로그아웃은 하지 않습니다.</span></div>
+      </div>
+    </header>
+
+    <section class="overview" aria-label="전체 실행 계약">
+      <article class="overview-panel">
+        <h2>단 하나의 상태 흐름</h2>
+        <ol class="state-line">
+          <li>RECEIVED</li>
+          <li>VALIDATED</li>
+          <li>DISCOVERED</li>
+          <li>ROUTED</li>
+          <li>TARGET LOCKED</li>
+          <li>AUTH READY</li>
+          <li>SURFACE READY</li>
+          <li>SEARCH RUNNING</li>
+        </ol>
+      </article>
+      <article class="overview-panel">
+        <h2>모든 카드의 공통 원칙</h2>
+        <ul class="rule-list">
+          <li>앞 카드가 기본 브랜치에 합쳐진 뒤 다음 카드를 시작합니다.</li>
+          <li>실패하는 검사를 먼저 만들고, 가장 작은 구현만 추가합니다.</li>
+          <li>단위검사 통과와 실제 호출 경로 연결을 따로 증명합니다.</li>
+          <li>비밀번호·쿠키·토큰 원문은 출력·로그·증거 파일에 남기지 않습니다.</li>
+        </ul>
+      </article>
+    </section>
+
+    <main class="workspace">
+      <div class="workspace-head">
+        <div>
+          <h2>독립 실행 카드</h2>
+          <p>
+            카드 제목이나 본문을 검색하고 단계별로 좁혀 보십시오. 완료 표시는 이 브라우저에만 저장됩니다.
+            복사 버튼은 역할부터 금지 범위까지 포함한 전체 프롬프트를 복사합니다.
+          </p>
+        </div>
+        <div class="progress" aria-live="polite">
+          <strong id="progressNumber">0 / 40</strong>
+          <span>COMPLETED SESSIONS</span>
+          <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label class="search-wrap">
+          <span class="sr-only" hidden>프롬프트 검색</span>
+          <input id="search" type="search" placeholder="예: li_at, 기기 선택, 사람 인증, 영수증" autocomplete="off">
+        </label>
+        <div class="control-actions">
+          <button class="action" id="expandAll" type="button">모두 펼치기</button>
+          <button class="action" id="collapseAll" type="button">모두 접기</button>
+          <button class="action primary" id="copyVisible" type="button">보이는 카드 전부 복사</button>
+          <button class="action" id="resetProgress" type="button">완료 표시 초기화</button>
+        </div>
+      </div>
+
+      <nav class="filters" aria-label="단계 필터">
+        <button class="filter" type="button" data-phase="all" aria-pressed="true">전체 40</button>
+        <button class="filter" type="button" data-phase="contract" aria-pressed="false">A · 계약 8</button>
+        <button class="filter" type="button" data-phase="fleet" aria-pressed="false">B · 기기 조사 8</button>
+        <button class="filter" type="button" data-phase="target" aria-pressed="false">C · 탭 연결 7</button>
+        <button class="filter" type="button" data-phase="auth" aria-pressed="false">D · 로그인 12</button>
+        <button class="filter" type="button" data-phase="search" aria-pressed="false">E · 검색 시작 5</button>
+      </nav>
+
+      <section id="promptGrid" class="prompt-grid" aria-label="구현 프롬프트 목록"></section>
+      <div class="empty" id="empty">조건에 맞는 프롬프트가 없습니다.</div>
+      <p class="footnote">
+        관련 기준: <code>AGENTS.md</code>, <code>docs/harness.md</code>,
+        <code>docs/sot/26-portal-login-spec.json</code>, <code>docs/sot/29-fleet-control.json</code>,
+        <code>docs/sot/31-fleet-run-reliability.md</code>, <code>docs/sot/33-hermes-retirement.md</code>.
+        원격 초안이 있는 항목도 그대로 합치지 말고 현재 기준과 검사를 대조한 뒤 재사용합니다.
+      </p>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const phaseLabels = {
+      contract: "A · REQUEST CONTRACT",
+      fleet: "B · FLEET DISCOVERY",
+      target: "C · EXACT TARGET",
+      auth: "D · AUTHENTICATION",
+      search: "E · SEARCH RELEASE"
+    };
+
+    const commonSot = [
+      "AGENTS.md",
+      "docs/harness.md",
+      "docs/sot/30-strict-mode-contract.md",
+      "docs/sot/26-portal-login-spec.json",
+      "docs/sot/29-fleet-control.json",
+      "docs/sot/31-fleet-run-reliability.md",
+      "docs/sot/33-hermes-retirement.md"
+    ];
+
+    const apps = [
+      {
+        id: 1, phase: "contract", title: "로그인 기준 규칙 통합",
+        summary: "사람인·잡코리아 저장 자격증명, LinkedIn li_at, 사람 인증 경계를 하나의 기준으로 고정합니다.",
+        role: "로그인 정책 설계자. 서로 충돌하는 기존 문서와 사용자 결정을 한 개의 실행 가능한 기준으로 통합한다.",
+        goal: "사람인·잡코리아는 저장된 아이디·비밀번호를 정확히 1회 제출하고 2FA·캡차·checkpoint부터 사람에게 인계한다. LinkedIn은 비밀 저장소의 li_at을 선택된 단일 기기의 정확한 기존 탭에만 적용한다. 이미 로그인된 LinkedIn 기기가 있으면 재사용하며 자동 로그아웃은 금지한다.",
+        reads: ["docs/prompts/hermes-login-gate-before-search-skills-2026-07-21.md", "docs/prompts/linkedin-rps-login-session-fix-2026-07-18.md"],
+        input: ["2026-07-26 사용자 결정", "현재 로그인 기준 문서와 실제 진입점 목록"],
+        output: ["갱신된 로그인 기준 문서 1개", "사이트별 허용·금지·사람 인계 표", "기존 문서에서 새 기준으로 가는 명시적 연결"],
+        red: ["LinkedIn 아이디·비밀번호 자동 제출을 허용하는 기존 문구를 검출하면 실패", "다른 기기 자동 로그아웃 또는 새 탭 생성을 허용하면 실패", "li_at 원문이 로그·영수증에 들어갈 수 있는 스키마면 실패"],
+        green: ["충돌 규칙을 새 버전으로 승격하고 변경 이유와 대체 범위를 기록", "LinkedIn 0개·1개·2개 로그인 기기 상황별 결정을 표로 고정", "정확한 기존 탭, 1회 조작, 사람 인계, 비밀정보 비출력 원칙을 기계 판독 필드로 표현"],
+        wiring: ["검색·로그인 진입점이 새 기준 문서 ID를 참조하는지 정적 검사", "과거 Hermes 전용 경로가 현재 Discord→queue→worker→Codex/Claude 경로로 바뀌었는지 증명"],
+        tests: ["python -m pytest -q tests/test_login_policy_contract.py", "rg -n \"li_at|auto.*logout|new_page|connectOverCDP\" docs/sot docs/prompts"],
+        done: ["변경 전 충돌 목록", "갱신된 기준 버전과 해시", "정적 검사 통과 기록"],
+        forbid: ["로그인 코드 구현", "실제 쿠키 입력", "브라우저 실행·종료", "Hermes 신규 의존성"]
+      },
+      {
+        id: 2, phase: "contract", title: "기기 이름 단일화",
+        summary: "macmini·macbook·winpc 이름이 코드·데이터베이스·운영 문서에서 다르게 쓰이지 않게 만듭니다.",
+        role: "함대 식별자 계약 담당자. 모든 생산 경로가 동일한 세 기기 이름만 사용하도록 한다.",
+        goal: "정식 기기 ID를 macmini, macbook, winpc로 고정하고 macbook_pro 같은 과거 별칭은 입력 경계에서만 정규화한다. 저장·영수증·잠금 키에는 정식 ID만 남긴다.",
+        reads: ["tools/multi_position_sourcing/job_queue.py", "tools/multi_position_sourcing/fleet_args.py", "tools/multi_position_sourcing/fleet_dispatch.py", "supabase/migrations/"],
+        input: ["명령의 machine 값", "heartbeat·브라우저 보고서·작업 행의 machine 값"],
+        output: ["정식 MachineId 타입과 normalize_machine_id 함수", "데이터베이스 제약 및 이전 값 호환 규칙"],
+        red: ["macbook_pro와 macbook이 서로 다른 잠금 키를 만들면 실패", "모르는 기기명이 기본 기기로 바뀌면 실패", "저장 계층에 별칭이 남으면 실패"],
+        green: ["한 모듈에 정식 ID·별칭·검증을 집중", "파서·작업 큐·heartbeat·receipt에서 공용 함수를 사용", "잘못된 값은 임의 추측 없이 거부"],
+        wiring: ["Discord 파서부터 worker 환경변수와 데이터베이스 행까지 동일 ID임을 통합검사로 증명"],
+        tests: ["python -m pytest -q tests/test_fleet_args.py tests/test_fleet_dispatch.py", "python -m pytest -q tests/test_machine_identity.py"],
+        done: ["세 정식 ID와 허용 별칭 표", "저장 계층에 별칭 0개임을 보이는 검사 결과"],
+        forbid: ["기기 자동 선택 로직", "heartbeat 구현", "기존 작업 데이터의 무근거 일괄 수정"]
+      },
+      {
+        id: 3, phase: "contract", title: "Discord·셸 명령 봉투",
+        summary: "login·aisearch·humansearch·url 요청을 같은 구조로 받되 모호한 입력은 거부합니다.",
+        role: "명령 입구 계약 담당자. Discord slash 명령과 셸 명령을 하나의 엄격한 요청 구조로 정규화한다.",
+        goal: "command, requester, request_id, requested_machine, jd_source, search_urls, engine 필드를 가진 LoginSearchRequest를 정의한다. login은 JD 없이 허용하고 검색 스킬은 JD 입력을 필수로 한다.",
+        reads: ["scripts/discord_direct_gateway.py", "tools/multi_position_sourcing/fleet_args.py", "tools/multi_position_sourcing/job_queue.py"],
+        input: ["/login", "/aisearch <URL|TEXT|FILE>", "/humansearch <URL|TEXT|FILE>", "/url <URL|TEXT|FILE>", "동일 의미의 셸 인자"],
+        output: ["검증된 LoginSearchRequest 또는 구조화된 거부 사유", "Discord와 셸의 동일 정규화 결과"],
+        red: ["login에 JD를 강제로 요구하면 실패", "검색 요청의 JD가 비어도 통과하면 실패", "모르는 필드·스킬·엔진을 조용히 버리면 실패"],
+        green: ["순수 파서와 직렬화 스키마 구현", "Discord 옵션과 셸 토큰을 같은 내부 구조로 변환", "민감값 필드를 애초에 스키마에서 금지"],
+        wiring: ["Discord gateway와 fleet-run CLI가 공용 파서를 실제 호출하는 spy 검사", "파싱 실패 시 queue 호출 0회 증명"],
+        tests: ["python -m pytest -q tests/test_fleet_args.py tests/test_discord_direct_gateway.py", "python -m pytest -q tests/test_login_search_request.py"],
+        done: ["허용·거부 예시 표", "동일 입력의 Discord·셸 직렬화 비교 결과"],
+        forbid: ["queue 저장", "기기 선택", "브라우저 조사", "자연어 임의 추론"]
+      },
+      {
+        id: 4, phase: "contract", title: "요청자 권한 검증",
+        summary: "로그인과 LinkedIn 기기 인수인계는 승인된 사용자만 요청할 수 있게 막습니다.",
+        role: "명령 인가 경계 담당자. Discord 사용자·셸 실행자를 검증하고 권한을 작업 행까지 위조 없이 전달한다.",
+        goal: "login, LinkedIn takeover, 비밀 저장소 사용은 owner 권한에서만 허용한다. 일반 검색은 기존 역할 정책을 유지한다. 외부 입력의 role 문자열은 신뢰하지 않는다.",
+        reads: ["scripts/discord_direct_gateway.py", "tools/multi_position_sourcing/job_queue.py", "tools/multi_position_sourcing/fleet_worker.py"],
+        input: ["Discord 서명·사용자 ID·채널 정보", "셸의 로컬 사용자 증거", "요청 동작"],
+        output: ["서버가 판정한 actor_id·role·allowed_actions", "거부 시 비밀 없는 감사 기록"],
+        red: ["payload의 role=owner만으로 로그인 쓰기 권한이 생기면 실패", "anon queue 호출로 login 작업이 실행 가능하면 실패", "비인가 요청에 내부 허용 사용자 목록을 노출하면 실패"],
+        green: ["신뢰 가능한 인가 소스에서 역할을 파생", "login과 takeover에 별도 권한 검사", "worker가 인가 증거를 다시 검사"],
+        wiring: ["Discord 수신→queue RPC→worker 실행 권한까지 actor 증거가 유지되는 통합검사", "비인가 경로에서 executor 호출 0회"],
+        tests: ["python -m pytest -q tests/test_discord_direct_gateway.py tests/test_job_queue_auth.py", "python -m pytest -q tests/test_fleet_worker_login_auth.py"],
+        done: ["인가 행렬", "위조 시나리오 검사 결과", "거부 감사 기록 예시"],
+        forbid: ["새 인증 시스템 도입", "Discord 토큰 출력", "owner 권한을 기본값으로 설정"]
+      },
+      {
+        id: 5, phase: "contract", title: "중복 요청 방지",
+        summary: "Discord 재전송·셸 재시도로 같은 로그인이나 검색이 두 번 실행되지 않게 합니다.",
+        role: "작업 단일 실행 계약 담당자. 하나의 사용자 의도를 정확히 하나의 작업으로 만든다.",
+        goal: "request_id와 정규화된 요청 해시로 enqueue-or-get을 원자적으로 수행한다. 같은 요청 재전송은 기존 job_id를 반환하고 새 브라우저 조작을 만들지 않는다.",
+        reads: ["tools/multi_position_sourcing/job_queue.py", "supabase/migrations/", "scripts/discord_direct_gateway.py"],
+        input: ["검증된 LoginSearchRequest", "Discord event_id 또는 셸 idempotency 키"],
+        output: ["새 작업 1개 또는 동일 기존 작업 1개", "중복 여부와 job_id"],
+        red: ["동시 요청 두 개가 작업 두 개를 만들면 실패", "같은 request_id에 다른 본문이 조용히 덮이면 실패", "재시도 때 로그인 제출 횟수가 증가하면 실패"],
+        green: ["데이터베이스 고유 제약과 원자 RPC 사용", "request_id 충돌이면서 본문 해시가 다르면 거부", "응답 재전송과 작업 재실행을 분리"],
+        wiring: ["Discord 동일 이벤트 병렬 20회→job_id 1개 통합검사", "worker claim과 mutation episode가 request_id를 포함하는지 증명"],
+        tests: ["python -m pytest -q tests/test_discord_idempotent_enqueue.py tests/test_job_queue.py"],
+        done: ["동시성 검사 횟수와 생성 작업 수", "고유 제약 마이그레이션 증거"],
+        forbid: ["프로세스 메모리만의 중복 방지", "기존 완료 작업 삭제", "request_id 자동 재사용"]
+      },
+      {
+        id: 6, phase: "contract", title: "스킬별 사이트 계획",
+        summary: "login·aisearch·humansearch·url이 어느 사이트와 검색 화면을 요구하는지 코드로 고정합니다.",
+        role: "실행 계획 계약 담당자. 스킬 이름을 필요한 로그인 채널과 검색 표면의 순서 있는 계획으로 변환한다.",
+        goal: "login은 3사, aisearch는 사람인·잡코리아, url은 LinkedIn RPS, humansearch는 제공된 검색 URL의 사이트만 요구하도록 순수 계획 함수를 만든다.",
+        reads: ["tools/multi_position_sourcing/fleet_worker.py", "tools/multi_position_sourcing/login_barrier.py", ".codex/skills/ai-search/SKILL.md", ".codex/skills/humansearch/SKILL.md", ".codex/skills/url/SKILL.md"],
+        input: ["skill", "정규화된 search_urls", "JD source metadata"],
+        output: ["required_channels", "required_surfaces", "execution_skill", "빈틈 없는 거부 사유"],
+        red: ["url 스킬이 사람인 로그인을 요구하면 실패", "humansearch URL의 호스트를 추측하면 실패", "지원하지 않는 사이트 URL이 무시되면 실패"],
+        green: ["표 기반 순수 함수 구현", "사이트 URL allowlist와 정확한 채널 매핑", "로그인 계획과 검색 계획을 같은 결과에 포함"],
+        wiring: ["worker의 로그인 장벽과 후속 검색 실행기가 동일 계획 객체를 사용함을 spy로 증명"],
+        tests: ["python -m pytest -q tests/test_login_barrier.py tests/test_skill_site_plan.py"],
+        done: ["네 스킬의 입력별 계획 표", "지원하지 않는 조합 거부 검사"],
+        forbid: ["브라우저 접속", "로그인 상태 추측", "검색 실행", "스킬 자동 체이닝"]
+      },
+      {
+        id: 7, phase: "contract", title: "JD 입력 종류 판별",
+        summary: "ClickUp URL, 일반 URL, 직접 붙인 JD 본문, 텍스트 파일 경로를 서로 혼동하지 않습니다.",
+        role: "작업 입력 판별 담당자. 입력 문자열을 추측 없이 한 가지 JD source로 분류한다.",
+        goal: "URL·직접 본문·로컬 UTF-8 텍스트 파일을 명시 규칙으로 판별한다. Discord 첨부는 먼저 승인된 로컬 임시 파일로 내려받은 뒤 FILE로 처리한다.",
+        reads: ["tools/multi_position_sourcing/fleet_args.py", "tools/multi_position_sourcing/job_queue.py", "scripts/discord_direct_gateway.py"],
+        input: ["원문 입력과 source_hint", "Discord 첨부 metadata"],
+        output: ["JDSource(kind, locator, display_name, sha256)", "모호하거나 금지된 입력의 거부 사유"],
+        red: ["존재하지 않는 경로를 JD 본문으로 처리하면 실패", "본문 첫 줄이 http라고 전체를 URL로 오인하면 실패", "두 종류로 동시에 해석 가능한 입력을 추측하면 실패"],
+        green: ["source_hint 우선, 엄격한 URL 파싱, 명시적 파일 표식 순서로 판별", "판별 단계에서는 파일 내용과 네트워크를 읽지 않는 순수 함수 유지"],
+        wiring: ["Discord·셸 파서가 같은 JDSource 판별기를 호출", "다음 카드의 안전 로더에만 FILE을 전달"],
+        tests: ["python -m pytest -q tests/test_jd_source.py tests/test_fleet_args.py"],
+        done: ["URL·본문·파일·모호 입력 표본 검사", "동일 입력의 양쪽 진입점 결과 비교"],
+        forbid: ["URL fetch", "파일 내용 읽기", "ClickUp API 호출", "JD 요약"]
+      },
+      {
+        id: 8, phase: "contract", title: "JD 파일 안전 로더",
+        summary: "허용된 텍스트 파일만 크기·경로·인코딩을 확인하고 해시와 함께 읽습니다.",
+        role: "로컬 입력 안전 담당자. 사용자가 지정한 텍스트 파일을 경로 탈출과 비밀 유출 없이 읽는다.",
+        goal: "허용 루트 안의 일반 파일만, 최대 크기와 UTF-8 정책을 적용해 읽고 정규화 본문과 SHA-256을 반환한다. 심볼릭 링크·장치 파일·.env·키 저장소는 거부한다.",
+        reads: ["tools/multi_position_sourcing/job_queue.py", "docs/sot/31-fleet-run-reliability.md"],
+        input: ["JDSource(kind=FILE)", "허용 루트", "최대 바이트"],
+        output: ["정규화된 JD 텍스트", "content_sha256", "바이트 수", "비밀 없는 거부 사유"],
+        red: ["../ 경로 탈출, 심볼릭 링크, .env.local 읽기가 통과하면 실패", "최대 크기 초과 파일을 일부만 읽으면 실패", "파일 내용이 로그에 출력되면 실패"],
+        green: ["resolve 후 허용 루트 포함 여부 재검사", "확장자·일반 파일·크기·UTF-8 검증", "본문은 다음 단계 메모리로만 전달하고 로그에는 해시만 기록"],
+        wiring: ["queue 직전 또는 worker 소비 시 다시 파일 해시를 확인", "검증 실패 시 네트워크·executor 호출 0회"],
+        tests: ["python -m pytest -q tests/test_jd_file_loader.py"],
+        done: ["경로 공격 표본과 결과", "읽은 파일 해시·크기만 포함한 영수증"],
+        forbid: ["임의 홈 디렉터리 읽기", "PDF·DOCX 자동 변환", "파일 수정·삭제", "본문 로그 출력"]
+      },
+      {
+        id: 9, phase: "fleet", title: "기기 준비 상태 보고",
+        summary: "세 기기가 작업을 받을 수 있는지 짧은 유효시간의 상태 보고서로 증명합니다.",
+        role: "기기 준비 상태 수집 담당자. 각 기기의 운영체제·worker·에이전트·시계를 읽기 전용으로 보고한다.",
+        goal: "macmini·macbook·winpc에서 machine_id, observed_at, worker_ready, codex_ready, claude_ready, clock_skew, capabilities를 수집한다. 오래되거나 미래 시각 보고서는 거부한다.",
+        reads: ["tools/multi_position_sourcing/fleet_heartbeat.py", "tools/multi_position_sourcing/fleet_worker.py", "supabase/migrations/"],
+        input: ["로컬 프로세스·에이전트 실행파일·시각", "정식 machine_id"],
+        output: ["짧은 유효시간의 MachineReadinessReport", "전송 성공 여부"],
+        red: ["오래된 heartbeat가 ready로 통과하면 실패", "모르는 machine_id가 등록되면 실패", "에이전트 실행파일이 없는데 ready면 실패"],
+        green: ["읽기 전용 probe와 순수 freshness 판정 분리", "등록된 기기·기대 능력과 대조", "보고 실패는 ready=false로 명확히 표시"],
+        wiring: ["실제 worker heartbeat 루프가 새 보고서를 저장하는지 spy 검사", "원격 초안 origin/task/integrity-login-receipt-barrier를 현재 기준과 대조 후 필요한 부분만 재사용"],
+        tests: ["python -m pytest -q tests/test_fleet_heartbeat.py tests/test_machine_readiness.py"],
+        done: ["세 기기 표본 보고서", "오래됨·미래 시각·미등록 기기 차단 결과"],
+        forbid: ["브라우저 조사", "기기 자동 선택", "프로세스 시작·종료", "24시간 상태 신뢰"]
+      },
+      {
+        id: 10, phase: "fleet", title: "실행 중 브라우저 프로세스 수집",
+        summary: "기기에서 Chrome·Chromium·Edge 계열 루트 프로세스와 명령행을 읽기 전용으로 찾습니다.",
+        role: "로컬 브라우저 프로세스 조사 담당자. 새 프로세스를 만들지 않고 실행 중인 브라우저 루트만 열거한다.",
+        goal: "Windows와 macOS에서 PID, executable_path, command_line, user_data_dir, remote_debugging_port, started_at을 수집한다. basename만 같은 가짜 실행파일을 신뢰하지 않는다.",
+        reads: ["tools/multi_position_sourcing/browser_inventory.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["운영체제 프로세스 스냅샷", "허용 브라우저 실행파일 규칙"],
+        output: ["BrowserProcessRecord 목록", "수집 실패 또는 불완전 사유"],
+        red: ["하위 renderer를 루트 브라우저로 보고하면 실패", "허용되지 않은 경로의 chrome.exe가 통과하면 실패", "명령행을 로그에 원문 출력해 비밀 플래그가 노출되면 실패"],
+        green: ["운영체제별 collector와 공용 parser 분리", "루트 프로세스·실행파일 신뢰 규칙·프로필·포트 추출", "로그에는 정규화 경로와 비밀 제거 명령행만 기록"],
+        wiring: ["heartbeat 직후 실제 local inventory builder가 collector를 호출", "원격 browser_inventory 초안의 순수 파서를 재사용하되 실 수집 배선을 별도로 증명"],
+        tests: ["python -m pytest -q tests/test_browser_inventory.py tests/test_browser_process_collector.py"],
+        done: ["Windows·macOS fixture 결과", "실제 로컬 읽기 전용 dry-run 영수증"],
+        forbid: ["브라우저 실행·kill·restart", "새 debug port 부여", "renderer 조작", "basename 단독 신뢰"]
+      },
+      {
+        id: 11, phase: "fleet", title: "브라우저 프로필 매핑",
+        summary: "각 브라우저 PID를 실제 사용자 데이터 폴더와 프로필 이름에 정확히 연결합니다.",
+        role: "브라우저 프로필 식별 담당자. 프로세스 명령행과 CDP 메타데이터에서 안정적인 profile_id를 만든다.",
+        goal: "user_data_dir와 profile-directory를 정규화하고 PID·실행파일·포트와 묶는다. 경로 대소문자·슬래시 차이를 운영체제별로 처리한다.",
+        reads: ["tools/multi_position_sourcing/browser_inventory.py", "tools/multi_position_sourcing/portal_worker.py"],
+        input: ["BrowserProcessRecord", "운영체제 경로 규칙"],
+        output: ["BrowserProfileRecord(profile_id, pid, path, port)", "모호한 프로필 차단 사유"],
+        red: ["서로 다른 두 프로필이 같은 profile_id가 되면 실패", "profile-directory 누락을 임의 Default로 추측하면 실패", "정규화 후 허용 루트 밖 경로가 통과하면 실패"],
+        green: ["운영체제별 canonical path 함수", "PID·user_data_dir·profile_directory 결합 해시", "모호하면 attachable=false"],
+        wiring: ["다음 CDP·target 보고서가 profile_id를 필수 참조하는지 스키마 검사"],
+        tests: ["python -m pytest -q tests/test_browser_profile_mapping.py tests/test_browser_inventory.py"],
+        done: ["Windows·macOS 경로 표본", "충돌 0건임을 보이는 fixture 검사"],
+        forbid: ["프로필 디렉터리 생성·수정·삭제", "쿠키 DB 직접 읽기", "브라우저 실행"]
+      },
+      {
+        id: 12, phase: "fleet", title: "열린 디버깅 포트 조사",
+        summary: "브라우저 명령행과 실제 listening socket을 대조해 살아 있는 CDP 후보만 남깁니다.",
+        role: "로컬 포트 조사 담당자. 프로세스가 주장하는 포트와 운영체제 listener 소유 PID를 교차검증한다.",
+        goal: "remote_debugging_port가 실제 LISTEN 중이고 같은 브라우저 PID가 소유하는지 판정한다. localhost 계열만 허용하고 외부 노출 포트는 차단 보고한다.",
+        reads: ["tools/multi_position_sourcing/browser_inventory.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["BrowserProfileRecord", "운영체제 listener 스냅샷"],
+        output: ["CdpListenerRecord(endpoint, owner_pid, profile_id)", "불일치·외부 노출 경고"],
+        red: ["다른 PID가 점유한 포트를 같은 브라우저로 연결하면 실패", "0.0.0.0 외부 노출을 정상으로 통과하면 실패", "listener 없는 명령행 포트를 attachable로 표시하면 실패"],
+        green: ["macOS lsof·Windows Get-NetTCPConnection 어댑터", "포트·PID·loopback 주소 교차검증", "조사는 읽기 전용으로 유지"],
+        wiring: ["실제 inventory runner가 프로세스와 listener 스냅샷을 같은 observed_at 묶음으로 생성"],
+        tests: ["python -m pytest -q tests/test_cdp_listener_inventory.py"],
+        done: ["포트 소유권 일치·불일치·외부 노출 fixture", "로컬 dry-run 결과"],
+        forbid: ["방화벽 변경", "포트 개방·종료", "브라우저 재시작", "원격 호스트 스캔"]
+      },
+      {
+        id: 13, phase: "fleet", title: "CDP 엔드포인트 생존 확인",
+        summary: "/json/version과 /json/list를 짧게 읽어 연결 가능한 브라우저인지 확인합니다.",
+        role: "CDP 읽기 전용 probe 담당자. 후보 엔드포인트의 응답 형태와 브라우저 정체성을 검증한다.",
+        goal: "짧은 timeout으로 loopback /json/version과 /json/list를 GET하고 WebSocket URL·브라우저 제품·target 목록 형식만 검증한다. WebSocket attach와 DOM 조작은 하지 않는다.",
+        reads: ["tools/multi_position_sourcing/raw_cdp.py", "tools/multi_position_sourcing/portal_worker.py"],
+        input: ["CdpListenerRecord"],
+        output: ["CdpEndpointHealth(healthy, browser, websocket_origin, target_count)", "timeout·형식 오류 사유"],
+        red: ["HTML 오류 페이지가 healthy로 통과하면 실패", "응답 WebSocket 호스트가 외부 주소면 실패", "timeout 뒤 다른 포트로 자동 탐색하면 실패"],
+        green: ["엄격한 JSON 스키마와 timeout", "endpoint와 반환 WebSocket 주소의 loopback·port 일치 검증", "비정상은 fail-closed"],
+        wiring: ["inventory pipeline이 healthy endpoint만 다음 target 수집기로 전달"],
+        tests: ["python -m pytest -q tests/test_cdp_endpoint_health.py"],
+        done: ["정상·timeout·오염 응답 fixture", "probe 요청 횟수와 조작 0회 기록"],
+        forbid: ["Runtime.evaluate", "Page.navigate", "WebSocket attach", "다른 포트 fallback"]
+      },
+      {
+        id: 14, phase: "fleet", title: "CDP 탭 목록 수집",
+        summary: "살아 있는 엔드포인트에서 기존 page target의 주소·제목·ID만 안전하게 모읍니다.",
+        role: "브라우저 target inventory 담당자. /json/list 응답을 비밀 제거된 불변 목록으로 변환한다.",
+        goal: "type=page인 기존 target만 수집하고 target_id, sanitized_url, sanitized_title, websocket_url_hash, profile_id를 기록한다. URL query·fragment와 민감값은 제거한다.",
+        reads: ["tools/multi_position_sourcing/browser_inventory.py", "tools/multi_position_sourcing/exact_target.py"],
+        input: ["healthy CdpEndpointHealth와 /json/list payload"],
+        output: ["BrowserTargetRecord 목록", "sanitization 증거"],
+        red: ["query의 token·code·session이 보고서에 남으면 실패", "extension·service_worker를 page로 포함하면 실패", "동일 target_id의 모순된 URL이 조용히 덮이면 실패"],
+        green: ["page target 엄격 필터", "URL query·fragment 제거와 제목 길이 제한", "target_id 중복·모순 차단"],
+        wiring: ["원격 browser_inventory 초안을 검토해 report builder가 실제 endpoint payload를 소비하는지 증명"],
+        tests: ["python -m pytest -q tests/test_browser_inventory.py tests/test_target_inventory.py"],
+        done: ["비밀 제거 fixture", "대상 유형별 포함·제외 결과"],
+        forbid: ["target attach", "DOM 읽기", "탭 focus·close·navigate", "새 target 생성"]
+      },
+      {
+        id: 15, phase: "fleet", title: "기기 조사 보고서 서명·전송",
+        summary: "각 기기의 조사 결과가 전송 중 바뀌거나 위조되지 않도록 출처와 서명을 붙입니다.",
+        role: "기기 증거 전송 담당자. readiness·process·listener·target 보고서를 하나의 인증된 봉투로 만든다.",
+        goal: "machine_id, report_id, observed_at, nonce, schema_version, payload_hash, keyed_signature를 포함한다. 단순 SHA-256만으로 위조 방지라고 주장하지 않는다.",
+        reads: ["tools/multi_position_sourcing/fleet_snapshot.py", "supabase/migrations/20260726100000_fleet_browser_inventory.sql"],
+        input: ["한 기기의 readiness·browser inventory", "기기별 비밀 서명 키 또는 검증 가능한 기기 신원"],
+        output: ["SignedMachineInventory", "서버 저장 결과"],
+        red: ["payload를 바꾸고 hash만 다시 계산해 통과하면 실패", "다른 machine_id의 키로 서명한 보고서가 통과하면 실패", "nonce 재사용 보고서가 저장되면 실패"],
+        green: ["키 기반 서명 또는 동등한 서버 검증 방식", "키 ID·회전 버전 포함", "재전송 방지 nonce와 짧은 유효시간"],
+        wiring: ["각 worker heartbeat 직후 전송되고 중앙 snapshot 조회에서 서명 검증됨을 통합검사"],
+        tests: ["python -m pytest -q tests/test_fleet_inventory_signature.py tests/test_fleet_snapshot.py"],
+        done: ["변조·재전송·기기 바꿔치기 검사", "비밀 없는 서명 검증 영수증"],
+        forbid: ["서명 키 출력·저장소 커밋", "무서명 fallback", "로컬 파일만을 중앙 증거로 신뢰"]
+      },
+      {
+        id: 16, phase: "fleet", title: "동일 시점 함대 스냅샷",
+        summary: "세 기기의 최신 보고서를 한 시점 기준으로 묶고 하나라도 빠지면 선택을 멈춥니다.",
+        role: "중앙 함대 스냅샷 담당자. 세 기기 보고서의 서명·신선도·시간차를 검증해 불변 snapshot을 만든다.",
+        goal: "기대 기기 세 대의 유효 보고서가 모두 있고 관찰 시각 차이가 허용 범위 안일 때만 FleetSnapshot을 생성한다. 누락·미래 시각·오래됨·중복은 차단한다.",
+        reads: ["tools/multi_position_sourcing/fleet_snapshot.py", "tools/multi_position_sourcing/fleet_heartbeat.py"],
+        input: ["SignedMachineInventory 3개", "기대 기기 집합과 max_age·max_skew"],
+        output: ["sealed FleetSnapshot(snapshot_id, reports, created_at)", "불완전 사유"],
+        red: ["두 기기만으로 snapshot을 만들면 실패", "24시간 지난 보고서를 사용하면 실패", "같은 기기 보고서 두 개를 임의 선택하면 실패"],
+        green: ["서명 검증 후 기대 집합 정확 일치", "관찰 시각과 중앙 시각의 freshness·skew 검사", "정렬된 payload 해시로 snapshot 봉인"],
+        wiring: ["fleet router가 개별 heartbeat가 아니라 snapshot_id만 입력받는지 증명", "원격 fleet_snapshot 초안을 현재 기기 이름·서명 계약에 맞게 재사용"],
+        tests: ["python -m pytest -q tests/test_fleet_snapshot.py"],
+        done: ["누락·오래됨·미래·중복 fixture", "세 기기 성공 snapshot 영수증"],
+        forbid: ["기기 선택", "불완전 snapshot fallback", "보고서 내용 수정"]
+      },
+      {
+        id: 17, phase: "target", title: "근거 기반 기기 선택",
+        summary: "로그인 상태와 준비 상태로 한 기기를 결정하고 근거가 없으면 임의 기본값 없이 멈춥니다.",
+        role: "순수 함대 라우터 담당자. FleetSnapshot과 요청만으로 결정적인 RouteDecision을 만든다.",
+        goal: "요청 기기가 있으면 준비 가능성과 정책을 검증한다. LinkedIn 로그인 기기가 정확히 하나면 그 기기를 재사용한다. 로그인 기기가 없을 때만 요청 기기 또는 결정적 준비 기기를 로그인 후보로 고른다. 두 곳 이상 로그인은 충돌로 차단한다.",
+        reads: ["tools/multi_position_sourcing/fleet_route.py", "tools/multi_position_sourcing/fleet_dispatch.py", "tools/multi_position_sourcing/linkedin_session_guardian.py"],
+        input: ["LoginSearchRequest", "FleetSnapshot", "채널별 인증 증거 요약"],
+        output: ["RouteDecision(selected_machine, reason_code, required_handoff)", "차단 사유"],
+        red: ["근거가 없을 때 macmini로 fallback하면 실패", "요청 기기가 준비되지 않았는데 선택되면 실패", "LinkedIn 두 기기 로그인 중 첫 번째를 임의 선택하면 실패"],
+        green: ["순수·결정적 우선순위 함수", "기기 선택 근거 코드를 열거형으로 고정", "동일 입력은 항상 동일 결과"],
+        wiring: ["fleet dispatch가 선택 결과 없이는 enqueue하지 않는지 spy 검사", "원격 fleet_route 초안의 전역 충돌 boolean이 특정 기기에 임의 귀속되지 않게 교정"],
+        tests: ["python -m pytest -q tests/test_fleet_route_decision.py tests/test_fleet_dispatch.py"],
+        done: ["0·1·2 LinkedIn 로그인 기기와 요청 기기 조합표", "fallback 0회 증명"],
+        forbid: ["브라우저 조작", "로그아웃", "snapshot 밖 상태 조회", "임의 우선 기기"]
+      },
+      {
+        id: 18, phase: "target", title: "정확한 브라우저 프로세스 선택",
+        summary: "선택된 기기에서 사이트와 연결된 프로필·포트·루트 PID를 하나로 확정합니다.",
+        role: "브라우저 프로세스 해석 담당자. snapshot 안의 증거만으로 exact browser binding을 만든다.",
+        goal: "site, machine_id, profile_id, root_pid, executable_path, endpoint를 1:1로 묶는다. 후보 0개 또는 2개 이상이면 선택하지 않는다.",
+        reads: ["tools/multi_position_sourcing/exact_target.py", "tools/multi_position_sourcing/portal_worker.py"],
+        input: ["RouteDecision", "선택 기기의 BrowserProcess·Profile·Endpoint records", "사이트별 managed profile 규칙"],
+        output: ["ExactBrowserBinding", "0개·다중 후보 차단 사유"],
+        red: ["포트만 맞고 프로필이 다른 브라우저가 통과하면 실패", "첫 번째 후보 fallback이 있으면 실패", "snapshot 이후 PID가 바뀌어도 통과하면 실패"],
+        green: ["site·profile·PID·endpoint 전부 일치 요구", "실행 직전 로컬 PID·listener 재확인 필드 포함", "모호함은 HUMAN/HANDOFF가 아니라 DISCOVERY_BLOCKED로 구분"],
+        wiring: ["exact target resolver가 이 binding 없이는 호출되지 않음을 타입·통합검사로 증명"],
+        tests: ["python -m pytest -q tests/test_exact_browser_binding.py tests/test_exact_target_resolver.py"],
+        done: ["0·1·2 후보 fixture", "PID 재사용 공격 차단 결과"],
+        forbid: ["새 브라우저 실행", "포트 재설정", "프로필 추측", "탭 선택"]
+      },
+      {
+        id: 19, phase: "target", title: "정확한 기존 탭 선택",
+        summary: "사이트 공식 주소와 target ID를 동시에 맞춘 기존 page 탭 하나만 선택합니다.",
+        role: "exact target resolver 담당자. 브라우저 목록에서 작업 가능한 단 하나의 기존 탭을 찾는다.",
+        goal: "사이트별 허용된 login·holding·talent surface URL과 type=page를 정확히 매칭한다. snapshot target_id와 실행 직전 /json/list의 ID·URL이 모두 같아야 한다.",
+        reads: ["tools/multi_position_sourcing/exact_target.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["ExactBrowserBinding", "snapshot targets", "실행 직전 live target list", "site"],
+        output: ["ExactTargetRef(target_id, endpoint, sanitized_url, websocket_hash)", "모호함 사유"],
+        red: ["도메인만 같은 tutorial·authwall 탭이 선택되면 실패", "target ID는 같지만 URL이 바뀌었는데 통과하면 실패", "후보 여러 개 중 첫 탭을 선택하면 실패"],
+        green: ["사이트별 URL 분류표", "snapshot과 live list의 동일성 재확인", "정확히 1개일 때만 결과 생성"],
+        wiring: ["raw CDP client가 ExactTargetRef 없이는 생성되지 않도록 생성자 계약", "원격 exact_target 초안 재사용 시 현재 URL 기준과 교차검사"],
+        tests: ["python -m pytest -q tests/test_exact_target_resolver.py"],
+        done: ["사이트별 정상·stale·다중 target fixture", "새 target 생성 0회 증명"],
+        forbid: ["newPage·Target.createTarget", "탭 close", "도메인 단독 매칭", "첫 후보 fallback"]
+      },
+      {
+        id: 20, phase: "target", title: "읽기 전용 CDP 부착 가능성 확인",
+        summary: "정확한 target WebSocket 하나에 붙어 최소 도메인만 활성화하고 즉시 분리합니다.",
+        role: "raw CDP attachability probe 담당자. 전체 브라우저 연결 없이 exact target의 읽기 가능성만 검증한다.",
+        goal: "ExactTargetRef의 WebSocket에 짧게 연결해 Runtime.enable과 최소 읽기 명령을 수행하고 target identity를 재확인한다. navigate·evaluate mutation·focus는 하지 않는다.",
+        reads: ["tools/multi_position_sourcing/raw_cdp.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["ExactTargetRef", "timeout과 허용 CDP method 목록"],
+        output: ["AttachabilityResult(attachable, target_id, observed_url_hash, latency)", "명시적 실패 사유"],
+        red: ["connectOverCDP 전체 브라우저 API를 사용하면 실패", "probe 중 페이지 상태가 바뀌면 실패", "timeout 후 재시도하면 실패"],
+        green: ["target WebSocket 직접 연결", "허용된 읽기 명령 allowlist", "한 번 연결·한 번 종료·프로세스 hang 방지"],
+        wiring: ["auth evidence collector가 attachable=true 증거 없이는 실행되지 않음", "CDP 호출 기록에서 mutation method 0개 증명"],
+        tests: ["python -m pytest -q tests/test_raw_cdp_attachability.py tests/test_raw_cdp_busy_badge.py"],
+        done: ["정상·timeout·target 교체 fixture", "호출 method 목록 영수증"],
+        forbid: ["chromium.connectOverCDP", "Page.navigate", "Runtime.evaluate로 DOM 수정", "재시도"]
+      },
+      {
+        id: 21, phase: "target", title: "계정 전체 조작 잠금",
+        summary: "같은 계정은 세 기기 중 어느 곳에서도 동시에 조작되지 않게 중앙 잠금을 겁니다.",
+        role: "전역 계정 lease 담당자. site·account_key 단위로 하나의 활성 조작만 허용한다.",
+        goal: "작업·기기·요청 ID에 묶인 짧은 중앙 lease를 원자적으로 획득·갱신·해제한다. 사람 인증 대기 중에는 정책에 맞는 상태로 보존하고 다른 조작을 차단한다.",
+        reads: ["tools/multi_position_sourcing/mutation_guard.py", "tools/multi_position_sourcing/job_queue.py", "supabase/migrations/"],
+        input: ["site", "account_key hash", "machine_id", "job_id", "request_id"],
+        output: ["GlobalLeaseToken 또는 busy 사유", "감사 가능한 acquire·renew·release 기록"],
+        red: ["두 기기 동시 획득이 모두 성공하면 실패", "만료된 token으로 조작이 가능하면 실패", "다른 job이 lease를 해제할 수 있으면 실패"],
+        green: ["데이터베이스 원자 RPC와 fencing token", "비밀 없는 account_key 해시", "명시적 만료·갱신·소유자 검증"],
+        wiring: ["모든 CDP mutation 직전 전역 lease 검증을 강제하는 공용 경계", "원격 mutation_guard 초안과 database lease를 실제 연결"],
+        tests: ["python -m pytest -q tests/test_global_account_lease.py tests/test_cross_agent_mutation_guard.py"],
+        done: ["동시 획득 경쟁 검사", "만료·잘못된 해제·fencing 검사"],
+        forbid: ["로컬 파일만의 전역 잠금", "무기한 lease", "사람 인증 중 다른 기기 조작 허용"]
+      },
+      {
+        id: 22, phase: "target", title: "기기 내부 조작 잠금",
+        summary: "같은 기기의 여러 Codex·Claude 프로세스가 같은 탭을 동시에 만지지 못하게 합니다.",
+        role: "로컬 mutation lease 담당자. endpoint·profile·target 기준의 프로세스 간 잠금을 제공한다.",
+        goal: "GlobalLeaseToken을 가진 프로세스만 target 단위 로컬 잠금을 획득한다. PID 재사용·stale lock·비정상 종료를 처리하고 Windows에서도 원자성을 보장한다.",
+        reads: ["tools/multi_position_sourcing/mutation_guard.py", "tools/multi_position_sourcing/session_guard.py"],
+        input: ["GlobalLeaseToken", "ExactTargetRef", "owner process identity"],
+        output: ["LocalMutationLease", "busy·stale·권한 불일치 사유"],
+        red: ["서로 다른 프로세스가 같은 target 잠금을 동시에 얻으면 실패", "stale lock을 무조건 삭제하면 실패", "전역 lease 없이 로컬 잠금만으로 조작하면 실패"],
+        green: ["원자 파일·OS lock과 소유 PID 시작 시각 검증", "전역 fencing token 포함", "복구 가능하되 추측 없는 stale 판정"],
+        wiring: ["공용 mutation guard가 전역→로컬 순서로만 획득", "모든 mutation 함수가 lease 인자를 필수로 받음"],
+        tests: ["python -m pytest -q tests/test_cross_agent_mutation_guard.py"],
+        done: ["동시 프로세스·PID 재사용·crash fixture", "잠금 획득 순서 기록"],
+        forbid: ["잠금 파일 무조건 삭제", "target 없는 브라우저 전체 잠금", "전역 lease 생략"]
+      },
+      {
+        id: 23, phase: "target", title: "사람 사용 여부와 창 표시",
+        summary: "사람이 PC를 쓰는 중에는 조작하지 않고, 조작할 탭에는 정확한 사용 중 표시만 붙입니다.",
+        role: "owner activity·exact window badge 담당자. 사람과 에이전트가 같은 브라우저를 충돌 없이 공유하게 한다.",
+        goal: "macOS와 Windows에서 실제 마지막 입력 시각과 전면 앱을 읽고 조작 직전 두 번 idle을 확인한다. exact target 창에만 [AI WORKING] 표시를 1회 붙이고 원래 제목을 복원한다.",
+        reads: ["tools/multi_position_sourcing/mutation_guard.py", "tools/multi_position_sourcing/session_guard.py", "scripts/macos_window_locator.swift"],
+        input: ["LocalMutationLease", "ExactTargetRef", "운영체제 owner activity", "agent·job 표시값"],
+        output: ["OwnerIdleProof 두 개", "BadgeReceipt(window identity, original title hash, restored)"],
+        red: ["Windows activity를 항상 idle로 간주하면 실패", "모호한 창에서 첫 번째 창을 표시하면 실패", "사람 입력 후에도 mutation하면 실패"],
+        green: ["Windows GetLastInputInfo와 foreground process 어댑터", "macOS 기존 window locator 재사용", "두 번 idle 확인·정확한 창 표시·guarded cleanup"],
+        wiring: ["mutation guard에서 idle proof와 badge 없이는 다음 auth mutation 차단", "원격 exact-window-badge 초안과 Windows activity 구현을 결합"],
+        tests: ["python -m pytest -q tests/test_owner_activity.py tests/test_raw_cdp_busy_badge.py"],
+        done: ["macOS·Windows 활동 fixture", "정확한 창 1개 표시·복원 영수증"],
+        forbid: ["전체 데스크톱 focus", "사람 활동 중 조작", "창·탭 생성/종료", "제목 기반 단독 창 선택"]
+      },
+      {
+        id: 24, phase: "auth", title: "사이트별 로그인 증거 수집",
+        summary: "URL 하나가 아니라 현재 화면의 계정 표식·로그인 폼·보안 도전을 함께 읽습니다.",
+        role: "인증 증거 collector 담당자. exact target에서 판단 재료만 읽고 결론은 내리지 않는다.",
+        goal: "site, target_id, observed_url, account_markers, login_form_markers, challenge_markers, selector_probe_errors, observed_at을 수집한다. 이력서 본문 같은 일반 텍스트로 캡차를 오인하지 않도록 구조·가시성을 함께 기록한다.",
+        reads: ["tools/multi_position_sourcing/auth_classifier.py", "tools/multi_position_sourcing/humansearch_preflight.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["AttachabilityResult", "ExactTargetRef", "사이트별 읽기 selector 계약"],
+        output: ["SiteAuthEvidence", "비밀 제거된 증거 해시"],
+        red: ["URL만으로 authenticated를 주장할 수 있으면 실패", "숨겨진 password input을 로그인 폼으로 단정하면 실패", "이력서의 captcha 단어만으로 challenge가 되면 실패"],
+        green: ["구조·가시성·서로 배타적인 표식 수집", "target ID와 URL 전후 동일성 포함", "collector는 읽기만 하고 상태 enum을 만들지 않음"],
+        wiring: ["auth classifier의 유일한 입력이 SiteAuthEvidence인지 타입 검사", "실 CDP 호출 목록에 mutation 0개"],
+        tests: ["python -m pytest -q tests/test_site_auth_evidence.py tests/test_humansearch_preflight.py"],
+        done: ["3사 로그인·로그아웃·2FA·selector drift fixture", "비밀 제거 증거 예시"],
+        forbid: ["로그인 제출", "상태 판정", "navigate·reload", "전체 body text 단독 판정"]
+      },
+      {
+        id: 25, phase: "auth", title: "로그인 상태 판정기",
+        summary: "수집된 증거를 인증됨·로그아웃·사람 인증·충돌·화면 변경으로 분류합니다.",
+        role: "순수 auth classifier 담당자. SiteAuthEvidence에서 정확히 하나의 상태와 근거 코드를 반환한다.",
+        goal: "AUTHENTICATED, AUTH_LOST, HUMAN_AUTH_REQUIRED, AUTH_CONFLICT, SELECTOR_DRIFT를 구분한다. 서로 모순되는 표식이나 target 변경은 통과하지 않는다.",
+        reads: ["tools/multi_position_sourcing/auth_classifier.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["SiteAuthEvidence"],
+        output: ["AuthDecision(state, reason_codes, evidence_hash)", "판정 불가의 명시적 이유"],
+        red: ["authenticated와 login form이 동시에 있어도 통과하면 실패", "challenge marker가 있는데 자동 로그인으로 보내면 실패", "알 수 없는 화면을 AUTH_LOST로 추측하면 실패"],
+        green: ["사이트별 판정 표와 공통 모순 규칙", "순수 함수·완전한 enum 처리", "target·URL 전후 불일치 차단"],
+        wiring: ["login coordinator와 search barrier가 같은 classifier 결과를 사용", "원격 auth_classifier 초안의 모든 분기를 현재 기준과 교차검사"],
+        tests: ["python -m pytest -q tests/test_site_auth_classifier.py"],
+        done: ["상태별 fixture와 이유 코드", "미처리 enum 0개 정적 검사"],
+        forbid: ["DOM 재조회", "자동 로그인", "재시도", "모호한 상태 기본값"]
+      },
+      {
+        id: 26, phase: "auth", title: "사람인 비밀정보 제공자",
+        summary: "Windows와 macOS에서 사람인 아이디·비밀번호를 로그 없이 메모리로만 가져옵니다.",
+        role: "사람인 credential provider 담당자. 운영체제별 비밀 저장소를 공통 인터페이스로 감싼다.",
+        goal: "macOS Keychain과 Windows Credential Manager 또는 승인된 저장소에서 SARAMIN 자격증명을 읽는다. 값은 redacted 타입으로 전달하고 직렬화·repr·예외에서 원문을 숨긴다.",
+        reads: ["tools/multi_position_sourcing/portal_recovery.py", "tools/multi_position_sourcing/portal_login.py", ".env.local.example"],
+        input: ["site=saramin", "machine_id", "승인된 secret reference"],
+        output: ["SecretCredentialHandle(username, password) 또는 CONFIG_MISSING", "secret source metadata만 포함한 기록"],
+        red: ["repr·str·JSON에 비밀번호가 보이면 실패", "Windows에서 macOS security 명령을 호출하면 실패", ".env.local 내용을 오류에 포함하면 실패"],
+        green: ["운영체제 provider와 공용 redacted handle", "secret reference allowlist", "메모리 사용 후 가능한 범위에서 즉시 참조 해제"],
+        wiring: ["사람인 one-shot login만 이 provider를 호출", "로그 캡처 검사에서 fixture secret 원문 0건"],
+        tests: ["python -m pytest -q tests/test_portal_credential_provider.py -k saramin"],
+        done: ["macOS·Windows fixture", "로그·예외·receipt 비밀 유출 검사"],
+        forbid: ["비밀번호 파일 새로 생성", "Discord·셸에서 비밀번호 받기", "LinkedIn 자격증명 처리"]
+      },
+      {
+        id: 27, phase: "auth", title: "사람인 로그인 1회",
+        summary: "정확한 기존 사람인 탭의 검증된 폼에만 자격증명을 한 번 제출합니다.",
+        role: "사람인 one-shot autologin 담당자. AUTH_LOST에서만 정확한 폼을 검증하고 단 한 번 조작한다.",
+        goal: "fresh global/local lease, owner idle proof, exact target, valid visible form, episode_id가 모두 있을 때 ID·비밀번호 입력과 submit 1회를 수행한다. 이후 새 증거를 수집해 재판정한다.",
+        reads: ["tools/multi_position_sourcing/safe_autologin.py", "tools/multi_position_sourcing/portal_autologin.py"],
+        input: ["AuthDecision=AUTH_LOST", "ExactTargetRef", "SecretCredentialHandle", "mutation guards", "episode_id"],
+        output: ["AutoLoginAttempt(submit_count=1, post_auth_decision)", "HUMAN_AUTH 또는 SELECTOR_DRIFT 인계"],
+        red: ["같은 episode에서 submit 두 번이면 실패", "AUTHENTICATED·HUMAN_AUTH_REQUIRED 상태에서 입력하면 실패", "target 또는 폼이 바뀐 뒤에도 제출하면 실패"],
+        green: ["사전 폼 probe와 mutation을 분리", "input/change 이벤트와 submit 1회", "제출 뒤 fresh evidence·classifier 재실행"],
+        wiring: ["portal login coordinator가 AUTH_LOST 사람인 분기에서만 호출", "원격 safe_autologin 초안을 사이트 전용으로 좁혀 사용"],
+        tests: ["python -m pytest -q tests/test_one_shot_safe_autologin.py -k saramin", "python -m pytest -q tests/test_login_session_runner.py -k saramin"],
+        done: ["제출 횟수 1 영수증", "전후 target·URL·auth evidence hash"],
+        forbid: ["재시도", "새 탭·navigate", "캡차 우회", "비밀번호 출력"]
+      },
+      {
+        id: 28, phase: "auth", title: "잡코리아 비밀정보 제공자",
+        summary: "Windows와 macOS의 승인된 저장소에서 잡코리아 기업 계정 자격증명만 회수합니다.",
+        role: "잡코리아 credential provider 담당자. 사람인 provider와 같은 보안 계약을 유지하되 사이트 키를 분리한다.",
+        goal: "JOBKOREA 자격증명을 운영체제 비밀 저장소에서 읽고 redacted handle로 반환한다. 사람인·LinkedIn 키와 교차 사용되지 않게 site binding을 강제한다.",
+        reads: ["tools/multi_position_sourcing/portal_recovery.py", "tools/multi_position_sourcing/portal_login.py", ".env.local.example"],
+        input: ["site=jobkorea", "machine_id", "승인된 secret reference"],
+        output: ["site-bound SecretCredentialHandle 또는 CONFIG_MISSING"],
+        red: ["사람인 key를 잡코리아에 사용할 수 있으면 실패", "secret 원문이 repr·로그·receipt에 남으면 실패", "지원하지 않는 운영체제에서 빈 문자열을 반환하면 실패"],
+        green: ["site가 포함된 secret key namespace", "운영체제 provider 재사용", "빈 값·형식 오류를 명확한 설정 오류로 처리"],
+        wiring: ["잡코리아 one-shot login만 이 provider를 호출", "secret fixture가 전체 테스트 출력에 나타나지 않음"],
+        tests: ["python -m pytest -q tests/test_portal_credential_provider.py -k jobkorea"],
+        done: ["site 교차사용 차단 검사", "macOS·Windows 비밀 비출력 검사"],
+        forbid: ["LinkedIn li_at 처리", "평문 파일 저장", "Discord 입력", "자격증명 자동 생성"]
+      },
+      {
+        id: 29, phase: "auth", title: "잡코리아 로그인 1회",
+        summary: "기업회원 로그인 화면을 확인하고 정확한 기존 탭에서만 제출을 한 번 수행합니다.",
+        role: "잡코리아 one-shot autologin 담당자. 기업회원 폼이 명확한 경우에만 1회 제출한다.",
+        goal: "AUTH_LOST, 기업회원 폼 표식, fresh guards, exact target를 모두 확인한 뒤 ID·비밀번호와 submit을 1회 수행한다. 제출 뒤 인재검색 화면 인증 표식을 새로 확인한다.",
+        reads: ["tools/multi_position_sourcing/safe_autologin.py", "tools/multi_position_sourcing/portal_autologin.py"],
+        input: ["AuthDecision=AUTH_LOST", "ExactTargetRef", "잡코리아 SecretCredentialHandle", "mutation guards", "episode_id"],
+        output: ["AutoLoginAttempt(submit_count=1, post_auth_decision)", "사람 인증·화면 변경 인계"],
+        red: ["개인회원 폼에 기업 자격증명을 넣으면 실패", "episode 재실행으로 두 번째 submit이 발생하면 실패", "제출 후 URL만 보고 성공하면 실패"],
+        green: ["기업회원 pre-step·폼 표식 확인", "one-shot mutation", "fresh evidence로 로그인됨·2FA·selector drift 판정"],
+        wiring: ["portal coordinator의 jobkorea AUTH_LOST 분기에서만 호출", "검색 executor는 post_auth_decision=AUTHENTICATED 전 호출 0회"],
+        tests: ["python -m pytest -q tests/test_one_shot_safe_autologin.py -k jobkorea", "python -m pytest -q tests/test_login_session_runner.py -k jobkorea"],
+        done: ["제출 1회와 기업회원 폼 증거", "전후 인증 증거 해시"],
+        forbid: ["개인회원 로그인", "재시도", "새 탭·브라우저", "캡차·2FA 자동 처리"]
+      },
+      {
+        id: 30, phase: "auth", title: "LinkedIn li_at 비밀 제공자",
+        summary: "선택된 단일 기기에서만 사용할 li_at을 승인된 비밀 저장소에서 안전하게 회수합니다.",
+        role: "LinkedIn 세션 비밀 provider 담당자. li_at 원문이 관측 가능한 경로로 새지 않게 한다.",
+        goal: "owner 승인과 selected_machine이 일치할 때만 기기 비밀 저장소의 LINKEDIN_LI_AT reference를 resolve한다. 원문은 redacted handle 내부에서만 존재하고 길이·형식 최소 검사를 수행한다.",
+        reads: ["tools/multi_position_sourcing/portal_recovery.py", "tools/multi_position_sourcing/login_barrier.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["site=linkedin_rps", "selected_machine", "owner authorization", "secret reference"],
+        output: ["MachineBoundCookieHandle(name=li_at, domain=.linkedin.com, secure=true)", "CONFIG_MISSING·MACHINE_MISMATCH"],
+        red: ["다른 기기용 handle을 사용할 수 있으면 실패", "cookie value가 str·repr·JSON·예외에 보이면 실패", "Discord payload에서 li_at 값을 받을 수 있으면 실패"],
+        green: ["기기·사이트·cookie name에 묶인 redacted handle", "비밀 저장소 provider의 접근 감사", "원문 대신 fingerprint만 증거에 허용"],
+        wiring: ["LinkedIn injector만 handle을 소비하고 다른 모듈은 value 접근 불가", "로그 전체 secret scanner 통과"],
+        tests: ["python -m pytest -q tests/test_linkedin_li_at_provider.py"],
+        done: ["기기 바꿔치기·직렬화·오류 유출 검사", "secret-free 접근 영수증"],
+        forbid: ["쿠키 원문 출력·커밋", "Discord·셸 평문 입력", "다른 LinkedIn 쿠키 회수", "브라우저 조작"]
+      },
+      {
+        id: 31, phase: "auth", title: "LinkedIn li_at 1회 적용",
+        summary: "로그아웃된 정확한 LinkedIn 기존 탭에만 li_at을 한 번 적용하고 즉시 재검증합니다.",
+        role: "LinkedIn exact-target cookie injector 담당자. 단일 보안 조작을 원자적 episode로 수행한다.",
+        goal: "AUTH_LOST이며 LinkedIn guardian이 LOGIN_ALLOWED를 준 경우, fresh guards와 ExactTargetRef를 재확인하고 CDP Network.setCookie로 li_at을 1회 설정한다. 같은 기존 target에서 허용된 LinkedIn RPS 주소로 1회 이동한 뒤 인증 증거를 재수집한다.",
+        reads: ["tools/multi_position_sourcing/raw_cdp.py", "tools/multi_position_sourcing/linkedin_session_guardian.py", "tools/multi_position_sourcing/session_guard.py"],
+        input: ["MachineBoundCookieHandle", "ExactTargetRef", "GuardianDecision=LOGIN_ALLOWED", "mutation guards", "episode_id"],
+        output: ["LinkedInCookieAttempt(mutation_count, post_auth_decision, target_identity)", "사람 인증 또는 충돌 인계"],
+        red: ["기존 인증 기기가 있는데 다른 기기에 cookie를 적용하면 실패", "같은 episode에서 setCookie가 두 번이면 실패", "새 탭·전체 브라우저 context에 쿠키를 쓰면 실패"],
+        green: ["exact target raw CDP connection", "domain·secure·httpOnly·sameSite·expiry 계약 검증 후 setCookie 1회", "같은 target의 허용 주소 이동과 fresh auth classification"],
+        wiring: ["guardian→provider→injector 순서를 타입과 spy로 강제", "worker 모델 프롬프트가 아닌 생산 코드가 mutation_count를 검증"],
+        tests: ["python -m pytest -q tests/test_linkedin_li_at_injector.py tests/test_linkedin_single_seat_guardian.py"],
+        done: ["setCookie 1회·target 동일·post-auth 증거", "로그의 li_at 원문 0건"],
+        forbid: ["다른 기기 로그아웃", "쿠키 DB 직접 수정", "새 브라우저·탭", "재시도·로그인 폼 제출"]
+      },
+      {
+        id: 32, phase: "auth", title: "LinkedIn 로그인 재검증",
+        summary: "li_at 적용 뒤 RPS 화면과 계정 표식이 실제로 살아 있는지 별도 단계에서 확인합니다.",
+        role: "LinkedIn post-auth verifier 담당자. injector 성공 주장과 독립적으로 fresh evidence를 판정한다.",
+        goal: "동일 target_id와 허용 RPS URL, 계정 또는 Recruiter 표식, challenge 부재를 확인한다. login-cap·enterprise-authentication·multiple sign-ins는 성공으로 처리하지 않는다.",
+        reads: ["tools/multi_position_sourcing/auth_classifier.py", "tools/multi_position_sourcing/login_barrier.py"],
+        input: ["LinkedInCookieAttempt", "fresh SiteAuthEvidence"],
+        output: ["VerifiedLinkedInSession(machine_id, target_id, evidence_hash, observed_at) 또는 차단 상태"],
+        red: ["injector return=true만으로 통과하면 실패", "login-cap URL이 성공이면 실패", "target ID가 바뀌어도 통과하면 실패"],
+        green: ["fresh evidence와 classifier 재사용", "attempt의 machine·target·episode와 정확 일치", "HUMAN_AUTH_REQUIRED·AUTH_CONFLICT 분리"],
+        wiring: ["LinkedIn receipt writer가 VerifiedLinkedInSession만 받도록 생성자 계약"],
+        tests: ["python -m pytest -q tests/test_linkedin_post_auth_verifier.py tests/test_site_auth_classifier.py"],
+        done: ["성공·login-cap·multiple-signin·target-swap fixture", "injector와 독립된 판정 기록"],
+        forbid: ["추가 쿠키 적용", "재로그인", "기기 선택", "사람 대신 계속 버튼 클릭"]
+      },
+      {
+        id: 33, phase: "auth", title: "LinkedIn 단일 기기 보호자",
+        summary: "로그인 기기 0·1·2개 상황에서 재사용·로그인 허용·충돌 차단을 결정합니다.",
+        role: "LinkedIn single-seat guardian 담당자. 전역 관찰값으로만 안전한 결정을 내리는 순수 코어를 구현한다.",
+        goal: "인증 기기 1개면 반드시 그 기기를 재사용한다. 0개면 선택된 준비 기기의 로그인만 허용한다. 2개 이상·모순·오래된 증거면 차단한다. 다른 기기 자동 로그아웃 명령은 절대 생성하지 않는다.",
+        reads: ["tools/multi_position_sourcing/linkedin_session_guardian.py", "tools/multi_position_sourcing/fleet_route.py"],
+        input: ["FleetSnapshot", "기기별 fresh LinkedIn auth observations", "requested_machine"],
+        output: ["GuardianDecision(REUSE_EXISTING|LOGIN_ALLOWED|TAKEOVER_APPROVAL_REQUIRED|CONFLICT_BLOCKED)", "근거 기기 집합"],
+        red: ["인증 기기 1개를 무시하고 요청 기기로 이동하면 실패", "인증 기기 2개 중 첫 번째를 선택하면 실패", "AUTO_LOGOUT 같은 동작을 반환하면 실패"],
+        green: ["순수 상태표", "freshness와 conflict 검증", "route decision과 일관된 selected_machine"],
+        wiring: ["fleet router와 LinkedIn injector 양쪽이 동일 guardian 결정을 요구", "원격 guardian 초안의 결정표를 현재 정책으로 확장"],
+        tests: ["python -m pytest -q tests/test_linkedin_single_seat_guardian.py"],
+        done: ["0·1·2 기기 전체 조합 검사", "자동 로그아웃 출력 0개 정적 증명"],
+        forbid: ["실제 로그아웃·로그인", "브라우저 조작", "요청 기기 우선 강제", "오래된 heartbeat 신뢰"]
+      },
+      {
+        id: 34, phase: "auth", title: "LinkedIn 명시적 기기 인수인계",
+        summary: "이미 로그인된 기기와 다른 기기로 옮길 때 사장님 승인과 전역 잠금을 별도로 요구합니다.",
+        role: "LinkedIn takeover coordinator 담당자. 단일 기기 세션 이동을 독립적인 파괴적 승인 절차로 관리한다.",
+        goal: "GuardianDecision=TAKEOVER_APPROVAL_REQUIRED일 때만 owner에게 기존 기기·새 기기·영향을 표시한다. 정확한 request_id에 대한 1회 승인 뒤 새 기기 로그인을 허용하고, 기존 기기는 자동 조작하지 않은 채 인증 상실 여부만 읽기 전용으로 관찰한다.",
+        reads: ["tools/multi_position_sourcing/linkedin_session_guardian.py", "scripts/discord_direct_gateway.py", "tools/multi_position_sourcing/job_queue.py"],
+        input: ["guardian decision", "owner approval token", "from_machine", "to_machine", "request_id"],
+        output: ["TakeoverPermit 또는 승인 대기·만료", "전후 기기 인증 관찰 결과"],
+        red: ["일반 login 승인으로 takeover가 허용되면 실패", "승인 token을 다른 request_id에 재사용하면 실패", "기존 기기에서 logout 클릭을 자동 수행하면 실패"],
+        green: ["별도 Discord 승인 문구와 짧은 1회 token", "전역 계정 lease 독점 후 permit 발급", "새 기기 성공 뒤 기존 기기 상태는 읽기만 수행"],
+        wiring: ["LinkedIn injector가 TAKEOVER permit 없이는 기존 인증 기기와 다른 machine에서 실행되지 않음"],
+        tests: ["python -m pytest -q tests/test_linkedin_takeover.py tests/test_linkedin_single_seat_guardian.py"],
+        done: ["승인·거부·만료·재사용 fixture", "자동 logout 호출 0회 영수증"],
+        forbid: ["묵시적 승인", "다른 기기 원격 로그아웃", "무기한 permit", "승인 없는 cookie 적용"]
+      },
+      {
+        id: 35, phase: "auth", title: "재시작 가능한 사람 인증 인계",
+        summary: "2FA·캡차·checkpoint 창을 한 번만 보여주고 프로세스가 재시작돼도 같은 요청을 이어갑니다.",
+        role: "human auth episode coordinator 담당자. 사람에게 필요한 조치만 정확한 창으로 인계하고 상태를 영속화한다.",
+        goal: "HUMAN_AUTH_REQUIRED에서 site·machine·target·request_id별 episode를 중앙 저장한다. exact window를 1회 앞으로 보여주고 이후에는 auth marker와 owner idle만 읽는다. 프로세스 재시작 후에도 중복 안내·중복 조작 없이 이어간다.",
+        reads: ["tools/multi_position_sourcing/human_auth_episode.py", "tools/multi_position_sourcing/session_guard.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["AuthDecision=HUMAN_AUTH_REQUIRED", "ExactTargetRef", "window identity", "request_id", "owner contact"],
+        output: ["PersistentHumanAuthEpisode", "Discord 안내 1회", "AUTHENTICATED 또는 계속 대기"],
+        red: ["프로세스 재시작 후 새 episode와 새 알림이 생기면 실패", "대기 중 click·type·reload가 실행되면 실패", "모호한 창을 focus하면 실패"],
+        green: ["중앙 또는 내구성 있는 episode 저장", "presentation_count 최대 1", "대기 allowlist를 auth read·owner idle·wait로 제한", "성공 뒤 exact episode만 종료"],
+        wiring: ["fleet worker paused_for_human과 resume가 같은 episode_id를 사용", "원격 process-local 초안을 영속 저장으로 교체"],
+        tests: ["python -m pytest -q tests/test_human_auth_episode_coordinator.py tests/test_session_guard.py -k human_auth"],
+        done: ["재시작·중복 이벤트·target 변경 fixture", "안내 1회·mutation 0회 대기 기록"],
+        forbid: ["2FA 자동 입력", "캡차 우회", "창·탭 종료", "전체 브라우저 focus", "외부 timeout으로 취소"]
+      },
+      {
+        id: 36, phase: "search", title: "요청에 묶인 로그인 영수증",
+        summary: "검색 직전 상태를 기기·탭·요청·증거 파일과 묶어 위조하기 어렵게 증명합니다.",
+        role: "로그인 receipt·execution barrier 담당자. 문자열 성공 주장을 믿지 않고 파일과 신선한 증거를 검증한다.",
+        goal: "channel, machine_id, profile_id, target_id, request_id, job_id, auth_state, observed_at, evidence hashes, mutation_count, keyed_signature를 가진 짧은 유효시간 영수증을 만든다. 신뢰된 증거 루트의 파일만 허용한다.",
+        reads: ["tools/multi_position_sourcing/login_barrier.py", "tools/multi_position_sourcing/fleet_worker.py"],
+        input: ["Verified auth session", "신뢰된 evidence files", "active request/job", "기기 서명 키"],
+        output: ["SignedLoginReceipt", "검증 함수와 채널별 차단 사유"],
+        red: ["payload와 증거 hash를 다시 계산한 위조가 통과하면 실패", "다른 request_id·machine·target 영수증 재사용이 통과하면 실패", "임의 경로의 증거 파일이 통과하면 실패"],
+        green: ["키 기반 서명", "신뢰 루트·파일 권한·크기 검사", "request/job/machine/target binding과 짧은 TTL", "실행 직전 디스크 재조회"],
+        wiring: ["worker가 모델 출력이 아니라 receipt verifier 결과로 executor 호출 여부를 결정", "원격 login_barrier 초안의 단순 hash를 서명으로 강화"],
+        tests: ["python -m pytest -q tests/test_login_barrier.py tests/test_fleet_worker_login_barrier.py"],
+        done: ["변조·재사용·경로 바꿔치기 검사", "성공 receipt 예시에서 비밀값 0개"],
+        forbid: ["24시간 영수증", "모델의 LOGIN_BARRIER=PASS 문자열 신뢰", "임의 evidence path", "비밀값·cookie fingerprint 외 원문 기록"]
+      },
+      {
+        id: 37, phase: "search", title: "기존 탭으로 검색 화면 이동",
+        summary: "새 탭 없이 선택된 기존 target을 사람인·잡코리아 인재검색 또는 LinkedIn RPS 화면으로 이동합니다.",
+        role: "search surface navigator 담당자. 인증된 exact target 하나를 허용된 공식 검색 주소로만 이동한다.",
+        goal: "fresh login receipt와 mutation guards를 다시 확인한 뒤 같은 target_id에서 사이트별 공식 주소로 Page.navigate 1회를 수행한다. redirect chain이 허용 범위를 벗어나면 중단한다.",
+        reads: ["tools/multi_position_sourcing/portal_worker.py", "tools/multi_position_sourcing/raw_cdp.py", "docs/sot/26-portal-login-spec.json"],
+        input: ["SignedLoginReceipt", "ExactTargetRef", "required surface", "mutation guards"],
+        output: ["SurfaceNavigationReceipt(target_id, requested_url, final_url, redirect_chain)", "인증 상실·challenge 인계"],
+        red: ["새 탭을 만들면 실패", "영수증 target과 다른 탭을 이동하면 실패", "외부 도메인 redirect를 따라가면 실패"],
+        green: ["사이트별 정확한 공식 URL allowlist", "same target Page.navigate 1회", "redirect와 target identity 재확인", "이동 후 auth evidence 새로 수집"],
+        wiring: ["skill site plan의 required_surfaces만 navigator가 받음", "navigation 성공 전 JD 입력·검색 executor 호출 0회"],
+        tests: ["python -m pytest -q tests/test_search_surface_navigator.py"],
+        done: ["3사 공식 URL fixture", "target 동일·새 target 0개 영수증"],
+        forbid: ["Target.createTarget·newPage", "back·reload 재시도", "검색값 입력", "로그인 폼 조작"]
+      },
+      {
+        id: 38, phase: "search", title: "검색 화면 준비 확인",
+        summary: "화면 주소·로그인 상태·입력 컨트롤이 모두 맞아야 준비 완료로 판정합니다.",
+        role: "search surface verifier 담당자. navigation 결과를 실제 DOM과 fresh auth evidence로 검증한다.",
+        goal: "사람인 인재풀, 잡코리아 인재검색, LinkedIn Recruiter 검색의 사이트별 필수 입력 컨트롤과 계정 표식을 확인한다. selector drift와 권한 부족을 구분한다.",
+        reads: ["tools/multi_position_sourcing/humansearch_preflight.py", "tools/multi_position_sourcing/portal_worker.py"],
+        input: ["SurfaceNavigationReceipt", "fresh SiteAuthEvidence", "사이트별 surface selector contract"],
+        output: ["VerifiedSearchSurface(site, target_id, controls, evidence_hash)", "AUTH_LOST·HUMAN_AUTH_REQUIRED·SELECTOR_DRIFT"],
+        red: ["URL만 맞으면 준비 완료가 되면 실패", "입력 selector가 없는데 계속하면 실패", "이력서 본문의 captcha 단어로 HUMAN_AUTH가 되면 실패"],
+        green: ["가시적인 필수 컨트롤·계정 표식·target 동일성 검증", "사이트별 selector version", "실패 상태를 후속 조치별로 분리"],
+        wiring: ["JD input applier가 VerifiedSearchSurface만 입력받음", "실제 스킬 runner의 preflight가 공용 verifier를 호출"],
+        tests: ["python -m pytest -q tests/test_search_surface_verifier.py tests/test_humansearch_preflight.py"],
+        done: ["3사 성공·selector drift·auth lost fixture", "읽기 전용 CDP 호출 목록"],
+        forbid: ["입력·클릭", "selector 자동 추측", "URL 단독 통과", "검색 실행"]
+      },
+      {
+        id: 39, phase: "search", title: "JD 검색값 입력·되읽기",
+        summary: "요청받은 JD에서 만든 검색값을 넣은 뒤 화면에서 실제 적용값을 다시 읽어 비교합니다.",
+        role: "search input applicator 담당자. 검증된 화면에 사이트별 입력 계약을 적용하고 read-back 증거를 만든다.",
+        goal: "정규화된 JD와 실행 스킬이 만든 검색어·필터를 VerifiedSearchSurface에 입력한다. 입력 직후 UI의 실제 값·키워드 칩·필터를 다시 읽어 기대값과 비교한다. 검색 버튼은 아직 누르지 않는다.",
+        reads: ["tools/multi_position_sourcing/humansearch_preflight.py", ".codex/skills/ai-search/SKILL.md", ".codex/skills/url/SKILL.md"],
+        input: ["VerifiedSearchSurface", "정규화 JD", "site-specific SearchQueryPlan", "mutation guards"],
+        output: ["SearchInputReceipt(expected, observed, target_id, evidence_hash)", "불일치·selector drift 사유"],
+        red: ["입력 후 read-back 없이 성공하면 실패", "사람인·잡코리아 필터를 서로 바꾸어도 통과하면 실패", "검색 submit까지 같이 실행하면 실패"],
+        green: ["사이트별 input adapter와 순수 expected plan 분리", "실제 UI 값·칩·선택 필터 read-back", "정규화 비교와 불일치 시 즉시 중단"],
+        wiring: ["aisearch·url·humansearch runner가 공용 receipt를 요구", "JD URL·본문·파일 세 종류가 같은 정규화 본문으로 연결되는 통합검사"],
+        tests: ["python -m pytest -q tests/test_search_input_readback.py tests/test_fleet_args.py"],
+        done: ["3사 입력·되읽기 fixture", "입력 종류별 동일 결과 증명", "검색 클릭 0회 기록"],
+        forbid: ["검색 시작", "후보 프로필 열기", "메시지·메일 발송", "불일치 자동 보정 반복"]
+      },
+      {
+        id: 40, phase: "search", title: "검색 실행 해제와 전체 경로 증명",
+        summary: "모든 증거가 신선할 때만 aisearch·humansearch·url 실행기를 한 번 호출하고 Discord에 결과를 돌려줍니다.",
+        role: "최종 execution release·live acceptance 담당자. 앞 39개 계약을 생산 호출 경로에서 하나로 묶는다.",
+        goal: "요청·기기 snapshot·route·exact target·로그인 영수증·검색 화면·입력 되읽기 증거가 모두 같은 request_id, job_id, machine_id, target_id에 묶인 경우에만 해당 검색 executor를 1회 시작한다. 상태 변화와 결과를 Discord·셸에 비밀 없이 회신한다.",
+        reads: ["scripts/discord_direct_gateway.py", "tools/multi_position_sourcing/fleet_dispatch.py", "tools/multi_position_sourcing/fleet_worker.py", "tools/multi_position_sourcing/login_barrier.py"],
+        input: ["LoginSearchRequest", "모든 signed receipts", "SearchInputReceipt", "execution skill"],
+        output: ["queued→running→done 또는 paused_for_human 상태", "executor invocation receipt", "Discord response_id 또는 셸 결과"],
+        red: ["영수증 하나가 없거나 ID가 다를 때 executor가 호출되면 실패", "동일 request_id로 executor가 두 번 실행되면 실패", "login 작업이 검색을 자동 시작하면 실패"],
+        green: ["실행 직전 모든 receipt를 디스크·중앙 저장소에서 재검증", "exactly-once executor release", "login과 search 작업 분리 유지", "Claude 1건·Codex 1건의 실제 경로와 rollback 절차"],
+        wiring: ["Discord→direct gateway→queue→worker→Codex/Claude→result reply 전체를 실제 환경에서 증명", "Hermes가 호출 경로에 없고 executor 직접 우회가 0개인지 확인", "검색 중 사람 인증 필요 시 같은 job·episode로 멈춤·재개"],
+        tests: ["python -m pytest -q tests/test_discord_direct_gateway.py tests/test_fleet_dispatch.py tests/test_fleet_worker_login_barrier.py", "python -m pytest -q tests/test_login_search_e2e.py", "git diff --check"],
+        done: ["Claude·Codex 각각 event_id, job_id, machine_id, target_id, response_id", "동일 요청 executor 1회", "중복 응답 0개", "실패 주입 rollback 결과", "전체 검사 통과 기록"],
+        forbid: ["Hermes 신규 호출", "모델 성공 문구만으로 통과", "로그인과 검색의 한 작업 합치기", "아웃리치·Send·메일 발송", "증거 없는 완료 보고"]
+      }
+    ];
+
+    const list = value => value.map(item => `- ${item}`).join("\n");
+
+    function buildPrompt(app) {
+      const previous = app.id === 1
+        ? "없음. 다만 시작 전 저장소의 기존 미해결 작업과 검사 환경을 먼저 정상화한다."
+        : `APP ${String(app.id - 1).padStart(2, "0")}가 기본 브랜치에 병합되고 전체 검사가 통과한 상태.`;
+      const sot = [...commonSot, ...app.reads];
+      return `[APP ${String(app.id).padStart(2, "0")} / 40] ${app.title}
+
+이 프롬프트는 Codex·Claude의 새 독립 세션에 그대로 붙여 넣는 구현 계약이다.
+이전 대화나 다른 에이전트의 기억을 신뢰하지 말고 저장소의 파일·테스트·git 이력에서만 상태를 회수한다.
+한 세션에서는 이 카드의 인수 기준 하나만 구현한다.
+
+## 역할
+${app.role}
+
+## 목표
+${app.goal}
+
+## 선행 조건
+- ${previous}
+- 현재 브랜치와 변경 파일을 확인하고, 사용자 변경을 덮어쓰지 않는다.
+- 시작 전 표준 점검을 실행한다. 미해결 항목이 있으면 새 구현을 시작하지 말고 차단 근거만 보고한다.
+- 새 작업은 격리된 작업 브랜치에서 수행하고, 이 카드 범위 밖의 정리는 하지 않는다.
+
+## 기준 회수
+아래 파일을 처음부터 끝까지 읽고 현재 코드와 모순을 표로 정리한다.
+${list(sot)}
+- 관련 구현·테스트·호출자를 rg와 git log로 찾는다.
+- origin/task/integrity-login-receipt-barrier 등 원격 초안이 있으면 참고하되 통째로 합치지 않는다.
+- 기준 문서와 사용자 결정이 충돌하면 사용자 결정을 반영한 기준 갱신이 먼저이며 추측 구현은 금지한다.
+
+## 입력 계약
+${list(app.input)}
+- 누락·모호·오래됨·서명 불일치 입력은 명시적 오류로 거부한다.
+- 비밀번호·쿠키·토큰 원문은 함수 인자 타입 밖으로 직렬화하지 않는다.
+
+## 출력 계약
+${list(app.output)}
+- 결과에는 request_id, machine_id, target_id 중 이 단계에 해당하는 식별자를 포함한다.
+- 오류는 재시도 가능 여부와 사람 조치 여부를 구조화해 반환한다.
+- 로그·영수증·예외 메시지는 secret-free여야 한다.
+
+## 먼저 만들 실패 검사
+${list(app.red)}
+- 검사 이름은 행동을 설명해야 하며 구현 세부사항에 종속되지 않게 한다.
+- 새 검사가 의도한 이유로 실패하는 모습을 저장한 뒤에만 구현을 시작한다.
+
+## 최소 구현
+${list(app.green)}
+- 위 실패 검사를 통과시키는 데 필요한 가장 작은 생산 코드만 작성한다.
+- timeout, freshness, idempotency, ambiguity는 모두 안전하게 중단하는 방향으로 처리한다.
+- 브라우저 조작 함수는 읽기와 쓰기를 분리하고, 쓰기는 fresh lease와 exact target을 필수 인자로 받는다.
+
+## 실제 연결 증명
+${list(app.wiring)}
+- 단위검사에서 직접 함수를 호출한 것만으로 완료하지 않는다.
+- 생산 진입점에서 이 구현이 호출되고, 실패 시 다음 실행기가 0회 호출되는지를 spy 또는 통합검사로 증명한다.
+
+## 검증 명령
+- Windows: & 'C:\\Program Files\\Git\\bin\\bash.exe' scripts/harness/red-ledger-gate.sh
+- macOS/Linux: bash scripts/harness/red-ledger-gate.sh
+${list(app.tests)}
+- 관련 검사가 통과한 뒤 저장소 표준 전체 검사를 실행한다.
+- 별도 검토 도구로 범위 누락·우회 경로·비밀 유출·중복 실행 가능성을 교차 점검한다.
+
+## 완료 증거
+${list(app.done)}
+- 변경 파일 목록과 각 파일의 이유
+- 새 검사 수·관련 검사 수·전체 검사 수와 모두 통과한 결과
+- 생산 호출 경로에서 실제로 사용됨을 보이는 증거
+- 비밀값이 포함되지 않은 완료 영수증
+
+## 금지 범위
+${list(app.forbid)}
+- 브라우저 kill·restart·새 창·새 탭 생성
+- exact target이 없는 전체 브라우저 연결
+- 2FA·캡차·checkpoint 자동 우회
+- 사용자 승인 없는 로그아웃·세션 이전
+- 테스트 삭제·약화·skip, 실패를 성공으로 바꾸는 fallback
+- push·PR·merge는 사용자 요청이나 저장소 절차의 명시적 단계 없이 수행하지 않는다.
+
+## 종료 규칙
+완료 증거가 하나라도 없으면 완료라고 말하지 않는다. 현재 상태, 차단 이유, 다음 한 행동만 보고한다.
+완료했다면 쉬운 한국어 보고서 형식으로 요청·변경·검증·남은 위험·다음 행동을 보고한다.`;
+    }
+
+    const grid = document.getElementById("promptGrid");
+    const search = document.getElementById("search");
+    const empty = document.getElementById("empty");
+    const toast = document.getElementById("toast");
+    const progressNumber = document.getElementById("progressNumber");
+    const progressBar = document.getElementById("progressBar");
+    let activePhase = "all";
+    let toastTimer;
+
+    function announce(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    async function copyText(text, successMessage) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+      }
+      announce(successMessage);
+    }
+
+    function completedIds() {
+      try {
+        return new Set(JSON.parse(localStorage.getItem("loginPromptProgress") || "[]"));
+      } catch {
+        return new Set();
+      }
+    }
+
+    function updateProgress() {
+      const completed = [...grid.querySelectorAll(".complete-check:checked")].length;
+      progressNumber.textContent = `${completed} / ${apps.length}`;
+      progressBar.style.width = `${(completed / apps.length) * 100}%`;
+      localStorage.setItem(
+        "loginPromptProgress",
+        JSON.stringify([...grid.querySelectorAll(".complete-check:checked")].map(box => Number(box.dataset.id)))
+      );
+    }
+
+    function render() {
+      const completed = completedIds();
+      grid.replaceChildren();
+      apps.forEach((app, index) => {
+        const prompt = buildPrompt(app);
+        const card = document.createElement("article");
+        card.className = "prompt-card";
+        card.style.setProperty("--i", index);
+        card.dataset.phase = app.phase;
+        card.dataset.search = `${app.title} ${app.summary} ${prompt}`.toLocaleLowerCase("ko");
+        if (completed.has(app.id)) card.classList.add("done");
+
+        const head = document.createElement("div");
+        head.className = "card-head";
+
+        const number = document.createElement("div");
+        number.className = "index";
+        number.innerHTML = `APP<strong>${String(app.id).padStart(2, "0")}</strong>`;
+
+        const title = document.createElement("div");
+        title.className = "card-title";
+        const phase = document.createElement("span");
+        phase.className = "phase-code";
+        phase.textContent = phaseLabels[app.phase];
+        const h3 = document.createElement("h3");
+        h3.textContent = app.title;
+        const p = document.createElement("p");
+        p.textContent = app.summary;
+        title.append(phase, h3, p);
+
+        const actions = document.createElement("div");
+        actions.className = "card-actions";
+        const completeLabel = document.createElement("label");
+        completeLabel.className = "complete-label";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "complete-check";
+        checkbox.dataset.id = app.id;
+        checkbox.checked = completed.has(app.id);
+        checkbox.setAttribute("aria-label", `${app.title} 완료 표시`);
+        completeLabel.append(checkbox, document.createTextNode("완료"));
+
+        const copy = document.createElement("button");
+        copy.className = "copy";
+        copy.type = "button";
+        copy.textContent = "프롬프트 복사";
+        copy.setAttribute("aria-label", `${app.title} 전체 프롬프트 복사`);
+        copy.addEventListener("click", () => copyText(prompt, `APP ${String(app.id).padStart(2, "0")} 복사 완료`));
+        actions.append(completeLabel, copy);
+        head.append(number, title, actions);
+
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "전체 구현 계약 보기";
+        const pre = document.createElement("pre");
+        pre.className = "prompt-text";
+        pre.textContent = prompt;
+        details.append(summary, pre);
+        card.append(head, details);
+
+        checkbox.addEventListener("change", () => {
+          card.classList.toggle("done", checkbox.checked);
+          updateProgress();
+        });
+        grid.appendChild(card);
+      });
+      updateFilters();
+      updateProgress();
+    }
+
+    function updateFilters() {
+      const query = search.value.trim().toLocaleLowerCase("ko");
+      let visible = 0;
+      grid.querySelectorAll(".prompt-card").forEach(card => {
+        const phaseMatch = activePhase === "all" || card.dataset.phase === activePhase;
+        const searchMatch = !query || card.dataset.search.includes(query);
+        card.hidden = !(phaseMatch && searchMatch);
+        if (!card.hidden) visible += 1;
+      });
+      empty.style.display = visible ? "none" : "block";
+    }
+
+    document.querySelectorAll(".filter").forEach(button => {
+      button.addEventListener("click", () => {
+        activePhase = button.dataset.phase;
+        document.querySelectorAll(".filter").forEach(item => {
+          item.setAttribute("aria-pressed", String(item === button));
+        });
+        updateFilters();
+      });
+    });
+
+    search.addEventListener("input", updateFilters);
+
+    document.getElementById("expandAll").addEventListener("click", () => {
+      grid.querySelectorAll(".prompt-card:not([hidden]) details").forEach(item => { item.open = true; });
+    });
+
+    document.getElementById("collapseAll").addEventListener("click", () => {
+      grid.querySelectorAll("details").forEach(item => { item.open = false; });
+    });
+
+    document.getElementById("copyVisible").addEventListener("click", () => {
+      const visiblePrompts = [...grid.querySelectorAll(".prompt-card:not([hidden])")]
+        .map(card => apps.find(app => app.id === Number(card.querySelector(".complete-check").dataset.id)))
+        .map(buildPrompt);
+      if (!visiblePrompts.length) {
+        announce("복사할 카드가 없습니다.");
+        return;
+      }
+      copyText(visiblePrompts.join("\n\n" + "=".repeat(80) + "\n\n"), `${visiblePrompts.length}개 프롬프트 복사 완료`);
+    });
+
+    document.getElementById("resetProgress").addEventListener("click", () => {
+      grid.querySelectorAll(".complete-check").forEach(box => { box.checked = false; });
+      grid.querySelectorAll(".prompt-card").forEach(card => card.classList.remove("done"));
+      updateProgress();
+      announce("완료 표시를 초기화했습니다.");
+    });
+
+    render();
+  </script>
+</body>
+</html>
