@@ -34,7 +34,7 @@ description: LinkedIn Recruiter(RPS)에서 한 포지션의 InMail 본문(개요
 | **R21** | **🎯 본문 맺음 인입 CTA 1줄 필수** — 서명(강상모 드림) 뒤 구분선 + `P.S. 지금 이 포지션이 딱 맞지 않으셔도 괜찮습니다. 밸류커넥트가 이력서를 직접 검증해, 더 잘 맞는 기회까지 연결해 드립니다 — 무료 커리어 검증 신청: https://valuehire.cc/resume`. 후보자를 0원 검증 깔때기(VERIFIED-PULL)로 자연 인입. §6 ⑤ 참조. 4채널 공통. **매칭 우선권 무관한 정보성 안내로만(취업 알선 대가·합격보장 표현 금지).** 링크 라이브 `/resume`(배포 후 `/career` 검토). | 사장님 명시 2026-05-30 (push-bodies 하단 인입 링크) |
 | **R22** | **Golden Sample 빠른 경로: local artifact -> DOM inventory -> fill -> org radio evidence -> save toast**. Codebox/ZUZU 2026-06-23 run에서 가장 오래 걸린 병목은 문안이 아니라 브라우저 상태/DOM/라디오 검증이었다. 직접 composer에는 raw `{{...}}` 변수를 붙이지 말고, 저장 전 `Only me=false` + `Anyone in my organization=true`를 DOM과 스크린샷으로 모두 증명한다. | 2026-06-23 live run + Claude adversarial FAIL remediation |
 | **R23** | **문안은 개요식 + 5원칙 균형 분할**. 축약하더라도 빈약하면 실패다. 글자 수를 늘리는 어투는 줄이고, 회사 사실/조직·원칙/JD/자격·우대/설득 포인트/CTA를 짧은 bullet로 나눈다. Codebox/ZUZU처럼 5원칙이 있는 회사는 한 줄 나열 금지, 5개 bullet로 균형 배치한다. `지원 요청이 아닙니다`, `30분`, `브리핑`, `[근무/절차]`, `[근무/다음]`은 기본 생성 금지다. 근무/절차/레퍼런스 정보는 JD상 핵심 설득 정보일 때만 1개 짧은 fact bullet로 넣는다. `밸류커넥트(valueconnect.kr)`와 요청 시 `Valuehire.cc` 개인정보 동의/Subscription 안내를 포함한다. | 2026-06-23 사장님 피드백 |
-| **R24** | **2026-06-23 Target-company save lessons 고정**. Chrome 탭이 많을 때 full Playwright `connectOverCDP`는 느리거나 멈출 수 있으므로 exact LinkedIn page target raw CDP를 우선한다. 새 템플릿은 기존 선택 템플릿을 먼저 clear한 뒤 subject/body를 채우고 `Save as new template`로 저장한다. multi-line Korean body가 첫 문단만 들어가면 line-by-line `insertLineBreak` + `insertText`로 재입력한다. 기존 템플릿 검색은 option/listbox row로만 제한하고 broad DOM text click 금지. `Save message template` popover 안의 작은 Save만 클릭한다. legacy `_rev1` 저장 러너 사용 금지. Long batch에서 같은 control이 두 번 이상 꼬이면 stale tab과 싸우지 말고 fresh authenticated `rightRail=composer` target을 열어 save-log skip set으로 이어간다. | 2026-06-23 5-company live save remediation |
+| **R24** | **2026-06-23 Target-company save lessons 고정**. `26-portal-login-spec@1.5.0`과 기기 선택 작업이 증명한 `PROVEN_CDP_ENDPOINT` 및 exact existing target만 사용한다. 새 브라우저·창·탭 생성 금지. 새 템플릿은 기존 선택 템플릿을 먼저 clear한 뒤 subject/body를 채우고 `Save as new template`로 저장한다. multi-line Korean body가 첫 문단만 들어가면 line-by-line `insertLineBreak` + `insertText`로 재입력한다. 기존 템플릿 검색은 option/listbox row로만 제한하고 broad DOM text click 금지. `Save message template` popover 안의 작은 Save만 클릭한다. legacy `_rev1` 저장 러너 사용 금지. Long batch에서 같은 control이 두 번 이상 꼬이면 terminal handoff를 남기고 멈춘다. | 2026-06-23 5-company live save remediation + 2026-07-27 login policy hardening |
 | **R25** | **raw brace / HTML comment 금지**. Direct RPS composer는 raw `{{...}}`뿐 아니라 스크래퍼 메타데이터 `<!-- integrity: {"source":"..."} -->` 같은 braces도 invalid variable banner로 볼 수 있다. 브라우저 입력 전 HTML comment, `{`, `}`, zero-width emoji marker를 제거하고 validator에 박는다. | 2026-06-23 AX Frontend invalid-variable stop |
 | **R26** | **AI Search 내장 레인**. 이 스킬은 AI Search 이후 별도 요청이 있을 때만 부르는 부록이 아니다. 신규/현재 포지션 AI Search에서는 `LinkedIn/RPS JD 템플릿` 산출물로 항상 상태가 보고돼야 한다. 브라우저 저장까지 가능하면 `saved/updated`, 불가능하면 `local-package-only` 또는 `blocked(사유)`로 남긴다. 로컬 패키지만 만든 상태를 저장 완료로 말하지 않는다. | 2026-06-23 Golden Sample process embedding |
 
@@ -42,22 +42,13 @@ description: LinkedIn Recruiter(RPS)에서 한 포지션의 InMail 본문(개요
 
 ## 1. 환경 준비
 
-```bash
-# (a) Chrome 디버그 모드 (이미 떠 있으면 skip)
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug &
-
-# (b) MCP claude-in-chrome 1순위 — 사장님 LinkedIn 로그인 세션 그대로 활용
-# (c) Playwright connectOverCDP 는 fallback
-
-# (d) LinkedIn 계정 라이선스 확인
-#  - Value Connect Recruiter 계정 필수 (일반 LinkedIn 계정 X)
-#  - Recruiter Lite 가 아니라 Recruiter Corporate 권장 (InMail 50+/월)
-```
+`26-portal-login-spec@1.5.0`의 증거를 먼저 확인한다. 정책과 기기 선택 작업이 남긴
+`PROVEN_CDP_ENDPOINT`와 exact existing target이 모두 있을 때만 그 연결을 사용한다.
+새 브라우저·창·탭 생성 금지. 고정 포트·고정 프로필·추측한 fallback 연결도 금지한다.
 
 **도구 선택:**
-- 1순위: `mcp__claude-in-chrome__*` — 사장님 LinkedIn 세션 그대로 사용
-- 2순위: `playwright-core` + `connectOverCDP("http://localhost:9222")` — fallback
+- 증명된 raw CDP exact-target 연결만 허용한다.
+- 연결 주소나 target 증거가 없으면 `HANDOFF`로 종료한다.
 
 ---
 
@@ -69,15 +60,15 @@ DOM/브라우저 증거의 상위 SOT는 `/Users/kangsangmo/Desktop/Valuehire_v4
 1. **로컬 산출물부터 만든다.** 브라우저에 바로 쓰지 말고 JSONL/preview/source_notes/validator를 먼저 만든다. direct composer용 본문은 기본 1,600~1,899자, 사장님이 "1899자에 가깝게/풍성하게"라고 하면 1,800~1,899자, raw `{{...}}` 변수 0개, raw brace/HTML comment 0개, markdown wrapper 0개, emoji 0개, 회사 채용페이지 직접지원 CTA 0개.
 2. **JD 원문과 현재 웹 채용정보를 먼저 비교한다.** 회사 수치, 직무 책임, 기술 스택, 우대사항, 근무조건은 source_notes에 URL/파일 근거를 남긴다. 공개 JD가 있으면 공개 JD를 우선하고, 내부 target evidence는 보조로만 쓴다.
 3. **문안은 개요식으로 짠다.** 긴 수식어를 줄이고 `[회사]`, `[일하는 방식 5원칙]`, `[포지션 핵심]`, `[왜 검토할 만한가]`, `[자격/우대]`, `[클로징]`처럼 나눈다. 5원칙은 한 줄 압축 금지, 5개 bullet로 균형 분할한다. 가능하면 `밸류커넥트`를 `valueconnect.kr`로 hyperlink하고, 불가하면 `밸류커넥트(valueconnect.kr)`로 쓴다.
-4. **브라우저는 사장님 Chrome `:9222`를 공유 작업장으로 취급한다.** 로그인 세션은 재사용하되, 사장님이 동시에 브라우저를 쓰면 click/text mutation은 즉시 멈춘다. read-only screenshot/DOM inspection만 허용한다. Chrome 탭이 많으면 full-browser attach 대신 exact `linkedin.com/talent/...rightRail=composer` page target raw CDP로 붙는다.
-5. **오래된 composer와 discard prompt는 오염 상태로 본다.** 안전하게 닫을 수 있다는 근거가 없으면 싸우지 말고 fresh Recruiter right-rail profile target을 연다. 메시지 draft를 임의 폐기하지 않는다.
+4. **브라우저는 증명된 연결만 사용한다.** `PROVEN_CDP_ENDPOINT`와 exact existing target이 일치할 때만 붙는다. 사장님이 동시에 브라우저를 쓰면 click/text mutation은 즉시 멈춘다. 새 브라우저·창·탭 생성 금지.
+5. **오래된 composer와 discard prompt는 오염 상태로 본다.** 안전하게 계속할 수 있다는 근거가 없으면 terminal handoff를 남기고 멈춘다. 메시지 draft를 임의 폐기하지 않는다.
 6. **selector-first 금지, DOM inventory-first.** 먼저 visible buttons/links, subject input, editor/contenteditable, save-template control, popover input, radio labels/state, error banner, counter, Send button을 dump한다. 그 뒤 role/text/index로 액션한다.
 7. **기존 버전 정정이면 새로 만들지 않는다.** 같은 subject/template name을 먼저 검색한다. 기존 템플릿이 확인되면 body를 교체하고 Update current를 사용한다. first creation이거나 사장님이 새 저장을 승인한 경우에만 `Save as new template`을 쓴다. 검색 결과 선택은 실제 option/listbox row로만 제한한다. broad DOM text scan은 현재 composer 본문을 잘못 클릭해 `Replace content?` 모달을 만들 수 있으므로 금지한다.
 7-1. **신규 저장은 선택 템플릿 clear부터 시작한다.** 기존 템플릿이 선택된 상태면 먼저 clear하고, subject/body를 채운 뒤 `Save as new template` 버튼이 보이는 상태에서 저장한다. Current UI는 별도 `Message template name` input이 나타날 수도 있다. 보이면 반드시 exact subject를 채운다. 비어 있으면 Save를 눌러도 validation error만 난다.
 8. **저장 전 증거를 남긴다.** subject exact, body counter <= 1,899, invalid-variable banner 0, raw brace variable 0을 확인한다. visibility control이 보이면 `Anyone in my organization`을 명시 선택한다.
 9. **조직공유 라디오는 양방향으로 검증한다.** `Only me` unchecked + `Anyone in my organization` checked를 DOM으로 확인하고, 같은 순간의 pre-save/update screenshot을 저장한다. Save/Update 후 exact template-name success toast screenshot을 저장한다. Toast가 DOM에 남지 않으면 popover close, org radio state, counter, invalid-banner absence, Send-not-clicked evidence를 JSON log로 남기고 가능하면 exact option search로 후검증한다. Send는 절대 누르지 않는다.
-9-1. **입력 실패 fallback.** long Korean body는 `Input.insertText`를 피한다. `execCommand('insertText', false, body)`가 첫 문단만 넣으면 `String.fromCharCode(10)`으로 줄을 나누고 `insertLineBreak` + `insertText`를 반복한다. raw CDP `Runtime.evaluate` 안에서는 regex literal, optional chaining, `${...}` template interpolation을 피한다. Runtime/evaluate가 느려지거나 같은 tab에서 search dropdown/save popover가 반복적으로 남으면 fresh target으로 갈아타고 save-log 기준으로 이어간다.
-10. **적대검증은 화면 증거까지 공격한다.** Claude에게 "스크린샷이 정말 organization-visible을 증명하는가"를 물어보고, Codex/Claude 본체가 Claude 판정을 다시 DOM/screenshot으로 재현한다.
+9-1. **입력 실패 처리.** long Korean body는 `Input.insertText`를 피한다. `execCommand('insertText', false, body)`가 첫 문단만 넣으면 `String.fromCharCode(10)`으로 줄을 나누고 `insertLineBreak` + `insertText`를 반복한다. raw CDP `Runtime.evaluate` 안에서는 regex literal, optional chaining, `${...}` template interpolation을 피한다. Runtime/evaluate가 느려지거나 같은 tab에서 search dropdown/save popover가 반복적으로 남으면 terminal handoff를 남기고 멈춘다.
+10. **적대검증은 화면 증거까지 공격한다.** 구현 문맥과 분리된 Codex가 스크린샷의 organization-visible 증거를 검토하고, 구현 Codex가 그 판정을 DOM/screenshot으로 재현한다.
 
 ---
 

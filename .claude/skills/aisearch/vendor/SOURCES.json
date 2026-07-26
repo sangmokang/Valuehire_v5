@@ -3,6 +3,12 @@
   "copied_at": "2026-06-26T15:41:59Z",
   "files": [
     { "vendored": "vendor/ai_search_sot_check.py", "origin": "~/.codex/skills/ai-search/scripts/ai_search_sot_check.py", "sha256_at_copy": "e72a25746980324aacc06c6f22a4551fb44d53c62f66b7c9a573afcdf79d30c1" },
-    { "vendored": "vendor/linkedin-rps-jd-set-builder.md", "origin": "~/.claude/skills/linkedin-rps-jd-set-builder/SKILL.md", "sha256_at_copy": "2a45369fbed77d4ddd4058e22304950e9c83c4780e359c1a2b0ccff5f3255416" }
+    {
+      "vendored": "vendor/linkedin-rps-jd-set-builder.md",
+      "origin": "~/.claude/skills/linkedin-rps-jd-set-builder/SKILL.md",
+      "sha256_at_copy": "2a45369fbed77d4ddd4058e22304950e9c83c4780e359c1a2b0ccff5f3255416",
+      "local_hardening": "26-portal-login-spec@1.5.0 exact-existing-target correction on 2026-07-27",
+      "sha256_current": "72e613d50aad1dbc9957160c40072e375af22b125f0afb7ff59fe19daf027ec9"
+    }
   ]
 }
