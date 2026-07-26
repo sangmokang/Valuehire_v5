@@ -1,4 +1,4 @@
-"""저수지 모델 단계 5 — match() + 재랭킹.
+﻿"""저수지 모델 단계 5 — match() + 재랭킹.
 
 인수 기준(기계 단언):
   - 세그먼트 필터 → JD 임베딩 vs 엔트리 코사인 top-K → scoring(4기준) 2차 정렬(우수 인재 상위).
@@ -72,7 +72,7 @@ class MatchTests(unittest.TestCase):
     def test_filters_to_segment(self) -> None:
         res = match_jd_to_reservoir(
             JD, BACKEND_POS, [HIGH, LOW, OTHER_SEG], segment_id="it_ai_data",
-            run_id="r1", today="2026-06-12",
+            run_id="r1", today="2026-06-12", machine="macmini",
         )
         urls = {c.canonical_url for c in res.candidates}
         self.assertEqual(urls, {"https://x/high", "https://x/low"})  # 다른 세그먼트 제외
@@ -80,14 +80,14 @@ class MatchTests(unittest.TestCase):
     def test_reranks_by_quality_high_first(self) -> None:
         res = match_jd_to_reservoir(
             JD, BACKEND_POS, [LOW, HIGH], segment_id="it_ai_data",
-            run_id="r1", today="2026-06-12",
+            run_id="r1", today="2026-06-12", machine="macmini",
         )
         self.assertEqual(res.candidates[0].canonical_url, "https://x/high")  # 우수 인재 상위
         self.assertGreater(res.candidates[0].quality_score, res.candidates[-1].quality_score)
 
     def test_deterministic_regardless_of_input_order(self) -> None:
-        a = match_jd_to_reservoir(JD, BACKEND_POS, [HIGH, LOW], segment_id="it_ai_data", run_id="r1", today="2026-06-12")
-        b = match_jd_to_reservoir(JD, BACKEND_POS, [LOW, HIGH], segment_id="it_ai_data", run_id="r1", today="2026-06-12")
+        a = match_jd_to_reservoir(JD, BACKEND_POS, [HIGH, LOW], segment_id="it_ai_data", run_id="r1", today="2026-06-12", machine="macmini")
+        b = match_jd_to_reservoir(JD, BACKEND_POS, [LOW, HIGH], segment_id="it_ai_data", run_id="r1", today="2026-06-12", machine="macmini")
         self.assertEqual(
             [c.canonical_url for c in a.candidates],
             [c.canonical_url for c in b.candidates],
@@ -105,8 +105,8 @@ class MatchTests(unittest.TestCase):
 
         order_a = [tie_entry(u) for u in ("https://x/c", "https://x/a", "https://x/b")]
         order_b = [tie_entry(u) for u in ("https://x/b", "https://x/c", "https://x/a")]
-        ra = match_jd_to_reservoir(JD, BACKEND_POS, order_a, segment_id="it_ai_data", run_id="r", today="2026-06-12")
-        rb = match_jd_to_reservoir(JD, BACKEND_POS, order_b, segment_id="it_ai_data", run_id="r", today="2026-06-12")
+        ra = match_jd_to_reservoir(JD, BACKEND_POS, order_a, segment_id="it_ai_data", run_id="r", today="2026-06-12", machine="macmini")
+        rb = match_jd_to_reservoir(JD, BACKEND_POS, order_b, segment_id="it_ai_data", run_id="r", today="2026-06-12", machine="macmini")
         urls = [c.canonical_url for c in ra.candidates]
         self.assertEqual(urls, [c.canonical_url for c in rb.candidates])  # 입력 순서 무관
         self.assertEqual(urls, ["https://x/a", "https://x/b", "https://x/c"])  # url 오름차순 타이브레이크
@@ -118,7 +118,7 @@ class MatchTests(unittest.TestCase):
         ]
         res = match_jd_to_reservoir(
             JD, BACKEND_POS, entries, segment_id="it_ai_data", top_k=20,
-            run_id="r1", today="2026-06-12",
+            run_id="r1", today="2026-06-12", machine="macmini",
         )
         self.assertEqual(len(res.candidates), 20)
         rec = res.log_records[0]
@@ -127,14 +127,14 @@ class MatchTests(unittest.TestCase):
         self.assertEqual(rec["dropped_count"], 10)
 
     def test_logs_match_line(self) -> None:
-        res = match_jd_to_reservoir(JD, BACKEND_POS, [HIGH], segment_id="it_ai_data", run_id="r1", today="2026-06-12")
+        res = match_jd_to_reservoir(JD, BACKEND_POS, [HIGH], segment_id="it_ai_data", run_id="r1", today="2026-06-12", machine="macmini")
         self.assertTrue(res.log_records)
         for rec in res.log_records:
             validate_reservoir_log_record(rec)
             self.assertEqual(rec["line"], "match")
 
     def test_empty_segment_returns_empty_with_log(self) -> None:
-        res = match_jd_to_reservoir(JD, BACKEND_POS, [OTHER_SEG], segment_id="it_ai_data", run_id="r1", today="2026-06-12")
+        res = match_jd_to_reservoir(JD, BACKEND_POS, [OTHER_SEG], segment_id="it_ai_data", run_id="r1", today="2026-06-12", machine="macmini")
         self.assertEqual(res.candidates, ())
         self.assertTrue(res.log_records)
 

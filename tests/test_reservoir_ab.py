@@ -64,14 +64,22 @@ class PurityReportTests(unittest.TestCase):
 
     def test_score_purity_ratio_and_winner(self) -> None:
         batch = build_blind_ab_batch(REALTIME, RESERVOIR)
-        report = score_purity(batch, self._scores_favoring_reservoir(batch))
+        report = score_purity(
+            batch,
+            self._scores_favoring_reservoir(batch),
+            machine="macmini",
+        )
         self.assertAlmostEqual(report.reservoir_top20_ge85_ratio, 1.0)
         self.assertAlmostEqual(report.realtime_top20_ge85_ratio, 0.0)
         self.assertEqual(report.winner, "reservoir")
 
     def test_score_purity_logs_calibrate_line(self) -> None:
         batch = build_blind_ab_batch(REALTIME, RESERVOIR)
-        report = score_purity(batch, self._scores_favoring_reservoir(batch))
+        report = score_purity(
+            batch,
+            self._scores_favoring_reservoir(batch),
+            machine="macmini",
+        )
         self.assertTrue(report.log_records)
         for rec in report.log_records:
             validate_reservoir_log_record(rec)
@@ -89,14 +97,14 @@ class PurityReportTests(unittest.TestCase):
                 scores[blind_id] = 90 if rank < 2 else 50
             else:
                 scores[blind_id] = 50
-        report = score_purity(batch, scores, top_n=2)
+        report = score_purity(batch, scores, top_n=2, machine="macmini")
         self.assertAlmostEqual(report.reservoir_top20_ge85_ratio, 1.0)
 
     def test_score_purity_deterministic(self) -> None:
         batch = build_blind_ab_batch(REALTIME, RESERVOIR)
         scores = self._scores_favoring_reservoir(batch)
-        r1 = score_purity(batch, scores)
-        r2 = score_purity(batch, scores)
+        r1 = score_purity(batch, scores, machine="macmini")
+        r2 = score_purity(batch, scores, machine="macmini")
         self.assertEqual(r1.reservoir_top20_ge85_ratio, r2.reservoir_top20_ge85_ratio)
         self.assertEqual(r1.winner, r2.winner)
 
