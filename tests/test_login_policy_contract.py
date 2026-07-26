@@ -355,6 +355,11 @@ def test_worker_generated_prompts_reference_the_new_policy() -> None:
         assert "APP 17" in prompt
     assert "저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것" not in login_prompt
     assert "linkedin_rps_logged_in=true인 머신을 먼저 찾아" not in url_prompt
+    assert "HUMAN_AUTH일 때만 다음 형식" in url_prompt
+    assert (
+        "HANDOFF 또는 AUTH_CONFLICT면 PAUSED_FOR_HUMAN 마커와 "
+        "완료 영수증을 출력하지 말고"
+    ) in url_prompt
 
 
 def test_current_route_does_not_keep_hermes_as_an_active_agent() -> None:
