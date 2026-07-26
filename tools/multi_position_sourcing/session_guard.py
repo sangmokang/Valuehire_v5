@@ -1701,6 +1701,10 @@ def run_human_auth_episode(
                 "status": "authenticated",
                 "capture_status": evidence_payload.get("capture_status", evidence_payload.get("status")),
                 "site": site,
+                "target_id": ref.target_id,
+                "endpoint": ref.endpoint,
+                "profile_path": ref.profile_path,
+                "browser_pid": ref.browser_pid,
                 "already_authenticated": already_authenticated,
                 "auth_url": _sanitize_locator_url(observation.url),
                 "proof_names": list(observation.proof_names),
@@ -2327,6 +2331,8 @@ def run_auto_login_episode(
 
     if site not in _SITE_DOMAINS:
         return {"status": "unsupported_site", "site": site}
+    if site == "linkedin_rps":
+        return {"status": "forbidden_linkedin_password_login", "site": site}
     try:
         snapshot = detect_owner_activity_snapshot()
     except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
@@ -2371,6 +2377,9 @@ def run_auto_login_episode(
 
     outcome["site"] = site
     outcome["target_id"] = ref.target_id
+    outcome["endpoint"] = ref.endpoint
+    outcome["profile_path"] = ref.profile_path
+    outcome["browser_pid"] = ref.browser_pid
     outcome["host"] = os.environ.get("VALUEHIRE_MACHINE", "").strip()
     return outcome
 
@@ -2430,6 +2439,9 @@ def main(argv: list[str] | None = None) -> int:
                     "status": "authenticated",
                     "site": site,
                     "target_id": result.get("target_id"),
+                    "endpoint": result.get("endpoint"),
+                    "profile_path": result.get("profile_path"),
+                    "browser_pid": result.get("browser_pid"),
                     "proof_names": ["gnb_account_marker"],
                     "evidence": {**evidence_result,
                                  "target_id": result.get("target_id")},

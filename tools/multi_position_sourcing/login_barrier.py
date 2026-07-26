@@ -18,6 +18,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 RECEIPT_SCHEMA_VERSION = 1
 RECEIPT_MAX_AGE_SECONDS = 1800  # 사람인·잡코리아 서버세션 20~30분(SOT-26 §4) — 보수값
@@ -41,6 +42,33 @@ _SECRET_KEY_MARKERS = (
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _EVIDENCE_PATH_FIELDS = ("screenshot_path", "text_path", "manifest_path")
+
+
+def _valid_exact_browser_binding(receipt: Mapping[str, Any]) -> bool:
+    endpoint = str(receipt.get("endpoint") or "").strip()
+    try:
+        parsed = urlsplit(endpoint)
+        port = parsed.port
+    except ValueError:
+        return False
+    profile_path = str(receipt.get("profile_path") or "").strip()
+    browser_pid = receipt.get("browser_pid")
+    return bool(
+        parsed.scheme == "http"
+        and parsed.hostname in {"127.0.0.1", "localhost"}
+        and port is not None
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
+        and profile_path
+        and Path(profile_path).is_absolute()
+        and isinstance(browser_pid, int)
+        and not isinstance(browser_pid, bool)
+        and browser_pid > 0
+        and str(receipt.get("target_id") or "").strip()
+    )
 
 
 def default_receipt_dir() -> Path:
@@ -178,6 +206,8 @@ def validate_channel_receipt(
         return "owner_activity_detected != false"
     if not str(receipt.get("target_id") or "").strip():
         return "target_id 없음"
+    if not _valid_exact_browser_binding(receipt):
+        return "증명된 endpoint/profile/target/browser_pid 결합 없음"
     proofs = receipt.get("proof_names")
     if (not isinstance(proofs, list) or not proofs
             or not all(isinstance(p, str) and p.strip() for p in proofs)):
@@ -186,13 +216,27 @@ def validate_channel_receipt(
         return "mutation_count != 0"
     if receipt.get("capture_status") != "saved":
         return "capture_status != saved"
+    evidence = receipt.get("evidence")
+    if not isinstance(evidence, Mapping):
+        return "정식 브라우저 증거 묶음 없음"
+    from .browser_evidence import complete_evidence_payload
+
+    evidence_payload = dict(evidence)
+    if not complete_evidence_payload(evidence_payload):
+        return "정식 브라우저 증거 묶음 검증 실패"
+    if (
+        evidence_payload.get("site") != channel
+        or evidence_payload.get("task") != "login"
+        or evidence_payload.get("mode") != "evidence"
+    ):
+        return "로그인 증거 채널·작업 불일치"
     for field in _EVIDENCE_PATH_FIELDS:
-        path = str(receipt.get(field) or "")
-        if not path or not os.path.isfile(path):
-            return f"증거 파일 없음({field})"
-    for field in ("screenshot_sha256", "text_sha256"):
-        if not _SHA256_RE.fullmatch(str(receipt.get(field) or "")):
-            return f"{field} 형식 오류"
+        if str(receipt.get(field) or "") != str(evidence_payload.get(field) or ""):
+            return f"증거 경로 불일치({field})"
+    if receipt.get("screenshot_sha256") != evidence_payload.get("screenshot_sha256"):
+        return "screenshot_sha256 불일치"
+    if receipt.get("text_sha256") != evidence_payload.get("visible_text_sha256"):
+        return "text_sha256 불일치"
     return None
 
 
@@ -315,9 +359,10 @@ def classify_job_block_reason(reason: str | None) -> str:
     if reason is None:
         return "PASS"
     failures = [part.strip() for part in str(reason).split(";") if part.strip()]
-    if any("AUTH_CONFLICT" in failure for failure in failures):
+    details = [failure.partition(":")[2].strip() for failure in failures]
+    if any(detail.startswith("AUTH_CONFLICT: verified ") for detail in details):
         return "AUTH_CONFLICT"
-    if failures and all("HUMAN_AUTH" in failure for failure in failures):
+    if details and all(detail.startswith("HUMAN_AUTH: verified ") for detail in details):
         return "HUMAN_AUTH"
     return "HANDOFF"
 
@@ -327,7 +372,11 @@ def human_auth_channels(reason: str | None) -> tuple[str, ...]:
     channels: list[str] = []
     for failure in str(reason or "").split(";"):
         channel, separator, detail = failure.strip().partition(":")
-        if separator and "HUMAN_AUTH" in detail and channel in CHANNELS:
+        if (
+            separator
+            and detail.strip().startswith("HUMAN_AUTH: verified ")
+            and channel in CHANNELS
+        ):
             channels.append(channel)
     return tuple(dict.fromkeys(channels))
 
@@ -353,6 +402,16 @@ def write_channel_receipt_from_episode(
     evidence = episode.get("evidence")
     if not isinstance(evidence, Mapping):
         return None
+    from .browser_evidence import complete_evidence_payload
+
+    evidence_payload = dict(evidence)
+    if (
+        not complete_evidence_payload(evidence_payload)
+        or evidence_payload.get("site") != site
+        or evidence_payload.get("task") != "login"
+        or evidence_payload.get("mode") != "evidence"
+    ):
+        return None
     from datetime import timezone as _tz
     if now_epoch is None:
         ts = datetime.now(_tz.utc)
@@ -365,6 +424,9 @@ def write_channel_receipt_from_episode(
         "ready": True,
         "host": str(machine),
         "target_id": str(evidence.get("target_id") or episode.get("target_id") or ""),
+        "endpoint": str(episode.get("endpoint") or ""),
+        "profile_path": str(episode.get("profile_path") or ""),
+        "browser_pid": episode.get("browser_pid"),
         "last_verified_at": ts.isoformat(),
         "owner_activity_detected": False,
         "proof_names": [str(p) for p in (episode.get("proof_names") or []) if str(p).strip()],
@@ -376,6 +438,7 @@ def write_channel_receipt_from_episode(
         "screenshot_sha256": str(evidence.get("screenshot_sha256") or ""),
         "text_sha256": str(
             evidence.get("text_sha256") or evidence.get("visible_text_sha256") or ""),
+        "evidence": evidence_payload,
     }
     # 자기 검증: 쓰기 전에 같은 validator 를 통과 못 하면 쓰지 않는다(fail-closed).
     if validate_channel_receipt(

@@ -714,7 +714,10 @@ def parse_worker_output(stdout: str, exit_code: int, stderr: str = "") -> dict[s
     for line in reversed(lines[-15:]):
         if line.startswith(_PAUSE_MARKER):
             reason = line[len(_PAUSE_MARKER):].strip() or "(사유 미기재)"
-            return {"status": "paused_for_human", "reason": reason}
+            return {
+                "status": "failed",
+                "reason": f"검증되지 않은 사람 대기 자기신고 거부: {reason}",
+            }
     err = (stderr or "").strip()
     combined = (text + ("\n" + err if err else "")).strip()
     if exit_code != 0:
