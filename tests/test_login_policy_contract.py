@@ -10,6 +10,7 @@ POLICY_PATH = ROOT / "docs/sot/26-portal-login-spec.json"
 CONTROL_PATH = ROOT / "skills/login/browser-control-contract.json"
 SKILL_PATH = ROOT / "skills/login/SKILL.md"
 WORKER_PATH = ROOT / "tools/multi_position_sourcing/fleet_worker.py"
+SEARCH_CONTRACT_PATH = ROOT / "docs/prompts/login-search-execution-contract.md"
 POLICY_ID = "26-portal-login-spec@1.5.0"
 HISTORICAL_MARKER = "historical_input_not_executable"
 
@@ -27,6 +28,7 @@ POLICY_ENTRYPOINTS = (
     ROOT / "CLAUDE.md",
     ROOT / "docs/sot/25-ai-search-execution-process.json",
     ROOT / "docs/prompts/goal-full-codebase-review.md",
+    ROOT / "docs/prompts/login-search-execution-contract.md",
     ROOT / "docs/ai-search/three-mac-account-coordinator-goal-prompt.md",
     ROOT / "skills/ai-search/references/spec-procedure.md",
     ROOT / "skills/ai-search/SKILL.md",
@@ -300,6 +302,31 @@ def test_login_and_search_entrypoints_reference_the_new_policy() -> None:
             "기기 수 미증명은 인증 조작 0회",
         ):
             assert marker in text, (path, marker)
+
+
+def test_login_search_execution_contract_cannot_restore_legacy_login() -> None:
+    text = _text(SEARCH_CONTRACT_PATH)
+    for forbidden in (
+        "Hermes",
+        "tools.multi_position_sourcing.portal_login",
+        "정상 로그아웃이면 정식 `portal_login` 러너가 저장 자격증명을 1회만 제출",
+        "ready=true`가 아니면 검색 잡은 `paused_for_human`",
+        "Hook 차단은 작업 포기 신호가 아닙니다",
+    ):
+        assert forbidden not in text
+    for required in (
+        POLICY_ID,
+        "APP 17",
+        "APP 30/31",
+        "LINKEDIN_LI_AT",
+        "인증 기기 수 미증명",
+        "HANDOFF",
+        "2개 이상",
+        "AUTH_CONFLICT",
+        "PAUSED_FOR_HUMAN은 실제 HUMAN_AUTH에서만",
+        "HANDOFF·AUTH_CONFLICT에는 사용하지 않는다",
+    ):
+        assert required in text
 
 
 def test_ai_search_status_vocabulary_matches_the_login_policy() -> None:
