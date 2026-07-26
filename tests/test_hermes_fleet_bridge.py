@@ -439,6 +439,7 @@ def test_natural_machine_alias_uses_shared_canonical_identity() -> None:
     assert rewritten is not None
     command, raw_args = rewritten.removeprefix("/").split(" ", 1)
     assert parse_hermes_fleet_args(command, raw_args)["machine"] == "macbook"
+    assert "filters64:" not in rewritten
 
 
 @pytest.mark.parametrize("machine_text", ("MACBOOK", "macbook winpc"))
