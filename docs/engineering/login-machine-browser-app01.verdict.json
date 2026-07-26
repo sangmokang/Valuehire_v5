@@ -1,0 +1,44 @@
+{
+  "claim_id": "login-machine-browser-app01",
+  "mode": "code-change",
+  "risk": "L3",
+  "spec": "docs/engineering/login-machine-browser-decomposition-briefing-2026-07-26.html APP 01",
+  "branch": "task/login-machine-browser-app01-clean",
+  "implementation_head": "dd8fbf094af47cb5f285b43831f95fbec5e353a6",
+  "generator": {
+    "author": "Codex",
+    "claim": "APP 01 로그인 기준을 26-portal-login-spec@1.5.0으로 통합하고 활성 정책·스킬·생성 프롬프트를 정적으로 연결했다. 인증 제공자, 쿠키 적용기, 브라우저 제어, SQL 또는 세션 런타임은 구현하지 않았다.",
+    "implementation_commits": [
+      "26051d0",
+      "7a49fe6",
+      "dd8fbf0"
+    ],
+    "focused_command": "uv run --with pytest python -m pytest tests/test_fleet_login_job.py tests/test_login_barrier.py tests/test_login_policy_contract.py -q",
+    "focused_output": "125 passed in 0.58s",
+    "prompt_command": "uv run --with pytest python -m pytest tests/test_fleet_worker.py::test_build_job_prompt_contains_contract tests/test_fleet_worker.py::test_url_prompt_has_executable_login_machine_and_pause_contract tests/test_fleet_worker.py::test_capture_prompt_is_specific_to_each_skill tests/test_login_harness_hook.py::test_execution_prompt_makes_login_a_code_enforced_search_barrier tests/test_login_harness_hook.py::test_fleet_search_prompts_require_login_barrier_before_execution -q",
+    "prompt_output": "5 passed in 0.14s",
+    "mutation_evidence": "Disposable worktree mutation auto_logout_other_machine=false -> true made test_site_authentication_methods_are_explicit_and_mutation_bounded fail; disposable worktree removed.",
+    "mirror_evidence": "login skill x3, browser-control-contract x3, ai-search/search/humansearch/multisearch mirrors matched by SHA-256.",
+    "scope_evidence": "Only policy/docs/skills/tests and fleet_worker prompt strings/comments changed; no credential provider, cookie injector, browser controller, SQL, or session runtime implementation."
+  },
+  "codex_adversarial_review": {
+    "verdict": "pass",
+    "blocking_findings": 0,
+    "independent_checks": "22 policy tests plus 6 generated-prompt checks passed; diff, mirror hashes, secret-shape scan, historical prompt quarantine, and runtime-scope boundary passed."
+  },
+  "claude_adversarial_review": {
+    "verdict": "blocked_by_usage_limit",
+    "attempt_output": "You've hit your weekly limit · resets 12pm (Asia/Seoul)",
+    "required_before_app02": true
+  },
+  "known_out_of_scope_failures": {
+    "command": "uv run --with pytest python -m pytest tests/test_fleet_worker.py tests/test_login_harness_hook.py -q",
+    "output": "71 passed, 22 failed",
+    "classification": "Pre-existing Windows CLI path resolution and browser evidence fixture failures; quarantined for later owning APPs."
+  },
+  "three_way_agree": false,
+  "status": "codex_pass_claude_review_pending",
+  "push": false,
+  "pull_request": false,
+  "merge": false
+}

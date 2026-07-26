@@ -6,7 +6,7 @@
 - 입력 정본: `docs/engineering/login-machine-browser-decomposition-briefing-2026-07-26.html`
 - 입력 SHA-256: `6870DF7DEABF02051C2A99EB34B87B912E1A7375FB207ECE7CAB27CCB046C1F9`
 - 기준선: `a141459c645830f719fc2b5db517d0c60c77d594`
-- 격리 브랜치: `task/login-machine-browser-app01`
+- 격리 브랜치: `task/login-machine-browser-app01-clean`
 
 ## 절대 발생하면 안 되는 결과
 
@@ -25,7 +25,7 @@ LinkedIn의 다른 기기 세션을 자동 종료하거나, `li_at`·비밀번�
 
 | 순서 | 단계 | 단위 | 상태 | 단위 검증 |
 |---:|---|---|---|---|
-| 01 | 계약 | 로그인 기준 규칙 통합 | 진행 중 | `tests/test_login_policy_contract.py` |
+| 01 | 계약 | 로그인 기준 규칙 통합 | Codex 완료·Claude 한도 대기 | `tests/test_login_policy_contract.py` |
 | 02 | 계약 | 기기 이름 단일화 | 대기 | 기기 ID 계약 검사 |
 | 03 | 계약 | Discord·셸 명령 봉투 | 대기 | 요청 직렬화·거부 검사 |
 | 04 | 계약 | 요청자 권한 검증 | 대기 | 권한 위조·실행 0회 검사 |
@@ -71,10 +71,10 @@ LinkedIn의 다른 기기 세션을 자동 종료하거나, `li_at`·비밀번�
 ### 목표
 
 - 사람인·잡코리아: 비밀 저장소의 사이트별 아이디·비밀번호를 정확한 기존 탭에 최대 1회 제출한다.
-- LinkedIn: 아이디·비밀번호 폼 제출을 금지하고, 비밀 저장소의 `LINKEDIN_LI_AT` 참조를 선택된 단일 기기의 정확한 기존 탭에 최대 1회 적용한다.
+- LinkedIn: 아이디·비밀번호 폼 제출을 금지한다. 인증 기기 0개가 봉인된 증거로 확인되고 현재 턴 소유자 승인과 APP 17 경로 결정이 같은 기기의 정확한 기존 탭 하나를 가리킬 때만 APP 30/31이 비밀 저장소의 `LINKEDIN_LI_AT` 참조를 최대 1회 적용할 수 있다.
 - 이미 인증된 LinkedIn 기기가 정확히 하나면 그 기기와 탭을 조작 0회로 재사용한다.
 - 인증된 LinkedIn 기기가 둘 이상이면 terminal `AUTH_CONFLICT`로 중단한다. 다른 기기 로그아웃·Continue/Confirm·새 탭·재시도는 0회다.
-- `li_at` 원문과 그 파생값은 로그·영수증·모델 대화에 넣지 않는다.
+- `li_at` 원문과 그 파생값은 인자·stdout·stderr·로그·영수증·산출물·모델 대화에 넣지 않는다.
 
 ### 선행 입력과 산출물
 
@@ -99,6 +99,28 @@ LinkedIn의 다른 기기 세션을 자동 종료하거나, `li_at`·비밀번�
 | 사람 활동 감지 | mutation 0회, 읽기 전용 대기 |
 | 로그·영수증에 비밀 키가 들어옴 | 기록 자체를 거부 |
 | 그 외 전부 | 임의 판단 없이 명시적으로 중단하고 표를 갱신 |
+
+### APP 01 실행 증거
+
+- 정책 ID: `26-portal-login-spec@1.5.0`
+- 실패 검사 커밋: `6f7c639`, `5e9bf7c`, `691b835`, `a5dbdd1`, `9c46571`,
+  `af32456`, `40f1da6`, `70e08c9`, `d5caea8`, `af5c546`, `1ccdfda`,
+  `110b0bb`, `0749e6e`, `3e27b24`, `b228f8f`, `f74557c`, `59843e7`,
+  `b88707f`, `a172fce`, `9f788d1`, `0679ed1`
+- 구현 커밋: `26051d0`, `7a49fe6`, `dd8fbf0`
+- 관련 검사: 125개 통과. 별도 생성 프롬프트·실행 장벽 검사 5개 통과.
+- 정책 집중 검사: 22개 통과.
+- 자기 반증: `auto_logout_other_machine=false`를 `true`로 바꾼 일회용 작업폴더에서
+  정책 일치 검사가 실패함을 확인하고 일회용 작업폴더를 제거했다.
+- 정합성: 로그인 스킬 3개, 브라우저 계약 3개, ai-search/search/humansearch/
+  multisearch 관련 거울이 각각 동일한 해시임을 확인했다.
+- Codex 새 문맥 적대 검토: PASS, 차단 결함 0건.
+- Claude 새 문맥 적대 검토: 주간 사용 한도 오류로 미완료.
+  `You've hit your weekly limit · resets 12pm (Asia/Seoul)`
+- 전체 `test_fleet_worker.py`와 `test_login_harness_hook.py` 묶음은 71개 통과,
+  22개 실패다. 실패는 APP 01 이전부터 존재한 Windows CLI 경로와 브라우저 증거 fixture
+  문제이며 APP 01 범위에서 고치지 않았다.
+- push·PR·merge: APP 01 비범위라 수행하지 않았다.
 
 ### 검사 대응표
 
