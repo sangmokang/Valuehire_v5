@@ -8,6 +8,7 @@ import shlex
 from typing import Any
 
 from .access import DiscordAuthorizedUser, is_authorized_discord_dm
+from .machine_identity import CANONICAL_MACHINE_IDS
 from .models import Channel
 
 DIRECT_SEARCH_SKILL_COMMANDS: dict[str, str] = {
@@ -286,7 +287,7 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
                         "required": False,
                         "choices": [
                             {"name": machine, "value": machine}
-                            for machine in ("macmini", "macbook", "winpc")
+                            for machine in CANONICAL_MACHINE_IDS
                         ],
                     },
                     {
@@ -332,7 +333,7 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
                     "required": False,
                     "choices": [
                         {"name": machine, "value": machine}
-                        for machine in ("macmini", "macbook", "winpc")
+                        for machine in CANONICAL_MACHINE_IDS
                     ],
                 },
             ],
@@ -362,7 +363,7 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
                     "required": False,
                     "choices": [
                         {"name": machine, "value": machine}
-                        for machine in ("macmini", "macbook", "winpc")
+                        for machine in CANONICAL_MACHINE_IDS
                     ],
                 },
                 {
@@ -387,7 +388,7 @@ def discord_slash_command_payloads() -> list[dict[str, Any]]:
                 {"name": "skill", "description": "Search skill (default: humansearch).", "type": 3, "required": False,
                  "choices": [{"name": s, "value": s} for s in ("humansearch", "aisearch", "url")]},
                 {"name": "machine", "description": "Target machine.", "type": 3, "required": False,
-                 "choices": [{"name": m, "value": m} for m in ("macmini", "macbook", "winpc")]},
+                 "choices": [{"name": m, "value": m} for m in CANONICAL_MACHINE_IDS]},
             ],
         },
         {

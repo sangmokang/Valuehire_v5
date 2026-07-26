@@ -22,6 +22,7 @@ from typing import Any
 from .fleet_dispatch import FLEET_COMMANDS
 from .job_queue import FLEET_MACHINES, FLEET_SKILLS, FOLLOWUP_SKILLS
 from .machine_identity import (
+    MACHINE_ID_ALIASES,
     MachineIdentityError,
     normalize_machine_id,
 )
@@ -58,6 +59,10 @@ _MAX_RAW_ARGS_LEN = 8000
 # M3 — "명시적으로 빈 값" vs "필드 부재"를 구분하는 센티넬. options.pop 이 이 값을
 # 돌려주면 필드가 아예 없었던 것이고, "" 를 돌려주면 사용자가 빈 값을 명시한 것이다.
 _MISSING = object()
+
+# Compatibility re-export for the retired Hermes adapter.  The mapping itself
+# remains owned by machine_identity so parser copies cannot drift.
+_MACHINE_ALIASES = MACHINE_ID_ALIASES
 
 
 def _classify_bare_fleet_run_token(token: str) -> tuple[str, str] | None:
