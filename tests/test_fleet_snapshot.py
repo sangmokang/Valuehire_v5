@@ -72,6 +72,7 @@ def test_three_machine_snapshot_is_complete_deterministic_and_secret_free():
     assert first["complete"] is True
     assert first["missing_machines"] == []
     assert first["stale_machines"] == []
+    assert first["blocking_reasons"] == []
     assert list(first["reports_by_machine"]) == EXPECTED
     assert first["snapshot_id"].startswith("fleet_")
     assert len(first["sanitized_hash"]) == 64
@@ -85,6 +86,7 @@ def test_one_machine_timeout_and_linkedin_partial_report_never_complete():
     assert snapshot["complete"] is False
     assert snapshot["missing_machines"] == ["winpc"]
     assert snapshot["stale_machines"] == []
+    assert snapshot["blocking_reasons"] == ["DISCOVERY_INCOMPLETE"]
 
 
 @pytest.mark.parametrize(
@@ -103,6 +105,7 @@ def test_stale_and_future_reports_fail_closed(captured_at, expected_stale):
 
     assert snapshot["complete"] is False
     assert snapshot["stale_machines"] == expected_stale
+    assert "REPORT_STALE" in snapshot["blocking_reasons"]
     assert "macmini" not in snapshot["reports_by_machine"]
 
 
@@ -159,13 +162,108 @@ def test_queue_status_store_wiring_uses_exact_snapshot_id():
     client._call = lambda *args: calls.append(args) or [{"accepted": True}]
 
     sealed = _report("macmini")["payload"]
-    assert client.publish_browser_inventory(sealed) == [{"accepted": True}]
+    assert client.publish_browser_inventory(
+        "macmini", sealed,
+    ) == [{"accepted": True}]
     assert client.browser_inventory_reports("req-4") == [{"accepted": True}]
     assert calls == [
-        ("POST", "/rpc/record_browser_inventory", {"p_report": sealed}),
+        (
+            "POST",
+            "/rpc/record_browser_inventory",
+            {"p_source_machine_id": "macmini", "p_report": sealed},
+        ),
         (
             "GET",
             "/fleet_browser_inventory"
             "?request_id=eq.req-4&select=source_machine_id,report&order=source_machine_id",
         ),
     ]
+
+
+def test_status_store_is_sanitized_and_conflict_safe():
+    from pathlib import Path
+
+    sql = (
+        Path(__file__).resolve().parents[1]
+        / "supabase/migrations/20260726100000_fleet_browser_inventory.sql"
+    ).read_text(encoding="utf-8").lower()
+
+    assert "create table public.fleet_browser_inventory" in sql
+    assert "unique (request_id, source_machine_id)" in sql
+    assert "record_browser_inventory" in sql
+    assert "integrity_hash = excluded.integrity_hash" in sql
+    assert "cookie" in sql and "password" in sql and "websocketdebuggerurl" in sql
+    assert "grant select on table public.fleet_browser_inventory to service_role" in sql
+    assert "to anon" not in sql
+
+
+def test_status_store_migration_runs_on_postgres16_and_is_idempotent():
+    import psycopg
+    from psycopg.types.json import Jsonb
+    from test_fleet_slot_schema_postgres import (
+        MIGRATIONS,
+        TARGET_MIGRATION,
+        _apply,
+        _apply_base,
+        _create_roles,
+        _drop_database,
+        _new_database,
+        _postgres_server,
+    )
+
+    migration = MIGRATIONS / "20260726100000_fleet_browser_inventory.sql"
+    with _postgres_server() as admin_dsn:
+        _create_roles(admin_dsn)
+        database, dsn = _new_database(admin_dsn)
+        try:
+            with psycopg.connect(dsn, autocommit=True) as connection:
+                _apply_base(connection)
+                _apply(connection, TARGET_MIGRATION)
+                _apply(connection, migration)
+                assert connection.execute(
+                    "select has_table_privilege("
+                    "'service_role','public.fleet_browser_inventory','select')"
+                ).fetchone()[0] is True
+                sealed = _report("macmini")["payload"]
+                first = connection.execute(
+                    "select * from public.record_browser_inventory(%s, %s)",
+                    ("macmini", Jsonb(sealed)),
+                ).fetchone()
+                second = connection.execute(
+                    "select * from public.record_browser_inventory(%s, %s)",
+                    ("macmini", Jsonb(sealed)),
+                ).fetchone()
+                assert first == second == (True, sealed["integrity_hash"])
+
+                conflicting = _report(
+                    "macmini", captured_at=NOW - timedelta(seconds=4)
+                )["payload"]
+                with pytest.raises(psycopg.errors.RaiseException):
+                    connection.execute(
+                        "select * from public.record_browser_inventory(%s, %s)",
+                        ("macmini", Jsonb(conflicting)),
+                    )
+                stored = connection.execute(
+                    "select report from public.fleet_browser_inventory"
+                ).fetchone()[0]
+                assert "secret" not in repr(stored)
+        finally:
+            _drop_database(admin_dsn, database)
+
+
+def test_sealing_re_sanitizes_url_endpoint_and_extra_secret_fields():
+    raw = _report("macmini")["payload"]
+    raw.pop("integrity_hash")
+    raw["inventory"][0]["endpoint"] = "http://10.0.0.8:9225"
+    raw["inventory"][0]["targets"][0]["sanitized_url"] = (
+        "https://user:secret@www.linkedin.com/talent/home?token=secret#private"
+    )
+    raw["inventory"][0]["cookie"] = "secret"
+
+    sealed = seal_browser_report(raw)
+
+    assert sealed["inventory"][0]["endpoint"] is None
+    assert sealed["inventory"][0]["targets"][0]["sanitized_url"] == (
+        "https://www.linkedin.com/talent/home"
+    )
+    assert "secret" not in repr(sealed)

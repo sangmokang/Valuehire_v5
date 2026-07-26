@@ -626,6 +626,24 @@ class JobQueueClient:
         rows = self._call("POST", "/rpc/heartbeats_epoch", {})
         return rows if isinstance(rows, list) else []
 
+    def publish_browser_inventory(self, source_machine_id: str,
+                                  report: dict[str, Any]) -> Any:
+        return self._call(
+            "POST", "/rpc/record_browser_inventory",
+            {"p_source_machine_id": source_machine_id, "p_report": report})
+
+    def browser_inventory_reports(self, request_id: str) -> list[dict[str, Any]]:
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise ValueError("request_id is required")
+        encoded = urllib.parse.quote(request_id, safe="")
+        rows = self._call(
+            "GET",
+            "/fleet_browser_inventory"
+            f"?request_id=eq.{encoded}"
+            "&select=source_machine_id,report&order=source_machine_id",
+        )
+        return rows if isinstance(rows, list) else []
+
     def linkedin_ready_machines(self) -> list:
         """이슈 D — heartbeat 의 LinkedIn 로그인 상태 조회(라우팅용, epoch 초)."""
         rows = self._call("POST", "/rpc/linkedin_ready_machines", {})
