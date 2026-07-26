@@ -120,6 +120,18 @@ def test_linkedin_machine_decision_table_is_complete_and_fail_closed() -> None:
         "APP31",
     ]
     assert (
+        decisions["zero_authenticated_machines"][
+            "selected_machine_requires_current_turn_owner_authorization"
+        ]
+        is True
+    )
+    assert (
+        decisions["zero_authenticated_machines"][
+            "selected_machine_requires_app17_route_decision"
+        ]
+        is True
+    )
+    assert (
         decisions["zero_authenticated_machines"]["provider_or_injector_unavailable"]
         == "HANDOFF"
     )
@@ -250,7 +262,28 @@ def test_login_and_search_entrypoints_reference_the_new_policy() -> None:
         assert POLICY_ID in text, path
 
     for path in LOGIN_SKILL_PATHS:
-        assert "APP 30/31" in _text(path), path
+        text = _text(path)
+        assert "APP 30/31" in text, path
+        assert "tools.install_login_skill" not in text, path
+        assert "금지 경로 강제 Hook" not in text, path
+        assert "레거시·불완전" in text, path
+
+
+def test_ai_search_status_vocabulary_matches_the_login_policy() -> None:
+    process = _json(ROOT / "docs/sot/25-ai-search-execution-process.json")
+    assert process["version"] == "1.2.0"
+    assert process["updated_at"] == "2026-07-26"
+
+    stage1 = next(stage for stage in process["stages"] if stage["id"] == "1_occupancy_captcha_gate")
+    stage9 = next(stage for stage in process["stages"] if stage["id"] == "9_report")
+    assert "status=BLOCKED" not in "\n".join(stage1["actions"])
+    assert "HUMAN_AUTH" in stage1["decision_tree"]["channel_captcha_detected"]
+    assert "AUTH_CONFLICT" in stage1["decision_tree"]["linkedin_multiple_authenticated_or_multisession"]
+    for status in ("READY", "OCCUPIED", "HUMAN_AUTH", "HANDOFF", "AUTH_CONFLICT"):
+        assert status in stage9["pass_criteria"]
+    assert "BLOCKED" not in stage9["pass_criteria"]
+    assert "HUMAN_AUTH" in process["gates"]["G_captcha"]
+    assert "BLOCKED" not in process["gates"]["G_captcha"]
 
 
 def test_worker_generated_prompts_reference_the_new_policy() -> None:
