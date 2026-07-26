@@ -88,6 +88,7 @@ def validate_reservoir_log_record(record: Mapping[str, object]) -> None:
     unexpected = [field for field in record if field not in RESERVOIR_LOG_FIELDS]
     if unexpected:
         raise ReservoirLogContractError(f"알 수 없는 로그 필드: {unexpected}")
+    require_machine_id(record["machine"])
     if record["line"] not in RESERVOIR_LINES:
         raise ReservoirLogContractError(f"알 수 없는 line: {record['line']!r}")
     if record["status"] not in RESERVOIR_STATUSES:
