@@ -11,6 +11,7 @@ CONTROL_PATH = ROOT / "skills/login/browser-control-contract.json"
 SKILL_PATH = ROOT / "skills/login/SKILL.md"
 WORKER_PATH = ROOT / "tools/multi_position_sourcing/fleet_worker.py"
 SEARCH_CONTRACT_PATH = ROOT / "docs/prompts/login-search-execution-contract.md"
+AI_SEARCH_PROCESS_MD_PATH = ROOT / "docs/sot/25-ai-search-execution-process.md"
 POLICY_ID = "26-portal-login-spec@1.5.0"
 HISTORICAL_MARKER = "historical_input_not_executable"
 
@@ -44,6 +45,7 @@ SEARCH_SKILL_PATHS = (
 )
 POLICY_ENTRYPOINTS = (
     ROOT / "CLAUDE.md",
+    AI_SEARCH_PROCESS_MD_PATH,
     ROOT / "docs/sot/25-ai-search-execution-process.json",
     ROOT / "docs/prompts/goal-full-codebase-review.md",
     ROOT / "docs/prompts/login-search-execution-contract.md",
@@ -518,6 +520,22 @@ def test_ai_search_status_vocabulary_matches_the_login_policy() -> None:
     assert "BLOCKED" not in stage9["pass_criteria"]
     assert "HUMAN_AUTH" in process["gates"]["G_captcha"]
     assert "BLOCKED" not in process["gates"]["G_captcha"]
+
+
+def test_ai_search_human_entrypoint_matches_machine_statuses() -> None:
+    text = _text(AI_SEARCH_PROCESS_MD_PATH)
+    assert "v1.2.0 · 2026-07-26" in text
+    assert "{READY/OCCUPIED/BLOCKED}" not in text
+    assert "캡차·봇차단 감지 → 그 채널 **즉시 STOP" not in text
+    for required in (
+        POLICY_ID,
+        "READY",
+        "OCCUPIED",
+        "HUMAN_AUTH",
+        "HANDOFF",
+        "AUTH_CONFLICT",
+    ):
+        assert required in text
 
 
 def test_worker_generated_prompts_reference_the_new_policy() -> None:
