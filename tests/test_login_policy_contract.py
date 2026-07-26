@@ -28,12 +28,17 @@ MULTISEARCH_SKILL_PATHS = (
     ROOT / "skills/multisearch/SKILL.md",
     ROOT / ".codex/skills/multisearch/SKILL.md",
 )
+AI_SEARCH_SKILL_PATHS = (
+    ROOT / "skills/ai-search/SKILL.md",
+    ROOT / ".codex/skills/ai-search/SKILL.md",
+    ROOT / ".claude/skills/aisearch/SKILL.md",
+)
 POLICY_ENTRYPOINTS = (
     ROOT / "CLAUDE.md",
     ROOT / "docs/sot/25-ai-search-execution-process.json",
     ROOT / "docs/prompts/goal-full-codebase-review.md",
     ROOT / "docs/prompts/login-search-execution-contract.md",
-    ROOT / "docs/ai-search/three-mac-account-coordinator-goal-prompt.md",
+    ROOT / "docs/search-access.md",
     ROOT / "skills/ai-search/references/spec-procedure.md",
     ROOT / "skills/ai-search/SKILL.md",
     ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
@@ -51,6 +56,7 @@ SUPERSEDED_PROMPTS = (
     ROOT / "docs/engineering/linkedin-managed-autologin-goal-2026-07-26.md",
     ROOT / "docs/engineering/login-policy-recement-goal-2026-07-08.md",
     ROOT / "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md",
+    ROOT / "docs/ai-search/three-mac-account-coordinator-goal-prompt.md",
 )
 
 
@@ -80,6 +86,7 @@ def test_site_authentication_methods_are_explicit_and_mutation_bounded() -> None
     ]
     assert control["source_priority"][0] == "docs/sot/26-portal-login-spec.json"
     assert control["policy_authority"] == POLICY_ID
+    assert "HANDOFF" in control["state_machine"]["DISCOVER"]["next"]
     multi_device = control["multi_device"]
     assert multi_device["authenticated_machine_count_requires_sealed_fleet_evidence"] is True
     assert multi_device["evidence_unavailable"] == "HANDOFF"
@@ -280,6 +287,9 @@ def test_policy_supersedes_historical_prompts_without_new_hermes_runtime() -> No
         "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md": (
             "historical_input_not_executable"
         ),
+        "docs/ai-search/three-mac-account-coordinator-goal-prompt.md": (
+            "historical_input_not_executable"
+        ),
     }
     route = policy["current_execution_route"]
     assert route == ["Discord", "queue", "worker", "Codex_or_Claude"]
@@ -363,6 +373,52 @@ def test_multisearch_entrypoint_uses_the_site_specific_policy() -> None:
             "AUTH_CONFLICT",
         ):
             assert required in text, (path, required)
+
+
+def test_ai_search_skills_do_not_collapse_policy_states() -> None:
+    for path in AI_SEARCH_SKILL_PATHS:
+        text = _text(path)
+        for forbidden in (
+            "classify each channel as `READY`, `OCCUPIED`, or `BLOCKED`",
+            "각 채널을 `READY`/`OCCUPIED`/`BLOCKED`로 분류",
+            "Auto-login is allowed only for a proven ordinary logout",
+            "캡차·2FA·봇차단·로그인캡·LinkedIn 멀티세션락 → 해당 채널 STOP",
+        ):
+            assert forbidden not in text, (path, forbidden)
+        for required in (
+            POLICY_ID,
+            "READY",
+            "OCCUPIED",
+            "HUMAN_AUTH",
+            "HANDOFF",
+            "AUTH_CONFLICT",
+            "APP 17",
+            "APP 30/31",
+            "인증 기기 수 미증명",
+        ):
+            assert required in text, (path, required)
+
+
+def test_search_access_cannot_authorize_linkedin_password_login() -> None:
+    text = _text(ROOT / "docs/search-access.md")
+    for forbidden in (
+        "auto-login is never disabled",
+        "LINKEDIN_USERNAME",
+        "LINKEDIN_PASSWORD",
+        "runner auto-logs in like the other portals",
+        "Auto-login + search/collect is always allowed",
+    ):
+        assert forbidden not in text
+    for required in (
+        POLICY_ID,
+        "APP 17",
+        "APP 30/31",
+        "LINKEDIN_LI_AT",
+        "인증 기기 수 미증명",
+        "HANDOFF",
+        "AUTH_CONFLICT",
+    ):
+        assert required in text
 
 
 def test_ai_search_status_vocabulary_matches_the_login_policy() -> None:
