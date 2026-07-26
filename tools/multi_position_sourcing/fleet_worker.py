@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .browser_evidence import complete_evidence_payload
+from .browser_inventory import collect_browser_inventory
 
 from tools.codex_skill_sync.sync import (
     default_dest as default_skill_dest,
@@ -50,6 +51,28 @@ REPO = Path(__file__).resolve().parents[2]
 # 훅(H2 guards/discord-bot-login-gate.py)은 2층 — 1층 강제는 이 코드다(훅 fail-open 전제).
 LOGIN_RECEIPT_RELPATH = "artifacts/portal_session_status_latest.json"
 LOGIN_RECEIPT_MAX_AGE_SECONDS = 86400  # fleet_heartbeat.PORTAL_STATUS_MAX_AGE_SECONDS 와 동일 기준
+
+
+def build_local_inventory_report(
+    *, machine_id: str, machine_readiness: Mapping[str, Any],
+    captured_at: str, request_id: str, process_snapshot: str,
+    listener_snapshot: list[Mapping[str, Any]],
+    endpoint_responses: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Local worker boundary: only sanitized collector fields leave the host."""
+    return {
+        "machine_id": machine_id,
+        "captured_at": captured_at,
+        "schema_version": 1,
+        "request_id": request_id,
+        "inventory": collect_browser_inventory(
+            local_machine_id=machine_id,
+            machine_readiness=machine_readiness,
+            process_snapshot=process_snapshot,
+            listener_snapshot=listener_snapshot,
+            endpoint_responses=endpoint_responses,
+        ),
+    }
 
 
 def _read_login_receipt() -> Any:
