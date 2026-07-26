@@ -101,7 +101,7 @@ nl-to-fleet-command	GREEN	-	PR#173 merged 2026-07-22(66c29ab). SHIPPED.
 nl-interpret-entry	GREEN	-	PR#174 merged 2026-07-22(605bbac). SHIPPED.
 nl-jdintake-skill	GREEN	-	PR#175 merged 2026-07-22(d53e055) — AC-N3 jdintake 스킬·큐/DB/Hook 화이트리스트 정합. RED 8 failed → GREEN 10 passed, 전체 2367 passed+4 xfailed+105 subtests, CI 2건 성공. SHIPPED.
 nl-gateway-wiring	GREEN	-	PR#176 merged 2026-07-22(28f7ccc) — AC-N4 plan_from_text() 직결 행동 결정 배선. RED 9 failed → GREEN 9 passed, 전체 2376 passed+4 xfailed+105 subtests, CI 2건 성공. SHIPPED.
-nl-gateway-connect	RED	-	worktree ../Valuehire_v5-nl-gateway-connect (branch task/nl-gateway-connect)
-hermes-retirement-contract	RED	-	worktree ../Valuehire_v5-hermes-retirement-contract (branch task/hermes-retirement-contract)
+nl-gateway-connect	GREEN	#177	PR#177 merged as 17ad672; tests/test_gateway_nl_connect.py and live gateway wiring are present. The later nl-shell-ac-n2-n4 aggregate row is also GREEN. Stale task-opening RED closed 2026-07-26.
+hermes-retirement-contract	GREEN	-	Merged as e697dc3; docs/engineering/hermes-retirement-contract.verdict.json records three_way_agree=true and contract complete, followed by shipped HR-0 PR#181. Stale task-opening RED closed 2026-07-26.
 nl-shell-ac-n2-n4	GREEN	-	PR#171~177 merged 2026-07-22 — U1 해소3분기·U2 ClickUp어댑터+동의어·U3 fleet환원·U4 단일진입점·U5 jdintake스킬·U6 plan_from_text·U7 게이트웨이배선. 각 단위 RED→GREEN+뮤턴트 kill. verify 2386 passed exit 0. 잔여: ClickUp 라이브 HTTP 어댑터, badge_env 워커 주입, E-NL4 인텐트 결정. SHIPPED.
 hermes-retirement-hr0-inventory	GREEN	-	PR#181 merged 2026-07-22(598764f) — HR-0 전수조사 2,909항목·UNKNOWN 0·live caller 선이사 153·비밀원문 0. focused 38 passed, 전체 2431 passed+4 xfailed+105 subtests, CI 2건·독립 최종 PASS. Hermes runtime 변경 0. SHIPPED.
