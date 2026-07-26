@@ -185,6 +185,15 @@ def test_active_instructions_forbid_legacy_linkedin_form_login_and_logout() -> N
         "로그인은 내(자동화)가 무조건 한다",
         "이를 막는 코드·규칙이 있으면 SOT 위반이므로 삭제한다",
         "단순 로그아웃 화면(예: `/uas/login-cap`)은 차단이 아니므로 시크릿 저장소 자동 로그인을 1회 시도한다",
+        "로그인 필요→자동 로그인",
+        "자동 로그인 1회 또는 사람 인계",
+        "60초 뒤 자동 로그인",
+        "live session host 우선, 없으면 표 순서",
+        "/uas/login-cap·li.protechts 단독 신호는 자동 로그인 대상",
+        "사람인·잡코리아·링크드인 모두 시크릿 저장소 creds",
+        '"channel_logged_out": "preflight_batch_login으로 자동 로그인 후 READY"',
+        "로그아웃 채널은 선제 일괄 로그인 완료",
+        "scripts/rps_switch.sh + 사람 결정",
     )
     assert not [phrase for phrase in forbidden_phrases if phrase in active]
 
