@@ -82,15 +82,20 @@ def build_fleet_job_payload(
 def _route_linkedin_machine(
     queue: Any, *, request_id: str = "", requested_machine: str = "",
     delegate_winpc: bool = False,
-) -> str:
-    """등록·heartbeat·위임을 통과한 LinkedIn 후보만 기존 선택기에 전달한다."""
+) -> dict[str, Any]:
+    """Build one exact App 04 snapshot, then call the side-effect-free router."""
     from datetime import datetime, timezone
 
+    from .fleet_route import decide_fleet_route
+    from .fleet_snapshot import aggregate_fleet_snapshot
     from .fleet_heartbeat import (
         normalize_machine_hostname,
-        pick_linkedin_machine,
         readiness_candidates,
     )
+    failed = {
+        "selected_machine": None, "reason": "DISCOVERY_INCOMPLETE",
+        "evidence_refs": [], "snapshot_id": "",
+    }
     try:
         fetch = getattr(queue, "linkedin_ready_machines", None)
         rows = list(
@@ -106,24 +111,57 @@ def _route_linkedin_machine(
                 for row in rows
             ]
         now = datetime.now(timezone.utc)
-        ready, _ = readiness_candidates(
+        ready, rejected = readiness_candidates(
             rows, required_capability="linkedin_rps",
             request_id=request_id, now=now,
         )
-        selectable = [
-            row for row in ready if row.get("linkedin_rps_logged_in") is True
+        candidates = [*ready, *rejected]
+        expected = [
+            machine for row in rows
+            if (machine := normalize_machine_hostname(row.get("machine_id")))
         ]
-        requested_canonical = normalize_machine_hostname(requested_machine)
-        if requested_machine:
-            selectable = [
-                row for row in selectable
-                if row.get("machine_id") == requested_canonical
-            ]
-        if not selectable:
-            return ""
-        return pick_linkedin_machine(selectable, now_epoch=int(now.timestamp()))
+        if len(expected) != len(rows) or len(expected) != len(set(expected)):
+            return failed
+        readiness = [
+            {"machine_id": row["machine_id"], **row["readiness"]}
+            for row in candidates
+        ]
+        report_fetch = getattr(queue, "browser_inventory_reports")
+        stored = report_fetch(request_id)
+        reports = [
+            {
+                "source_machine_id": row.get("source_machine_id"),
+                "payload": row.get("report"),
+            }
+            for row in stored if isinstance(row, Mapping)
+        ]
+        snapshot = aggregate_fleet_snapshot(
+            expected_machine_ids=expected,
+            machine_readiness=readiness,
+            reports=reports,
+            request_id=request_id,
+            requested_at=now,
+            required_capability="linkedin_rps",
+        )
+        receipt_fetch = getattr(queue, "login_receipt_summaries", None)
+        receipts = list(receipt_fetch("linkedin_rps")) if callable(receipt_fetch) else []
+        defaults_fetch = getattr(queue, "site_role_defaults", None)
+        defaults = defaults_fetch() if callable(defaults_fetch) else {}
+        return decide_fleet_route(
+            normalized_request={
+                "request_id": request_id,
+                "site": "linkedin_rps",
+                "requested_machine": requested_machine or None,
+                "delegated_for_request_id": (
+                    request_id if delegate_winpc and requested_machine == "winpc" else None
+                ),
+            },
+            fleet_snapshot=snapshot,
+            login_receipts=receipts,
+            site_role_defaults=defaults,
+        )
     except Exception:  # noqa: BLE001 — 준비를 증명 못 하면 enqueue 하지 않는다
-        return ""
+        return failed
 
 
 def _group_session_for_url(url: str) -> Optional[dict[str, Any]]:
@@ -210,17 +248,22 @@ def dispatch_fleet_command(
 
             requested_machine = str(options.get("machine") or "").strip()
             request_id = str(options.pop("_request_id", "") or uuid.uuid4().hex)
-            routed = _route_linkedin_machine(
+            route_decision = _route_linkedin_machine(
                 q, request_id=request_id,
                 requested_machine=requested_machine,
                 delegate_winpc=owner and requested_machine == "winpc",
             )
+            routed = route_decision["selected_machine"]
             if not routed:
                 return {
                     "action": "error",
-                    "reason": "준비 상태를 증명한 LinkedIn 머신이 없습니다",
+                    "reason": route_decision["reason"],
                 }
             options["machine"] = routed
+            params = dict(options.get("params") or {})
+            params["route_decision"] = route_decision
+            params["snapshot_id"] = route_decision["snapshot_id"]
+            options["params"] = params
         # 이슈 #104: humansearch 잡에 진행 중 포지션(SOT24) 그룹 세션을 동봉 —
         # 같은 로그인 세션에서 유사 포지션 연속 검색 + idle 변형 자동 enqueue 의 원천.
         if (options.get("skill") or "").strip() == "humansearch":

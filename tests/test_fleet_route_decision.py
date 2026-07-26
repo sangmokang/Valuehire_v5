@@ -144,12 +144,16 @@ def test_explicit_winpc_requires_current_request_delegation():
         ({"lookup_error": True}, "DISCOVERY_INCOMPLETE"),
         ({"requested_machine": "ghost"}, "INVALID_MACHINE"),
         (
-            {"receipts": [_receipt("macmini", age=86401)]},
+            {"receipts": [_receipt("macmini", age=1801)]},
             "STALE_RECEIPT",
         ),
         (
             {"receipts": [_receipt("macmini", state="AUTH_CONFLICT")]},
             "AUTH_CONFLICT",
+        ),
+        (
+            {"receipts": [{**_receipt("macmini"), "schema_version": 99}]},
+            "ROUTE_AMBIGUOUS",
         ),
     ],
 )
