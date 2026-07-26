@@ -182,7 +182,9 @@ def test_active_instructions_forbid_legacy_linkedin_form_login_and_logout() -> N
         "linkedin_rps_logged_in=true인 머신을 먼저 찾아 이 잡에 배정",
         "저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것",
         "3사 자동 로그인을 막지 않는다",
-        "/uas/login-cap current target이면 시크릿 저장소 자동 로그인 1회",
+        "로그인은 내(자동화)가 무조건 한다",
+        "이를 막는 코드·규칙이 있으면 SOT 위반이므로 삭제한다",
+        "단순 로그아웃 화면(예: `/uas/login-cap`)은 차단이 아니므로 시크릿 저장소 자동 로그인을 1회 시도한다",
     )
     assert not [phrase for phrase in forbidden_phrases if phrase in active]
 
@@ -255,6 +257,10 @@ def test_worker_generated_prompts_reference_the_new_policy() -> None:
         assert "APP 30/31" in prompt
         assert "LINKEDIN_LI_AT" in prompt
         assert "자동 로그아웃" in prompt
+        assert "AUTH_CONFLICT" in prompt
+        assert "인증 기기가 정확히 1개" in prompt
+        assert "인증 조작 0회" in prompt
+        assert "신뢰도 기반 선택" in prompt
     assert "저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것" not in login_prompt
     assert "linkedin_rps_logged_in=true인 머신을 먼저 찾아" not in url_prompt
 
@@ -270,7 +276,9 @@ def test_current_route_does_not_keep_hermes_as_an_active_agent() -> None:
     for path in CONTROL_PATHS:
         assert _json(path)["supported_agents"] == ["claude", "codex"]
 
-    active = "\n".join(_text(path) for path in (*LOGIN_SKILL_PATHS, POLICY_PATH))
+    active = "\n".join(
+        _text(path) for path in (*LOGIN_SKILL_PATHS, *CONTROL_PATHS, POLICY_PATH)
+    )
     forbidden_active_markers = (
         "Claude, Codex, Hermes",
         "Claude·Codex·Hermes",
