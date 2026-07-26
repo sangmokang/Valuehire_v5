@@ -215,6 +215,33 @@ def test_auth_conflict_never_presents_notifies_or_waits() -> None:
     assert notifications == []
 
 
+def test_invalid_evidence_is_a_structured_terminal_state() -> None:
+    result = run(
+        [],
+        EpisodeStore(),
+        [],
+        _evidence_validator=lambda _payload: False,
+    )
+    assert result["state"] == "EVIDENCE_CAPTURE_FAILED"
+    assert result["capture_status"] == "failed"
+    assert result["presentation_count"] == 1
+    assert result["notification_count"] == 1
+
+
+def test_notification_failure_is_structured_and_never_enters_wait() -> None:
+    result = run(
+        [],
+        EpisodeStore(),
+        [],
+        notification_sink=lambda _payload: (_ for _ in ()).throw(
+            RuntimeError("discord unavailable")
+        ),
+        _auth_waiter=lambda **_kwargs: pytest.fail("failed handoff must not wait"),
+    )
+    assert result["state"] == "HANDOFF_FAILED"
+    assert result["reason"] == "human_auth_notification_failed"
+
+
 def test_keyboard_interrupt_disconnects_websocket_without_browser_close() -> None:
     trace: list[str] = []
     with pytest.raises(KeyboardInterrupt):

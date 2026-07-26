@@ -28,6 +28,7 @@ import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -69,6 +70,8 @@ class AuthObservation:
     target_id: str = ""
     url_before: str = ""
     url_after: str = ""
+    last_probe_at: str = ""
+    owner_quiet_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -503,6 +506,7 @@ def wait_for_human_auth(
     stop_requested: Callable[[], bool],
     poll_interval_seconds: float = 5.0,
     quiet_seconds: float = 15.0,
+    utc_now: Callable[[], datetime] | None = None,
 ) -> AuthObservation | None:
     """Wait indefinitely using read-only probes until auth and owner quiet agree.
 
@@ -513,13 +517,16 @@ def wait_for_human_auth(
 
     poll = max(5.0, float(poll_interval_seconds))
     quiet = max(15.0, float(quiet_seconds))
+    now = utc_now or (lambda: datetime.now(timezone.utc))
     while True:
         if stop_requested():
             return None
         try:
             observation = auth_probe()
+            last_probe_at = now().astimezone(timezone.utc).isoformat()
         except Exception:
             observation = None
+            last_probe_at = now().astimezone(timezone.utc).isoformat()
         if (
             isinstance(observation, AuthObservation)
             and observation.auth_conflict is True
@@ -549,7 +556,11 @@ def wait_for_human_auth(
             and bool(observation.proof_names)
             and valid_idle
         ):
-            return observation
+            return replace(
+                observation,
+                last_probe_at=last_probe_at,
+                owner_quiet_seconds=float(idle),
+            )
         sleep(poll)
 
 
@@ -602,7 +613,6 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     target_after = _tab_target_id(tab) or "unavailable-target"
     if not isinstance(raw, Mapping):
         return AuthObservation(False, False, "", ())
-    from datetime import datetime, timezone
     from .auth_classifier import classify_auth_observation
 
     markers = {
@@ -1597,6 +1607,8 @@ def run_human_auth_episode(
     site: Site,
     *,
     agent: str,
+    machine: str = "",
+    episode_id: str | None = None,
     task: str = "login",
     job_id: str = "",
     target_id: str | None = None,
@@ -1605,6 +1617,7 @@ def run_human_auth_episode(
     mutation_sleep: Callable[[float], None] = time.sleep,
     wait_sleep: Callable[[float], None] = time.sleep,
     locator_sink: Callable[[Mapping[str, Any]], None] | None = None,
+    notification_sink: Callable[[Mapping[str, str]], None] | None = None,
     _lease_factory: Callable[[Site], Any] | None = None,
     _target_resolver: Callable[..., BrowserTargetRef] | None = None,
     _tab_attacher: Callable[..., Any] | None = None,
@@ -1613,6 +1626,8 @@ def run_human_auth_episode(
     _auth_waiter: Callable[..., AuthObservation | None] | None = None,
     _cleanup: Callable[..., dict[str, Any]] | None = None,
     _evidence_capture: Callable[..., Any] | None = None,
+    _evidence_validator: Callable[[Any], bool] | None = None,
+    _episode_store: Any | None = None,
 ) -> dict[str, Any]:
     """Run one exact existing-target auth handoff without creating browser state."""
     if site not in _SITE_DOMAINS:
@@ -1635,6 +1650,7 @@ def run_human_auth_episode(
         capture_owned_browser_evidence,
         complete_evidence_payload,
     )
+    from .human_auth_episode import DEFAULT_HUMAN_AUTH_EPISODES
     from .portal_worker import assert_raw_browser_mutation_allowed
 
     lease_factory = _lease_factory or _default_login_lease
@@ -1647,6 +1663,33 @@ def run_human_auth_episode(
     evidence_capture = _evidence_capture or capture_owned_browser_evidence
     stop = stop_requested or (lambda: False)
     sink = locator_sink or (lambda _payload: None)
+    notify = notification_sink or (lambda _payload: None)
+    coordinated = episode_id is not None
+    active_episode = episode_id or secrets.token_hex(16)
+    store = _episode_store or DEFAULT_HUMAN_AUTH_EPISODES
+    evidence_validator = _evidence_validator or complete_evidence_payload
+
+    def decorate(
+        payload: dict[str, Any],
+        state: str,
+        observation: AuthObservation | None = None,
+    ) -> dict[str, Any]:
+        if not coordinated:
+            return payload
+        return {
+            **payload,
+            "episode_id": active_episode,
+            "presentation_count": store.count(active_episode, "presentation"),
+            "notification_count": store.count(active_episode, "notification"),
+            "state": state,
+            "last_probe_at": (
+                getattr(observation, "last_probe_at", "")
+                or getattr(observation, "observed_at", "")
+            ),
+            "owner_quiet_seconds": float(
+                getattr(observation, "owner_quiet_seconds", 0.0) or 0.0
+            ),
+        }
     lease = lease_factory(site)
     tab: Any | None = None
     ref: BrowserTargetRef | None = None
@@ -1673,6 +1716,14 @@ def run_human_auth_episode(
             already_authenticated: bool,
             extra: Mapping[str, Any] | None = None,
         ) -> dict[str, Any]:
+            def evidence_failed(reason: str) -> dict[str, Any]:
+                return decorate({
+                    "status": "evidence_failed",
+                    "capture_status": "failed",
+                    "site": site,
+                    "reason": reason,
+                }, "EVIDENCE_CAPTURE_FAILED", observation)
+
             if not _wait_for_initial_mutation_gate(
                 mutation_gate,
                 stop_requested=stop,
@@ -1690,34 +1741,19 @@ def run_human_auth_episode(
                     auth_probe=auth_reader,
                 )
             except BrowserEvidenceError as exc:
-                return {
-                    "status": "evidence_failed",
-                    "capture_status": "failed",
-                    "site": site,
-                    "reason": str(exc),
-                }
+                return evidence_failed(str(exc))
             if hasattr(evidence_receipt, "public_dict"):
                 evidence_payload = evidence_receipt.public_dict()
             elif isinstance(evidence_receipt, Mapping):
                 evidence_payload = dict(evidence_receipt)
             else:
-                return {
-                    "status": "evidence_failed",
-                    "capture_status": "failed",
-                    "site": site,
-                    "reason": "login evidence receipt is invalid",
-                }
+                return evidence_failed("login evidence receipt is invalid")
             if (
                 evidence_payload.get("status") != "saved"
                 or evidence_payload.get("capture_status", "saved") != "saved"
-                or not complete_evidence_payload(evidence_payload)
+                or not evidence_validator(evidence_payload)
             ):
-                return {
-                    "status": "evidence_failed",
-                    "capture_status": "failed",
-                    "site": site,
-                    "reason": "login evidence receipt is not saved",
-                }
+                return evidence_failed("login evidence receipt is not saved")
             result: dict[str, Any] = {
                 "status": "authenticated",
                 "capture_status": evidence_payload.get("capture_status", evidence_payload.get("status")),
@@ -1729,7 +1765,7 @@ def run_human_auth_episode(
             }
             if extra:
                 result.update(extra)
-            return result
+            return decorate(result, "AUTHENTICATED", observation)
         # Attach itself is read-only, but the gate here ensures a user who is
         # actively driving this exact managed browser is never even shadowed.
         # HUMAN_ACTIVE is a read-only wait state, not a terminal error.
@@ -1753,7 +1789,11 @@ def run_human_auth_episode(
             and isinstance(initial_auth, AuthObservation)
             and initial_auth.auth_conflict is True
         ):
-            return _terminal_auth_conflict_result(site, initial_auth)
+            return decorate(
+                _terminal_auth_conflict_result(site, initial_auth),
+                "AUTH_CONFLICT",
+                initial_auth,
+            )
         if _auth_matches(initial_auth, ref.initial_url):
             return authenticated_with_evidence(
                 initial_auth,
@@ -1771,16 +1811,23 @@ def run_human_auth_episode(
             ):
                 raise _HumanAuthStopRequested()
 
-        episode_id = secrets.token_hex(16)
+        presented_now = False
         try:
             presentation_kwargs: dict[str, Any] = {
                 "agent": clean_agent,
                 "mutation_gate": presentation_mutation_gate,
-                "episode_id": episode_id,
+                "episode_id": active_episode,
             }
             if _presenter is None:
                 presentation_kwargs.update({"task": task, "job_id": job_id})
-            locator = presenter(tab, ref, **presentation_kwargs)
+            if store.claim(active_episode, "presentation"):
+                locator = presenter(tab, ref, **presentation_kwargs)
+                store.save_locator(active_episode, locator)
+                presented_now = True
+            else:
+                locator = store.load_locator(active_episode)
+                if not isinstance(locator, LoginWindowLocator):
+                    raise RuntimeError("episode presentation receipt missing")
         except _HumanAuthStopRequested:
             return {"status": "human_auth_stopped", "site": site}
         except Exception as exc:
@@ -1789,14 +1836,31 @@ def run_human_auth_episode(
             if isinstance(exc, ProfileLockError):
                 raise
             pending_locator = getattr(tab, "_vh_human_auth_cleanup_locator", None)
-            return {
+            return decorate({
                 "status": "handoff_failed",
                 "site": site,
                 "reason": "exact_window_presentation_failed",
                 "cleanup_pending": isinstance(pending_locator, LoginWindowLocator),
-            }
+            }, "EXACT_WINDOW_PRESENTATION_FAILED")
         public_locator = _public_locator_payload(locator)
-        sink(public_locator)
+        if presented_now:
+            sink(public_locator)
+        if coordinated and store.claim(active_episode, "notification"):
+            try:
+                notify({
+                    "machine": re.sub(r"[^A-Za-z0-9_.-]+", "-", machine)[:48],
+                    "site": site,
+                    "agent": clean_agent,
+                    "target_suffix": locator.target_id_suffix,
+                    "sanitized_title": locator.sanitized_title,
+                })
+            except Exception:
+                return decorate({
+                    "status": "handoff_failed",
+                    "site": site,
+                    "reason": "human_auth_notification_failed",
+                    "cleanup_pending": True,
+                }, "HANDOFF_FAILED")
         observation = waiter(
             auth_probe=lambda: auth_reader(tab, site),
             owner_snapshot=auth_owner_snapshot,
@@ -1813,11 +1877,11 @@ def run_human_auth_episode(
             # marker untouched, disconnect the WebSocket, and report cleanup
             # pending instead of focusing or modifying the page again.
             cleanup_attempted = True
-            return _terminal_auth_conflict_result(
+            return decorate(_terminal_auth_conflict_result(
                 site,
                 observation,
                 cleanup_pending=locator is not None,
-            )
+            ), "AUTH_CONFLICT", observation)
         if observation is None or stop():
             cleanup_attempted = True
             cleanup_result = cleanup(
@@ -2547,6 +2611,17 @@ def run_auto_login_episode(
         lease.release()
 
 
+def _notify_human_auth_discord(payload: Mapping[str, str]) -> None:
+    """Send the one public handoff notice through the shared Discord route."""
+    from .fleet_worker import discord_notify
+
+    fields = ("machine", "site", "agent", "target_suffix", "sanitized_title")
+    text = "🔐 HUMAN_AUTH\n" + "\n".join(
+        f"- {key}: {str(payload.get(key, ''))}" for key in fields
+    )
+    discord_notify({"id": f"human-auth:{payload.get('target_suffix', '')}"}, text)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI for the actual exact-target human-auth and keepalive runners."""
     import argparse
@@ -2558,6 +2633,8 @@ def main(argv: list[str] | None = None) -> int:
     auth.add_argument("--agent", required=True)
     auth.add_argument("--task", default="login")
     auth.add_argument("--job-id", default="")
+    auth.add_argument("--episode-id", default=None)
+    auth.add_argument("--machine", default="")
     auth.add_argument(
         "--target-id",
         default=None,
@@ -2616,13 +2693,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.get("state") == "AUTHENTICATED" else 1
 
     if args.command == "human-auth":
+        auth_episode_id = args.episode_id or secrets.token_hex(16)
         result = run_human_auth_episode(
             site,
             agent=args.agent,
+            machine=args.machine or os.environ.get("VALUEHIRE_MACHINE", "").strip(),
+            episode_id=auth_episode_id,
             task=args.task,
             job_id=args.job_id,
             target_id=args.target_id,
             locator_sink=lambda payload: print(json.dumps(payload, ensure_ascii=False)),
+            notification_sink=_notify_human_auth_discord,
         )
         # #639 login-first: AUTHENTICATED + 증거 저장 확인 시에만 로그인 영수증 기록.
         # 이 파일이 검색 장벽(login_barrier)이 인정하는 유일한 통과 증거다.
