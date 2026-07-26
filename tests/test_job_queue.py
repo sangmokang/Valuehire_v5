@@ -109,6 +109,7 @@ def test_new_job_payload_rejects_unserializable_params():
     {"items": [{"cookie_value": "FAKE_SENTINEL_DO_NOT_USE"}]},
     {"secret_digest": "FAKE_DERIVED_SENTINEL"},
     {"auth_token": "FAKE_SENTINEL_DO_NOT_USE"},
+    {"note": "FAKE_SECRET_VALUE"},
 ])
 def test_new_job_payload_rejects_secret_shaped_params(params):
     assert new_job_payload(**_ok_kwargs(), params=params) is None

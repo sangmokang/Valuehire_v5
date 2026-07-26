@@ -11,6 +11,10 @@ CONTROL_PATH = ROOT / "skills/login/browser-control-contract.json"
 SKILL_PATH = ROOT / "skills/login/SKILL.md"
 WORKER_PATH = ROOT / "tools/multi_position_sourcing/fleet_worker.py"
 SEARCH_CONTRACT_PATH = ROOT / "docs/prompts/login-search-execution-contract.md"
+HUMANSEARCH_CONFIG_PATH = ROOT / "skills/humansearch/humansearch.config.json"
+AISEARCH_VENDOR_PATH = (
+    ROOT / ".claude/skills/aisearch/vendor/linkedin-rps-jd-set-builder.md"
+)
 AI_SEARCH_PROCESS_MD_PATH = ROOT / "docs/sot/25-ai-search-execution-process.md"
 AI_SEARCH_PROCEDURE_PATHS = (
     ROOT / "skills/ai-search/references/spec-procedure.md",
@@ -375,6 +379,31 @@ def test_fleet_sot_cannot_guess_linkedin_machine_or_time_resume_login() -> None:
         "시간 자동 재개 금지",
     ):
         assert required in text
+
+
+def test_active_humansearch_sources_require_proven_existing_target() -> None:
+    config = _json(HUMANSEARCH_CONFIG_PATH)
+    browser = config["browser_driver"]
+    assert browser["endpoint_source"] == "APP17_PROVEN_CDP_ENDPOINT"
+    assert "endpoint" not in browser
+    assert "9222" not in json.dumps(browser, ensure_ascii=False)
+
+    vendor = _text(AISEARCH_VENDOR_PATH)
+    for forbidden in (
+        "--remote-debugging-port=9222",
+        "--user-data-dir=/tmp/chrome-debug",
+        'connectOverCDP("http://localhost:9222")',
+        "fresh Recruiter right-rail profile target을 연다",
+        "fresh authenticated `rightRail=composer` target을 열어",
+    ):
+        assert forbidden not in vendor
+    for required in (
+        POLICY_ID,
+        "PROVEN_CDP_ENDPOINT",
+        "exact existing target",
+        "새 브라우저·창·탭 생성 금지",
+    ):
+        assert required in vendor
 
 
 def test_login_search_execution_contract_cannot_restore_legacy_login() -> None:

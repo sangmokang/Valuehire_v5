@@ -296,6 +296,7 @@ def test_build_job_prompt_fail_closed():
     {"items": [{"cookie_value": "FAKE_SENTINEL_DO_NOT_USE"}]},
     {"secret_digest": "FAKE_DERIVED_SENTINEL"},
     {"auth_token": "FAKE_SENTINEL_DO_NOT_USE"},
+    {"note": "FAKE_SECRET_VALUE"},
 ])
 def test_build_job_prompt_rejects_secret_shaped_params_from_db_bypass(params):
     with pytest.raises(ValueError, match="비밀"):

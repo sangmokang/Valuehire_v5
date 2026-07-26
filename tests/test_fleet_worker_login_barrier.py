@@ -161,6 +161,10 @@ def test_blocked_notice_names_exact_human_action(tmp_path):
         "schema_version": 1,
         "channel": "linkedin_rps",
         "state": "HUMAN_AUTH",
+        "challenge_verified": True,
+        "challenge_type": "captcha",
+        "target_id": "T1",
+        "proof_names": ["captcha_visible"],
     }), encoding="utf-8")
     job = _job(skill="url",
                params={"search_urls": ["https://www.linkedin.com/talent/search"]})
@@ -178,6 +182,10 @@ def test_auth_conflict_is_terminal_without_human_pause_or_resume(tmp_path):
         "schema_version": 1,
         "channel": "linkedin_rps",
         "state": "AUTH_CONFLICT",
+        "conflict_verified": True,
+        "conflict_type": "multiple_authenticated_machines",
+        "authenticated_machine_count": 2,
+        "proof_names": ["fleet_snapshot"],
     }), encoding="utf-8")
     status, q, calls, notes = _run_worker(
         _job(skill="url", params={
@@ -190,6 +198,29 @@ def test_auth_conflict_is_terminal_without_human_pause_or_resume(tmp_path):
     assert calls == []
     joined = "\n".join(notes)
     assert "AUTH_CONFLICT" in joined
+    assert "paused_for_human" not in joined
+    assert "session_guard human-auth" not in joined
+    assert "fleet-resume" not in joined
+
+
+def test_human_auth_label_without_positive_challenge_proof_is_handoff(tmp_path):
+    rdir = tmp_path / "login_receipts"
+    rdir.mkdir()
+    (rdir / "linkedin_rps.json").write_text(json.dumps({
+        "schema_version": 1,
+        "channel": "linkedin_rps",
+        "state": "HUMAN_AUTH",
+    }), encoding="utf-8")
+    status, q, calls, notes = _run_worker(
+        _job(skill="url", params={
+            "search_urls": ["https://www.linkedin.com/talent/search"],
+        }),
+        rdir,
+    )
+    assert status == "failed"
+    assert q.released[-1][1] == "failed"
+    assert calls == []
+    joined = "\n".join(notes)
     assert "paused_for_human" not in joined
     assert "session_guard human-auth" not in joined
     assert "fleet-resume" not in joined
