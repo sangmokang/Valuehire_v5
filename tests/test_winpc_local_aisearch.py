@@ -92,7 +92,7 @@ def test_live_local_run_prepares_browser_and_invokes_agent_on_same_process_path(
         ),
         artifact_root=tmp_path / "runs",
         lock_path=tmp_path / "local.lock",
-        environ={"LOCALAPPDATA": str(tmp_path / "LocalAppData")},
+        environ={"LOCALAPPDATA": r"C:\Users\Test\AppData\Local"},
         portal_preparer=prepare,
         runner=runner,
         system_name="Windows",

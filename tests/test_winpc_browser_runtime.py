@@ -50,7 +50,7 @@ def test_windows_managed_endpoint_uses_configured_port_without_unix_launcher() -
 def test_winpc_environment_discards_legacy_global_endpoint(tmp_path: Path) -> None:
     env = winpc_environment(
         {
-            "LOCALAPPDATA": str(tmp_path),
+            "LOCALAPPDATA": r"C:\Users\Test\AppData\Local",
             "VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT": "http://127.0.0.1:9222",
         }
     )
