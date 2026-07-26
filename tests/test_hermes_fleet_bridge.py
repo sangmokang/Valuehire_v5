@@ -165,17 +165,20 @@ def test_default_access_doc_resolves_regardless_of_process_cwd(monkeypatch, tmp_
 
 def test_bare_url_alone_defaults_skill_aisearch_without_forcing_winpc() -> None:
     # 사장님 요청(2026-07-13): "그냥 /fleet-run 하고 클릭업 링크만 주면 서치하도록" —
-    # skill:/machine: 없이 URL 하나만 줘도 aisearch/winpc 기본값으로 등록돼야 한다.
+    # skill 없이 URL 하나만 주면 aisearch로 해석하되 기기는 추측하지 않는다.
     options = parse_hermes_fleet_args("fleet-run", "https://app.clickup.com/t/abc")
     assert options["skill"] == "aisearch"
     assert options["url"] == "https://app.clickup.com/t/abc"
     assert "machine" not in options
 
 
-def test_bare_url_dispatches_end_to_end_with_defaults() -> None:
+def test_url_dispatches_end_to_end_with_explicit_machine() -> None:
     queue = FakeQueue()
     result = dispatch_hermes_fleet_command(
-        "fleet-run", "https://app.clickup.com/t/abc", gateway_user_id=OWNER, queue=queue
+        "fleet-run",
+        "https://app.clickup.com/t/abc macmini",
+        gateway_user_id=OWNER,
+        queue=queue,
     )
     assert result["action"] == "enqueued"
     assert queue.enqueued[0]["skill"] == "aisearch"
@@ -271,7 +274,7 @@ def test_search_result_url_dispatches_end_to_end_as_humansearch_job() -> None:
     result = dispatch_hermes_fleet_command(
         "fleet-run",
         "https://app.clickup.com/t/abc "
-        "https://www.linkedin.com/search/results/people/?keywords=cto",
+        "https://www.linkedin.com/search/results/people/?keywords=cto macbook",
         gateway_user_id=OWNER,
         queue=queue,
     )
@@ -403,11 +406,11 @@ def test_two_position_urls_are_rejected_not_silently_dropped() -> None:
         parse_hermes_fleet_args("fleet-run", "https://a.test https://b.test")
 
 
-def test_linkedin_only_uses_existing_default_account_binding() -> None:
+def test_linkedin_only_uses_explicit_account_binding() -> None:
     queue = FakeQueue()
     result = dispatch_hermes_fleet_command(
         "fleet-run",
-        "https://www.linkedin.com/search/results/people/?keywords=cto",
+        "https://www.linkedin.com/search/results/people/?keywords=cto macmini",
         gateway_user_id=OWNER,
         queue=queue,
     )
@@ -586,7 +589,7 @@ def test_explicit_skill_overrides_linkedin_rule() -> None:
 
 def test_win_alias_and_linkedin_rule_apply_together() -> None:
     rewritten = natural_fleet_command_text(
-        "Win 에서 링크드인 찾아줘 https://career.wrtn.io/ko/o/172878")
+        "win 에서 링크드인 찾아줘 https://career.wrtn.io/ko/o/172878")
     assert rewritten is not None
     command, raw_args = rewritten[1:].split(" ", 1)
     options = parse_hermes_fleet_args(command, raw_args)
@@ -595,13 +598,13 @@ def test_win_alias_and_linkedin_rule_apply_together() -> None:
     assert options["params"]["followup_skill"] == "aisearch"
 
 
-def test_bare_token_win_any_case_maps_to_winpc() -> None:
-    # 이미 대소문자 무관 동작 — 회귀 방지 고정(goal §1 확인 항목)
+def test_bare_token_machine_alias_requires_exact_case() -> None:
     from tools.multi_position_sourcing.hermes_fleet_bridge import (
         _classify_bare_fleet_run_token,
     )
-    assert _classify_bare_fleet_run_token("Win") == ("machine", "winpc")
-    assert _classify_bare_fleet_run_token("WIN") == ("machine", "winpc")
+    assert _classify_bare_fleet_run_token("win") == ("machine", "winpc")
+    assert _classify_bare_fleet_run_token("Win") is None
+    assert _classify_bare_fleet_run_token("WIN") is None
 
 
 def test_followup_field_rejects_unknown_skill() -> None:
