@@ -68,7 +68,7 @@ class ReservoirLogContractTests(unittest.TestCase):
 
     def test_missing_field_is_rejected(self) -> None:
         rec = make_reservoir_log_record(
-            ts="t", run_id="r", machine="m", segment_id="s", site="saramin",
+            ts="t", run_id="r", machine="macmini", segment_id="s", site="saramin",
             line="harvest", in_count=1, out_count=1, dropped_count=0, status="ok",
         )
         del rec["dropped_count"]
@@ -91,7 +91,7 @@ class ReservoirLogContractTests(unittest.TestCase):
     def test_fail_closed_requires_reason(self) -> None:
         # status=fail 인데 fail_reason 비면 계약 위반(조용한 실패 금지).
         rec = make_reservoir_log_record(
-            ts="t", run_id="r", machine="m", segment_id="s", site="jobkorea",
+            ts="t", run_id="r", machine="macmini", segment_id="s", site="jobkorea",
             line="harvest", in_count=5, out_count=0, dropped_count=5, status="fail",
             fail_reason="",
         )
@@ -101,7 +101,7 @@ class ReservoirLogContractTests(unittest.TestCase):
     def test_unknown_extra_field_rejected(self) -> None:
         # 스키마 자체가 계약 — 오타/잉여 필드는 로깅 버그를 가릴 수 있으므로 거부.
         rec = make_reservoir_log_record(
-            ts="t", run_id="r", machine="m", segment_id="s", site="saramin",
+            ts="t", run_id="r", machine="macmini", segment_id="s", site="saramin",
             line="harvest", in_count=1, out_count=1, dropped_count=0, status="ok",
         )
         rec["linee"] = "typo"
@@ -128,7 +128,7 @@ class ReservoirLogContractTests(unittest.TestCase):
 # ----------------------------------------------------------------------------
 class HarvestPolicyTests(unittest.TestCase):
     def test_three_machines_and_startup_priority_macmini_first(self) -> None:
-        self.assertEqual(set(HARVEST_MACHINES), {"macmini", "macbook", "macair"})
+        self.assertEqual(set(HARVEST_MACHINES), {"macmini", "macbook", "winpc"})
         self.assertEqual(startup_priority()[0], "macmini")
 
     def test_no_dedicated_site_all_machines_do_both(self) -> None:

@@ -69,7 +69,7 @@ def _executor(runner: _FakeRunner, keywords: tuple[str, ...]) -> HarvestSearchEx
 def test_returns_candidate_cards_on_search() -> None:
     runner = _FakeRunner([_result("searched", cards=("p1", "p2"))])
     ex = _executor(runner, ("engineer",))
-    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -83,7 +83,7 @@ def test_multiple_keywords_accumulate_and_advance_pacing() -> None:
         [_result("searched", cards=("a",)), _result("searched", cards=("b", "c"))]
     )
     ex = _executor(runner, ("kw1", "kw2"))
-    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -100,7 +100,7 @@ def test_challenge_not_ready_reauth_stops_empty_with_reason() -> None:
         ]
     )
     ex = _executor(runner, ("kw1", "kw2"))
-    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -125,7 +125,7 @@ def test_challenge_keeps_already_collected_cards_and_stops() -> None:
         ]
     )
     ex = _executor(runner, ("kw1", "kw2", "kw3"))
-    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -152,7 +152,7 @@ def test_pacing_blocked_stops_and_does_not_hammer() -> None:
         ]
     )
     ex = _executor(runner, ("kw1", "kw2"))
-    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -168,7 +168,7 @@ def test_selector_missing_stops_fail_closed() -> None:
         [_result("selector_missing", reason="search box not found"), _result("searched", cards=("x",))]
     )
     ex = _executor(runner, ("kw1", "kw2"))
-    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -187,7 +187,7 @@ def test_stopping_result_cards_are_preserved() -> None:
         [_result("not_ready", cards=("onpage1",), reauth_cause="login_marker_lost")]
     )
     ex = _executor(runner, ("kw1", "kw2"))
-    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="saramin", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -200,7 +200,7 @@ def test_pause_site_alone_stops_even_without_reauth_or_error() -> None:
     """pause_site 는 STOP 사유로 명시 기록된다(사람 개입 필요 신호)."""
     runner = _FakeRunner([_result("not_ready", reauth_cause="", pause_site=True)])
     ex = _executor(runner, ("kw1", "kw2"))
-    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -224,7 +224,7 @@ def test_searched_with_pause_site_still_stops() -> None:
         ]
     )
     ex = _executor(runner, ("kw1", "kw2"))
-    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -237,7 +237,7 @@ def test_searched_with_pause_site_still_stops() -> None:
 def test_pause_site_error_stops_empty_with_reason() -> None:
     runner = _FakeRunner([_result("error", pause_site=True, reason="reauth recovery failed")])
     ex = _executor(runner, ("kw1",))
-    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="m1")
+    item = HarvestItem(segment_id="it_ai_data", channel="linkedin_rps", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -249,7 +249,7 @@ def test_pause_site_error_stops_empty_with_reason() -> None:
 def test_no_keywords_returns_empty_and_does_not_search() -> None:
     runner = _FakeRunner([])
     ex = _executor(runner, ())
-    item = HarvestItem(segment_id="unknown", channel="saramin", machine="m1")
+    item = HarvestItem(segment_id="unknown", channel="saramin", machine="macmini")
 
     out = tuple(asyncio.run(ex(item)))
 
@@ -264,7 +264,7 @@ def test_adapter_plugs_into_run_harvest_cycle() -> None:
     saved: list[object] = []
 
     summary = run_harvest_cycle(
-        [HarvestItem(segment_id="it_ai_data", channel="saramin", machine="m1")],
+        [HarvestItem(segment_id="it_ai_data", channel="saramin", machine="macmini")],
         execute_item=ex,
         save_rail=saved.append,
         run_id="run-1",

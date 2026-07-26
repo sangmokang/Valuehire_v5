@@ -65,7 +65,8 @@ class IngestTests(unittest.TestCase):
     def test_ingest_stores_embedding_and_logs_index(self) -> None:
         store = InMemoryEmbeddingStore()
         result = ingest_profile_embedding(
-            _profile(), embedder=embed_text, store=store, run_id="r1", today="2026-06-12"
+            _profile(), embedder=embed_text, store=store, run_id="r1",
+            today="2026-06-12", machine="macmini",
         )
         self.assertTrue(result.stored)
         self.assertFalse(result.deduped)
@@ -79,8 +80,14 @@ class IngestTests(unittest.TestCase):
         store = InMemoryEmbeddingStore()
         first = _profile(url="https://www.saramin.co.kr/profile/x1?trk=abc")
         dup = _profile(url="https://www.saramin.co.kr/profile/x1#frag")  # canonical 동일
-        ingest_profile_embedding(first, embedder=embed_text, store=store, run_id="r1", today="2026-06-12")
-        result = ingest_profile_embedding(dup, embedder=embed_text, store=store, run_id="r1", today="2026-06-12")
+        ingest_profile_embedding(
+            first, embedder=embed_text, store=store, run_id="r1",
+            today="2026-06-12", machine="macmini",
+        )
+        result = ingest_profile_embedding(
+            dup, embedder=embed_text, store=store, run_id="r1",
+            today="2026-06-12", machine="macmini",
+        )
         self.assertTrue(result.deduped)
         self.assertFalse(result.stored)
         self.assertEqual(store.size(), 1)  # 중복 적재 안 함
