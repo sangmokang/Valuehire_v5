@@ -18,7 +18,7 @@ import pytest
 
 from tools.multi_position_sourcing import login_barrier as lb
 from tools.multi_position_sourcing import session_guard
-from tools.multi_position_sourcing.session_guard import BrowserTargetRef
+from tools.multi_position_sourcing.session_guard import AuthObservation, BrowserTargetRef
 
 NOW = int(datetime(2026, 7, 25, 12, 0, 0, tzinfo=timezone.utc).timestamp())
 PNG = base64.b64decode(
@@ -44,6 +44,14 @@ def _exact_live_browser_binding(monkeypatch):
             profile_path=str(Path.cwd().resolve()),
             browser_pid=4242,
         ),
+    )
+    monkeypatch.setattr(
+        lb,
+        "_live_authenticated_target",
+        lambda site, target_id: session_guard.resolve_existing_target(
+            site, target_id=target_id
+        ),
+        raising=False,
     )
 
 
@@ -354,9 +362,59 @@ def test_browser_binding_rejects_target_that_is_currently_logged_out(tmp_path, m
             browser_pid=4242,
         ),
     )
+    monkeypatch.setattr(
+        lb,
+        "_live_authenticated_target",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            LookupError("current target is logged out")
+        ),
+        raising=False,
+    )
     assert lb.validate_channel_receipt(
         receipt, channel="linkedin_rps", machine="macmini", now_epoch=NOW
     ) is not None
+
+
+def test_live_auth_verifier_reads_exact_target_and_disconnects_on_rejection():
+    verifier = getattr(session_guard, "verify_existing_authenticated_target")
+    ref = BrowserTargetRef(
+        site="linkedin_rps",
+        endpoint="http://127.0.0.1:9311",
+        target_id="TARGET123",
+        websocket_url="ws://127.0.0.1:9311/devtools/page/TARGET123",
+        initial_url="https://www.linkedin.com/talent/",
+        profile_path=str(Path.cwd().resolve()),
+        browser_pid=4242,
+    )
+
+    class Tab:
+        target_id = "TARGET123"
+        disconnected = 0
+
+        def eval(self, script):
+            if script == "location.href":
+                return ref.initial_url
+            raise AssertionError(script)
+
+        def disconnect(self):
+            self.disconnected += 1
+            return True
+
+    tab = Tab()
+    with pytest.raises(LookupError, match="authenticated"):
+        verifier(
+            "linkedin_rps",
+            target_id="TARGET123",
+            _target_resolver=lambda *_args, **_kwargs: ref,
+            _tab_attacher=lambda *_args, **_kwargs: tab,
+            _auth_reader=lambda *_args, **_kwargs: AuthObservation(
+                authenticated=False,
+                challenge=False,
+                auth_conflict=False,
+                url=ref.initial_url,
+            ),
+        )
+    assert tab.disconnected == 1
 
 
 def test_linkedin_auto_login_never_reads_username_or_password(monkeypatch):

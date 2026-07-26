@@ -142,6 +142,14 @@ def _quiet_notify(monkeypatch):
             browser_pid=4242,
         ),
     )
+    monkeypatch.setattr(
+        lb,
+        "_live_authenticated_target",
+        lambda site, target_id: session_guard.resolve_existing_target(
+            site, target_id=target_id
+        ),
+        raising=False,
+    )
     with patch.object(fw, "discord_notify", lambda job, text: None):
         yield
 
