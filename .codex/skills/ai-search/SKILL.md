@@ -40,16 +40,19 @@ description: "Execute or inspect the Valuehire AI Search workflow. Use when the 
 
 Use this skill to run, explain, debug, or modify Valuehire AI Search. Treat the repo SOT as stronger than older loose `skills/search` instructions.
 
-Default repo root: `/Users/kangsangmo/Valuehire_v5`. If the current workspace is a different Valuehire checkout, use that root and verify the same SOT files exist.
+Default repo root: the current Valuehire v5 checkout. Resolve all commands from that
+checkout instead of hard-coding another machine's home directory.
 
 ## First Moves
 
 1. Read `references/spec-procedure.md`.
 2. Run the SOT checker before live or code work:
 
-```bash
-python3 ~/.codex/skills/ai-search/scripts/ai_search_sot_check.py --repo /Users/kangsangmo/Valuehire_v5
+```powershell
+python .codex/skills/ai-search/scripts/ai_search_sot_check.py --repo .
 ```
+
+On macOS/Linux, use `python3` with the same repo-relative script and `--repo .`.
 
 3. For implementation/debugging, read `references/code-map.md` and then the exact repo files it points to.
 
@@ -58,6 +61,27 @@ Do not start from `skills/search/SKILL.md` alone. That file is a legacy/fresh-lo
 ## Operating Rules
 
 - Do not search on your own initiative. AI Search may start only from a user-provided position ID, ClickUp task URL, hiring URL, JD text, or an explicit instruction to run a specific stage.
+- If `VALUEHIRE_WINPC_LOCAL_AISEARCH_EXECUTOR=1` is present, never call
+  `winpc_local_aisearch`, a fleet runner, or another agent. Never inspect port
+  9222 or `artifacts/portal_session_status_latest.json`. Use only the exact
+  `tools.multi_position_sourcing.winpc_local_portal` probe and search commands
+  supplied by the outer executor. That helper binds to the registered
+  per-channel WinPC endpoint and preserves the browser window, tab, and profile.
+- 프롬프트에 `VALUEHIRE_WINPC_LOCAL_AISEARCH_EXECUTOR=1`이 있으면 이미 WinPC 로컬
+  실행기 내부입니다. 이 경우 `winpc_local_aisearch`를 재호출하지 말고, 아래 Spec Stages를
+  현재 프로세스에서 직접 수행합니다.
+- 위 실행기 표시가 없고, 현재 운영체제가 Windows이며 사장님이 같은 턴에 `winpc`, `이 기기`,
+  `여기에서`처럼 현재 PC 실행을
+  명시하면 원격 큐로 보내지 않는다. 아래 정식 로컬 진입점을 실행하며, 이 진입점이 WinPC 관리
+  브라우저 표시·로그인 준비·AI Search 실행을 같은 기기에서 순서대로 처리한다.
+
+  ```powershell
+  python -m tools.multi_position_sourcing.winpc_local_aisearch `
+    --url "<ClickUp task URL>" --channels "saramin,jobkorea"
+  ```
+
+  사용자가 특정 채널만 요청하면 `--channels`도 그 채널만 지정한다. 명시적 로컬 요청이 없는
+  Windows 백그라운드 작업은 기존 함대 배정 규칙을 유지한다.
 - Do not run generic web search, portal search, ChatGPT Search, LinkedIn/Saramin/Jobkorea search, or candidate discovery before stage 0-4 have established scope, channel state, JD source, and keyword strategy.
 - Do not replace the SOT with convenience judgment. If the SOT and a shortcut conflict, the SOT wins; if the tool path is unavailable, stop and report the blocker.
 - Do not silently downgrade live search into unofficial manual search. If a required channel is `OCCUPIED` or `BLOCKED`, mark it that way and do not improvise around the gate.

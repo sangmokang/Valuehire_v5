@@ -5,6 +5,7 @@ import inspect
 import json
 import math
 import os
+import platform
 import re
 import secrets
 import stat
@@ -14,6 +15,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from urllib import request as urllib_request
 from urllib.parse import quote, urlsplit
 
 try:  # pragma: no cover - platform-specific branches are exercised via helpers
@@ -111,6 +113,9 @@ def resolve_managed_channel_cdp_endpoint(
     channel: str,
     *,
     runner: Callable[..., Any] = subprocess.run,
+    system_name: str | None = None,
+    env: Mapping[str, str] | None = None,
+    urlopen: Callable[..., Any] = urllib_request.urlopen,
 ) -> str:
     """Resolve the live endpoint for the channel's exact managed profile.
 
@@ -121,6 +126,30 @@ def resolve_managed_channel_cdp_endpoint(
     browser_name = _CHANNEL_BROWSER_NAME.get(channel)
     if browser_name is None:
         raise ValueError(f"channel {channel!r} 은 관리 브라우저 대상이 아니다")
+    if (system_name or platform.system()) == "Windows":
+        endpoint = resolve_channel_cdp_endpoint(channel, env=env)
+        try:
+            with urlopen(f"{endpoint}/json/version", timeout=3.0) as response:
+                payload = json.loads(response.read(65_537).decode("utf-8"))
+        except Exception as exc:
+            raise LookupError(f"{channel} 관리 브라우저가 실행 중이지 않음") from exc
+        websocket = str(payload.get("webSocketDebuggerUrl") or "") if isinstance(
+            payload, Mapping
+        ) else ""
+        try:
+            parsed_ws = urlsplit(websocket)
+            endpoint_port = urlsplit(endpoint).port
+        except ValueError as exc:
+            raise LookupError(f"{channel} 관리 브라우저 endpoint가 잘못됨") from exc
+        if (
+            parsed_ws.scheme != "ws"
+            or parsed_ws.hostname not in {"127.0.0.1", "localhost"}
+            or parsed_ws.port != endpoint_port
+            or parsed_ws.username is not None
+            or parsed_ws.password is not None
+        ):
+            raise LookupError(f"{channel} 관리 브라우저 endpoint가 로컬 단일주소가 아님")
+        return endpoint
     script = Path(__file__).resolve().parents[2] / "scripts" / "portal_browsers.sh"
     try:
         result = runner(
@@ -628,6 +657,9 @@ class ProfileLock:
         self._close_raw_fds(lock_fd, parent_fd)
 
     def _acquire_raw_lease(self) -> None:
+        if os.name == "nt":
+            self._acquire_raw_lease_windows()
+            return
         if any(
             value is not None
             for value in (
@@ -723,6 +755,137 @@ class ProfileLock:
                 raise ProfileLockError("raw browser lease initialization failed") from exc
             raise
 
+    @staticmethod
+    def _windows_directory_is_safe(path: Path) -> bool:
+        """Reject files, symlinks and Windows junctions before token checks."""
+
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            return False
+        is_junction = getattr(path, "is_junction", None)
+        return not (callable(is_junction) and is_junction())
+
+    def _read_raw_owner_windows(self) -> dict[str, Any]:
+        if not self._windows_directory_is_safe(self.config.lock_path):
+            raise ProfileLockError("raw browser lease ownership was lost")
+        try:
+            payload = json.loads(self._raw_owner_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise ProfileLockError("raw browser lease ownership was lost") from exc
+        if not isinstance(payload, dict):
+            raise ProfileLockError("raw browser lease ownership was lost")
+        return payload
+
+    def _acquire_raw_lease_windows(self) -> None:
+        """Windows equivalent of the atomic directory lease contract.
+
+        Windows does not support POSIX ``dir_fd`` directory handles.  ``mkdir``
+        remains atomic, while the random owner token prevents a replaced or
+        foreign directory from being treated as ours.
+        """
+
+        if self._lease_token is not None:
+            raise ProfileLockError("raw browser lease is already acquired by this object")
+        token = secrets.token_hex(24)
+        lock_path = self.config.lock_path
+        if not self._windows_directory_is_safe(lock_path.parent):
+            raise ProfileLockError("raw browser lease parent is unsafe")
+        try:
+            os.mkdir(lock_path, mode=0o700)
+        except FileExistsError as exc:
+            raise ProfileLockError(
+                f"profile already locked for {self.config.channel}/{self.config.worker_id}"
+            ) from exc
+        except OSError as exc:
+            raise ProfileLockError("raw browser lease initialization failed") from exc
+        owner_created = False
+        try:
+            if not self._windows_directory_is_safe(lock_path):
+                raise ProfileLockError("raw browser lease path changed during acquisition")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            owner_fd = os.open(self._raw_owner_path, flags, 0o600)
+            owner_created = True
+            with os.fdopen(owner_fd, "w", encoding="utf-8") as owner:
+                json.dump({"token": token, "pid": os.getpid()}, owner, sort_keys=True)
+                owner.write("\n")
+                owner.flush()
+            payload = self._read_raw_owner_windows()
+            if payload.get("token") != token:
+                raise ProfileLockError("raw browser lease path changed during acquisition")
+            self._lease_token = token
+        except BaseException:
+            if owner_created:
+                try:
+                    self._raw_owner_path.unlink()
+                except OSError:
+                    pass
+            try:
+                lock_path.rmdir()
+            except OSError:
+                pass
+            self._lease_token = None
+            raise
+
+    def _assert_raw_lease_owned_windows(self) -> None:
+        token = self._lease_token
+        if not token:
+            raise ProfileLockError("raw browser lease ownership was lost")
+        payload = self._read_raw_owner_windows()
+        if payload.get("token") != token:
+            raise ProfileLockError("raw browser lease ownership was lost")
+
+    def _release_raw_lease_windows(self) -> None:
+        token = self._lease_token
+        if not token:
+            return
+        try:
+            payload = self._read_raw_owner_windows()
+        except ProfileLockError:
+            self._lease_token = None
+            return
+        if payload.get("token") != token:
+            self._lease_token = None
+            return
+        tombstone = self.config.lock_path.parent / (
+            f".{self.config.lock_path.name}.{token}.release"
+        )
+        renamed = False
+        for attempt in range(50):
+            try:
+                os.rename(self._raw_owner_path, tombstone)
+                renamed = True
+                break
+            except FileNotFoundError:
+                self._lease_token = None
+                return
+            except OSError:
+                if attempt < 49:
+                    time.sleep(0.02)
+        if not renamed:
+            return
+        removed = False
+        for attempt in range(50):
+            try:
+                self.config.lock_path.rmdir()
+                removed = True
+                break
+            except FileNotFoundError:
+                removed = True
+                break
+            except OSError:
+                if attempt < 49:
+                    time.sleep(0.02)
+        if not removed:
+            try:
+                os.replace(tombstone, self._raw_owner_path)
+            except OSError:
+                self._lease_token = None
+            return
+        try:
+            tombstone.unlink()
+        except OSError:
+            pass
+        self._lease_token = None
+
     def _cleanup_interrupted_raw_acquire(
         self,
         token: str,
@@ -796,6 +959,9 @@ class ProfileLock:
             if self._handle is None:
                 raise ProfileLockError("profile lock ownership was lost")
             return
+        if os.name == "nt":
+            self._assert_raw_lease_owned_windows()
+            return
         token = self._lease_token
         parent_fd = self._lease_parent_fd
         lock_fd = self._lease_dir_fd
@@ -836,6 +1002,9 @@ class ProfileLock:
             pass
 
     def _release_raw_lease(self) -> None:
+        if os.name == "nt":
+            self._release_raw_lease_windows()
+            return
         token = self._lease_token
         if not token:
             self._forget_raw_lease()

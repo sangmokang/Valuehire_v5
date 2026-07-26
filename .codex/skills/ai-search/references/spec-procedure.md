@@ -4,13 +4,13 @@ This reference consolidates the AI Search specs. It does not replace the repo fi
 
 ## Canonical Files
 
-- Main execution spec: `/Users/kangsangmo/Valuehire_v5/docs/sot/25-ai-search-execution-process.json`
-- Human-readable entry: `/Users/kangsangmo/Valuehire_v5/docs/sot/25-ai-search-execution-process.md`
-- Channel filters and DOM SSOT: `/Users/kangsangmo/Valuehire_v5/docs/sot/22-talent-search-filters.json`
-- Channel summary: `/Users/kangsangmo/Valuehire_v5/docs/sot/22-talent-search-filters.md`
-- JD and scoring SOT: `/Users/kangsangmo/Valuehire_v5/docs/sot/24-position-jd-sot.json`
-- Portal login/blocking SOT: `/Users/kangsangmo/Valuehire_v5/docs/sot/26-portal-login-spec.json`
-- Top repo invariants: `/Users/kangsangmo/Valuehire_v5/CLAUDE.md`
+- Main execution spec: `docs/sot/25-ai-search-execution-process.json`
+- Human-readable entry: `docs/sot/25-ai-search-execution-process.md`
+- Channel filters and DOM SSOT: `docs/sot/22-talent-search-filters.json`
+- Channel summary: `docs/sot/22-talent-search-filters.md`
+- JD and scoring SOT: `docs/sot/24-position-jd-sot.json`
+- Portal login/blocking SOT: `docs/sot/26-portal-login-spec.json`
+- Top repo invariants: `CLAUDE.md`
 
 ## Non-Negotiable Invariants
 
@@ -35,14 +35,17 @@ This reference consolidates the AI Search specs. It does not replace the repo fi
 Inputs: position ID, ClickUp task URL, hiring URL, or JD text.
 
 Required actions:
-- Confirm work is in `/Users/kangsangmo/Valuehire_v5` or equivalent v5 checkout.
-- Check browser path: Chrome/CDP `http://127.0.0.1:9222/json/version` and/or the connected extension path if available.
+- Confirm work is in the current Valuehire v5 checkout.
+- Resolve the browser only through the registered per-channel launcher/endpoint.
+  In a WinPC local executor, use `winpc_local_portal --probe`; never inspect a
+  guessed global port.
 - If no authenticated browser path exists, report live-search unavailable and continue only with non-live strategy/dry-run.
 
 ### 1. Occupancy, Captcha, Login Gate
 
 Required actions:
-- Read CDP tab list from `http://127.0.0.1:9222/json`.
+- Read only the exact target returned by the registered per-channel browser
+  resolver. In a WinPC local executor, direct localhost probes are forbidden.
 - Detect blocks using the unified regex from SOT 26: captcha, recaptcha, 보안문자, 자동입력 방지, checkpoint, unusual activity, multiple sign-ins, Only one session, enterprise-authentication, 2단계, authwall, challenge, etc. Do not classify `/uas/login-cap` or `li.protechts` alone as a hard block.
 - Before declaring `BLOCKED`, cross-check with screenshot or direct page evidence to avoid plain-text false positives.
 - Run preflight batch login: check all target channels first, then log in logged-out channels before registration/search.

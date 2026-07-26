@@ -20,15 +20,18 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import ntpath
 import os
+import platform
 import re
 import secrets
+import shlex
 import stat
 import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
 
@@ -275,6 +278,8 @@ def _is_managed_chrome_executable(command_prefix: str) -> bool:
         return True
     if folded in _MANAGED_CHROME_LEGACY_APPLICATION_PATHS:
         return True
+    if PureWindowsPath(value).name.casefold() in {"chrome.exe", "chromium.exe"}:
+        return PureWindowsPath(value).is_absolute()
     app_match = re.fullmatch(
         r"/.+/(?:google chrome(?: for testing)?|chromium|chrome)\.app/"
         r"contents/macos/(?P<name>google chrome(?: for testing)?|chromium|chrome)",
@@ -283,11 +288,131 @@ def _is_managed_chrome_executable(command_prefix: str) -> bool:
     return bool(app_match and app_match.group("name") in _MANAGED_CHROME_EXECUTABLE_NAMES)
 
 
+def _windows_command_line_argv(command_line: str) -> list[str]:
+    """Parse the Chrome flags emitted by Win32_Process without using a shell."""
+
+    try:
+        raw = shlex.split(command_line, posix=False)
+    except ValueError:
+        return []
+    argv: list[str] = []
+    for item in raw:
+        value = str(item)
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+        argv.append(value)
+    return argv
+
+
+def _windows_chrome_options(argv: list[str]) -> dict[str, list[str | None]]:
+    options: dict[str, list[str | None]] = {}
+    index = 1
+    while index < len(argv):
+        item = argv[index]
+        if not item.startswith("--"):
+            index += 1
+            continue
+        key, separator, value = item[2:].partition("=")
+        if not separator:
+            value_or_none: str | None = None
+            if index + 1 < len(argv) and not argv[index + 1].startswith("--"):
+                index += 1
+                value_or_none = argv[index]
+        else:
+            value_or_none = value
+        if (
+            isinstance(value_or_none, str)
+            and len(value_or_none) >= 2
+            and value_or_none[0] == value_or_none[-1] == '"'
+        ):
+            value_or_none = value_or_none[1:-1]
+        options.setdefault(key, []).append(value_or_none)
+        index += 1
+    return options
+
+
+def list_windows_managed_browser_processes(
+    port: int,
+    *,
+    expected_profile: str | None = None,
+    runner: Callable[..., Any] = subprocess.run,
+) -> list[ManagedBrowserProcess]:
+    """Return root Chrome processes declaring one exact CDP port/profile pair."""
+
+    command = [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        (
+            "& { Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" "
+            "| Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress }"
+        ),
+    ]
+    try:
+        result = runner(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+            check=False,
+        )
+    except Exception as exc:
+        raise LookupError("managed browser process inspection failed") from exc
+    if int(getattr(result, "returncode", 1)) != 0:
+        raise LookupError("managed browser process inspection failed")
+    stdout = str(getattr(result, "stdout", "") or "").strip()
+    if not stdout:
+        return []
+    try:
+        payload = json.loads(stdout)
+    except ValueError as exc:
+        raise LookupError("managed browser process inspection failed") from exc
+    rows = payload if isinstance(payload, list) else [payload]
+    wanted_profile = (
+        ntpath.normcase(ntpath.normpath(expected_profile))
+        if expected_profile
+        else ""
+    )
+    matches: list[ManagedBrowserProcess] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        try:
+            pid = int(row.get("ProcessId"))
+        except (TypeError, ValueError):
+            continue
+        argv = _windows_command_line_argv(str(row.get("CommandLine") or ""))
+        if pid <= 0 or not argv or not _is_managed_chrome_executable(argv[0]):
+            continue
+        options = _windows_chrome_options(argv)
+        if "type" in options:
+            continue
+        ports = options.get("remote-debugging-port", [])
+        profiles = options.get("user-data-dir", [])
+        if len(ports) != 1 or str(ports[0] or "") != str(port):
+            continue
+        if len(profiles) != 1 or not str(profiles[0] or "").strip():
+            continue
+        profile = str(profiles[0]).strip()
+        if (
+            not PureWindowsPath(profile).is_absolute()
+            or any(ord(character) < 32 or ord(character) == 127 for character in profile)
+        ):
+            continue
+        if wanted_profile and ntpath.normcase(ntpath.normpath(profile)) != wanted_profile:
+            continue
+        matches.append(ManagedBrowserProcess(pid, profile))
+    return matches
+
+
 def resolve_managed_browser_process(
     site: Site,
     endpoint: str,
     *,
     runner: Callable[..., Any] = subprocess.run,
+    system_name: str | None = None,
 ) -> ManagedBrowserProcess:
     """Bind the already verified endpoint to one root Chrome PID/profile.
 
@@ -301,6 +426,13 @@ def resolve_managed_browser_process(
         raise ValueError(f"unsupported login site: {site!r}")
     local = _local_cdp_endpoint(endpoint)
     port = urlsplit(local).port
+    if (system_name or platform.system()) == "Windows":
+        matches = list_windows_managed_browser_processes(int(port), runner=runner)
+        if len(matches) != 1:
+            raise LookupError(
+                f"{site} managed browser root process match count was {len(matches)}"
+            )
+        return matches[0]
     try:
         result = runner(
             ["ps", "ax", "-o", "pid=,command="],
@@ -2291,11 +2423,26 @@ def _load_runtime_login_credentials(
     site: Site,
     *,
     credential_provider: Any | None = None,
+    system_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> tuple[str, str] | None:
-    """Read one portal credential pair from the common macOS Keychain store."""
-    if credential_provider is None:
-        from .portal_recovery import MacKeychainPortalCredentialProvider
+    """Read one portal credential pair without returning or logging secret material."""
 
+    source = os.environ if environ is None else environ
+    if credential_provider is None:
+        if (system_name or platform.system()) == "Windows":
+            key_prefix = {
+                "saramin": "SARAMIN",
+                "jobkorea": "JOBKOREA",
+                "linkedin_rps": "LINKEDIN",
+            }.get(site)
+            if key_prefix is None:
+                return None
+            username = str(source.get(f"{key_prefix}_USERNAME") or "").strip()
+            password = str(source.get(f"{key_prefix}_PASSWORD") or "")
+            return (username, password) if username and password else None
+
+        from .portal_recovery import MacKeychainPortalCredentialProvider
         credential_provider = MacKeychainPortalCredentialProvider()
     try:
         credentials = credential_provider.load(site)
@@ -2313,7 +2460,14 @@ def run_auto_login_episode(
     *,
     agent: str,
     target_id: str | None = None,
+    owner_explicit_local: bool = False,
+    system_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
     _credential_provider: Any | None = None,
+    _lease_factory: Callable[[Site], Any] | None = None,
+    _target_resolver: Callable[..., BrowserTargetRef] | None = None,
+    _tab_attacher: Callable[..., Any] | None = None,
+    _autologin: Callable[[Any, Site, Any], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
 
@@ -2327,36 +2481,51 @@ def run_auto_login_episode(
 
     if site not in _SITE_DOMAINS:
         return {"status": "unsupported_site", "site": site}
-    try:
-        snapshot = detect_owner_activity_snapshot()
-    except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
-        return {"status": "human_active", "site": site, "note": "owner 감지 실패 → 양보"}
-    if snapshot.owner_activity_detected:
-        return {"status": "human_active", "site": site,
-                "note": "사장님 활동 감지 — 자동 로그인 보류"}
+    source = os.environ if environ is None else environ
+    system = system_name or platform.system()
+    if owner_explicit_local:
+        if system != "Windows" or str(source.get("VALUEHIRE_MACHINE") or "") != "winpc":
+            return {
+                "status": "invalid_owner_delegation",
+                "site": site,
+                "note": "owner-explicit local login is limited to machine=winpc on Windows",
+            }
+    else:
+        try:
+            snapshot = detect_owner_activity_snapshot()
+        except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
+            return {"status": "human_active", "site": site, "note": "owner 감지 실패 → 양보"}
+        if snapshot.owner_activity_detected:
+            return {"status": "human_active", "site": site,
+                    "note": "사장님 활동 감지 — 자동 로그인 보류"}
 
     loaded_credentials = _load_runtime_login_credentials(
         site,
         credential_provider=_credential_provider,
+        system_name=system,
+        environ=source,
     )
     if loaded_credentials is None:
         return {"status": "missing_credentials", "site": site,
-                "note": "macOS Keychain valuehire.portal_credentials 설정 필요"}
+                "note": "portal credential source is not configured"}
     username, password = loaded_credentials
 
-    lease = _default_login_lease(site)
+    lease = (_lease_factory or _default_login_lease)(site)
     if not _acquire_login_lease_read_only(lease, stop_requested=lambda: False, sleep=time.sleep):
         return {"status": "lease_unavailable", "site": site}
     try:
-        ref = resolve_existing_target(site, target_id=target_id)
-        tab = _attach_exact_ref({
+        resolver = _target_resolver or resolve_existing_target
+        ref = resolver(site, target_id=target_id)
+        attacher = _tab_attacher or _attach_exact_ref
+        tab = attacher({
             "id": ref.target_id,
             "type": "page",
             "url": ref.initial_url,
             "webSocketDebuggerUrl": ref.websocket_url,
         }, badge=True)
         try:
-            outcome = ssl.perform_autologin(
+            login = _autologin or ssl.perform_autologin
+            outcome = login(
                 tab, site, ssl.PortalCreds(username=username, password=password))
         finally:
             try:
@@ -2371,8 +2540,26 @@ def run_auto_login_episode(
 
     outcome["site"] = site
     outcome["target_id"] = ref.target_id
-    outcome["host"] = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+    outcome["host"] = str(source.get("VALUEHIRE_MACHINE") or "").strip()
     return outcome
+
+
+def _owner_explicit_snapshot_reader() -> Callable[[], Any]:
+    """Monotonic non-portal proof for one owner-requested local WinPC episode."""
+
+    from .owner_activity import OwnerActivitySnapshot
+
+    started = time.monotonic()
+
+    def read() -> OwnerActivitySnapshot:
+        return OwnerActivitySnapshot(
+            owner_activity_detected=False,
+            idle_seconds=60.0 + (time.monotonic() - started),
+            detection_status="ok",
+            portal_site_active=False,
+        )
+
+    return read
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2412,16 +2599,32 @@ def main(argv: list[str] | None = None) -> int:
     autologin.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     autologin.add_argument("--agent", required=True)
     autologin.add_argument("--target-id", default=None)
+    autologin.add_argument(
+        "--owner-explicit-local",
+        action="store_true",
+        help="Windows winpc only: the owner explicitly requested execution on this device",
+    )
     args = parser.parse_args(argv)
     site: Site = args.site
 
     if args.command == "auto-login":
-        result = run_auto_login_episode(site, agent=args.agent, target_id=args.target_id)
+        result = run_auto_login_episode(
+            site,
+            agent=args.agent,
+            target_id=args.target_id,
+            owner_explicit_local=args.owner_explicit_local,
+        )
         if result.get("state") == "AUTHENTICATED":
             # 로그인 성공 → 정식 증거 캡처로 login_barrier 영수증까지 발급.
             evidence_result = run_capture_evidence_episode(
                 site, task="login", mode="evidence", agent=args.agent,
-                target_id=result.get("target_id"))
+                target_id=result.get("target_id"),
+                owner_snapshot=(
+                    _owner_explicit_snapshot_reader()
+                    if args.owner_explicit_local
+                    else None
+                ),
+            )
             result["evidence"] = evidence_result
             if evidence_result.get("capture_status") == "saved":
                 from . import login_barrier

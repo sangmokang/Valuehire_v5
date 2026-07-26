@@ -267,7 +267,8 @@ def test_fleet_search_prompts_require_login_barrier_before_execution() -> None:
         assert "LOGIN_BARRIER=PASS" in prompt
         assert "local secret store 자동 로그인" not in prompt
         assert "session_guard human-auth" in prompt
-        assert "portal_session_status_latest.json" in prompt
+        assert "~/.valuehire/login_receipts/<channel>.json" in prompt
+        assert "portal_session_status_latest.json" not in prompt
         assert prompt.index("LOGIN_BARRIER=PASS") < prompt.index(
             f"{skill} 스킬의 검색·URL 작업"
         )

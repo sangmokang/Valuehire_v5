@@ -383,8 +383,8 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         )
     login_barrier_rule = (
         "0. `docs/prompts/login-search-execution-contract.md`를 먼저 읽고 그대로 실행할 것. "
-        "워커가 필요한 사이트 전부의 `artifacts/portal_session_status_latest.json` "
-        "영수증과 exact target 로그인 마커를 정식 게이트로 검증해 "
+        "워커가 필요한 사이트 전부의 `~/.valuehire/login_receipts/<channel>.json` "
+        "채널별 영수증과 exact target 로그인 마커를 코드로 검증해 "
         "`LOGIN_BARRIER=PASS` 영수증이 나온 뒤에만 "
         f"{skill} 스킬의 검색·URL 작업을 시작할 것. BLOCKED이면 검색을 시작하지 말고 "
         "사이트별 상태와 브라우저 보존 결과를 보고할 것.\n"
@@ -426,6 +426,15 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             f"--mode evidence를 실행하고, 완료 마지막 줄에 {_URL_RECEIPT_MARKER} 뒤로 그 "
             "saved JSON 영수증을 그대로 출력할 것.\n"
         )
+    windows_profile_rule = (
+        "10. Windows에서는 WinPC 등록 관리 프로필과 채널별 로컬 연결주소를 재사용하고 "
+        "Chrome 종료, 로그아웃, 쿠키 삭제, 프로필 복사·초기화를 하지 말 것.\n"
+        if str(job.get("machine") or "") == "winpc"
+        and params.get("queue_mode") == "none"
+        else
+        "10. Windows에서는 Chrome Profile 2를 영속 세션으로 재사용하고 Chrome 종료, "
+        "로그아웃, 쿠키 삭제, 프로필 복사·초기화를 하지 말 것.\n"
+    )
     return (
         f"[Valuehire 잡 #{job_id}] {skill} 스킬을 발동해 아래 작업을 수행해줘.\n"
         f"- 포지션 URL: {url}\n"
@@ -451,8 +460,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"180~420초(3~7분) 랜덤 지연을 둘 것.\n"
         f"9. 프리랜서/freelancer/freelance/개인사업자/독립계약자/contract worker/외주 또는 종료된 12개월 미만 "
         f"재직이 2회 이상인 후보는 점수 계산 전에 원천 제외할 것.\n"
-        f"10. Windows에서는 Chrome Profile 2를 영속 세션으로 재사용하고 Chrome 종료, "
-        f"로그아웃, 쿠키 삭제, 프로필 복사·초기화를 하지 말 것.\n"
+        f"{windows_profile_rule}"
         f"11. 열어본 모든 레쥬메는 점수·하드제외 여부와 무관하게 URL, 스크린샷, 본문을 "
         f"로컬 DB에 먼저 저장하고 저장 영수증을 확인한 뒤에만 다음 프로필로 이동할 것.\n"
         f"12. aisearch 완료 시 마지막 줄에 {_SEARCH_RECEIPT_MARKER} 뒤로 JSON을 출력할 것. "
@@ -1108,7 +1116,13 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
     login_job = str(source.get("VALUEHIRE_JOB_SKILL") or "") == "login"
     owner_role = str(source.get("VALUEHIRE_JOB_ROLE") or "") == "owner"
     login_escalated = login_job and owner_role
-    if login_escalated:
+    owner_local_search = (
+        str(source.get("VALUEHIRE_OWNER_LOCAL_AI_SEARCH") or "") == "1"
+        and str(source.get("VALUEHIRE_JOB_SKILL") or "") == "aisearch"
+        and owner_role
+        and str(source.get("VALUEHIRE_MACHINE") or "") == "winpc"
+    )
+    if login_escalated or owner_local_search:
         mode = "workspace_write"
     sandbox = {"read_only": "read-only", "workspace_write": "workspace-write"}.get(mode)
     if sandbox is None:
@@ -1120,7 +1134,7 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
         args.extend(["--model", _model])
     if sandbox == "workspace-write":
         args.extend(["-c", _NETWORK_CONFIG_FLAG])
-    if login_escalated:
+    if login_escalated or owner_local_search:
         valuehire_home = Path.home() / ".valuehire"
         # Codex V2 F2: 윈도우 홈 경로의 cmd.exe 메타문자는 명령 분리·변수확장 위험 —
         # owner 저장소 경로(위)와 동일 차단 기준을 적용한다.
@@ -1128,6 +1142,14 @@ def build_codex_exec_args(environ: Mapping[str, str] | None = None) -> list[str]
             raise ValueError("unsafe Windows valuehire path")
         valuehire_home.mkdir(parents=True, exist_ok=True)
         args.extend(["--add-dir", str(valuehire_home)])
+    if owner_local_search:
+        evidence_home = Path.home() / ".vh-browser-evidence"
+        if sys.platform == "win32" and any(
+            ch in str(evidence_home) for ch in "&|<>^%!()"
+        ):
+            raise ValueError("unsafe Windows browser evidence path")
+        evidence_home.mkdir(parents=True, exist_ok=True)
+        args.extend(["--add-dir", str(evidence_home)])
     if str(source.get("VALUEHIRE_OWNER_AGENT_JOB") or "") == "1":
         v4_root = _v4_repo(source)
         if not v4_root.is_dir():
