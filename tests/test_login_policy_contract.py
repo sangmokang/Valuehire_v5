@@ -12,6 +12,16 @@ SKILL_PATH = ROOT / "skills/login/SKILL.md"
 WORKER_PATH = ROOT / "tools/multi_position_sourcing/fleet_worker.py"
 SEARCH_CONTRACT_PATH = ROOT / "docs/prompts/login-search-execution-contract.md"
 AI_SEARCH_PROCESS_MD_PATH = ROOT / "docs/sot/25-ai-search-execution-process.md"
+AI_SEARCH_PROCEDURE_PATHS = (
+    ROOT / "skills/ai-search/references/spec-procedure.md",
+    ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
+)
+EXACT_TARGET_ENTRYPOINTS = (
+    AI_SEARCH_PROCESS_MD_PATH,
+    ROOT / "docs/sot/25-ai-search-execution-process.json",
+    *AI_SEARCH_PROCEDURE_PATHS,
+    ROOT / ".claude/skills/aisearch/SKILL.md",
+)
 POLICY_ID = "26-portal-login-spec@1.5.0"
 HISTORICAL_MARKER = "historical_input_not_executable"
 
@@ -439,6 +449,16 @@ def test_ai_search_skills_do_not_collapse_policy_states() -> None:
             assert required in text, (path, required)
 
 
+def test_claude_ai_search_requires_proven_multi_machine_conflict() -> None:
+    text = _text(ROOT / ".claude/skills/aisearch/SKILL.md")
+    assert (
+        "다른 Chrome 프로필에 RPS 세션 신호가 있으면 `AUTH_CONFLICT`"
+        not in text
+    )
+    assert "봉인된 함대 증거로 인증 기기 2개 이상" in text
+    assert "인증 기기 수 미증명은 `HANDOFF`" in text
+
+
 def test_search_access_cannot_authorize_linkedin_password_login() -> None:
     text = _text(ROOT / "docs/search-access.md")
     for forbidden in (
@@ -541,6 +561,41 @@ def test_ai_search_human_entrypoint_matches_machine_statuses() -> None:
         "AUTH_CONFLICT",
     ):
         assert required in text
+
+
+def test_login_preflight_never_guesses_a_fixed_port_or_profile() -> None:
+    for path in EXACT_TARGET_ENTRYPOINTS:
+        text = _text(path)
+        for forbidden in (
+            "127.0.0.1:9222",
+            "CDP(:9222)",
+            "CDP :9222",
+        ):
+            assert forbidden not in text, (path, forbidden)
+        for required in (
+            "exact endpoint/profile/target",
+            "포트·프로필 추측 금지",
+        ):
+            assert required in text, (path, required)
+
+    from tools.multi_position_sourcing.fleet_worker import build_job_prompt
+
+    for skill in ("login", "aisearch", "humansearch", "url"):
+        prompt = build_job_prompt(
+            {
+                "id": 40,
+                "skill": skill,
+                "position_url": (
+                    "" if skill == "login" else "https://app.clickup.com/t/abc123"
+                ),
+                "requested_by": "owner",
+                "role": "owner",
+                "machine": "macmini",
+            }
+        )
+        assert "Chrome Profile 2" not in prompt, skill
+        assert "exact endpoint/profile/target" in prompt, skill
+        assert "포트·프로필 추측 금지" in prompt, skill
 
 
 def test_worker_generated_prompts_reference_the_new_policy() -> None:
