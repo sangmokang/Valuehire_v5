@@ -1506,6 +1506,45 @@ def _disconnect_websocket_only(tab: Any | None) -> bool:
         return False
 
 
+def verify_existing_authenticated_target(
+    site: Site,
+    *,
+    target_id: str,
+    _target_resolver: Callable[..., BrowserTargetRef] | None = None,
+    _tab_attacher: Callable[..., Any] | None = None,
+    _auth_reader: Callable[[Any, Site], AuthObservation] | None = None,
+) -> BrowserTargetRef:
+    """Re-read authentication from one exact existing target without mutation."""
+
+    resolver = _target_resolver or resolve_existing_target
+    attacher = _tab_attacher or _attach_exact_ref
+    auth_reader = _auth_reader or read_auth_observation
+    tab: Any | None = None
+    try:
+        ref = resolver(site, target_id=target_id)
+        tab = attacher({
+            "id": ref.target_id,
+            "type": "page",
+            "url": ref.initial_url,
+            "webSocketDebuggerUrl": ref.websocket_url,
+        }, badge=False)
+        if _tab_target_id(tab) != ref.target_id:
+            raise LookupError("live browser target identity changed")
+        live_url = _tab_current_url(tab)
+        if live_url != ref.initial_url:
+            raise LookupError("live browser target URL changed")
+        observation = auth_reader(tab, site)
+        if not _auth_matches(observation, live_url):
+            raise LookupError("live browser target is not authenticated")
+        return ref
+    except LookupError:
+        raise
+    except Exception as exc:
+        raise LookupError("live browser authentication proof failed") from exc
+    finally:
+        _disconnect_websocket_only(tab)
+
+
 def _profile_lock_is_contention(exc: BaseException) -> bool:
     message = str(exc).strip().casefold()
     return message == "busy" or "already locked" in message

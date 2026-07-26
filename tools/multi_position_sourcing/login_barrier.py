@@ -78,12 +78,10 @@ def _matches_live_browser_binding(
     *,
     channel: str,
 ) -> bool:
-    from .session_guard import resolve_existing_target
-
     try:
-        live = resolve_existing_target(
+        live = _live_authenticated_target(
             channel,
-            target_id=str(receipt.get("target_id") or ""),
+            str(receipt.get("target_id") or ""),
         )
         receipt_profile = Path(str(receipt.get("profile_path") or "")).resolve(strict=True)
         live_profile = Path(str(live.profile_path or "")).resolve(strict=True)
@@ -96,6 +94,12 @@ def _matches_live_browser_binding(
         and live.browser_pid == receipt.get("browser_pid")
         and live_profile == receipt_profile
     )
+
+
+def _live_authenticated_target(channel: str, target_id: str) -> Any:
+    from .session_guard import verify_existing_authenticated_target
+
+    return verify_existing_authenticated_target(channel, target_id=target_id)
 
 
 def default_receipt_dir() -> Path:
