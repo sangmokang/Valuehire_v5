@@ -64,11 +64,22 @@ _NATURAL_TRIGGERS: tuple[str, ...] = (
 )
 _FOLLOWUP_TRIGGERS: tuple[str, ...] = ("계속해", "잡코리아도", "사람인부터", "방금 포지션")
 _EXPLICIT_SKILL_IN_TEXT_RE = re.compile(r"skill:(aisearch|humansearch)")
+_MACHINE_IDENTITY_SPELLINGS = frozenset(
+    (*CANONICAL_MACHINE_IDS, *MACHINE_ID_ALIASES.keys())
+)
+_MACHINE_FILTER_PATTERN = "|".join(
+    re.escape(spelling)
+    for spelling in sorted(
+        _MACHINE_IDENTITY_SPELLINGS,
+        key=len,
+        reverse=True,
+    )
+)
 _FILTER_CONTROL_RE = re.compile(
     r"skill:(?:aisearch|humansearch)|aisearch|humansearch|"
     r"후보|이\s*링크|링크|사람인|잡코리아|링크드인|linkedin|"
     r"찾아줘|검색해줘|서치해줘|실행해줘|돌려줘|해줘|말고|이걸로|"
-    r"맥미니|macmini|맥북|macbook|winpc|windows|윈도우pc|윈도우|win|"
+    rf"(?:{_MACHINE_FILTER_PATTERN})|"
     r"claude|codex|에서|부터|으로|로|도",
     re.IGNORECASE,
 )
@@ -126,9 +137,6 @@ def natural_fleet_command_text(
         return None
     urls = [match.group(0).rstrip(".,);]}") for match in _URL_IN_TEXT_RE.finditer(raw)]
     low = raw.lower()
-    identity_spellings = frozenset(
-        (*CANONICAL_MACHINE_IDS, *MACHINE_ID_ALIASES.keys())
-    )
     machine_candidates: set[str] = set()
     ambiguous_machine_token = False
     text_without_urls = _URL_IN_TEXT_RE.sub(" ", raw)
@@ -137,7 +145,7 @@ def natural_fleet_command_text(
             machine_candidates.add(normalize_machine_id(token))
         except MachineIdentityError:
             if token.casefold() in {
-                spelling.casefold() for spelling in identity_spellings
+                spelling.casefold() for spelling in _MACHINE_IDENTITY_SPELLINGS
             }:
                 ambiguous_machine_token = True
     if ambiguous_machine_token or len(machine_candidates) > 1:
