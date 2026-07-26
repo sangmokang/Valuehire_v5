@@ -70,25 +70,15 @@ def build_fleet_job_payload(
         _emd_default = emd.get_default(_ENGINE_MODEL_PATH)
         params.setdefault("agent", _emd_default["engine"])
         params.setdefault("model", _emd_default["model"])
-    # SOT29 existing fleet default/account binding stays authoritative. Natural language
-    # may select winpc only through an explicit win/windows/윈도우/winpc token.
-    machine = options.get("machine") or "macmini"
+    # LinkedIn(url)은 APP 17이 증명한 기기를 호출자가 명시해야 한다. 그 전에는
+    # heartbeat·신뢰도·기본값으로 추측하지 않는다. 다른 스킬의 기존 기본값은 보존한다.
+    machine = options.get("machine")
+    if not machine and skill != "url":
+        machine = "macmini"
     return new_job_payload(
         machine=machine, skill=skill, position_url=url,
         requested_by=requested_by, role=role, params=params,
     )
-
-
-def _route_linkedin_machine(queue: Any) -> str:
-    """이슈 D — LinkedIn 로그인 머신 라우팅(조회 실패 = macmini 폴백, fail-safe)."""
-    import time
-
-    from .fleet_heartbeat import pick_linkedin_machine
-    try:
-        rows = queue.linkedin_ready_machines()
-        return pick_linkedin_machine(rows, now_epoch=int(time.time()))
-    except Exception:  # noqa: BLE001 — 라우팅 조회 실패가 enqueue 를 막으면 안 됨
-        return "macmini"
 
 
 def _group_session_for_url(url: str) -> Optional[dict[str, Any]]:
@@ -169,12 +159,6 @@ def dispatch_fleet_command(
 
     if invocation.command_name == "fleet-run":
         options = dict(invocation.options or {})
-        # 이슈 D(2026-07-15 사장님 승인, SOT29 §2 개정): LinkedIn 잡(skill=url)이
-        # 머신 미지정이면 heartbeat 의 로그인 상태로 라우팅. 조회 실패/미검출 =
-        # macmini 폴백(fail-safe) — 명시 machine 은 절대 덮어쓰지 않는다.
-        if (options.get("skill") or "").strip() == "url" \
-                and not (options.get("machine") or "").strip():
-            options["machine"] = _route_linkedin_machine(q)
         # 이슈 #104: humansearch 잡에 진행 중 포지션(SOT24) 그룹 세션을 동봉 —
         # 같은 로그인 세션에서 유사 포지션 연속 검색 + idle 변형 자동 enqueue 의 원천.
         if (options.get("skill") or "").strip() == "humansearch":

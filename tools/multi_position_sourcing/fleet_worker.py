@@ -39,8 +39,10 @@ from .job_queue import (
     _valid_url,
     default_account_key,
     is_valid_machine_id,
+    job_params_match_contract,
     new_job_payload,
     params_contain_secret_keys,
+    params_contain_secret_values,
     url_host_resolves_public,
 )
 
@@ -354,6 +356,10 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         raise ValueError("params 는 JSON object여야 함")
     if params_contain_secret_keys(params):
         raise ValueError("params에 비밀값 성격 키 포함 — 저장·모델 전달 금지")
+    if params_contain_secret_values(params):
+        raise ValueError("params에 비밀 원문·파생값 표식 포함 — 모델 전달 금지")
+    if not job_params_match_contract(skill, params):
+        raise ValueError("params 계약 밖 필드 포함 — 임의 입력 거부")
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
     login_terminal_rule = (

@@ -123,8 +123,35 @@ def validate_channel_receipt(
     if _contains_secret_key(receipt):
         return "영수증에 비밀값 성격 키 포함(secret_material) — 저장 금지 계약 위반"
     state = receipt.get("state")
-    if state in ("HUMAN_AUTH", "AUTH_CONFLICT"):
-        return f"{state} 화면은 성공 증거가 아님"
+    if state == "HUMAN_AUTH":
+        proof_names = receipt.get("proof_names")
+        if (
+            receipt.get("challenge_verified") is True
+            and receipt.get("challenge_type") in ("captcha", "2fa", "checkpoint")
+            and isinstance(proof_names, list)
+            and proof_names
+            and all(isinstance(proof, str) and proof.strip() for proof in proof_names)
+            and str(receipt.get("target_id") or "").strip()
+        ):
+            return f"HUMAN_AUTH: verified {receipt.get('challenge_type')} challenge"
+        return "사람 인증 양성 증거 없음"
+    if state == "AUTH_CONFLICT":
+        proof_names = receipt.get("proof_names")
+        if (
+            receipt.get("conflict_verified") is True
+            and receipt.get("conflict_type") in (
+                "multiple_authenticated_machines",
+                "linkedin_multiple_signins",
+            )
+            and isinstance(receipt.get("authenticated_machine_count"), int)
+            and not isinstance(receipt.get("authenticated_machine_count"), bool)
+            and receipt.get("authenticated_machine_count") >= 2
+            and isinstance(proof_names, list)
+            and proof_names
+            and all(isinstance(proof, str) and proof.strip() for proof in proof_names)
+        ):
+            return f"AUTH_CONFLICT: verified {receipt.get('conflict_type')}"
+        return "다중 로그인 충돌 양성 증거 없음"
     if state != "AUTHENTICATED":
         return f"state 미인증({state!r})"
     if receipt.get("ready") is not True:

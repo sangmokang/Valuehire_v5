@@ -43,6 +43,22 @@ _OWNER_AGENT_PARAM_KEYS = frozenset({
 _SECRET_PARAM_KEY_MARKERS = (
     "password", "passwd", "cookie", "token", "secret", "credential", "li_at",
 )
+_SECRET_PARAM_VALUE_MARKERS = (
+    "password", "passwd", "cookie", "secret", "credential", "li_at", "bearer ",
+)
+_FLEET_PARAM_KEYS = frozenset({
+    "agent",
+    "channels",
+    "execution",
+    "followup_skill",
+    "group_id",
+    "group_session",
+    "idempotency_key",
+    "model",
+    "search_filters_text",
+    "search_urls",
+    "variant",
+})
 
 
 def _approval_sha256(request: str, agent: str, mode: str, approval_id: str) -> str:
@@ -92,6 +108,29 @@ def params_contain_secret_keys(value: Any) -> bool:
     elif isinstance(value, (list, tuple)):
         return any(params_contain_secret_keys(item) for item in value)
     return False
+
+
+def params_contain_secret_values(value: Any) -> bool:
+    """Detect explicit secret material labels hidden under otherwise safe keys."""
+    if isinstance(value, Mapping):
+        return any(params_contain_secret_values(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(params_contain_secret_values(item) for item in value)
+    if isinstance(value, str):
+        lowered = value.lower()
+        return any(marker in lowered for marker in _SECRET_PARAM_VALUE_MARKERS)
+    return False
+
+
+def job_params_match_contract(skill: Any, params: Any) -> bool:
+    """Deny unknown params for fleet jobs; owner-agent has its own signed schema."""
+    if not isinstance(params, Mapping):
+        return False
+    if skill == OWNER_AGENT_SKILL:
+        return set(params) == _OWNER_AGENT_PARAM_KEYS
+    if skill not in FLEET_SKILLS:
+        return False
+    return all(isinstance(key, str) and key in _FLEET_PARAM_KEYS for key in params)
 
 
 def _valid_url(url: Any) -> bool:
@@ -324,6 +363,10 @@ def new_job_payload(
     if not isinstance(params, dict):
         return None
     if params_contain_secret_keys(params):
+        return None
+    if skill != OWNER_AGENT_SKILL and params_contain_secret_values(params):
+        return None
+    if not job_params_match_contract(skill, params):
         return None
     try:
         # V1: 직렬화 불가 params 차단. allow_nan=False — NaN/Infinity 는 유효 JSON 이 아님(V1 2R)
