@@ -390,6 +390,29 @@ def test_multisearch_entrypoint_uses_the_site_specific_policy() -> None:
             assert required in text, (path, required)
 
 
+def test_multisearch_consumes_login_results_without_running_legacy_recovery() -> None:
+    for path in MULTISEARCH_SKILL_PATHS:
+        text = _text(path)
+        for forbidden in (
+            "portal_live_check restart-smoke",
+            "portal_live_check capture-snapshot",
+            "portal_live_check discord-alert-test",
+            "--delete-profile-before-start",
+            "snapshot_reinject",
+            "keychain auto-relogin fallback",
+            "Login/Login_Tot.asp",
+            "zf_user/auth?ut=c",
+        ):
+            assert forbidden not in text, (path, forbidden)
+        for preserved in (
+            "검색 시간제한",
+            "셀렉터 드리프트 감지",
+            "크롬 잔재 잠금 정리",
+            "로그인 판정 결과만 소비",
+        ):
+            assert preserved in text, (path, preserved)
+
+
 def test_ai_search_skills_do_not_collapse_policy_states() -> None:
     for path in AI_SEARCH_SKILL_PATHS:
         text = _text(path)
