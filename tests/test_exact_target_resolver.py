@@ -49,10 +49,12 @@ def _resolve(inventory, *, observations=None, **changes):
         "expected_role": None,
         "browser_inventory": inventory,
         "expected_inventory_hash": inventory_hash(inventory),
-        "endpoint_observations": observations or {
-            browser["endpoint"]: {"targets": browser["targets"]}
-            for browser in inventory if browser["endpoint"]
-        },
+        "endpoint_observations": (
+            observations if observations is not None else {
+                browser["endpoint"]: {"targets": browser["targets"]}
+                for browser in inventory if browser["endpoint"]
+            }
+        ),
     }
     args.update(changes)
     return resolve_exact_target(**args)
@@ -149,6 +151,9 @@ def test_endpoint_recheck_and_inventory_hash_conflicts_fail_closed():
         _resolve(inventory, observations={})
     with pytest.raises(ExactTargetError, match="TARGET_IDENTITY_CHANGED"):
         _resolve(inventory, expected_inventory_hash="0" * 64)
+    ambiguous = [{**inventory[0], "issues": ["PROCESS_AMBIGUOUS"]}]
+    with pytest.raises(ExactTargetError, match="ENDPOINT_CONFLICT"):
+        _resolve(ambiguous)
 
 
 def test_same_url_in_different_profiles_is_ambiguous_without_exact_profile():
@@ -173,3 +178,14 @@ def test_session_guard_wiring_passes_only_exact_target_id_and_rechecks_identity(
     ]
     source = json.dumps(exact, sort_keys=True).encode()
     assert hashlib.sha256(source).hexdigest()
+
+
+def test_resolver_has_no_browser_creation_or_whole_browser_connect_calls():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "tools/multi_position_sourcing/exact_target.py"
+    ).read_text(encoding="utf-8")
+    for banned in ("connect_over_cdp", "connectOverCDP", "new_page(", "close_page"):
+        assert banned not in source
