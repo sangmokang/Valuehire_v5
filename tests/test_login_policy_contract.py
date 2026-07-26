@@ -490,6 +490,8 @@ def test_search_entrypoints_cannot_restore_legacy_login_recovery() -> None:
         for forbidden in (
             "로그인·세션 자동 복구(재로그인 백오프",
             "3사 로그인을 건드리는 모든 작업은 이 런북을 따른다",
+            "channel timeout은 사람 timeout보다 길거나 `0`",
+            "크롬 9222",
         ):
             assert forbidden not in text, (path, forbidden)
         for required in (
@@ -501,6 +503,9 @@ def test_search_entrypoints_cannot_restore_legacy_login_recovery() -> None:
             "HANDOFF",
             "인증 기기 2개 이상",
             "AUTH_CONFLICT",
+            "`HUMAN_AUTH`에는 시간제한을 두지",
+            "exact endpoint/profile/target",
+            "포트 추측 금지",
         ):
             assert required in text, (path, required)
 
@@ -579,6 +584,38 @@ def test_worker_generated_prompts_reference_the_new_policy() -> None:
         "HANDOFF 또는 AUTH_CONFLICT면 PAUSED_FOR_HUMAN 마커와 "
         "완료 영수증을 출력하지 말고"
     ) in url_prompt
+
+
+def test_all_login_gated_worker_prompts_seal_terminal_states_and_secrets() -> None:
+    from tools.multi_position_sourcing.fleet_worker import build_job_prompt
+
+    prompts = {
+        skill: build_job_prompt(
+            {
+                "id": index,
+                "skill": skill,
+                "position_url": (
+                    "" if skill == "login" else "https://app.clickup.com/t/abc123"
+                ),
+                "requested_by": "owner",
+                "role": "owner",
+                "machine": "macmini",
+            }
+        )
+        for index, skill in enumerate(
+            ("login", "aisearch", "humansearch", "url"),
+            start=10,
+        )
+    }
+    for skill, prompt in prompts.items():
+        for required in (
+            "실제 캡차/2FA/checkpoint 양성만 HUMAN_AUTH",
+            "HUMAN_AUTH에서만 PAUSED_FOR_HUMAN",
+            "HANDOFF와 AUTH_CONFLICT는 PAUSED_FOR_HUMAN·완료 영수증 없이 terminal 종료",
+            "시간 재개하지 말 것",
+            "비밀 원문·파생값을 인자·stdout·stderr·로그·영수증·산출물·모델 메시지",
+        ):
+            assert required in prompt, (skill, required)
 
 
 def test_current_route_does_not_keep_hermes_as_an_active_agent() -> None:
