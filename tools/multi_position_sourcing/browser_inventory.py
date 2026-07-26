@@ -96,6 +96,8 @@ def _targets(payload: Any) -> list[dict[str, Any]]:
     for raw in payload:
         if not isinstance(raw, Mapping):
             continue
+        if raw.get("type") != "page":
+            continue
         sanitized_url = _safe_url(raw.get("url"))
         markers = raw.get("marker_names")
         result.append(
@@ -181,10 +183,14 @@ def collect_browser_inventory(
 
     roots = _roots(process_snapshot)
     profile_counts: dict[str, int] = {}
+    port_counts: dict[int, int] = {}
     for root in roots:
         profile = root["profile_path"]
         if profile:
             profile_counts[profile] = profile_counts.get(profile, 0) + 1
+        port = root["declared_port"]
+        if port is not None:
+            port_counts[port] = port_counts.get(port, 0) + 1
 
     report: list[dict[str, Any]] = []
     for root in roots:
@@ -193,18 +199,19 @@ def collect_browser_inventory(
         addresses = root.pop("_debug_addresses")
         port_count = root.pop("_port_count")
         profile_count = root.pop("_profile_count")
-        if profile_count != 1 or not root["profile_path"]:
-            issues.append(
-                "AMBIGUOUS_PROFILE" if profile_count > 1 else "MISSING_PROFILE"
-            )
+        incomplete = profile_count != 1 or not root["profile_path"]
+        if profile_count > 1:
+            issues.append("PROCESS_AMBIGUOUS")
         if port_count != 1 or port is None:
-            issues.append(
-                "AMBIGUOUS_DECLARED_PORT" if port_count > 1 else "MISSING_DECLARED_PORT"
-            )
+            incomplete = True
+            if port_count > 1:
+                issues.append("PROCESS_AMBIGUOUS")
+        if port is not None and port_counts.get(port, 0) > 1:
+            issues.append("PROCESS_AMBIGUOUS")
         if len(addresses) > 1 or (
             addresses and addresses[0] not in {"127.0.0.1", "localhost"}
         ):
-            issues.append("NON_LOOPBACK_DEBUG_ADDRESS")
+            incomplete = True
 
         listeners = [
             row
@@ -215,22 +222,24 @@ def collect_browser_inventory(
         remote = [row for row in listeners if row.get("address") != "127.0.0.1"]
         listen_pid: int | None = None
         if remote:
-            issues.append("NON_LOOPBACK_LISTENER")
+            incomplete = True
         elif len(local) > 1:
-            issues.append("AMBIGUOUS_LISTENER")
+            issues.append("PROCESS_AMBIGUOUS")
         elif len(local) == 1 and isinstance(local[0].get("pid"), int):
             listen_pid = local[0]["pid"]
             if listen_pid != root["browser_pid"]:
                 issues.append("LISTENER_PID_MISMATCH")
         elif port is not None:
-            issues.append("LISTENER_MISSING")
+            incomplete = True
+        if incomplete:
+            issues.append("DISCOVERY_INCOMPLETE")
 
         endpoint = (
             f"http://127.0.0.1:{port}"
             if port is not None
-            and "NON_LOOPBACK_DEBUG_ADDRESS" not in issues
-            and "NON_LOOPBACK_LISTENER" not in issues
-            and "AMBIGUOUS_LISTENER" not in issues
+            and addresses in ([], ["127.0.0.1"], ["localhost"])
+            and not remote
+            and len(local) <= 1
             else None
         )
         response = endpoint_responses.get(endpoint) if endpoint else None
@@ -243,7 +252,7 @@ def collect_browser_inventory(
             issues.append("ENDPOINT_DEAD")
         profile = root["profile_path"]
         if profile and profile_counts.get(profile, 0) > 1:
-            issues.append("DUPLICATE_PROFILE")
+            issues.append("PROFILE_DUPLICATE")
         report.append(
             {
                 **root,

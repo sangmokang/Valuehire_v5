@@ -84,7 +84,7 @@ def test_listener_mismatch_dead_endpoint_and_ambiguous_port_are_explicit():
     ]
     assert report[1]["declared_port"] is None
     assert report[1]["endpoint"] is None
-    assert report[1]["issues"] == ["AMBIGUOUS_DECLARED_PORT"]
+    assert report[1]["issues"] == ["PROCESS_AMBIGUOUS", "DISCOVERY_INCOMPLETE"]
 
 
 def test_remote_debugging_address_and_remote_listener_never_become_endpoint():
@@ -104,10 +104,7 @@ def test_remote_debugging_address_and_remote_listener_never_become_endpoint():
 
     assert report[0]["endpoint"] is None
     assert report[0]["endpoint_live"] is False
-    assert report[0]["issues"] == [
-        "NON_LOOPBACK_DEBUG_ADDRESS",
-        "NON_LOOPBACK_LISTENER",
-    ]
+    assert report[0]["issues"] == ["DISCOVERY_INCOMPLETE"]
 
 
 def test_duplicate_profile_and_duplicate_listener_are_explicit():
@@ -121,8 +118,8 @@ def test_duplicate_profile_and_duplicate_listener_are_explicit():
     )
 
     assert report[0]["listen_pid"] is None
-    assert "AMBIGUOUS_LISTENER" in report[0]["issues"]
-    assert all("DUPLICATE_PROFILE" in item["issues"] for item in report)
+    assert "PROCESS_AMBIGUOUS" in report[0]["issues"]
+    assert all("PROFILE_DUPLICATE" in item["issues"] for item in report)
 
 
 def test_missing_listener_and_ambiguous_profile_are_explicit():
@@ -135,11 +132,7 @@ def test_missing_listener_and_ambiguous_profile_are_explicit():
 
     assert report[0]["profile_path"] == ""
     assert report[0]["listen_pid"] is None
-    assert report[0]["issues"] == [
-        "AMBIGUOUS_PROFILE",
-        "LISTENER_MISSING",
-        "ENDPOINT_DEAD",
-    ]
+    assert report[0]["issues"] == ["PROCESS_AMBIGUOUS", "DISCOVERY_INCOMPLETE", "ENDPOINT_DEAD"]
 
 
 def test_root_without_debug_flags_is_still_inventoried_with_explicit_issues():
@@ -159,7 +152,7 @@ def test_root_without_debug_flags_is_still_inventoried_with_explicit_issues():
             "endpoint": None,
             "endpoint_live": False,
             "targets": [],
-            "issues": ["MISSING_PROFILE", "MISSING_DECLARED_PORT"],
+            "issues": ["DISCOVERY_INCOMPLETE"],
         }
     ]
 
@@ -181,12 +174,9 @@ def test_live_endpoint_collects_sanitized_targets_without_secrets():
                             "authenticated_shell", "", 7, "token=secret",
                         ],
                         "webSocketDebuggerUrl": "ws://secret",
+                        "body": "secret full page body",
                     },
-                    {
-                        "id": "worker-1",
-                        "type": "service_worker",
-                        "url": "chrome-extension://abc/background.html?key=secret",
-                    },
+                    {"id": "worker-1", "type": "service_worker", "url": "about:blank"},
                 ],
             }
         },
@@ -200,13 +190,6 @@ def test_live_endpoint_collects_sanitized_targets_without_secrets():
             "sanitized_url": "https://www.linkedin.com/talent/home",
             "site": "linkedin_rps",
             "marker_names": ["authenticated_shell"],
-        },
-        {
-            "target_id": "worker-1",
-            "type": "service_worker",
-            "sanitized_url": "chrome-extension://abc/background.html",
-            "site": None,
-            "marker_names": [],
         },
     ]
     assert "secret" not in repr(report)
@@ -234,6 +217,44 @@ def test_winpc_chrome_exe_and_absolute_spaced_profile_are_supported():
     assert report[0]["executable"].endswith("chrome.exe\"")
     assert report[0]["profile_path"] == "C:\\Users\\Value Hire\\Chrome Profile"
     assert report[0]["issues"] == []
+
+
+def test_same_port_multiple_roots_are_process_ambiguous():
+    report = _collect(
+        "\n".join([_root(101, "/tmp/A", "9223"), _root(202, "/tmp/B", "9223")]),
+        listeners=[{"pid": 101, "address": "127.0.0.1", "port": 9223}],
+    )
+
+    assert all("PROCESS_AMBIGUOUS" in item["issues"] for item in report)
+
+
+def test_local_worker_builds_sanitized_report_envelope():
+    from tools.multi_position_sourcing.fleet_worker import build_local_inventory_report
+
+    envelope = build_local_inventory_report(
+        machine_id="macmini",
+        machine_readiness=READY,
+        captured_at="2026-07-26T03:00:00+00:00",
+        request_id="req-03",
+        process_snapshot=_root(101, "/tmp/A", "9223"),
+        listener_snapshot=[{"pid": 101, "address": "127.0.0.1", "port": 9223}],
+        endpoint_responses={
+            "http://127.0.0.1:9223": {
+                "version": {"Browser": "Chrome"},
+                "targets": [{
+                    "id": "p", "type": "page",
+                    "url": "https://saramin.co.kr/?secret=x",
+                }],
+            }
+        },
+    )
+
+    assert envelope["schema_version"] == 1
+    assert envelope["request_id"] == "req-03"
+    assert envelope["inventory"][0]["targets"][0]["sanitized_url"] == (
+        "https://saramin.co.kr/"
+    )
+    assert "secret" not in repr(envelope)
 
 
 @pytest.mark.parametrize(
