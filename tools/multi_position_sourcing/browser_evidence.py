@@ -231,6 +231,8 @@ def _read_private_regular(path: Path, maximum_bytes: int) -> bytes:
     if not path.is_absolute():
         raise OSError("browser evidence path must be absolute")
     flags = os.O_RDONLY
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(path, flags)
@@ -431,6 +433,8 @@ def _private_dir(path: Path) -> None:
 
 def _write_private(path: Path, payload: bytes) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(path, flags, 0o600)

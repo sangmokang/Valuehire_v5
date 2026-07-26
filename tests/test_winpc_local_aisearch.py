@@ -8,6 +8,10 @@ from pathlib import Path
 import pytest
 
 from tools.multi_position_sourcing import winpc_local_aisearch
+from tools.multi_position_sourcing.fleet_worker import (
+    build_codex_exec_args,
+    build_job_prompt,
+)
 
 
 CLICKUP_URL = "https://app.clickup.com/t/9018789656/86ey90v4k"
@@ -47,6 +51,11 @@ def test_local_request_is_bound_to_winpc_and_never_builds_queue_payload() -> Non
     assert "JobQueueClient" not in Path(winpc_local_aisearch.__file__).read_text(
         encoding="utf-8"
     )
+    prompt = build_job_prompt(job)
+    assert "WinPC 등록 관리 프로필" in prompt
+    assert "Chrome Profile 2" not in prompt
+    assert "~/.valuehire/login_receipts/<channel>.json" in prompt
+    assert "portal_session_status_latest.json" not in prompt
 
 
 def test_live_local_run_prepares_browser_and_invokes_agent_on_same_process_path(
@@ -62,6 +71,17 @@ def test_live_local_run_prepares_browser_and_invokes_agent_on_same_process_path(
         calls.append(("runner", (timeout, env["VALUEHIRE_MACHINE"])))
         assert "$ai-search" in prompt
         assert CLICKUP_URL in prompt
+        assert winpc_local_aisearch.LOCAL_EXECUTOR_MARKER in prompt
+        assert "다시 호출하지 말고" in prompt
+        assert env["VALUEHIRE_OWNER_LOCAL_AI_SEARCH"] == "1"
+        assert env["VALUEHIRE_JOB_SKILL"] == "aisearch"
+        assert env["VALUEHIRE_JOB_ROLE"] == "owner"
+        args = build_codex_exec_args(env)
+        pairs = list(zip(args, args[1:]))
+        assert ("--sandbox", "workspace-write") in pairs
+        assert ("--add-dir", str(Path.home() / ".valuehire")) in pairs
+        assert ("--add-dir", str(Path.home() / ".vh-browser-evidence")) in pairs
+        assert "sandbox_workspace_write.network_access=true" in args
         return _search_receipt(), "", 0
 
     result = winpc_local_aisearch.run_local_aisearch(
@@ -127,3 +147,64 @@ def test_non_windows_local_entrypoint_fails_closed(tmp_path: Path) -> None:
             system_name="Darwin",
         )
 
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://app.clickup.com/t/9018789656/86ey90v4k",
+        "https://example.com/t/9018789656/86ey90v4k",
+        "https://app.clickup.com/t/9018789656/86ey90v4k/extra",
+        "https://owner:secret@app.clickup.com/t/9018789656/86ey90v4k",
+        "https://app.clickup.com/t/9018789656/86ey90v4k%0A$other-skill",
+    ),
+)
+def test_local_entrypoint_rejects_non_exact_or_injectable_clickup_url(url: str) -> None:
+    with pytest.raises(ValueError, match="exact ClickUp"):
+        winpc_local_aisearch.LocalAisearchRequest(position_url=url)
+
+
+def test_local_run_lock_rejects_duplicate_process_on_same_winpc(tmp_path: Path) -> None:
+    lock_path = tmp_path / "local.lock"
+
+    with winpc_local_aisearch._LocalRunLock(lock_path):
+        with pytest.raises(winpc_local_aisearch.LocalAisearchBusy):
+            with winpc_local_aisearch._LocalRunLock(lock_path):
+                pass
+
+    with winpc_local_aisearch._LocalRunLock(lock_path):
+        assert lock_path.is_file()
+
+
+def test_local_search_permission_marker_cannot_escalate_wrong_context() -> None:
+    marker = {"VALUEHIRE_OWNER_LOCAL_AI_SEARCH": "1"}
+    for env in (
+        marker,
+        {**marker, "VALUEHIRE_JOB_SKILL": "aisearch", "VALUEHIRE_JOB_ROLE": "member",
+         "VALUEHIRE_MACHINE": "winpc"},
+        {**marker, "VALUEHIRE_JOB_SKILL": "aisearch", "VALUEHIRE_JOB_ROLE": "owner",
+         "VALUEHIRE_MACHINE": "macmini"},
+    ):
+        args = build_codex_exec_args(env)
+        pairs = list(zip(args, args[1:]))
+        assert ("--sandbox", "read-only") in pairs
+        assert ("--add-dir", str(Path.home() / ".valuehire")) not in pairs
+        assert ("--add-dir", str(Path.home() / ".vh-browser-evidence")) not in pairs
+
+
+def test_ai_search_skill_routes_owner_explicit_winpc_to_local_entrypoint() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    command = "tools.multi_position_sourcing.winpc_local_aisearch"
+    for relative in (
+        ".codex/skills/ai-search/SKILL.md",
+        "skills/ai-search/SKILL.md",
+    ):
+        body = (repo / relative).read_text(encoding="utf-8")
+        assert command in body
+        assert "원격 큐" in body
+        assert winpc_local_aisearch.LOCAL_EXECUTOR_MARKER in body
+        assert "재호출" in body
+        assert "위 실행기 표시가 없고" in body
+        assert (
+            "python .codex/skills/ai-search/scripts/ai_search_sot_check.py --repo ."
+            in body
+        )

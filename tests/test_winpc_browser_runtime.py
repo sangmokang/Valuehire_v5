@@ -8,7 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools.multi_position_sourcing import portal_worker, session_guard
+from tools.multi_position_sourcing import browser_evidence, portal_worker, session_guard
+from tools.multi_position_sourcing.winpc_portal_browser import _StartLease, winpc_environment
 
 
 class _Response:
@@ -44,6 +45,18 @@ def test_windows_managed_endpoint_uses_configured_port_without_unix_launcher() -
 
     assert endpoint == "http://127.0.0.1:9423"
     assert seen == ["http://127.0.0.1:9423/json/version"]
+
+
+def test_winpc_environment_discards_legacy_global_endpoint(tmp_path: Path) -> None:
+    env = winpc_environment(
+        {
+            "LOCALAPPDATA": str(tmp_path),
+            "VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT": "http://127.0.0.1:9222",
+        }
+    )
+
+    assert "VALUEHIRE_PORTAL_CHROME_CDP_ENDPOINT" not in env
+    assert portal_worker.resolve_channel_cdp_endpoint("saramin", env=env).endswith(":9423")
 
 
 def test_windows_managed_process_binds_exact_port_and_profile() -> None:
@@ -119,6 +132,65 @@ def test_windows_raw_directory_lease_is_atomic_and_owner_checked(
     assert not config.lock_path.exists()
 
 
+def test_windows_raw_directory_lease_release_can_retry_after_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        portal_worker,
+        "RAW_SINGLE_TARGET_LOCK_ROOT",
+        tmp_path / "browser_locks",
+    )
+    config = portal_worker.PortalWorkerConfig(
+        channel="saramin",
+        worker_id="default",
+        profile_root=tmp_path / "profiles",
+        mode="headed",
+        connection_mode="raw_single_tab",
+    )
+    lock = portal_worker.ProfileLock(config)
+    portal_worker._ensure_real_profile_dir(config)
+    lock._acquire_raw_lease_windows()
+    original_rmdir = Path.rmdir
+    original_rename = portal_worker.os.rename
+    rmdir_attempts = 0
+    rename_attempts = 0
+
+    def transient_rmdir(path: Path) -> None:
+        nonlocal rmdir_attempts
+        if path == config.lock_path and rmdir_attempts == 0:
+            rmdir_attempts += 1
+            raise PermissionError("transient Windows scanner handle")
+        original_rmdir(path)
+
+    def transient_rename(source: object, target: object) -> None:
+        nonlocal rename_attempts
+        if Path(source) == lock._raw_owner_path and rename_attempts == 0:
+            rename_attempts += 1
+            raise PermissionError("transient Windows reader handle")
+        original_rename(source, target)
+
+    monkeypatch.setattr(Path, "rmdir", transient_rmdir)
+    monkeypatch.setattr(portal_worker.os, "rename", transient_rename)
+    lock._release_raw_lease_windows()
+
+    assert rename_attempts == 1
+    assert rmdir_attempts == 1
+    assert not config.lock_path.exists()
+
+
+def test_browser_start_lease_is_process_locked_and_reusable(tmp_path: Path) -> None:
+    path = tmp_path / "start-saramin.lock"
+
+    with _StartLease(path):
+        with pytest.raises(RuntimeError, match="already in progress"):
+            with _StartLease(path):
+                pass
+
+    with _StartLease(path):
+        assert path.is_file()
+
+
 def test_windows_credentials_come_from_process_environment_not_macos_keychain() -> None:
     credentials = session_guard._load_runtime_login_credentials(
         "saramin",
@@ -182,3 +254,13 @@ def test_owner_explicit_winpc_autologin_bypasses_only_initial_idle_gate() -> Non
     assert result["host"] == "winpc"
     assert result["target_id"] == "target-1"
 
+
+def test_browser_evidence_low_level_io_preserves_windows_binary_bytes(
+    tmp_path: Path,
+) -> None:
+    payload = b"\x89PNG\r\n\x1a\nbinary\npayload\x00\xff"
+    target = tmp_path / "evidence.bin"
+
+    browser_evidence._write_private(target, payload)
+
+    assert browser_evidence._read_private_regular(target, len(payload)) == payload
