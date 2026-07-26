@@ -39,6 +39,12 @@ from .fleet_args import (  # AC-1 이사(2026-07-22) — 파싱 단일출처는 
 )
 from .fleet_dispatch import FLEET_COMMANDS, dispatch_fleet_command
 from .job_queue import FLEET_MACHINES, FLEET_SKILLS
+from .machine_identity import (
+    CANONICAL_MACHINE_IDS,
+    MACHINE_ID_ALIASES,
+    MachineIdentityError,
+    normalize_machine_id,
+)
 
 FLEET_PLUGIN_COMMANDS: tuple[str, ...] = FLEET_ARG_COMMANDS  # ("fleet-run","fleet-resume","fleet-status","fleet-cancel")
 
@@ -120,14 +126,23 @@ def natural_fleet_command_text(
         return None
     urls = [match.group(0).rstrip(".,);]}") for match in _URL_IN_TEXT_RE.finditer(raw)]
     low = raw.lower()
-    words = set(re.findall(r"[A-Za-z0-9가-힣_-]+", low))
-    explicit_machine = next(
-        (canonical for canonical in FLEET_MACHINES if canonical in words), ""
+    identity_spellings = frozenset(
+        (*CANONICAL_MACHINE_IDS, *MACHINE_ID_ALIASES.keys())
     )
-    alias_machine = next(
-        (canonical for alias, canonical in _MACHINE_ALIASES.items() if alias in words), ""
-    )
-    machine = explicit_machine or alias_machine
+    machine_candidates: set[str] = set()
+    ambiguous_machine_token = False
+    text_without_urls = _URL_IN_TEXT_RE.sub(" ", raw)
+    for token in re.findall(r"[A-Za-z0-9가-힣_-]+", text_without_urls):
+        try:
+            machine_candidates.add(normalize_machine_id(token))
+        except MachineIdentityError:
+            if token.casefold() in {
+                spelling.casefold() for spelling in identity_spellings
+            }:
+                ambiguous_machine_token = True
+    if ambiguous_machine_token or len(machine_candidates) > 1:
+        return None
+    machine = next(iter(machine_candidates), "")
     followup = any(trigger in low for trigger in _FOLLOWUP_TRIGGERS) or raw.lower() in {
         "win", "windows", "윈도우", "윈도우pc", "winpc"
     }
@@ -143,7 +158,7 @@ def natural_fleet_command_text(
     # 명시 skill 지정이 있으면 규칙 미적용(기존 "명시 우선" 원칙).
     explicit_skill = _explicit_skill_from_natural_text(low)
     position_urls = [url for url in urls if not _is_search_url(url)]
-    low_no_urls = _URL_IN_TEXT_RE.sub(" ", raw).lower()
+    low_no_urls = text_without_urls.lower()
     linkedin_handoff = (
         explicit_skill is None
         and len(position_urls) == 1

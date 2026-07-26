@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
 
+from .machine_identity import MachineIdentityError, normalize_machine_id
+
 _CONTRACT_REL = "docs/sot/32-nl-shell-routing.json"
 
 # 가드(.claude/hooks/guards/nl-shell-routing.py)를 켜는 스위치.
@@ -515,8 +517,16 @@ def plan_from_text(message: str, *, searcher, message_id: str = "",
             url = str(args.get("url") or "").strip() if isinstance(args, Mapping) else ""
             if command in {"aisearch", "humansearch", "url"} and url:
                 parts = ["/fleet-run", f"skill:{command}", f"url:{shlex.quote(url)}"]
-                machine = str(args.get("machine") or "").strip()
-                if machine in {"macmini", "macbook", "winpc"}:
+                raw_machine = args.get("machine")
+                if raw_machine not in (None, ""):
+                    try:
+                        machine = normalize_machine_id(raw_machine)
+                    except MachineIdentityError as exc:
+                        return Plan(
+                            action="reply",
+                            source="bot_intent",
+                            reply=f"기기 이름을 사용할 수 없습니다: {exc.code}",
+                        )
                     parts.append(f"machine:{machine}")
                 if message_id:
                     parts.append(f"idempotency:discord:{message_id}")
