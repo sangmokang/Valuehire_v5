@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import json
+import inspect
 from types import SimpleNamespace
 
 import pytest
 
+from tools.multi_position_sourcing.portal_worker import ProfileLockError
 from tools.multi_position_sourcing.session_guard import (
     AuthObservation,
     BrowserTargetRef,
     run_auto_login_episode,
+)
+from tools.multi_position_sourcing.safe_autologin import (
+    LoginFormObservation,
+    submit_login_form_once,
 )
 
 
@@ -102,6 +108,7 @@ def run(trace: list[str], **changes):
             "valid": True,
             "fingerprint": "linkedin-login-cap-v1",
             "url": URL,
+            "badge_present": "badge" in trace,
         },
         "_credential_provider": SimpleNamespace(
             load=lambda _site: SimpleNamespace(
@@ -169,6 +176,19 @@ def test_fresh_gates_badge_and_form_precede_exactly_one_submission() -> None:
     assert trace.count("submit") == 1
 
 
+def test_fresh_owner_guard_rejection_mutates_zero_times() -> None:
+    trace: list[str] = []
+    result = run(
+        trace,
+        _mutation_gate=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ProfileLockError("owner activity blocks raw browser mutation")
+        ),
+    )
+    assert result["state"] == "HUMAN_ACTIVE"
+    assert result["submission_count"] == 0
+    assert "badge" not in trace and "submit" not in trace
+
+
 def test_challenge_and_conflict_post_observations_are_terminal() -> None:
     for state in ("HUMAN_AUTH_REQUIRED", "AUTH_CONFLICT"):
         trace: list[str] = []
@@ -202,3 +222,41 @@ def test_secret_is_absent_from_result_repr_and_process_boundary() -> None:
     assert result.keys() >= {
         "attempted", "submission_count", "state", "reason", "post_observation",
     }
+
+    source = inspect.getsource(run_auto_login_episode)
+    assert "portal_selfservice_login" not in source
+    assert "portal_login" not in source
+    assert "subprocess" not in source
+    assert "os.environ" not in source
+
+
+def test_atomic_runtime_submission_marks_episode_without_navigation_or_secret_output() -> None:
+    scripts: list[str] = []
+
+    class RuntimeTab:
+        def eval(self, script: str):
+            scripts.append(script)
+            return {"submitted": True, "reason": "submitted"}
+
+    form = LoginFormObservation(
+        valid=True,
+        fingerprint="fingerprint",
+        url=URL,
+        badge_present=True,
+        selectors=("#username", "#password", 'button[type="submit"]'),
+        signature="INPUT|text|session_key|username|::INPUT|password|session_password|current-password|::BUTTON|submit|||",
+    )
+    result = submit_login_form_once(
+        RuntimeTab(),
+        form=form,
+        episode_id="episode-10",
+        username="credential-user",
+        password="credential-secret",
+    )
+
+    assert result == {"submitted": True, "reason": "submitted"}
+    assert "credential-user" not in repr(result)
+    assert "credential-secret" not in repr(result)
+    assert "dataset.vhLoginEpisode" in scripts[0]
+    assert "location.href" in scripts[0]
+    assert "navigate" not in scripts[0]

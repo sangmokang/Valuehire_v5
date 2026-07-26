@@ -2335,66 +2335,216 @@ def run_auto_login_episode(
     *,
     agent: str,
     target_id: str | None = None,
+    episode_id: str = "default",
     _credential_provider: Any | None = None,
+    _owner_snapshot: Callable[[], Any] | None = None,
+    _lease_factory: Callable[[Site], Any] | None = None,
+    _target_resolver: Callable[..., BrowserTargetRef] | None = None,
+    _tab_attacher: Callable[..., Any] | None = None,
+    _auth_reader: Callable[[Any, Site], AuthObservation] | None = None,
+    _form_reader: Callable[..., Any] | None = None,
+    _submitter: Callable[..., Mapping[str, Any]] | None = None,
+    _mutation_gate: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
-    """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
+    """Submit Keychain credentials once on one already-open verified form."""
+    from .portal_worker import ProfileLockError, assert_raw_browser_mutation_allowed
+    from .safe_autologin import read_login_form, submit_login_form_once
 
-    lease·owner-idle 게이트를 먼저 통과하고, 정확한 기존 target 하나에만 attach한다.
-    비밀번호는 공용 macOS Keychain에서 이 프로세스 안으로만 읽어
-    perform_autologin 내부로만 흐른다(반환값 무비밀).
-    캡차·2FA·세션충돌이면 제출 0회로 HUMAN_AUTH를 반환한다. 종료 시 CDP WebSocket만 해제.
-    """
-    from . import portal_selfservice_login as ssl
-    from .owner_activity import detect_owner_activity_snapshot
+    def result(
+        state: str,
+        reason: str,
+        *,
+        attempted: bool = False,
+        submissions: int = 0,
+        observation: AuthObservation | None = None,
+        resolved_target: str = "",
+    ) -> dict[str, Any]:
+        public_observation = None if observation is None else {
+            "state": observation.state,
+            "proof_names": list(observation.proof_names),
+            "block_names": list(observation.block_names),
+            "observed_at": observation.observed_at,
+            "target_id": observation.target_id,
+            "url_before": observation.url_before,
+            "url_after": observation.url_after,
+        }
+        return {
+            "attempted": attempted,
+            "submission_count": submissions,
+            "state": state,
+            "reason": reason,
+            "post_observation": public_observation,
+            "site": site,
+            "target_id": resolved_target,
+        }
 
     if site not in _SITE_DOMAINS:
-        return {"status": "unsupported_site", "site": site}
-    try:
-        snapshot = detect_owner_activity_snapshot()
-    except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
-        return {"status": "human_active", "site": site, "note": "owner 감지 실패 → 양보"}
-    if snapshot.owner_activity_detected:
-        return {"status": "human_active", "site": site,
-                "note": "사장님 활동 감지 — 자동 로그인 보류"}
+        return result("AUTH_UNKNOWN", "UNSUPPORTED_SITE")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(episode_id)):
+        return result("AUTH_UNKNOWN", "INVALID_EPISODE")
+    if _owner_snapshot is None:
+        from .owner_activity import detect_owner_activity_snapshot
 
-    loaded_credentials = _load_runtime_login_credentials(
-        site,
-        credential_provider=_credential_provider,
-    )
-    if loaded_credentials is None:
-        return {"status": "missing_credentials", "site": site,
-                "note": "macOS Keychain valuehire.portal_credentials 설정 필요"}
-    username, password = loaded_credentials
-
-    lease = _default_login_lease(site)
-    if not _acquire_login_lease_read_only(lease, stop_requested=lambda: False, sleep=time.sleep):
-        return {"status": "lease_unavailable", "site": site}
+        owner_snapshot = detect_owner_activity_snapshot
+    else:
+        owner_snapshot = _owner_snapshot
     try:
-        ref = resolve_existing_target(site, target_id=target_id)
-        tab = _attach_exact_ref({
+        snapshot = owner_snapshot()
+        if (
+            getattr(snapshot, "detection_status", "") != "ok"
+            or getattr(snapshot, "owner_activity_detected", True) is not False
+        ):
+            return result("HUMAN_ACTIVE", "HUMAN_ACTIVE")
+    except Exception:
+        return result("HUMAN_ACTIVE", "OWNER_DETECTION_FAILED")
+
+    lease = (_lease_factory or _default_login_lease)(site)
+    resolver = _target_resolver or resolve_existing_target
+    attacher = _tab_attacher or _attach_exact_ref
+    auth_reader = _auth_reader or read_auth_observation
+    form_reader = _form_reader or read_login_form
+    submitter = _submitter or submit_login_form_once
+    tab: Any | None = None
+    ref: BrowserTargetRef | None = None
+    try:
+        lease.acquire()
+        ref = resolver(site, target_id=target_id)
+        tab = attacher({
             "id": ref.target_id,
             "type": "page",
             "url": ref.initial_url,
             "webSocketDebuggerUrl": ref.websocket_url,
-        }, badge=True)
-        try:
-            outcome = ssl.perform_autologin(
-                tab, site, ssl.PortalCreds(username=username, password=password))
-        finally:
-            try:
-                tab.close()  # raw_cdp.close(): 배지 제거 + WebSocket 해제만(탭/브라우저 보존)
-            except Exception:  # noqa: BLE001
-                pass
-    finally:
-        try:
-            lease.release()
-        except Exception:  # noqa: BLE001
-            pass
+        }, badge=False)
+        initial = auth_reader(tab, site)
+        if initial.state == "AUTHENTICATED":
+            return result(
+                "AUTHENTICATED", "ALREADY_AUTHENTICATED",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        if initial.state in {"HUMAN_AUTH_REQUIRED", "AUTH_CONFLICT"}:
+            return result(
+                initial.state, initial.state,
+                observation=initial, resolved_target=ref.target_id,
+            )
+        if initial.state != "AUTH_LOST":
+            return result(
+                initial.state, initial.state,
+                observation=initial, resolved_target=ref.target_id,
+            )
 
-    outcome["site"] = site
-    outcome["target_id"] = ref.target_id
-    outcome["host"] = os.environ.get("VALUEHIRE_MACHINE", "").strip()
-    return outcome
+        form = form_reader(tab, site)
+        valid = bool(
+            form.get("valid") if isinstance(form, Mapping)
+            else getattr(form, "valid", False)
+        )
+        fingerprint = str(
+            form.get("fingerprint", "") if isinstance(form, Mapping)
+            else getattr(form, "fingerprint", "")
+        )
+        form_url = str(
+            form.get("url", "") if isinstance(form, Mapping)
+            else getattr(form, "url", "")
+        )
+        if not valid or not fingerprint:
+            state = (
+                "HUMAN_AUTH_REQUIRED"
+                if "challenge_path" in initial.block_names
+                else "SELECTOR_DRIFT"
+            )
+            return result(
+                state, state, observation=initial,
+                resolved_target=ref.target_id,
+            )
+        submitted_episodes = getattr(tab, "_vh_login_submitted_episodes", set())
+        if episode_id in submitted_episodes:
+            return result(
+                initial.state, "EPISODE_ALREADY_SUBMITTED",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        loaded = _load_runtime_login_credentials(
+            site, credential_provider=_credential_provider,
+        )
+        if loaded is None:
+            return result(
+                "CREDENTIAL_MISSING", "CREDENTIAL_MISSING",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        username, password = loaded
+
+        gate = _mutation_gate or (
+            lambda *_args, **_kwargs: assert_raw_browser_mutation_allowed(
+                lease, owner_snapshot=owner_snapshot,
+            )
+        )
+        def gate_allowed() -> bool:
+            try:
+                gate()
+                return True
+            except ProfileLockError:
+                return False
+        if not gate_allowed():
+            return result(
+                "HUMAN_ACTIVE", "HUMAN_ACTIVE",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        if _tab_target_id(tab) != ref.target_id or _tab_current_url(tab) != form_url:
+            return result(
+                "TARGET_IDENTITY_CHANGED", "TARGET_IDENTITY_CHANGED",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        marker = f"[{agent}][auto-login][{ref.target_id[-12:]}]"
+        mark_busy = getattr(tab, "mark_busy", None)
+        if not callable(mark_busy) or mark_busy(marker, expected_url=form_url) is not True:
+            return result(
+                "SELECTOR_DRIFT", "BADGE_MISSING",
+                observation=initial, resolved_target=ref.target_id,
+            )
+
+        if not gate_allowed():
+            return result(
+                "HUMAN_ACTIVE", "HUMAN_ACTIVE",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        fresh_form = form_reader(tab, site)
+        fresh_fingerprint = str(
+            fresh_form.get("fingerprint", "") if isinstance(fresh_form, Mapping)
+            else getattr(fresh_form, "fingerprint", "")
+        )
+        badge_present = bool(
+            fresh_form.get("badge_present") if isinstance(fresh_form, Mapping)
+            else getattr(fresh_form, "badge_present", False)
+        )
+        if (
+            _tab_target_id(tab) != ref.target_id
+            or _tab_current_url(tab) != form_url
+            or fresh_fingerprint != fingerprint
+            or not badge_present
+        ):
+            return result(
+                "TARGET_IDENTITY_CHANGED", "TARGET_OR_FORM_CHANGED",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        dispatched = submitter(
+            tab, form=fresh_form, episode_id=episode_id,
+            username=username, password=password,
+        )
+        if dispatched.get("submitted") is not True:
+            reason = str(dispatched.get("reason") or "SUBMISSION_UNVERIFIED").upper()
+            return result(
+                "SELECTOR_DRIFT", reason,
+                observation=initial, resolved_target=ref.target_id,
+            )
+        setattr(tab, "_vh_login_submitted_episodes",
+                {*submitted_episodes, episode_id})
+        post = auth_reader(tab, site)
+        return result(
+            post.state, "SUBMITTED",
+            attempted=True, submissions=1, observation=post,
+            resolved_target=ref.target_id,
+        )
+    finally:
+        _disconnect_websocket_only(tab)
+        lease.release()
 
 
 def main(argv: list[str] | None = None) -> int:
