@@ -135,6 +135,14 @@ def test_probe_redirect_or_target_swap_is_terminal():
     )
     assert changed_url["state"] == "TARGET_CHANGED_DURING_PROBE"
 
+    changed_query = _classify(
+        "linkedin_rps",
+        "https://www.linkedin.com/talent/home?origin=one",
+        {"recruiter_marker": True, "challenge_control": False, "multiple_sign_in": False},
+        url_after="https://www.linkedin.com/talent/home?origin=two",
+    )
+    assert changed_query["state"] == "TARGET_CHANGED_DURING_PROBE"
+
     changed_target = _classify(
         "linkedin_rps",
         "https://www.linkedin.com/talent/home",

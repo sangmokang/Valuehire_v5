@@ -623,41 +623,43 @@ def test_capture_episode_rejects_saved_label_without_real_evidence_files() -> No
 
 
 @pytest.mark.parametrize(
-    ("site", "url", "account_fields", "proof"),
+    ("site", "url", "account_fields", "blocks"),
     [
         (
             "saramin",
             "https://www.saramin.co.kr/zf_user/member/resume-view?resume_idx=1",
             {"hasLogout": True, "hasValueConnect": False},
-            "profile_detail",
+            ("search_input", "career_min", "career_max"),
         ),
         (
             "jobkorea",
             "https://www.jobkorea.co.kr/corp/person/find/resume/view?rNo=2",
             {"hasLogout": True, "hasValueConnect": True},
-            "profile_detail",
+            ("talent_search",),
         ),
     ],
 )
-def test_portal_profile_detail_has_positive_auth_marker(
-    site: str, url: str, account_fields: dict[str, bool], proof: str
+def test_portal_profile_detail_without_search_controls_is_not_authenticated(
+    site: str, url: str, account_fields: dict[str, bool], blocks: tuple[str, ...]
 ) -> None:
     class Tab:
         def eval(self, _script: str):
             return {
                 "url": url,
-                "hasChallenge": False,
+                "challengeControl": False,
                 "hasSessionConflict": False,
-                "saraminSearch": False,
+                "saraminSearchInput": False,
+                "saraminCareerMin": False,
+                "saraminCareerMax": False,
                 "jobkoreaSearch": False,
-                "linkedinSearch": False,
                 "linkedinAccount": False,
                 **account_fields,
             }
 
     observation = read_auth_observation(Tab(), site)  # type: ignore[arg-type]
-    assert observation.authenticated is True
-    assert proof in observation.proof_names
+    assert observation.authenticated is False
+    assert observation.state == "AUTH_LOST"
+    assert observation.block_names == blocks
 
 
 def test_exact_target_resolver_accepts_jobkorea_profile_detail() -> None:
