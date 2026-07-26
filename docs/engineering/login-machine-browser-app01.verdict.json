@@ -4,40 +4,72 @@
   "risk": "L3",
   "spec": "docs/engineering/login-machine-browser-decomposition-briefing-2026-07-26.html APP 01",
   "branch": "task/login-machine-browser-app01-clean",
-  "implementation_head": "dd8fbf094af47cb5f285b43831f95fbec5e353a6",
+  "implementation_head": "5c81f92a591fe3f1711134d9cd92237786319187",
   "generator": {
     "author": "Codex",
-    "claim": "APP 01 로그인 기준을 26-portal-login-spec@1.5.0으로 통합하고 활성 정책·스킬·생성 프롬프트를 정적으로 연결했다. 인증 제공자, 쿠키 적용기, 브라우저 제어, SQL 또는 세션 런타임은 구현하지 않았다.",
-    "implementation_commits": [
-      "26051d0",
-      "7a49fe6",
-      "dd8fbf0"
+    "claim": "APP 01 로그인 기준을 생산 실행 경로에 연결하고, 영수증의 증거·브라우저 대상·현재 인증 상태를 읽기 전용으로 재검증한다.",
+    "counterexample_test_commits": [
+      "86f023c",
+      "0ec8a17",
+      "7c041c4",
+      "ebf083d",
+      "97b6dae",
+      "5d60120",
+      "70b4602",
+      "51de3af",
+      "84eb732",
+      "5e9d8c7",
+      "25ff3cf",
+      "6baaebf",
+      "47e2c65"
+    ],
+    "counterexample_fix_commits": [
+      "f573603",
+      "dacd8ab",
+      "a2deb5b",
+      "8b7f8a5",
+      "ae4d394",
+      "03d74e1",
+      "59a65f2",
+      "4431c0c",
+      "23747f7",
+      "5c81f92"
     ],
     "focused_command": "uv run --with pytest python -m pytest tests/test_fleet_login_job.py tests/test_login_barrier.py tests/test_login_policy_contract.py -q",
-    "focused_output": "125 passed in 0.58s",
+    "focused_output": "138 passed",
     "prompt_command": "uv run --with pytest python -m pytest tests/test_fleet_worker.py::test_build_job_prompt_contains_contract tests/test_fleet_worker.py::test_url_prompt_has_executable_login_machine_and_pause_contract tests/test_fleet_worker.py::test_capture_prompt_is_specific_to_each_skill tests/test_login_harness_hook.py::test_execution_prompt_makes_login_a_code_enforced_search_barrier tests/test_login_harness_hook.py::test_fleet_search_prompts_require_login_barrier_before_execution -q",
-    "prompt_output": "5 passed in 0.14s",
-    "mutation_evidence": "Disposable worktree mutation auto_logout_other_machine=false -> true made test_site_authentication_methods_are_explicit_and_mutation_bounded fail; disposable worktree removed.",
-    "mirror_evidence": "login skill x3, browser-control-contract x3, ai-search/search/humansearch/multisearch mirrors matched by SHA-256.",
-    "scope_evidence": "Only policy/docs/skills/tests and fleet_worker prompt strings/comments changed; no credential provider, cookie injector, browser controller, SQL, or session runtime implementation."
+    "prompt_output": "5 passed",
+    "runtime_command": "uv run --with pytest python -m pytest tests/test_fleet_worker_login_barrier.py tests/test_fleet_dispatch.py -q",
+    "runtime_output": "34 passed",
+    "focused_total": 177,
+    "mutation_evidence": "Disposable worktrees removed state, secret, evidence, browser-identity, and live-authentication guards; 9 corresponding tests failed. All disposable worktrees were removed.",
+    "scope_evidence": "No credential read/input, browser start/stop, tab create/close, device auto-selection, push, pull request, or merge was performed."
   },
   "codex_adversarial_review": {
     "verdict": "pass",
     "blocking_findings": 0,
-    "independent_checks": "22 policy tests plus 6 generated-prompt checks passed; diff, mirror hashes, secret-shape scan, historical prompt quarantine, and runtime-scope boundary passed."
+    "review_history_preserved": true,
+    "failed_rounds_before_final_pass": 5,
+    "final_review_context": "fresh independent Codex context",
+    "final_review_date": "2026-07-27"
   },
   "claude_adversarial_review": {
     "verdict": "blocked_by_usage_limit",
     "attempt_output": "You've hit your weekly limit · resets 12pm (Asia/Seoul)",
-    "required_before_app02": true
+    "required_before_app02_originally": true,
+    "released_by_user_on": "2026-07-27",
+    "failure_record_preserved": true
+  },
+  "approval": {
+    "basis": "2026-07-27_user_authorized_independent_codex_review",
+    "three_way_agree": false
   },
   "known_out_of_scope_failures": {
     "command": "uv run --with pytest python -m pytest tests/test_fleet_worker.py tests/test_login_harness_hook.py -q",
-    "output": "71 passed, 22 failed",
-    "classification": "Pre-existing Windows CLI path resolution and browser evidence fixture failures; quarantined for later owning APPs."
+    "output": "78 passed, 22 failed",
+    "classification": "Pre-existing Windows CLI path resolution and browser evidence fixture failures; not changed for APP 01."
   },
-  "three_way_agree": false,
-  "status": "codex_pass_claude_review_pending",
+  "status": "complete_under_user_approved_codex_independent_review",
   "push": false,
   "pull_request": false,
   "merge": false
