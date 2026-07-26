@@ -42,6 +42,7 @@ _SECRET_KEY_MARKERS = (
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _EVIDENCE_PATH_FIELDS = ("screenshot_path", "text_path", "manifest_path")
+_BROWSER_BINDING_FIELDS = ("endpoint", "profile_path", "browser_pid", "target_id")
 
 
 def _valid_exact_browser_binding(receipt: Mapping[str, Any]) -> bool:
@@ -64,10 +65,36 @@ def _valid_exact_browser_binding(receipt: Mapping[str, Any]) -> bool:
         and not parsed.fragment
         and profile_path
         and Path(profile_path).is_absolute()
+        and Path(profile_path).is_dir()
         and isinstance(browser_pid, int)
         and not isinstance(browser_pid, bool)
         and browser_pid > 0
         and str(receipt.get("target_id") or "").strip()
+    )
+
+
+def _matches_live_browser_binding(
+    receipt: Mapping[str, Any],
+    *,
+    channel: str,
+) -> bool:
+    from .session_guard import resolve_existing_target
+
+    try:
+        live = resolve_existing_target(
+            channel,
+            target_id=str(receipt.get("target_id") or ""),
+        )
+        receipt_profile = Path(str(receipt.get("profile_path") or "")).resolve(strict=True)
+        live_profile = Path(str(live.profile_path or "")).resolve(strict=True)
+    except (LookupError, OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return bool(
+        live.site == channel
+        and live.endpoint == receipt.get("endpoint")
+        and live.target_id == receipt.get("target_id")
+        and live.browser_pid == receipt.get("browser_pid")
+        and live_profile == receipt_profile
     )
 
 
@@ -230,6 +257,11 @@ def validate_channel_receipt(
         or evidence_payload.get("mode") != "evidence"
     ):
         return "로그인 증거 채널·작업 불일치"
+    for field in _BROWSER_BINDING_FIELDS:
+        if receipt.get(field) != evidence_payload.get(field):
+            return f"browser identity mismatch ({field})"
+    if not _matches_live_browser_binding(receipt, channel=channel):
+        return "live browser identity mismatch"
     for field in _EVIDENCE_PATH_FIELDS:
         if str(receipt.get(field) or "") != str(evidence_payload.get(field) or ""):
             return f"증거 경로 불일치({field})"

@@ -1667,6 +1667,12 @@ def run_human_auth_episode(
                     expected_target_id=ref.target_id,
                     mutation_guard=mutation_gate,
                     auth_probe=auth_reader,
+                    browser_binding={
+                        "endpoint": ref.endpoint,
+                        "profile_path": ref.profile_path,
+                        "browser_pid": ref.browser_pid,
+                        "target_id": ref.target_id,
+                    },
                 )
             except BrowserEvidenceError as exc:
                 return {
@@ -2174,6 +2180,13 @@ def run_capture_evidence_episode(
             "mutation_guard": mutation_guard,
             "auth_probe": auth_reader,
         }
+        if task == "login":
+            kwargs["browser_binding"] = {
+                "endpoint": ref.endpoint,
+                "profile_path": ref.profile_path,
+                "browser_pid": ref.browser_pid,
+                "target_id": ref.target_id,
+            }
         if _root_dir is not None:
             kwargs["root_dir"] = _root_dir
         try:

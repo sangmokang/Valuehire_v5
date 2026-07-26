@@ -40,6 +40,7 @@ _TASK_MODES: dict[str, EvidenceMode] = {
     "url": "evidence",
     "login": "evidence",
 }
+_BROWSER_BINDING_FIELDS = ("endpoint", "profile_path", "browser_pid", "target_id")
 
 
 class BrowserEvidenceError(RuntimeError):
@@ -64,9 +65,13 @@ class BrowserEvidenceReceipt:
     candidate_index: int = 0
     archive_row_id: int | None = None
     archive_db_path: str = ""
+    endpoint: str = ""
+    profile_path: str = ""
+    browser_pid: int = 0
+    target_id: str = ""
 
     def public_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "status": self.status,
             "capture_status": self.status,
             "site": self.site,
@@ -85,6 +90,40 @@ class BrowserEvidenceReceipt:
             "archive_row_id": self.archive_row_id,
             "archive_db_path": self.archive_db_path,
         }
+        if self.target_id:
+            payload.update({
+                "endpoint": self.endpoint,
+                "profile_path": self.profile_path,
+                "browser_pid": self.browser_pid,
+                "target_id": self.target_id,
+            })
+        return payload
+
+
+def _valid_browser_binding(value: Mapping[str, Any]) -> bool:
+    endpoint = str(value.get("endpoint") or "").strip()
+    try:
+        parsed = urlsplit(endpoint)
+        port = parsed.port
+    except ValueError:
+        return False
+    profile_path = str(value.get("profile_path") or "").strip()
+    browser_pid = value.get("browser_pid")
+    return bool(
+        parsed.scheme == "http"
+        and parsed.hostname in {"127.0.0.1", "localhost"}
+        and port is not None
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
+        and profile_path
+        and isinstance(browser_pid, int)
+        and not isinstance(browser_pid, bool)
+        and browser_pid > 0
+        and str(value.get("target_id") or "").strip()
+    )
 
 
 def complete_evidence_payload(value: Any) -> bool:
@@ -158,6 +197,11 @@ def complete_evidence_payload(value: Any) -> bool:
             return False
         if task not in _TASK_MODES or _TASK_MODES[task] != mode:
             return False
+        if task == "login":
+            if not _valid_browser_binding(value) or not _valid_browser_binding(manifest):
+                return False
+            if any(manifest.get(key) != value.get(key) for key in _BROWSER_BINDING_FIELDS):
+                return False
         if mode == "profile":
             if (
                 not isinstance(value.get("position_id"), str)
@@ -475,6 +519,7 @@ def _persist(
     archive_store: Any | None,
     position_id: str,
     candidate_index: int,
+    browser_binding: Mapping[str, Any] | None,
 ) -> BrowserEvidenceReceipt:
     captured_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     day_root = root_dir / captured_at[:10] / task
@@ -522,6 +567,11 @@ def _persist(
             "archive_row_id": archive_row_id,
             "archive_db_path": archive_db_path,
         }
+        if browser_binding is not None:
+            manifest.update({
+                key: browser_binding[key]
+                for key in _BROWSER_BINDING_FIELDS
+            })
         if mode == "profile":
             if archive_store is None:
                 from .profile_archive_store import ProfileArchiveStore
@@ -574,6 +624,10 @@ def _persist(
         candidate_index=candidate_index,
         archive_row_id=archive_row_id,
         archive_db_path=archive_db_path,
+        endpoint=str((browser_binding or {}).get("endpoint") or ""),
+        profile_path=str((browser_binding or {}).get("profile_path") or ""),
+        browser_pid=int((browser_binding or {}).get("browser_pid") or 0),
+        target_id=str((browser_binding or {}).get("target_id") or ""),
     )
 
 
@@ -591,6 +645,7 @@ def capture_owned_browser_evidence(
     archive_store: Any | None = None,
     position_id: str = "",
     candidate_index: int = 0,
+    browser_binding: Mapping[str, Any] | None = None,
 ) -> BrowserEvidenceReceipt:
     """Capture one stable viewport/text pair from the already-owned exact target."""
 
@@ -602,6 +657,12 @@ def capture_owned_browser_evidence(
         raise BrowserEvidenceError("browser evidence task name is invalid")
     if not expected_target_id or _tab_target_id(tab) != expected_target_id:
         raise BrowserEvidenceError("exact browser target identity changed")
+    if task == "login" and browser_binding is not None:
+        if (
+            not _valid_browser_binding(browser_binding)
+            or str(browser_binding.get("target_id") or "") != expected_target_id
+        ):
+            raise BrowserEvidenceError("login browser identity proof is incomplete")
     def prove_safe() -> None:
         try:
             mutation_guard()
@@ -653,4 +714,5 @@ def capture_owned_browser_evidence(
         archive_store=archive_store,
         position_id=position_id,
         candidate_index=candidate_index,
+        browser_binding=browser_binding,
     )
