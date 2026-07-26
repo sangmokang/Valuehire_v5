@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import math
 from typing import Mapping, Sequence
 
+from .machine_identity import MachineId, MachineIdentityError, require_machine_id
+
 __all__ = [
     "Dispatch",
     "Job",
@@ -46,14 +48,14 @@ class Job:
     created_at: int | float
     resource_class: str
     requirements: Mapping[str, object]
-    requested_machine: str | None
+    requested_machine: MachineId | None
     account_key: str
 
 
 @dataclass(frozen=True)
 class Slot:
     slot_id: str
-    machine_id: str
+    machine_id: MachineId
     resource_class: str
     capabilities: Mapping[str, object]
     account_key: str
@@ -72,7 +74,7 @@ class Dispatch:
     requester_id: str
     job_id: int
     slot_id: str
-    machine_id: str
+    machine_id: MachineId
     account_key: str
     dispatch_seq: int
 
@@ -179,8 +181,14 @@ def _validate_inputs(
             raise ValueError("resource_class must be a non-empty normalized string")
         if not _valid_mapping(candidate.requirements):
             raise ValueError("requirements must have normalized string keys")
-        if candidate.requested_machine is not None and not _nonempty(candidate.requested_machine):
-            raise ValueError("requested_machine must be None or a normalized string")
+        if candidate.requested_machine is not None:
+            try:
+                require_machine_id(
+                    candidate.requested_machine,
+                    field="requested_machine",
+                )
+            except MachineIdentityError as exc:
+                raise ValueError("requested_machine must be canonical") from exc
         if not _nonempty(candidate.account_key):
             raise ValueError("account_key must be a non-empty normalized string")
         if not _valid_resource_account_pair(
@@ -192,8 +200,12 @@ def _validate_inputs(
     for candidate in slots:
         if not isinstance(candidate, Slot):
             raise ValueError("slots must contain Slot values")
-        if not _nonempty(candidate.slot_id) or not _nonempty(candidate.machine_id):
-            raise ValueError("slot_id and machine_id must be normalized strings")
+        try:
+            require_machine_id(candidate.machine_id, field="machine_id")
+        except MachineIdentityError as exc:
+            raise ValueError("slot machine_id must be canonical") from exc
+        if not _nonempty(candidate.slot_id):
+            raise ValueError("slot_id must be a normalized string")
         if candidate.slot_id in slot_ids:
             raise ValueError("duplicate slot_id")
         slot_ids.add(candidate.slot_id)

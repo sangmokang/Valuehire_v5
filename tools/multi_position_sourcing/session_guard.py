@@ -32,7 +32,16 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from .machine_identity import MachineIdentityError, normalize_machine_id
+
 Site = Literal["saramin", "jobkorea", "linkedin_rps"]
+
+
+def _receipt_machine_from_environment() -> str:
+    try:
+        return normalize_machine_id(os.environ.get("VALUEHIRE_MACHINE", ""))
+    except MachineIdentityError:
+        return ""
 
 
 @dataclass(frozen=True)
@@ -2432,7 +2441,7 @@ def run_auto_login_episode(
     outcome["endpoint"] = ref.endpoint
     outcome["profile_path"] = ref.profile_path
     outcome["browser_pid"] = ref.browser_pid
-    outcome["host"] = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+    outcome["host"] = _receipt_machine_from_environment()
     return outcome
 
 
@@ -2498,7 +2507,7 @@ def main(argv: list[str] | None = None) -> int:
                     "evidence": {**evidence_result,
                                  "target_id": result.get("target_id")},
                 }
-                machine = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+                machine = _receipt_machine_from_environment()
                 receipt_path = login_barrier.write_channel_receipt_from_episode(
                     episode, machine=machine)
                 result["login_receipt_path"] = receipt_path or ""
@@ -2520,7 +2529,7 @@ def main(argv: list[str] | None = None) -> int:
         ):
             from . import login_barrier
 
-            machine = os.environ.get("VALUEHIRE_MACHINE", "").strip()
+            machine = _receipt_machine_from_environment()
             receipt_path = login_barrier.write_channel_receipt_from_episode(
                 result, machine=machine)
             if receipt_path:

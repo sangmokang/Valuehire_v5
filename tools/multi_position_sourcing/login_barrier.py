@@ -20,6 +20,13 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from .machine_identity import (
+    MachineIdentityError,
+    canonicalize_legacy_machine_id,
+    normalize_machine_id,
+    require_machine_id,
+)
+
 RECEIPT_SCHEMA_VERSION = 1
 RECEIPT_MAX_AGE_SECONDS = 1800  # 사람인·잡코리아 서버세션 20~30분(SOT-26 §4) — 보수값
 CLOCK_SKEW_SECONDS = 60
@@ -175,6 +182,10 @@ def validate_channel_receipt(
     now_epoch: float,
 ) -> str | None:
     """영수증 1건 fail-closed 검증 — 차단 사유 문자열 or None(유효)."""
+    try:
+        canonical_machine = require_machine_id(machine)
+    except MachineIdentityError:
+        return "현재 기기 ID가 정식 이름이 아님"
     if not isinstance(receipt, Mapping):
         return "영수증 형식 오류(JSON object 아님)"
     if receipt.get("schema_version") != RECEIPT_SCHEMA_VERSION:
@@ -217,7 +228,14 @@ def validate_channel_receipt(
         return "ready != true"
     if str(receipt.get("channel") or "") != channel:
         return f"채널 불일치(요청={channel}, 영수증={receipt.get('channel')!r})"
-    if str(receipt.get("host") or "") != str(machine):
+    try:
+        receipt_machine = canonicalize_legacy_machine_id(
+            receipt.get("host"),
+            field="receipt.host",
+        )
+    except MachineIdentityError:
+        return "영수증 host가 정식 이름 또는 허용된 과거 별칭이 아님"
+    if receipt_machine != canonical_machine:
         return f"host 불일치(현재={machine}, 영수증={receipt.get('host')!r})"
     raw_ts = receipt.get("last_verified_at")
     if not isinstance(raw_ts, str) or not raw_ts.strip():
@@ -430,7 +448,9 @@ def write_channel_receipt_from_episode(
     """
     if not isinstance(episode, Mapping) or episode.get("status") != "authenticated":
         return None
-    if not str(machine).strip():
+    try:
+        canonical_machine = normalize_machine_id(machine)
+    except MachineIdentityError:
         return None  # 기기 식별 없이 만든 영수증은 host 검증을 우회할 수 있어 금지
     site = str(episode.get("site") or "").strip()
     if site not in CHANNELS:
@@ -458,7 +478,7 @@ def write_channel_receipt_from_episode(
         "channel": site,
         "state": "AUTHENTICATED",
         "ready": True,
-        "host": str(machine),
+        "host": canonical_machine,
         "target_id": str(evidence.get("target_id") or episode.get("target_id") or ""),
         "endpoint": str(episode.get("endpoint") or ""),
         "profile_path": str(episode.get("profile_path") or ""),
@@ -478,7 +498,7 @@ def write_channel_receipt_from_episode(
     }
     # 자기 검증: 쓰기 전에 같은 validator 를 통과 못 하면 쓰지 않는다(fail-closed).
     if validate_channel_receipt(
-            receipt, channel=site, machine=str(machine),
+            receipt, channel=site, machine=canonical_machine,
             now_epoch=ts.timestamp()) is not None:
         return None
     rdir = Path(receipt_dir) if receipt_dir is not None else default_receipt_dir()
