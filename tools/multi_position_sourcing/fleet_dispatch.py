@@ -276,7 +276,29 @@ def dispatch_fleet_command(
             options, requested_by=_requested_by(invocation, role), role=role)
         if payload is None:
             return {"action": "error", "reason": "잡 페이로드 무효(스킬/URL/머신 확인)"}
-        job = q.enqueue(payload)
+        idem = str((payload.get("params") or {}).get("idempotency_key") or "")
+        lookup = getattr(q, "job_by_idempotency_key", None)
+        if idem.startswith("discord:") and callable(lookup):
+            # App 14: the live Discord adapter uses the same queue-only gateway
+            # exported to Claude/Codex. Existing non-Discord producers stay compatible.
+            from .common_command_gateway import enqueue_command
+            status = enqueue_command(
+                queue=q, source="discord", raw_command=payload["skill"],
+                machine=payload["machine"],
+                channels=(payload.get("params") or {}).get("channels"),
+                agent=(payload.get("params") or {}).get("agent"),
+                message_id=idem.removeprefix("discord:"),
+                position_url=payload["position_url"],
+                requested_by=payload["requested_by"], role=payload["role"],
+                job_params=payload.get("params"),
+            )
+            job = lookup(idem)
+            if not isinstance(job, Mapping):
+                return {"action": "error", "reason": "QUEUE_WRITE_FAILED"}
+            if status["existing_job"]:
+                job = {**job, "_discord_duplicate": True}
+        else:
+            job = q.enqueue(payload)
         if isinstance(job, Mapping) and job.get("_discord_duplicate") is True:
             return {"action": "duplicate", "job": job}
         # The direct gateway sends the one requester-facing enqueue response on the

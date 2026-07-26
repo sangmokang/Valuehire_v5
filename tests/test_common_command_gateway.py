@@ -122,7 +122,7 @@ def test_same_key_with_different_payload_is_conflict():
     ("overrides", "code"),
     [
         ({"raw_command": "/delete"}, "INVALID_COMMAND"),
-        ({"channels": ["public_web"]}, "INVALID_CHANNEL"),
+        ({"raw_command": "/url", "channels": ["public_web"]}, "INVALID_CHANNEL"),
         ({"machine": "Mac Mini"}, "INVALID_MACHINE"),
         ({"machine": ""}, "NO_READY_MACHINE"),
     ],
@@ -180,3 +180,16 @@ def test_queue_failure_is_redacted():
         )
     assert error.value.code == "QUEUE_WRITE_FAILED"
     assert "SECRET" not in str(error.value)
+
+
+def test_secret_bearing_params_never_reach_queue():
+    queue = MemoryQueue()
+    with pytest.raises(CommandGatewayError) as error:
+        enqueue_command(
+            queue=queue, source="codex", raw_command="login",
+            machine="macmini", channels=["saramin"], agent="codex",
+            job_params={"cookie": "li_at=SECRET"},
+            uuid_factory=lambda: "u1", clock=lambda: NOW,
+        )
+    assert error.value.code == "INVALID_REQUEST"
+    assert queue.enqueue_calls == 0
