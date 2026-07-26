@@ -18,12 +18,18 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
 
+from .machine_identity import (
+    CANONICAL_MACHINE_IDS,
+    MachineIdentityError,
+    canonicalize_machine_mapping,
+    require_machine_id,
+)
+
 REPO = Path(__file__).resolve().parents[2]
 
-# Bootstrap/default machines remain useful for aliases and status views, but
-# they are no longer an admission whitelist. Registered machine IDs are
-# dynamic and share this syntax with fleet_machines.machine_id in PostgreSQL.
-FLEET_MACHINES: tuple[str, ...] = ("macmini", "macbook", "winpc")
+# The canonical tuple is the admission whitelist for every persistence write.
+# Known historic aliases are converted only on explicit external/read edges.
+FLEET_MACHINES: tuple[str, ...] = CANONICAL_MACHINE_IDS
 FLEET_SKILLS: tuple[str, ...] = ("humansearch", "aisearch", "url", "jdintake", "login")
 # Codex V2(#188) — followup 자동 체이닝은 login 금지: 검색 잡이 끝났다고 저장 자격증명을
 # 쓰는 전 포털 로그인을 자동 연쇄 실행하면 안 된다(로그인은 명시 요청·게이트 경유만).
@@ -85,15 +91,30 @@ _NETLOC_RE = None  # lazy compile
 
 
 def is_valid_machine_id(machine: Any) -> bool:
-    """Match the database machine_id contract without silently normalizing."""
-    if not isinstance(machine, str) or not 1 <= len(machine) <= 64:
+    """Return whether a value is already one of the three canonical IDs."""
+    try:
+        require_machine_id(machine)
+    except MachineIdentityError:
         return False
-    if not ("a" <= machine[0] <= "z" or "0" <= machine[0] <= "9"):
-        return False
-    return all(
-        "a" <= char <= "z" or "0" <= char <= "9" or char in "_-"
-        for char in machine
-    )
+    return True
+
+
+def _canonicalize_read_value(
+    value: Any,
+    *,
+    fields: tuple[str, ...] = ("machine",),
+) -> Any:
+    """Canonicalize known legacy aliases returned by storage without writing."""
+
+    if isinstance(value, list):
+        return [
+            canonicalize_machine_mapping(row, fields=fields)
+            if isinstance(row, Mapping) else row
+            for row in value
+        ]
+    if isinstance(value, Mapping):
+        return canonicalize_machine_mapping(value, fields=fields)
+    return value
 
 
 def params_contain_secret_keys(value: Any) -> bool:
@@ -285,7 +306,7 @@ def default_account_key(skill: str, machine: str) -> str:
     """계정 락 기본 정책 — LinkedIn 잡(url)은 좌석 공유 키, 그 외는 머신 바인딩 키."""
     if skill == "url":
         return LINKEDIN_RPS_ACCOUNT_KEY
-    return f"portal:{machine}"
+    return f"portal:{require_machine_id(machine)}"
 
 
 def _valid_owner_agent_params(params: dict[str, Any], position_url: str, role: str) -> bool:
@@ -622,20 +643,43 @@ class JobQueueClient:
                 if existing is not None:
                     return existing
             raise JobQueueConflictError(f"enqueue 실패(HTTP {exc.code})") from None
-        return rows[0] if isinstance(rows, list) and rows else rows
+        row = rows[0] if isinstance(rows, list) and rows else rows
+        if not isinstance(row, Mapping) or row.get("machine") != revalidated["machine"]:
+            raise ValueError("database row machine mismatch")
+        return canonicalize_machine_mapping(
+            row,
+            fields=("machine", "requested_machine", "assigned_machine"),
+        )
 
     def job_by_idempotency_key(self, key: str) -> dict[str, Any] | None:
         """idempotency_key 로 기존 잡 1건을 조회(없으면 None). 조각 B 회수 경로."""
         encoded = urllib.parse.quote(str(key), safe="")
         rows = self._call(
             "GET", f"/jobs?params->>idempotency_key=eq.{encoded}&limit=1")
-        return rows[0] if isinstance(rows, list) and rows else None
+        if not isinstance(rows, list) or not rows:
+            return None
+        return canonicalize_machine_mapping(
+            rows[0],
+            fields=("machine", "requested_machine", "assigned_machine"),
+        )
 
     def claim_next(self, machine: str) -> dict[str, Any] | None:
-        rows = self._call("POST", "/rpc/claim_next_job", claim_next_job_payload(machine))
+        canonical = require_machine_id(machine)
+        rows = self._call(
+            "POST", "/rpc/claim_next_job", claim_next_job_payload(canonical))
         if isinstance(rows, list):
-            return rows[0] if rows else None
-        return rows or None
+            row = rows[0] if rows else None
+        else:
+            row = rows or None
+        if not isinstance(row, Mapping):
+            return None
+        normalized = canonicalize_machine_mapping(
+            row,
+            fields=("machine", "requested_machine", "assigned_machine"),
+        )
+        if normalized.get("machine") != canonical:
+            raise ValueError("claimed job machine mismatch")
+        return normalized
 
     def release(self, job_id: int, status: str, *, result_summary: str = "",
                 error: str = "") -> Any:
@@ -665,33 +709,36 @@ class JobQueueClient:
 
     def recent(self, limit: int = 10) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 50))
-        return self._call("GET", f"/jobs?order=id.desc&limit={limit}")
+        return _canonicalize_read_value(
+            self._call("GET", f"/jobs?order=id.desc&limit={limit}"),
+            fields=("machine", "requested_machine", "assigned_machine"),
+        )
 
     def queued_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
         """SOT31(구 SOT30) S2 — watchdog 고착 판정용 queued 잡 목록(생성 오래된 것부터)."""
         limit = max(1, min(int(limit), 100))
-        return self._call(
+        return _canonicalize_read_value(self._call(
             "GET",
             "/jobs?status=eq.queued&select=id,machine,status,created_at"
-            f"&order=id.asc&limit={limit}")
+            f"&order=id.asc&limit={limit}"))
 
     def running_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
         """QA-1 — watchdog running 고아 판정용 잡 목록(워커 급사 가시화)."""
         limit = max(1, min(int(limit), 100))
-        return self._call(
+        return _canonicalize_read_value(self._call(
             "GET",
             "/jobs?status=eq.running&select=id,machine,status,started_at"
-            f"&order=id.asc&limit={limit}")
+            f"&order=id.asc&limit={limit}"))
 
     def heartbeats_epoch(self) -> list[dict[str, Any]]:
         """머신별 마지막 heartbeat(heartbeats_epoch RPC) — fleet-status 표시용."""
         rows = self._call("POST", "/rpc/heartbeats_epoch", {})
-        return rows if isinstance(rows, list) else []
+        return _canonicalize_read_value(rows) if isinstance(rows, list) else []
 
     def linkedin_ready_machines(self) -> list:
         """이슈 D — heartbeat 의 LinkedIn 로그인 상태 조회(라우팅용, epoch 초)."""
         rows = self._call("POST", "/rpc/linkedin_ready_machines", {})
-        return list(rows) if isinstance(rows, list) else []
+        return _canonicalize_read_value(rows) if isinstance(rows, list) else []
 
     def probe_auth(self) -> tuple[str, str]:
         """SOT31(구 SOT30) S3 — 기동 인증 프로브(가벼운 GET 1회).
