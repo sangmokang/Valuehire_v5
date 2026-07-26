@@ -317,3 +317,36 @@ def test_write_channel_receipt_refuses_non_authenticated(tmp_path):
     assert lb.write_channel_receipt_from_episode(
         episode, machine="macmini", receipt_dir=tmp_path, now_epoch=NOW
     ) is None
+
+
+def test_evidence_content_tamper_is_hash_mismatch(tmp_path):
+    receipt = make_receipt(tmp_path)
+    Path(receipt["text_path"]).write_bytes(b"tampered after receipt")
+    reason = lb.validate_channel_receipt(
+        receipt, channel="saramin", machine="macmini", now_epoch=NOW
+    )
+    assert reason is not None and reason.startswith("HASH_MISMATCH")
+
+
+def test_expected_exact_target_mismatch_is_blocked(tmp_path):
+    receipt = make_receipt(tmp_path)
+    reason = lb.validate_channel_receipt(
+        receipt,
+        channel="saramin",
+        machine="macmini",
+        now_epoch=NOW,
+        expected_target_id="OTHER_TARGET",
+    )
+    assert reason is not None and reason.startswith("HOST_MISMATCH")
+
+
+def test_barrier_decision_exposes_reason_codes_and_required_channels(tmp_path):
+    decision = lb.evaluate_barrier(
+        "aisearch",
+        machine="macmini",
+        now_epoch=NOW,
+        receipt_dir=tmp_path / "missing",
+    )
+    assert decision["barrier"] == "BLOCKED"
+    assert decision["required_channels"] == ["saramin", "jobkorea"]
+    assert decision["reason_codes"] == ["RECEIPT_MISSING"]
