@@ -17,6 +17,7 @@ AI_SEARCH_PROCEDURE_PATHS = (
     ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
 )
 EXACT_TARGET_ENTRYPOINTS = (
+    POLICY_PATH,
     AI_SEARCH_PROCESS_MD_PATH,
     ROOT / "docs/sot/25-ai-search-execution-process.json",
     *AI_SEARCH_PROCEDURE_PATHS,
@@ -55,6 +56,7 @@ SEARCH_SKILL_PATHS = (
 )
 POLICY_ENTRYPOINTS = (
     ROOT / "CLAUDE.md",
+    ROOT / "docs/sot/29-fleet-control.md",
     AI_SEARCH_PROCESS_MD_PATH,
     ROOT / "docs/sot/25-ai-search-execution-process.json",
     ROOT / "docs/prompts/goal-full-codebase-review.md",
@@ -81,6 +83,7 @@ SUPERSEDED_PROMPTS = (
     ROOT / "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md",
     ROOT / "docs/ai-search/three-mac-account-coordinator-goal-prompt.md",
     ROOT / "docs/ai-search/portal-login-live-search-runbook-2026-06-17.md",
+    ROOT / "docs/prompts/codex-humansearch-movensys-nn-2026-07-18.md",
 )
 
 
@@ -317,6 +320,9 @@ def test_policy_supersedes_historical_prompts_without_new_hermes_runtime() -> No
         "docs/ai-search/portal-login-live-search-runbook-2026-06-17.md": (
             "historical_input_not_executable"
         ),
+        "docs/prompts/codex-humansearch-movensys-nn-2026-07-18.md": (
+            "historical_input_not_executable"
+        ),
     }
     route = policy["current_execution_route"]
     assert route == ["Discord", "queue", "worker", "Codex_or_Claude"]
@@ -349,6 +355,27 @@ def test_login_and_search_entrypoints_reference_the_new_policy() -> None:
             "기기 수 미증명은 인증 조작 0회",
         ):
             assert marker in text, (path, marker)
+
+
+def test_fleet_sot_cannot_guess_linkedin_machine_or_time_resume_login() -> None:
+    text = _text(ROOT / "docs/sot/29-fleet-control.md")
+    for forbidden in (
+        "INV8 신뢰도 순(macmini > winpc > macbook)",
+        "아무도 로그인 안 돼 있거나 조회 실패면 macmini 폴백",
+        "캡차·2FA·paused) 후에는",
+        "60초(1분) 동안 이상이 없으면 **자동 재개**한다(로그인 포함",
+    ):
+        assert forbidden not in text
+    for required in (
+        POLICY_ID,
+        "인증 기기 수 미증명",
+        "HANDOFF",
+        "2개 이상",
+        "AUTH_CONFLICT",
+        "HUMAN_AUTH",
+        "시간 자동 재개 금지",
+    ):
+        assert required in text
 
 
 def test_login_search_execution_contract_cannot_restore_legacy_login() -> None:
@@ -568,6 +595,7 @@ def test_login_preflight_never_guesses_a_fixed_port_or_profile() -> None:
         text = _text(path)
         for forbidden in (
             "127.0.0.1:9222",
+            "localhost:9222",
             "CDP(:9222)",
             "CDP :9222",
         ):

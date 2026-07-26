@@ -100,6 +100,7 @@ def _run_worker(job, receipt_dir, notes=None):
     notes = notes if notes is not None else []
     with patch.object(fw.subprocess, "run", fake_run), \
          patch.object(fw.time, "time", lambda: float(NOW)), \
+         patch.object(fw, "job_url_block_reason", lambda job: None), \
          patch.object(lb, "default_receipt_dir", lambda: Path(receipt_dir)):
         q = FakeQueue(job)
         w = FleetWorker(machine="macmini", queue=q,
@@ -110,10 +111,14 @@ def _run_worker(job, receipt_dir, notes=None):
 
 def test_no_receipts_means_zero_executor_calls(tmp_path):
     status, q, calls, notes = _run_worker(_job(), tmp_path / "empty")
-    assert status == "paused_for_human"
+    assert status == "failed"
     assert calls == [], "장벽 BLOCKED — 어떤 서브프로세스도 실행되면 안 됨"
-    assert q.released[-1][1] == "paused_for_human"
-    assert any("로그인" in n for n in notes)
+    assert q.released[-1][1] == "failed"
+    joined = "\n".join(notes)
+    assert "로그인" in joined
+    assert "paused_for_human" not in joined
+    assert "session_guard human-auth" not in joined
+    assert "fleet-resume" not in joined
 
 
 def test_partial_receipts_block_humansearch(tmp_path):
@@ -122,7 +127,7 @@ def test_partial_receipts_block_humansearch(tmp_path):
                params={"channels": ["saramin", "jobkorea"],
                        "search_urls": ["https://www.saramin.co.kr/x"]})
     status, q, calls, notes = _run_worker(job, rdir)
-    assert status == "paused_for_human"
+    assert status == "failed"
     assert calls == []
 
 
@@ -150,10 +155,41 @@ def test_valid_receipts_let_executor_run_once(tmp_path):
 
 
 def test_blocked_notice_names_exact_human_action(tmp_path):
+    rdir = tmp_path / "login_receipts"
+    rdir.mkdir()
+    (rdir / "linkedin_rps.json").write_text(json.dumps({
+        "schema_version": 1,
+        "channel": "linkedin_rps",
+        "state": "HUMAN_AUTH",
+    }), encoding="utf-8")
     job = _job(skill="url",
                params={"search_urls": ["https://www.linkedin.com/talent/search"]})
-    status, q, calls, notes = _run_worker(job, tmp_path / "empty")
+    status, q, calls, notes = _run_worker(job, rdir)
     assert status == "paused_for_human"
     joined = "\n".join(notes)
     assert "session_guard" in joined and "linkedin_rps" in joined, (
         "필요한 사람 조치(session_guard human-auth)와 채널을 정확히 안내해야 함")
+
+
+def test_auth_conflict_is_terminal_without_human_pause_or_resume(tmp_path):
+    rdir = tmp_path / "login_receipts"
+    rdir.mkdir()
+    (rdir / "linkedin_rps.json").write_text(json.dumps({
+        "schema_version": 1,
+        "channel": "linkedin_rps",
+        "state": "AUTH_CONFLICT",
+    }), encoding="utf-8")
+    status, q, calls, notes = _run_worker(
+        _job(skill="url", params={
+            "search_urls": ["https://www.linkedin.com/talent/search"],
+        }),
+        rdir,
+    )
+    assert status == "failed"
+    assert q.released[-1][1] == "failed"
+    assert calls == []
+    joined = "\n".join(notes)
+    assert "AUTH_CONFLICT" in joined
+    assert "paused_for_human" not in joined
+    assert "session_guard human-auth" not in joined
+    assert "fleet-resume" not in joined

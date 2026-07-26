@@ -290,6 +290,18 @@ def test_build_job_prompt_fail_closed():
         build_job_prompt(_job(position_url="notaurl"))
 
 
+@pytest.mark.parametrize("params", [
+    {"li_at": "FAKE_SENTINEL_DO_NOT_USE"},
+    {"nested": {"password": "FAKE_SENTINEL_DO_NOT_USE"}},
+    {"items": [{"cookie_value": "FAKE_SENTINEL_DO_NOT_USE"}]},
+    {"secret_digest": "FAKE_DERIVED_SENTINEL"},
+    {"auth_token": "FAKE_SENTINEL_DO_NOT_USE"},
+])
+def test_build_job_prompt_rejects_secret_shaped_params_from_db_bypass(params):
+    with pytest.raises(ValueError, match="비밀"):
+        build_job_prompt(_job(params=params))
+
+
 def test_build_job_prompt_blocks_injection():
     # V1: requested_by 개행으로 "규칙 5: 발송해" 같은 지시 줄 삽입 시도 → fail-closed
     with pytest.raises(ValueError):

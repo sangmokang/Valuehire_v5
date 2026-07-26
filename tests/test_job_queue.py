@@ -103,6 +103,17 @@ def test_new_job_payload_rejects_unserializable_params():
     assert new_job_payload(**_ok_kwargs(), params={"x": float("inf")}) is None
 
 
+@pytest.mark.parametrize("params", [
+    {"li_at": "FAKE_SENTINEL_DO_NOT_USE"},
+    {"nested": {"password": "FAKE_SENTINEL_DO_NOT_USE"}},
+    {"items": [{"cookie_value": "FAKE_SENTINEL_DO_NOT_USE"}]},
+    {"secret_digest": "FAKE_DERIVED_SENTINEL"},
+    {"auth_token": "FAKE_SENTINEL_DO_NOT_USE"},
+])
+def test_new_job_payload_rejects_secret_shaped_params(params):
+    assert new_job_payload(**_ok_kwargs(), params=params) is None
+
+
 def test_new_job_payload_url_parity_with_sql():
     # V1 3R: python↔SQL 규칙 일치 — 쿼리스트링/경로 내 '..' 는 양쪽 다 허용
     assert new_job_payload(**_ok_kwargs(position_url="https://example.com?x=1")) is not None
