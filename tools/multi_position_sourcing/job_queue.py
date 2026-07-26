@@ -16,7 +16,7 @@ import unicodedata
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -40,6 +40,9 @@ _OWNER_AGENT_PARAM_KEYS = frozenset({
     "request_text", "agent", "approval_id", "prompt_sha256",
     "approval_sha256", "idempotency_key", "execution_mode",
 })
+_SECRET_PARAM_KEY_MARKERS = (
+    "password", "passwd", "cookie", "token", "secret", "credential", "li_at",
+)
 
 
 def _approval_sha256(request: str, agent: str, mode: str, approval_id: str) -> str:
@@ -75,6 +78,20 @@ def is_valid_machine_id(machine: Any) -> bool:
         "a" <= char <= "z" or "0" <= char <= "9" or char in "_-"
         for char in machine
     )
+
+
+def params_contain_secret_keys(value: Any) -> bool:
+    """Reject secret-shaped keys before queue storage or prompt serialization."""
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            lowered = str(key).lower()
+            if any(marker in lowered for marker in _SECRET_PARAM_KEY_MARKERS):
+                return True
+            if params_contain_secret_keys(nested):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(params_contain_secret_keys(item) for item in value)
+    return False
 
 
 def _valid_url(url: Any) -> bool:
@@ -305,6 +322,8 @@ def new_job_payload(
     if params is None:
         params = {}
     if not isinstance(params, dict):
+        return None
+    if params_contain_secret_keys(params):
         return None
     try:
         # V1: 직렬화 불가 params 차단. allow_nan=False — NaN/Infinity 는 유효 JSON 이 아님(V1 2R)

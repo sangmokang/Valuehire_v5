@@ -40,6 +40,7 @@ from .job_queue import (
     default_account_key,
     is_valid_machine_id,
     new_job_payload,
+    params_contain_secret_keys,
     url_host_resolves_public,
 )
 
@@ -349,6 +350,10 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     if role not in ("owner", "member"):
         raise ValueError(f"invalid role: {role!r}")
     params = job.get("params") or {}
+    if not isinstance(params, Mapping):
+        raise ValueError("params 는 JSON object여야 함")
+    if params_contain_secret_keys(params):
+        raise ValueError("params에 비밀값 성격 키 포함 — 저장·모델 전달 금지")
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
     login_terminal_rule = (
@@ -1563,19 +1568,30 @@ class FleetWorker:
             reason = login_barrier.job_block_reason(
                 job, machine=self.machine, now_epoch=time.time())
             if reason is not None:
-                required = login_barrier.job_required_channels(job)
-                action = "\n".join(
-                    f"  python3 -m tools.multi_position_sourcing.session_guard "
-                    f"human-auth --site {ch} --agent fleet" for ch in required)
-                self._release(job, job_id, "paused_for_human",
-                              error=f"로그인 선행 장벽: {reason}")
+                state = login_barrier.classify_job_block_reason(reason)
+                if state == "HUMAN_AUTH":
+                    action = "\n".join(
+                        f"  python3 -m tools.multi_position_sourcing.session_guard "
+                        f"human-auth --site {ch} --agent fleet"
+                        for ch in login_barrier.human_auth_channels(reason))
+                    self._release(job, job_id, "paused_for_human",
+                                  error=f"로그인 선행 장벽 HUMAN_AUTH: {reason}")
+                    self._notify(job, (
+                        f"⏸️ 잡 #{job_id} 대기(paused_for_human) — HUMAN_AUTH\n"
+                        f"machine={self.machine}, skill={job.get('skill')}\n"
+                        f"사유: {reason}\n"
+                        f"필요한 사람 조치(정확한 채널만):\n{action}\n"
+                        f"검색 executor 호출 0회 — 사람 인증 완료 후 owner가 명시적으로 "
+                        f"fleet-resume 해야 합니다."))
+                    return "paused_for_human"
+                self._release(job, job_id, "failed",
+                              error=f"로그인 선행 장벽 {state}: {reason}")
                 self._notify(job, (
-                    f"⏸️ 잡 #{job_id} 대기(paused_for_human) — LOGIN_BARRIER=BLOCKED\n"
+                    f"❌ 잡 #{job_id} 중단 — LOGIN_BARRIER={state}\n"
                     f"machine={self.machine}, skill={job.get('skill')}\n"
                     f"사유: {reason}\n"
-                    f"필요한 사람 조치(정확한 채널만):\n{action}\n"
-                    f"검색 executor 호출 0회 — 로그인 영수증 갱신 후 fleet-resume 로 재개됩니다."))
-                return "paused_for_human"
+                    f"검색 executor 호출 0회 — 사람 인증 대기나 시간 재개 없이 종결합니다."))
+                return "failed"
         if job.get("skill") == OWNER_AGENT_SKILL:
             try:
                 self.skill_sync()

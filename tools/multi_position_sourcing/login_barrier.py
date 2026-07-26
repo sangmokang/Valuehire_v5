@@ -278,6 +278,33 @@ def job_block_reason(
     return None
 
 
+def classify_job_block_reason(reason: str | None) -> str:
+    """Map barrier evidence to one non-overlapping terminal state.
+
+    AUTH_CONFLICT always wins. HUMAN_AUTH is allowed only when every failed
+    channel has positive HUMAN_AUTH evidence. Missing, malformed, mixed, and
+    unknown evidence fail closed as HANDOFF.
+    """
+    if reason is None:
+        return "PASS"
+    failures = [part.strip() for part in str(reason).split(";") if part.strip()]
+    if any("AUTH_CONFLICT" in failure for failure in failures):
+        return "AUTH_CONFLICT"
+    if failures and all("HUMAN_AUTH" in failure for failure in failures):
+        return "HUMAN_AUTH"
+    return "HANDOFF"
+
+
+def human_auth_channels(reason: str | None) -> tuple[str, ...]:
+    """Return only channels with positive HUMAN_AUTH evidence."""
+    channels: list[str] = []
+    for failure in str(reason or "").split(";"):
+        channel, separator, detail = failure.strip().partition(":")
+        if separator and "HUMAN_AUTH" in detail and channel in CHANNELS:
+            channels.append(channel)
+    return tuple(dict.fromkeys(channels))
+
+
 def write_channel_receipt_from_episode(
     episode: Mapping[str, Any],
     *,
