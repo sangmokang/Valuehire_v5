@@ -38,6 +38,10 @@ HUMANSEARCH_SKILL_PATHS = (
     ROOT / ".codex/skills/humansearch/SKILL.md",
     ROOT / ".claude/skills/humansearch/SKILL.md",
 )
+SEARCH_SKILL_PATHS = (
+    ROOT / "skills/search/SKILL.md",
+    ROOT / ".codex/skills/search/SKILL.md",
+)
 POLICY_ENTRYPOINTS = (
     ROOT / "CLAUDE.md",
     ROOT / "docs/sot/25-ai-search-execution-process.json",
@@ -50,6 +54,7 @@ POLICY_ENTRYPOINTS = (
     ROOT / ".codex/skills/ai-search/SKILL.md",
     ROOT / ".claude/skills/aisearch/SKILL.md",
     *HUMANSEARCH_SKILL_PATHS,
+    *SEARCH_SKILL_PATHS,
     ROOT / "skills/multisearch/SKILL.md",
     ROOT / ".codex/skills/multisearch/SKILL.md",
     ROOT / ".codex/skills/url/SKILL.md",
@@ -63,6 +68,7 @@ SUPERSEDED_PROMPTS = (
     ROOT / "docs/engineering/login-policy-recement-goal-2026-07-08.md",
     ROOT / "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md",
     ROOT / "docs/ai-search/three-mac-account-coordinator-goal-prompt.md",
+    ROOT / "docs/ai-search/portal-login-live-search-runbook-2026-06-17.md",
 )
 
 
@@ -296,6 +302,9 @@ def test_policy_supersedes_historical_prompts_without_new_hermes_runtime() -> No
         "docs/ai-search/three-mac-account-coordinator-goal-prompt.md": (
             "historical_input_not_executable"
         ),
+        "docs/ai-search/portal-login-live-search-runbook-2026-06-17.md": (
+            "historical_input_not_executable"
+        ),
     }
     route = policy["current_execution_route"]
     assert route == ["Discord", "queue", "worker", "Codex_or_Claude"]
@@ -446,6 +455,27 @@ def test_humansearch_entrypoints_preserve_handoff_vs_conflict() -> None:
             "인증 기기 2개 이상",
             "AUTH_CONFLICT",
             "HUMAN_AUTH",
+        ):
+            assert required in text, (path, required)
+
+
+def test_search_entrypoints_cannot_restore_legacy_login_recovery() -> None:
+    for path in SEARCH_SKILL_PATHS:
+        text = _text(path)
+        for forbidden in (
+            "로그인·세션 자동 복구(재로그인 백오프",
+            "3사 로그인을 건드리는 모든 작업은 이 런북을 따른다",
+        ):
+            assert forbidden not in text, (path, forbidden)
+        for required in (
+            POLICY_ID,
+            "APP 17",
+            "APP 30/31",
+            "LINKEDIN_LI_AT",
+            "인증 기기 수 미증명",
+            "HANDOFF",
+            "인증 기기 2개 이상",
+            "AUTH_CONFLICT",
         ):
             assert required in text, (path, required)
 
