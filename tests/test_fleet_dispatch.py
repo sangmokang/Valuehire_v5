@@ -250,6 +250,32 @@ def _routing_queue(rows=None, raise_rpc=False):
             raise RuntimeError("rpc down")
         return rows or []
     q.linkedin_ready_machines = linkedin_ready_machines
+    def browser_inventory_reports(request_id):
+        from tools.multi_position_sourcing.fleet_snapshot import seal_browser_report
+
+        reports = []
+        for row in rows or []:
+            machine = "macbook_pro" if row["machine_id"] == "macbook" else row["machine_id"]
+            report = seal_browser_report({
+                "machine_id": machine,
+                "captured_at": row["last_heartbeat_at"],
+                "schema_version": 1,
+                "request_id": request_id,
+                "inventory": [{
+                    "browser_pid": 100,
+                    "targets": [{
+                        "target_id": f"{machine}-linkedin",
+                        "type": "page",
+                        "site": "linkedin_rps",
+                        "sanitized_url": "https://www.linkedin.com/talent/home",
+                        "marker_names": ["authenticated_shell"],
+                    }],
+                    "issues": [],
+                }],
+            })
+            reports.append({"source_machine_id": machine, "report": report})
+        return reports
+    q.browser_inventory_reports = browser_inventory_reports
     return q
 
 
@@ -276,6 +302,8 @@ def test_url_job_without_machine_routes_to_logged_in_machine():
         authorized_users=_users(), config=_config(), queue=q)
     assert result["action"] == "enqueued"
     assert q.enqueued[0]["machine"] == "winpc"
+    assert q.enqueued[0]["params"]["snapshot_id"].startswith("fleet_")
+    assert q.enqueued[0]["params"]["route_decision"]["selected_machine"] == "winpc"
     assert q.linkedin_calls, "라우팅 조회가 실제로 호출돼야 함"
 
 
@@ -288,7 +316,7 @@ def test_url_job_routing_rpc_failure_fails_closed():
     assert q.enqueued == []
 
 
-def test_minimal_gateway_rpc_is_wired_to_readiness_selector():
+def test_minimal_gateway_without_exact_snapshot_fails_closed_without_fallback():
     calls = []
 
     class MinimalQueue(FakeQueue):
@@ -302,7 +330,9 @@ def test_minimal_gateway_rpc_is_wired_to_readiness_selector():
         }),
         authorized_users=_users(), config=_config(), queue=MinimalQueue(),
     )
-    assert result["action"] == "enqueued"
+    assert result["action"] == "error"
+    assert result["reason"] == "DISCOVERY_INCOMPLETE"
+    assert result.get("job") is None
     assert calls == [("linkedin_ready_machines", {})]
 
 

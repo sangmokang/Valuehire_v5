@@ -90,17 +90,41 @@ class FakeQueue:
         return list(reversed(self.enqueued))[:limit]
 
     def linkedin_ready_machines(self) -> list[dict]:
+        self._heartbeat_at = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 5))
         return [{
             "machine_id": "macmini",
             "platform": "macos",
             "hostname_aliases": ["mac-mini", "맥미니"],
             "agent_version": "test",
             "capabilities": ["linkedin_rps"],
-            "last_heartbeat_at": time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "last_heartbeat_at": self._heartbeat_at,
             "delegated_for_request_id": None,
             "linkedin_rps_logged_in": True,
         }]
+
+    def browser_inventory_reports(self, request_id: str) -> list[dict]:
+        from tools.multi_position_sourcing.fleet_snapshot import seal_browser_report
+
+        report = seal_browser_report({
+            "machine_id": "macmini",
+            "captured_at": self._heartbeat_at,
+            "schema_version": 1,
+            "request_id": request_id,
+            "inventory": [{
+                "browser_pid": 100,
+                "endpoint": "http://127.0.0.1:9225",
+                "targets": [{
+                    "target_id": "linkedin-page",
+                    "type": "page",
+                    "site": "linkedin_rps",
+                    "sanitized_url": "https://www.linkedin.com/talent/home",
+                    "marker_names": ["authenticated_shell"],
+                }],
+                "issues": [],
+            }],
+        })
+        return [{"source_machine_id": "macmini", "report": report}]
 
 
 class FakeResponse:
