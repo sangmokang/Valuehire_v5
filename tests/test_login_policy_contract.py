@@ -381,6 +381,26 @@ def test_fleet_sot_cannot_guess_linkedin_machine_or_time_resume_login() -> None:
         assert required in text
 
 
+def test_linkedin_dispatch_waits_for_proven_app17_route() -> None:
+    from tools.multi_position_sourcing.fleet_dispatch import build_fleet_job_payload
+
+    payload = build_fleet_job_payload(
+        {
+            "skill": "url",
+            "url": "https://app.clickup.com/t/abc123",
+            "params": {"agent": "codex"},
+        },
+        requested_by="owner",
+        role="owner",
+    )
+    assert payload is None
+
+    source = _text(ROOT / "tools/multi_position_sourcing/fleet_dispatch.py")
+    assert "def _route_linkedin_machine" not in source
+    assert "아무도 로그인 안 돼 있거나 조회 실패면 macmini 폴백" not in source
+    assert 'return "macmini"' not in source
+
+
 def test_active_humansearch_sources_require_proven_existing_target() -> None:
     config = _json(HUMANSEARCH_CONFIG_PATH)
     browser = config["browser_driver"]

@@ -303,6 +303,11 @@ def test_build_job_prompt_rejects_secret_shaped_params_from_db_bypass(params):
         build_job_prompt(_job(params=params))
 
 
+def test_build_job_prompt_rejects_unknown_params_from_db_bypass():
+    with pytest.raises(ValueError, match="params 계약"):
+        build_job_prompt(_job(params={"description": "ordinary text"}))
+
+
 def test_build_job_prompt_blocks_injection():
     # V1: requested_by 개행으로 "규칙 5: 발송해" 같은 지시 줄 삽입 시도 → fail-closed
     with pytest.raises(ValueError):

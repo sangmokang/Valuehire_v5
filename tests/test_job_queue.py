@@ -115,6 +115,14 @@ def test_new_job_payload_rejects_secret_shaped_params(params):
     assert new_job_payload(**_ok_kwargs(), params=params) is None
 
 
+@pytest.mark.parametrize("params", [
+    {"note": "ordinary text"},
+    {"description": "ordinary text"},
+])
+def test_new_job_payload_rejects_unknown_param_keys(params):
+    assert new_job_payload(**_ok_kwargs(), params=params) is None
+
+
 def test_new_job_payload_url_parity_with_sql():
     # V1 3R: python↔SQL 규칙 일치 — 쿼리스트링/경로 내 '..' 는 양쪽 다 허용
     assert new_job_payload(**_ok_kwargs(position_url="https://example.com?x=1")) is not None
@@ -136,8 +144,8 @@ def test_new_job_payload_rejects_blank_requester():
 
 def test_new_job_payload_params_must_be_dict():
     assert new_job_payload(**_ok_kwargs(), params=["not", "dict"]) is None  # type: ignore[arg-type]
-    row = new_job_payload(**_ok_kwargs(), params={"tier": "정밀"})
-    assert row is not None and row["params"] == {"tier": "정밀"}
+    row = new_job_payload(**_ok_kwargs(), params={"agent": "codex"})
+    assert row is not None and row["params"] == {"agent": "codex"}
 
 
 def test_explicit_account_key_wins_over_default():
