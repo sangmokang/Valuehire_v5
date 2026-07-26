@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -19,7 +20,9 @@ from tools.multi_position_sourcing import login_barrier as lb
 from tools.multi_position_sourcing.fleet_worker import FleetWorker
 
 NOW = int(datetime(2026, 7, 25, 12, 0, 0, tzinfo=timezone.utc).timestamp())
-SHA = hashlib.sha256(b"x").hexdigest()
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _job(skill="aisearch", params=None, machine="macmini"):
@@ -39,11 +42,37 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
     rdir = tmp_path / "login_receipts"
     rdir.mkdir(exist_ok=True)
     for ch in channels:
-        shot = tmp_path / f"{ch}.png"
-        text = tmp_path / f"{ch}.txt"
-        manifest = tmp_path / f"{ch}.manifest.json"
-        for p in (shot, text, manifest):
-            p.write_bytes(b"x")
+        evidence_dir = (tmp_path / f"{ch}-evidence").resolve()
+        evidence_dir.mkdir(exist_ok=True)
+        shot = evidence_dir / "viewport.png"
+        text = evidence_dir / "visible-text.txt"
+        manifest = evidence_dir / "manifest.json"
+        shot.write_bytes(PNG)
+        text.write_text("authenticated account marker", encoding="utf-8")
+        evidence = {
+            "status": "saved",
+            "capture_status": "saved",
+            "site": ch,
+            "task": "login",
+            "mode": "evidence",
+            "url": {
+                "saramin": "https://www.saramin.co.kr/zf_user/",
+                "jobkorea": "https://www.jobkorea.co.kr/",
+                "linkedin_rps": "https://www.linkedin.com/talent/",
+            }[ch],
+            "profile_url": "",
+            "screenshot_path": str(shot),
+            "text_path": str(text),
+            "manifest_path": str(manifest),
+            "screenshot_sha256": hashlib.sha256(PNG).hexdigest(),
+            "visible_text_sha256": hashlib.sha256(text.read_bytes()).hexdigest(),
+            "captured_at": "2026-07-25T11:59:00Z",
+            "position_id": "",
+            "candidate_index": 0,
+            "archive_row_id": None,
+            "archive_db_path": "",
+        }
+        manifest.write_text(json.dumps(evidence), encoding="utf-8")
         (rdir / f"{ch}.json").write_text(json.dumps({
             "schema_version": 1,
             "channel": ch,
@@ -51,6 +80,9 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
             "ready": True,
             "host": "macmini",
             "target_id": "T1",
+            "endpoint": "http://127.0.0.1:9311",
+            "profile_path": str((tmp_path / f"{ch}-profile").resolve()),
+            "browser_pid": 4242,
             "last_verified_at": (
                 datetime.fromtimestamp(NOW, tz=timezone.utc) - timedelta(seconds=30)
             ).isoformat(),
@@ -61,8 +93,9 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
             "screenshot_path": str(shot),
             "text_path": str(text),
             "manifest_path": str(manifest),
-            "screenshot_sha256": SHA,
-            "text_sha256": SHA,
+            "screenshot_sha256": evidence["screenshot_sha256"],
+            "text_sha256": evidence["visible_text_sha256"],
+            "evidence": evidence,
         }), encoding="utf-8")
     return rdir
 

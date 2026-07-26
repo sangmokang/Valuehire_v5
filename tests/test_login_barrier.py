@@ -7,6 +7,7 @@ goal: v4 docs/engineering/login-first-barrier-goal-2026-07-25.md §3 입력 영�
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,9 @@ import pytest
 from tools.multi_position_sourcing import login_barrier as lb
 
 NOW = int(datetime(2026, 7, 25, 12, 0, 0, tzinfo=timezone.utc).timestamp())
-SHA = hashlib.sha256(b"x").hexdigest()
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _iso(seconds_ago: int) -> str:
@@ -27,13 +30,44 @@ def _iso(seconds_ago: int) -> str:
     ).isoformat()
 
 
+def make_evidence(tmp_path: Path, channel: str) -> dict:
+    evidence_dir = (tmp_path / f"{channel}-evidence").resolve()
+    evidence_dir.mkdir(exist_ok=True)
+    shot = evidence_dir / "viewport.png"
+    text = evidence_dir / "visible-text.txt"
+    manifest = evidence_dir / "manifest.json"
+    shot.write_bytes(PNG)
+    text.write_text("authenticated account marker", encoding="utf-8")
+    evidence = {
+        "status": "saved",
+        "capture_status": "saved",
+        "site": channel,
+        "task": "login",
+        "mode": "evidence",
+        "url": {
+            "saramin": "https://www.saramin.co.kr/zf_user/",
+            "jobkorea": "https://www.jobkorea.co.kr/",
+            "linkedin_rps": "https://www.linkedin.com/talent/",
+        }[channel],
+        "profile_url": "",
+        "screenshot_path": str(shot),
+        "text_path": str(text),
+        "manifest_path": str(manifest),
+        "screenshot_sha256": hashlib.sha256(PNG).hexdigest(),
+        "visible_text_sha256": hashlib.sha256(text.read_bytes()).hexdigest(),
+        "captured_at": "2026-07-25T11:59:00Z",
+        "position_id": "",
+        "candidate_index": 0,
+        "archive_row_id": None,
+        "archive_db_path": "",
+    }
+    manifest.write_text(json.dumps(evidence), encoding="utf-8")
+    return evidence
+
+
 def make_receipt(tmp_path: Path, channel: str = "saramin", **overrides) -> dict:
     """유효 영수증 + 실제 증거 파일 3개 생성(입력 영역 표 6행)."""
-    shot = tmp_path / f"{channel}-shot.png"
-    text = tmp_path / f"{channel}-text.txt"
-    manifest = tmp_path / f"{channel}-manifest.json"
-    for p in (shot, text, manifest):
-        p.write_bytes(b"x")
+    evidence = make_evidence(tmp_path, channel)
     receipt = {
         "schema_version": 1,
         "channel": channel,
@@ -41,16 +75,20 @@ def make_receipt(tmp_path: Path, channel: str = "saramin", **overrides) -> dict:
         "ready": True,
         "host": "macmini",
         "target_id": "TARGET123",
+        "endpoint": "http://127.0.0.1:9311",
+        "profile_path": str((tmp_path / f"{channel}-profile").resolve()),
+        "browser_pid": 4242,
         "last_verified_at": _iso(60),
         "owner_activity_detected": False,
         "proof_names": ["gnb_profile_badge"],
         "mutation_count": 0,
         "capture_status": "saved",
-        "screenshot_path": str(shot),
-        "text_path": str(text),
-        "manifest_path": str(manifest),
-        "screenshot_sha256": SHA,
-        "text_sha256": SHA,
+        "screenshot_path": evidence["screenshot_path"],
+        "text_path": evidence["text_path"],
+        "manifest_path": evidence["manifest_path"],
+        "screenshot_sha256": evidence["screenshot_sha256"],
+        "text_sha256": evidence["visible_text_sha256"],
+        "evidence": evidence,
     }
     receipt.update(overrides)
     return receipt
@@ -331,22 +369,17 @@ def test_barrier_pass_string_receipt_file_still_blocked(tmp_path):
 
 def test_write_channel_receipt_roundtrip(tmp_path, monkeypatch):
     rdir = tmp_path / "login_receipts"
+    evidence = make_evidence(tmp_path, "saramin")
     episode = {
         "status": "authenticated",
         "site": "saramin",
+        "target_id": "TARGET123",
+        "endpoint": "http://127.0.0.1:9311",
+        "profile_path": str((tmp_path / "saramin-profile").resolve()),
+        "browser_pid": 4242,
         "proof_names": ["gnb_profile_badge"],
-        "evidence": {
-            "target_id": "TARGET123",
-            "screenshot_path": str(tmp_path / "s.png"),
-            "text_path": str(tmp_path / "t.txt"),
-            "manifest_path": str(tmp_path / "m.json"),
-            "screenshot_sha256": SHA,
-            "visible_text_sha256": SHA,
-            "capture_status": "saved",
-        },
+        "evidence": evidence,
     }
-    for k in ("screenshot_path", "text_path", "manifest_path"):
-        Path(episode["evidence"][k]).write_bytes(b"x")
     path = lb.write_channel_receipt_from_episode(
         episode, machine="macmini", receipt_dir=rdir, now_epoch=NOW
     )
