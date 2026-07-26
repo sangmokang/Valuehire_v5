@@ -219,15 +219,21 @@ def test_quoted_search_alternation_remains_read_only() -> None:
 def test_execution_prompt_makes_login_a_code_enforced_search_barrier() -> None:
     text = PROMPT.read_text(encoding="utf-8")
     required = (
+        "26-portal-login-spec@1.5.0",
         "LOGIN_BARRIER",
         "aisearch",
         "humansearch",
         "url",
         "session_guard human-auth",
-        "AUTHENTICATED",
+        "APP 17",
+        "APP 30/31",
+        "LINKEDIN_LI_AT",
+        "READY",
         "HUMAN_ACTIVE",
         "HUMAN_AUTH",
+        "HANDOFF",
         "AUTH_CONFLICT",
+        "인증 기기 수 미증명",
         "managed_browser_missing",
         "exact target",
         "새 창 0개",
