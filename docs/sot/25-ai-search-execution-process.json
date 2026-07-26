@@ -88,17 +88,17 @@
       "inputs": ["positionId 또는 채용 URL"],
       "actions": [
         "v5 레포(/Users/kangsangmo/Valuehire_v5)에서만 실행. v4 폴더·npm 절대 금지.",
-        "브라우저 경로 확인: claude-in-chrome 익스텐션 연결 여부 + 사장님 Chrome CDP(127.0.0.1:9222) 가용 여부.",
+        "브라우저 경로 확인: 26-portal-login-spec과 APP 17이 증명한 exact endpoint/profile/target만 사용한다. 포트·프로필 추측 금지.",
         "둘 다 불가 시 라이브 검색 불가 → stage 1로 사유 전달."
       ],
       "pass_criteria": "검색에 쓸 인증 브라우저 경로가 최소 1개 확인됨",
-      "evidence": "curl -s -m3 http://127.0.0.1:9222/json/version"
+      "evidence": "정책이 증명한 exact endpoint/profile/target의 읽기 전용 연결 증거. 포트·프로필 추측 금지."
     },
     {
       "id": "1_occupancy_captcha_gate",
       "name": "점유·캡차 게이트 (자동 판정)",
       "actions": [
-        "CDP 탭 목록 조회: curl -s -m3 http://127.0.0.1:9222/json",
+        "정책이 증명한 exact endpoint/profile/target에서만 CDP 탭 목록을 읽는다. 포트·프로필 추측 금지.",
         "캡차/차단/멀티세션 감지 정규식(docs/sot/26 block_detection.unified_regex): captcha|recaptcha|checkpoint|보안문자|자동입력 방지|multiple sign-ins|Only one session|enterprise-authentication|unusual activity|2단계. /uas/login-cap·li.protechts 단독 신호는 LinkedIn 로그아웃 상태 후보일 뿐 아이디·비밀번호 제출 허가가 아니다.",
         "채널별 흔적을 스크린샷으로 1회 교차확인한다. 실제 캡차·2FA·checkpoint는 status=HUMAN_AUTH, LinkedIn 멀티세션은 terminal status=AUTH_CONFLICT로 분리한다(INV4).",
         "★ 로그인 상태 선제 일괄 점검(docs/sot/26 preflight_batch_login): 대상 전 채널 exact target의 login_state_check를 먼저 수행한다. 사람인·잡코리아 로그아웃은 정확 후보 1개에서 저장 자격증명 최대 1회, LinkedIn은 인증 기기 1개면 인증 조작 0회 재사용하고 0개로 증명됐으면 현재 턴 승인·APP 17 경로 결정·정확 후보 1개·APP 30/31을 모두 요구한다. 기기 수 미증명은 인증 조작 0회 HANDOFF, 2개 이상이면 AUTH_CONFLICT다. 채널별로 흐름 중간에 따로 로그인하지 않는다.",

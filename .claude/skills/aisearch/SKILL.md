@@ -63,8 +63,9 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 - **사장님이 크롬 사용 중이면 자동화 액션 0, 손 떼면 자동 재개**(INV2).
 - 캡차·2FA·봇차단은 `HUMAN_AUTH`, 일반 로그인캡은 `AUTH_LOST` 후보, LinkedIn 멀티세션락은 terminal `AUTH_CONFLICT`다. LinkedIn 인증 기기 1개는 인증 조작 0회 재사용하고, 0개는 현재 턴 승인·APP 17 경로 결정·정확 후보 1개·APP 30/31 `LINKEDIN_LI_AT`을 모두 요구한다. 인증 기기 수 미증명은 `HANDOFF`다. 우회·반복재시도 금지(INV4).
 - **LinkedIn 세션 문맥 보존(`SESSION_CONTEXT_PRESERVATION`, #156)**: 이미 인증된 exact target 하나만
-  재사용하고 다른 Chrome 프로필에 RPS 세션 신호가 있으면 `AUTH_CONFLICT`로 중단한다. 새 탭·두 번째
-  로그인·Continue/Confirm은 0회다. 카드의 query 포함 `navigation_url`로 이동하고 canonical
+  재사용한다. 봉인된 함대 증거로 인증 기기 2개 이상 또는 복수 세션이 증명된 경우만
+  `AUTH_CONFLICT`이며, 인증 기기 수 미증명은 `HANDOFF`다. 새 탭·두 번째 로그인·
+  Continue/Confirm은 0회다. 카드의 query 포함 `navigation_url`로 이동하고 canonical
   `profile_url`은 저장·중복제거에만 사용하며, 이동 직후 차단 검사를 추출·스크린샷·저장보다 먼저 한다.
 - **채널을 직무로 가르지 않는다**(INV5). 라이브 포털 검색 범위에선 사람인·잡코리아·LinkedIn RPS 모두 전 직무 대상.
 - **LinkedIn RPS는 좌측 필터 패널 필수**(2026-07-07 사장님 지시): 검색 시 좌측 "Show filters"를 열어 **Locations = South Korea** 를 드롭다운 제안으로 선택하고, **연차(Years of experience)도 좌측 패널**에 JD ±1~2년 버퍼로 설정한다. 키워드(Boolean)만 넣고 지역·연차를 생략하면 스펙 위반. 상세는 `docs/sot/22-talent-search-filters.json` channels.linkedin.filters.left_panel_required.
@@ -80,7 +81,7 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 
 ## Spec Stages (docs/sot/25 stages와 1:1)
 
-1. `0_preflight` — v5 레포 + Chrome/CDP(:9222) 경로 확인. **점유 배지**: raw CDP 로 붙기 전 `export VH_BUSY_TASK=/aisearch`(Codex 면 `VH_BUSY_AGENT=Codex`) → `raw_cdp.attach()` 하면 "🤖 …자동화 사용중 · /aisearch" 배지가 화면에 자동 표시(사장님 점유 인지, SOT 투명성). 규약: humansearch SKILL "브라우저 드라이버" 절.
+1. `0_preflight` — v5 레포 + 정책이 증명한 exact endpoint/profile/target 경로 확인(포트·프로필 추측 금지). **점유 배지**: raw CDP 로 붙기 전 `export VH_BUSY_TASK=/aisearch`(Codex 면 `VH_BUSY_AGENT=Codex`) → `raw_cdp.attach()` 하면 "🤖 …자동화 사용중 · /aisearch" 배지가 화면에 자동 표시(사장님 점유 인지, SOT 투명성). 규약: humansearch SKILL "브라우저 드라이버" 절.
 2. `1_occupancy_captcha_gate` — 캡차·멀티세션·로그인 상태 먼저 확인, 채널 분류.
 3. `2_yield_resume` — 사장님 크롬 사용 중 양보, 손 떼면 자동 재개.
 4. `3_jd_intake` — ClickUp JD 우선, 비거나 오래되면 공식 채용홈에서 보강. 정리된 포지션은 `docs/sot/24-position-jd-sot.json`.

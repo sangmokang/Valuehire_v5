@@ -356,7 +356,8 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"PAUSED_FOR_HUMAN 마커를 출력한다. HANDOFF와 AUTH_CONFLICT는 "
         "PAUSED_FOR_HUMAN·완료 영수증 없이 terminal 종료하고 시간 재개하지 말 것. "
         "비밀 원문·파생값을 인자·stdout·stderr·로그·영수증·산출물·모델 메시지에 "
-        "넣지 말 것.\n"
+        "넣지 말 것. 정책과 APP 17이 증명한 exact endpoint/profile/target만 사용하고 "
+        "포트·프로필 추측 금지.\n"
     )
     if skill == "login":
         # APP01 정책 연결만 담당한다. 인증 제공자·적용기·기기 판정 로직은 후속 APP 범위다.
@@ -472,8 +473,9 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"180~420초(3~7분) 랜덤 지연을 둘 것.\n"
         f"9. 프리랜서/freelancer/freelance/개인사업자/독립계약자/contract worker/외주 또는 종료된 12개월 미만 "
         f"재직이 2회 이상인 후보는 점수 계산 전에 원천 제외할 것.\n"
-        f"10. Windows에서는 Chrome Profile 2를 영속 세션으로 재사용하고 Chrome 종료, "
-        f"로그아웃, 쿠키 삭제, 프로필 복사·초기화를 하지 말 것.\n"
+        f"10. 운영체제와 무관하게 정책과 APP 17이 증명한 exact endpoint/profile/target만 "
+        f"재사용하고 포트·프로필 추측 금지. Chrome 종료, 로그아웃, 쿠키 삭제, 프로필 "
+        f"복사·초기화를 하지 말 것.\n"
         f"11. 열어본 모든 레쥬메는 점수·하드제외 여부와 무관하게 URL, 스크린샷, 본문을 "
         f"로컬 DB에 먼저 저장하고 저장 영수증을 확인한 뒤에만 다음 프로필로 이동할 것.\n"
         f"12. aisearch 완료 시 마지막 줄에 {_SEARCH_RECEIPT_MARKER} 뒤로 JSON을 출력할 것. "

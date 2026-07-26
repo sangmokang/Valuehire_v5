@@ -36,13 +36,15 @@ Inputs: position ID, ClickUp task URL, hiring URL, or JD text.
 
 Required actions:
 - Confirm work is in `/Users/kangsangmo/Valuehire_v5` or equivalent v5 checkout.
-- Check browser path: Chrome/CDP `http://127.0.0.1:9222/json/version` and/or the connected extension path if available.
+- Check only the exact endpoint/profile/target proven by `26-portal-login-spec@1.5.0`
+  and APP 17. 포트·프로필 추측 금지.
 - If no authenticated browser path exists, report live-search unavailable and continue only with non-live strategy/dry-run.
 
 ### 1. Occupancy, Captcha, Login Gate
 
 Required actions:
-- Read CDP tab list from `http://127.0.0.1:9222/json`.
+- Read the CDP tab list only from the proven exact endpoint/profile/target.
+  포트·프로필 추측 금지.
 - Detect blocks using the unified regex from SOT 26: captcha, recaptcha, 보안문자, 자동입력 방지, checkpoint, unusual activity, multiple sign-ins, Only one session, enterprise-authentication, 2단계, authwall, challenge, etc. Do not classify `/uas/login-cap` or `li.protechts` alone as a hard block.
 - Before declaring a terminal or human state, cross-check with screenshot or direct page evidence to avoid plain-text false positives.
 - Run preflight batch state inspection: check all target channels and exact-target candidate counts before any allowed site-specific authentication.
