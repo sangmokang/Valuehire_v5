@@ -71,6 +71,10 @@ def test_site_authentication_methods_are_explicit_and_mutation_bounded() -> None
     ]
     assert control["source_priority"][0] == "docs/sot/26-portal-login-spec.json"
     assert control["policy_authority"] == POLICY_ID
+    multi_device = control["multi_device"]
+    assert multi_device["authenticated_machine_count_requires_sealed_fleet_evidence"] is True
+    assert multi_device["evidence_unavailable"] == "HANDOFF"
+    assert multi_device["owner_authorization_is_not_machine_count_evidence"] is True
 
     methods = policy["authentication_policy"]
     assert methods["saramin"] == {
@@ -191,6 +195,21 @@ def test_li_at_cannot_enter_logs_receipts_or_model_output() -> None:
     barrier = _text(ROOT / "tools/multi_position_sourcing/login_barrier.py")
     assert '"li_at"' in barrier
 
+    from tools.multi_position_sourcing.login_barrier import validate_channel_receipt
+
+    for key in ("li_at", "cookie_value", "password", "secret", "token"):
+        for receipt in (
+            {"schema_version": 1, key: "must-not-escape"},
+            {"schema_version": 1, "nested": {"items": [{key: "must-not-escape"}]}},
+        ):
+            error = validate_channel_receipt(
+                receipt,
+                channel="linkedin_rps",
+                machine="macmini",
+                now_epoch=0,
+            )
+            assert error is not None and "secret_material" in error, (key, receipt)
+
 
 def test_active_instructions_forbid_legacy_linkedin_form_login_and_logout() -> None:
     active = "\n".join(
@@ -273,6 +292,14 @@ def test_login_and_search_entrypoints_reference_the_new_policy() -> None:
         assert "tools.install_login_skill" not in text, path
         assert "금지 경로 강제 Hook" not in text, path
         assert "레거시·불완전" in text, path
+        for marker in (
+            "사이트별 허용·금지·인계 표",
+            "| 사람인 |",
+            "| 잡코리아 |",
+            "| LinkedIn RPS |",
+            "기기 수 미증명은 인증 조작 0회",
+        ):
+            assert marker in text, (path, marker)
 
 
 def test_ai_search_status_vocabulary_matches_the_login_policy() -> None:
@@ -324,6 +351,8 @@ def test_worker_generated_prompts_reference_the_new_policy() -> None:
         assert "인증 기기가 정확히 1개" in prompt
         assert "인증 조작 0회" in prompt
         assert "신뢰도 기반 선택" in prompt
+        assert "인증 기기 수 미증명" in prompt
+        assert "APP 17" in prompt
     assert "저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것" not in login_prompt
     assert "linkedin_rps_logged_in=true인 머신을 먼저 찾아" not in url_prompt
 
