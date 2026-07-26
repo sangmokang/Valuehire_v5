@@ -339,6 +339,26 @@ def test_browser_binding_is_re_resolved_at_validation_time(tmp_path, monkeypatch
     ) is not None
 
 
+def test_browser_binding_rejects_target_that_is_currently_logged_out(tmp_path, monkeypatch):
+    receipt = make_receipt(tmp_path, channel="linkedin_rps")
+    monkeypatch.setattr(
+        session_guard,
+        "resolve_existing_target",
+        lambda *_args, **_kwargs: BrowserTargetRef(
+            site="linkedin_rps",
+            endpoint="http://127.0.0.1:9311",
+            target_id="TARGET123",
+            websocket_url="ws://127.0.0.1:9311/devtools/page/TARGET123",
+            initial_url="https://www.linkedin.com/uas/login",
+            profile_path=str(Path.cwd().resolve()),
+            browser_pid=4242,
+        ),
+    )
+    assert lb.validate_channel_receipt(
+        receipt, channel="linkedin_rps", machine="macmini", now_epoch=NOW
+    ) is not None
+
+
 def test_linkedin_auto_login_never_reads_username_or_password(monkeypatch):
     from tools.multi_position_sourcing import owner_activity
     from tools.multi_position_sourcing import session_guard
