@@ -9,6 +9,12 @@ from typing import Any
 from .fleet_heartbeat import normalize_machine_hostname
 from .login_barrier import RECEIPT_MAX_AGE_SECONDS
 
+_AUTH_TARGET_MARKERS = {
+    "saramin": {"authenticated_shell", "gnb_profile_badge", "account_or_logout"},
+    "jobkorea": {"authenticated_shell", "gnb_profile_badge", "logout_and_account"},
+    "linkedin_rps": {"authenticated_shell", "recruiter_marker"},
+}
+
 
 def _decision(
     machine: str | None, reason: str, snapshot_id: str, evidence: Sequence[str] = (),
@@ -56,8 +62,11 @@ def _target_hosts(
                 markers = target.get("marker_names")
                 if not isinstance(markers, list) or not markers:
                     continue
-                if "auth_conflict" in markers:
+                if {"auth_conflict", "multiple_sign_in"}.intersection(markers):
                     conflict = True
+                    continue
+                if not set(markers).intersection(_AUTH_TARGET_MARKERS.get(site, set())):
+                    continue
                 target_id = target.get("target_id")
                 hosts.setdefault(str(machine), []).append(
                     f"target:{machine}:{target_id}"
@@ -126,6 +135,8 @@ def decide_fleet_route(
     }
     if len(ready_machines) != len(reports):
         return _decision(None, "DISCOVERY_INCOMPLETE", snapshot_id)
+    if not ready_machines:
+        return _decision(None, "DISCOVERY_INCOMPLETE", snapshot_id)
 
     site = str(normalized_request.get("site") or "")
     request_id = str(normalized_request.get("request_id") or "")
@@ -134,13 +145,48 @@ def decide_fleet_route(
         login_receipts, site=site, requested_at=requested_at,
         ready_machines=ready_machines,
     )
-    if target_conflict or receipt_conflict:
-        return _decision(None, "AUTH_CONFLICT", snapshot_id)
     if invalid_host:
         return _decision(None, "ROUTE_AMBIGUOUS", snapshot_id)
     auth_hosts = set(target_hosts) | set(receipt_hosts)
-    if site == "linkedin_rps" and len(auth_hosts) > 1:
+    if site != "linkedin_rps" and (target_conflict or receipt_conflict):
         return _decision(None, "AUTH_CONFLICT", snapshot_id)
+    if site == "linkedin_rps":
+        from .linkedin_session_guardian import decide_linkedin_session
+
+        default = site_role_defaults.get(site)
+        selected = normalized_request.get("requested_machine")
+        if selected not in ready_machines:
+            selected = default if default in ready_machines else sorted(ready_machines)[0]
+        observations = {
+            machine: {
+                "state": (
+                    "AUTH_CONFLICT" if (target_conflict or receipt_conflict)
+                    and machine == sorted(ready_machines)[0]
+                    else "AUTHENTICATED" if machine in auth_hosts
+                    else "AUTH_LOST"
+                ),
+                "ready": True,
+                "evidence_ref": (
+                    target_hosts.get(machine) or receipt_hosts.get(machine)
+                    or [f"snapshot:{snapshot_id}:{machine}"]
+                )[0],
+            }
+            for machine in ready_machines
+        }
+        session_decision = decide_linkedin_session(
+            request_id=request_id,
+            fleet_observations={
+                "request_id": request_id,
+                "complete": True,
+                "eligible_machines": sorted(ready_machines),
+                "missing_machines": [],
+                "observations_by_machine": observations,
+            },
+            selected_machine=selected,
+        )
+        if session_decision["state"] == "AUTH_CONFLICT":
+            return _decision(None, "AUTH_CONFLICT", snapshot_id,
+                             session_decision["evidence_refs"])
 
     explicit = normalized_request.get("requested_machine")
     if explicit:

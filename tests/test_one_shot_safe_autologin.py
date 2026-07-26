@@ -99,6 +99,22 @@ def run(trace: list[str], **changes):
         "agent": "Codex",
         "target_id": "target-exact",
         "episode_id": "episode-10",
+        "linkedin_request_id": "request-10",
+        "selected_machine": "macmini",
+        "linkedin_fleet_observations": {
+            "request_id": "request-10",
+            "complete": True,
+            "eligible_machines": ["macmini"],
+            "missing_machines": [],
+            "observations_by_machine": {
+                "macmini": {
+                    "state": "AUTH_LOST",
+                    "ready": True,
+                    "target_id": "target-exact",
+                    "evidence_ref": "snapshot:macmini",
+                }
+            },
+        },
         "_owner_snapshot": lambda: owner(),
         "_lease_factory": lambda _site: Lease(trace),
         "_target_resolver": lambda *_args, **_kwargs: ref(),

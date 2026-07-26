@@ -8,6 +8,7 @@ import pytest
 from tools.multi_position_sourcing.linkedin_session_guardian import (
     decide_linkedin_session,
 )
+from tools.multi_position_sourcing.fleet_route import decide_fleet_route
 from tools.multi_position_sourcing.session_guard import run_auto_login_episode
 
 
@@ -88,6 +89,14 @@ def test_zero_one_two_authenticated_host_truth_table(
             observations({}),
             "ghost", "SESSION_HOST_UNREADY", "SELECTED_MACHINE_UNREADY",
         ),
+        (
+            observations({"winpc": "AUTH_UNKNOWN"}),
+            "macmini", "DISCOVERY_INCOMPLETE", "DISCOVERY_INCOMPLETE",
+        ),
+        (
+            observations({"macmini": "HUMAN_AUTH_REQUIRED"}),
+            "macmini", "SESSION_HOST_UNREADY", "HUMAN_AUTH_PENDING",
+        ),
     ],
 )
 def test_incomplete_conflict_and_unready_are_fail_closed(
@@ -100,6 +109,19 @@ def test_incomplete_conflict_and_unready_are_fail_closed(
     )
     assert decision["state"] == state
     assert decision["reason"] == reason
+    assert decision["login_mutation_allowed"] is False
+
+
+def test_authenticated_but_unready_host_is_not_reused() -> None:
+    payload = observations({"winpc": "AUTHENTICATED"})
+    payload["observations_by_machine"]["winpc"]["ready"] = False
+    decision = decide_linkedin_session(
+        request_id="request-12",
+        fleet_observations=payload,
+        selected_machine="macmini",
+    )
+    assert decision["state"] == "SESSION_HOST_UNREADY"
+    assert decision["session_host"] == "winpc"
     assert decision["login_mutation_allowed"] is False
 
 
@@ -124,13 +146,9 @@ def test_auto_login_rechecks_guardian_before_owner_browser_or_credentials() -> N
     result = run_auto_login_episode(
         "linkedin_rps",
         agent="Codex",
-        linkedin_session_decision={
-            "state": "DISCOVERY_INCOMPLETE",
-            "session_host": None,
-            "reason": "DISCOVERY_INCOMPLETE",
-            "evidence_refs": [],
-            "login_mutation_allowed": False,
-        },
+        linkedin_request_id="request-12",
+        linkedin_fleet_observations=observations({}, complete=False),
+        selected_machine="macmini",
         _owner_snapshot=lambda: pytest.fail("must stop before owner probe"),
         _credential_provider=pytest.fail,
         _target_resolver=lambda *_args, **_kwargs: pytest.fail(
@@ -139,3 +157,10 @@ def test_auto_login_rechecks_guardian_before_owner_browser_or_credentials() -> N
     )
     assert result["state"] == "DISCOVERY_INCOMPLETE"
     assert result["submission_count"] == 0
+
+
+def test_guardian_is_wired_before_enqueue_route_and_auto_login_mutation() -> None:
+    assert "decide_linkedin_session" in inspect.getsource(decide_fleet_route)
+    source = inspect.getsource(run_auto_login_episode)
+    assert source.index("decide_linkedin_session") < source.index("owner_snapshot()")
+    assert source.index("decide_linkedin_session") < source.index("mark_busy")

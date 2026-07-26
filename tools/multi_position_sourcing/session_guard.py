@@ -2400,6 +2400,9 @@ def run_auto_login_episode(
     agent: str,
     target_id: str | None = None,
     episode_id: str = "default",
+    linkedin_request_id: str = "",
+    linkedin_fleet_observations: Mapping[str, Any] | None = None,
+    selected_machine: str = "",
     _credential_provider: Any | None = None,
     _owner_snapshot: Callable[[], Any] | None = None,
     _lease_factory: Callable[[Site], Any] | None = None,
@@ -2446,6 +2449,19 @@ def run_auto_login_episode(
         return result("AUTH_UNKNOWN", "UNSUPPORTED_SITE")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(episode_id)):
         return result("AUTH_UNKNOWN", "INVALID_EPISODE")
+    if site == "linkedin_rps":
+        from .linkedin_session_guardian import decide_linkedin_session
+
+        decision = decide_linkedin_session(
+            request_id=linkedin_request_id,
+            fleet_observations=linkedin_fleet_observations or {},
+            selected_machine=selected_machine or None,
+        )
+        if (
+            decision["state"] != "LOGIN_ALLOWED"
+            or decision["login_mutation_allowed"] is not True
+        ):
+            return result(decision["state"], decision["reason"])
     if _owner_snapshot is None:
         from .owner_activity import detect_owner_activity_snapshot
 
@@ -2663,11 +2679,27 @@ def main(argv: list[str] | None = None) -> int:
     autologin.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     autologin.add_argument("--agent", required=True)
     autologin.add_argument("--target-id", default=None)
+    autologin.add_argument("--request-id", default="")
+    autologin.add_argument("--machine", default="")
+    autologin.add_argument("--linkedin-observations-json", default="")
     args = parser.parse_args(argv)
     site: Site = args.site
 
     if args.command == "auto-login":
-        result = run_auto_login_episode(site, agent=args.agent, target_id=args.target_id)
+        fleet_observations: Mapping[str, Any] | None = None
+        if args.linkedin_observations_json:
+            loaded = json.loads(
+                Path(args.linkedin_observations_json).read_text(encoding="utf-8")
+            )
+            fleet_observations = loaded if isinstance(loaded, Mapping) else None
+        result = run_auto_login_episode(
+            site, agent=args.agent, target_id=args.target_id,
+            linkedin_request_id=args.request_id,
+            linkedin_fleet_observations=fleet_observations,
+            selected_machine=(
+                args.machine or os.environ.get("VALUEHIRE_MACHINE", "").strip()
+            ),
+        )
         if result.get("state") == "AUTHENTICATED":
             # 로그인 성공 → 정식 증거 캡처로 login_barrier 영수증까지 발급.
             evidence_result = run_capture_evidence_episode(
