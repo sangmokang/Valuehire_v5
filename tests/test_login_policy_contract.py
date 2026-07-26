@@ -17,7 +17,6 @@ AI_SEARCH_PROCEDURE_PATHS = (
     ROOT / ".codex/skills/ai-search/references/spec-procedure.md",
 )
 EXACT_TARGET_ENTRYPOINTS = (
-    POLICY_PATH,
     AI_SEARCH_PROCESS_MD_PATH,
     ROOT / "docs/sot/25-ai-search-execution-process.json",
     *AI_SEARCH_PROCEDURE_PATHS,
@@ -591,6 +590,12 @@ def test_ai_search_human_entrypoint_matches_machine_statuses() -> None:
 
 
 def test_login_preflight_never_guesses_a_fixed_port_or_profile() -> None:
+    policy = _json(POLICY_PATH)
+    attach_steps = "\n".join(policy["connection"]["attach_steps"])
+    assert "PROVEN_CDP_ENDPOINT" in attach_steps
+    assert "127.0.0.1:9222" not in attach_steps
+    assert "localhost:9222" not in attach_steps
+
     for path in EXACT_TARGET_ENTRYPOINTS:
         text = _text(path)
         for forbidden in (

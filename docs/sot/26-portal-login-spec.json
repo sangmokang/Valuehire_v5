@@ -14,7 +14,8 @@
     "docs/engineering/login-policy-recement-goal-2026-07-08.md": "historical_input_not_executable",
     "docs/ai-search/qa-linkedin-autologin-sot-2026-06-09.md": "historical_input_not_executable",
     "docs/ai-search/three-mac-account-coordinator-goal-prompt.md": "historical_input_not_executable",
-    "docs/ai-search/portal-login-live-search-runbook-2026-06-17.md": "historical_input_not_executable"
+    "docs/ai-search/portal-login-live-search-runbook-2026-06-17.md": "historical_input_not_executable",
+    "docs/prompts/codex-humansearch-movensys-nn-2026-07-18.md": "historical_input_not_executable"
   },
   "current_execution_route": ["Discord", "queue", "worker", "Codex_or_Claude"],
   "implementation_boundary": {
@@ -205,7 +206,7 @@
     "why": "관리 브라우저에 탭 수십~수백개(2026-06-25 실측 161개)면 playwright connectOverCDP 전체 attach가 모든 탭(무거운 페이지 포함) enumerate/attach로 hang. ws는 붙는데 이후 ctx.pages()/evaluate에서 멈춤. → 목표 탭 1개에만 raw CDP WebSocket으로 직접 attach.",
     "runtime": "node22 global WebSocket + fetch (외부 의존 0)",
     "attach_steps": [
-      "list = await (await fetch('http://localhost:9222/json/list')).json()",
+      "list = await (await fetch(`${PROVEN_CDP_ENDPOINT}/json/list`)).json()  // APP 17이 증명한 exact endpoint만",
       "t = list.find(x => x.type==='page' && EXACT_CHANNEL_URL_RE.test(x.url))  // 정확 URL 매칭",
       "ws = new WebSocket(t.webSocketDebuggerUrl); await Runtime.enable + Page.enable + DOM.enable",
       "한글 입력 = Runtime.evaluate value setter + input/change dispatch (atob/btoa·fill() 금지)",

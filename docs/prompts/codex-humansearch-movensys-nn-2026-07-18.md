@@ -1,5 +1,9 @@
 # Codex 실행 프롬프트 — 모벤시스 Physical AI N:N humansearch (LinkedIn RPS + 사람인)
 
+> `historical_input_not_executable`
+> 이 파일은 과거 실행 기록이며 실행 금지다. 로그인 판단은
+> `26-portal-login-spec@1.5.0`만 사용하고, 아래 본문을 현재 작업 지시로 붙여 넣지 않는다.
+
 > 이 파일 전체를 Codex에 붙여넣고 `$st` + humansearch 스킬로 실행. 레포: /Volumes/SSD/valuehire_v5.
 
 ## 0. 한 줄 목표
