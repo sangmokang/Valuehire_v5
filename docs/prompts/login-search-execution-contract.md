@@ -45,6 +45,17 @@
 
 ## LOGIN_BARRIER
 
+### WinPC owner-local executor
+
+When `VALUEHIRE_WINPC_LOCAL_AISEARCH_EXECUTOR=1` is present, the outer
+`winpc_local_aisearch` process has already refreshed the code-validated
+`~/.valuehire/login_receipts/<channel>.json` receipt against the current exact
+target. The nested planner must not read
+`artifacts/portal_session_status_latest.json`, inspect port 9222, or issue direct
+localhost HTTP commands. It must use only
+`python -m tools.multi_position_sourcing.winpc_local_portal --probe ...` before
+the bounded helper search command supplied in its prompt.
+
 검색 잡을 모델에 넘기기 전에 워커가 다음 순서를 수행합니다.
 
 1. `artifacts/portal_session_status_latest.json`의 생성 시각·필수 채널·`ready=true`를

@@ -61,6 +61,12 @@ Do not start from `skills/search/SKILL.md` alone. That file is a legacy/fresh-lo
 ## Operating Rules
 
 - Do not search on your own initiative. AI Search may start only from a user-provided position ID, ClickUp task URL, hiring URL, JD text, or an explicit instruction to run a specific stage.
+- If `VALUEHIRE_WINPC_LOCAL_AISEARCH_EXECUTOR=1` is present, never call
+  `winpc_local_aisearch`, a fleet runner, or another agent. Never inspect port
+  9222 or `artifacts/portal_session_status_latest.json`. Use only the exact
+  `tools.multi_position_sourcing.winpc_local_portal` probe and search commands
+  supplied by the outer executor. That helper binds to the registered
+  per-channel WinPC endpoint and preserves the browser window, tab, and profile.
 - 프롬프트에 `VALUEHIRE_WINPC_LOCAL_AISEARCH_EXECUTOR=1`이 있으면 이미 WinPC 로컬
   실행기 내부입니다. 이 경우 `winpc_local_aisearch`를 재호출하지 말고, 아래 Spec Stages를
   현재 프로세스에서 직접 수행합니다.

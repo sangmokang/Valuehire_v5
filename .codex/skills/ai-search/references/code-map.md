@@ -2,10 +2,14 @@
 
 Use this map to find implementation code quickly. Prefer current repo files over copied assumptions.
 
-Repo root: `/Users/kangsangmo/Valuehire_v5`
+Repo root: the current Valuehire v5 checkout
 
 ## Entrypoints and Scripts
 
+- `tools/multi_position_sourcing/winpc_local_aisearch.py`: owner-explicit WinPC
+  orchestration, ClickUp JD intake, and completion receipt validation.
+- `tools/multi_position_sourcing/winpc_local_portal.py`: bounded exact-target
+  probe/search helper for the registered WinPC portal browser.
 - `scripts/run_portal_search.py`: human-in-the-loop live portal search runner.
 - `scripts/collect_linkedin.py`: LinkedIn collection helper.
 - `scripts/probe_linkedin_dom.py`: LinkedIn DOM probing.

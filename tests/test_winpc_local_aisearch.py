@@ -69,10 +69,13 @@ def test_live_local_run_prepares_browser_and_invokes_agent_on_same_process_path(
 
     def runner(prompt, timeout, *, env):
         calls.append(("runner", (timeout, env["VALUEHIRE_MACHINE"])))
-        assert "$ai-search" in prompt
-        assert CLICKUP_URL in prompt
         assert winpc_local_aisearch.LOCAL_EXECUTOR_MARKER in prompt
-        assert "다시 호출하지 말고" in prompt
+        assert "Do not invoke winpc_local_aisearch" in prompt
+        assert "winpc_local_portal" in prompt
+        assert "--probe" in prompt
+        assert "top-level channels (not channel_receipts)" in prompt
+        assert "port 9222" in prompt
+        assert "portal_session_status_latest.json" in prompt
         assert env["VALUEHIRE_OWNER_LOCAL_AI_SEARCH"] == "1"
         assert env["VALUEHIRE_JOB_SKILL"] == "aisearch"
         assert env["VALUEHIRE_JOB_ROLE"] == "owner"
@@ -95,6 +98,13 @@ def test_live_local_run_prepares_browser_and_invokes_agent_on_same_process_path(
         environ={"LOCALAPPDATA": r"C:\Users\Test\AppData\Local"},
         portal_preparer=prepare,
         runner=runner,
+        task_loader=lambda _url, *, environ: {
+            "id": "86ey90v4k",
+            "name": "Backend engineer",
+            "description": "Python backend",
+            "status": "open",
+            "source_url": CLICKUP_URL,
+        },
         system_name="Windows",
     )
 
@@ -104,6 +114,136 @@ def test_live_local_run_prepares_browser_and_invokes_agent_on_same_process_path(
         ("prepare", (("saramin",), "winpc")),
         ("runner", (winpc_local_aisearch.LOCAL_SEARCH_TIMEOUT_SECONDS, "winpc")),
     ]
+
+
+def test_clickup_task_context_is_bounded_and_does_not_return_token() -> None:
+    seen: dict[str, object] = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, limit):
+            seen["limit"] = limit
+            return json.dumps(
+                {
+                    "id": "86ey90v4k",
+                    "name": "Backend engineer",
+                    "description": "Python and Spring backend",
+                    "status": {"status": "open"},
+                }
+            ).encode()
+
+    def urlopen(request, *, timeout):
+        seen["url"] = request.full_url
+        seen["authorization"] = request.get_header("Authorization")
+        seen["timeout"] = timeout
+        return Response()
+
+    context = winpc_local_aisearch._fetch_clickup_task_context(
+        CLICKUP_URL,
+        environ={"CLICKUP_API_TOKEN": "top-secret-token"},
+        urlopen=urlopen,
+    )
+
+    assert context["id"] == "86ey90v4k"
+    assert context["description"] == "Python and Spring backend"
+    assert "top-secret-token" not in json.dumps(context)
+    assert seen == {
+        "url": "https://api.clickup.com/api/v2/task/86ey90v4k",
+        "authorization": "top-secret-token",
+        "timeout": 20,
+        "limit": winpc_local_aisearch._MAX_CLICKUP_RESPONSE_BYTES + 1,
+    }
+
+
+def test_local_portal_preparation_refreshes_current_dom_even_with_fresh_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        winpc_local_aisearch,
+        "ensure_windows_portal_browser",
+        lambda channel, *, environ: {"channel": channel, "started": False},
+    )
+    monkeypatch.setattr(
+        winpc_local_aisearch.login_barrier,
+        "job_block_reason",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def login(channel, *, environ):
+        calls.append(channel)
+        return {"state": "AUTHENTICATED"}
+
+    monkeypatch.setattr(winpc_local_aisearch, "_login_subprocess", login)
+
+    result = winpc_local_aisearch.prepare_local_portals(
+        ("saramin",),
+        environ={},
+    )
+
+    assert result["status"] == "ready"
+    assert calls == ["saramin"]
+
+
+def test_production_receipt_is_derived_from_local_helper_artifact(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "runs" / "job-218"
+
+    def runner(_prompt, _timeout, *, env):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "portal-saramin.json").write_text(
+            json.dumps(
+                {
+                    "status": "done",
+                    "login_verified": True,
+                    "query_verified": True,
+                    "result_count_verified": True,
+                    "pages_visited": 1,
+                    "last_page_reached": True,
+                    "opened_profiles": 0,
+                    "saved_receipts": 0,
+                    "profile_evidence": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return (
+            'FLEET_SEARCH_RECEIPT:{"channel_receipts":{"saramin":{}}}',
+            "",
+            0,
+        )
+
+    result = winpc_local_aisearch.run_local_aisearch(
+        winpc_local_aisearch.LocalAisearchRequest(
+            position_url=CLICKUP_URL,
+            channels=("saramin",),
+            job_id=218,
+        ),
+        artifact_root=tmp_path / "runs",
+        lock_path=tmp_path / "local.lock",
+        environ={"LOCALAPPDATA": r"C:\Users\Test\AppData\Local"},
+        portal_preparer=lambda channels, *, environ: {"status": "ready"},
+        runner=runner,
+        task_loader=lambda _url, *, environ: {
+            "id": "86ey90v4k",
+            "name": "Backend engineer",
+            "description": "Python backend",
+            "status": "open",
+            "source_url": CLICKUP_URL,
+        },
+        system_name="Windows",
+    )
+
+    receipt = json.loads((run_dir / "receipt.json").read_text(encoding="utf-8"))
+    assert result.status == "done"
+    assert receipt["receipt"]["position_id"] == "86ey90v4k"
+    assert set(receipt["receipt"]["channels"]) == {"saramin"}
 
 
 def test_dry_run_has_no_browser_login_agent_or_queue_side_effect(
