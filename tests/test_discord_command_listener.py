@@ -259,3 +259,32 @@ def test_main_requires_explicit_valid_machine(monkeypatch) -> None:
     monkeypatch.delenv("VALUEHIRE_MACHINE", raising=False)
     with pytest.raises(RuntimeError, match="VALUEHIRE_MACHINE"):
         dcl.main(queue=_FakeQueue())
+
+
+def test_main_normalizes_legacy_machine_at_external_boundary(monkeypatch) -> None:
+    from scripts import discord_command_listener as dcl
+
+    queue = _FakeQueue()
+    messages = [
+        {
+            "id": "765432109876543210",
+            "channel_id": dcl.DM_CHANNEL,
+            "author": {"id": dcl.OWNER_ID},
+            "content": "keep exact request",
+        },
+        {
+            "id": "765432109876543211",
+            "channel_id": dcl.DM_CHANNEL,
+            "author": {"id": dcl.OWNER_ID},
+            "content": "봇 정지",
+        },
+    ]
+    monkeypatch.setattr(dcl, "acquire_single_instance_lock", lambda *a: True)
+    monkeypatch.setattr(dcl, "_load_last", lambda: "765432109876543209")
+    monkeypatch.setattr(dcl, "_api", lambda *a, **k: messages)
+    monkeypatch.setattr(dcl, "_send", lambda _text: None)
+    monkeypatch.setattr(dcl, "_save_last", lambda _last: None)
+
+    dcl.main(queue=queue, machine="macbook_pro")
+
+    assert queue.payloads[0]["machine"] == "macbook"

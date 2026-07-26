@@ -359,6 +359,19 @@ def test_gateway_guard_checks_readiness_acquires_and_releases() -> None:
     assert TOKEN not in repr(queue.calls)
 
 
+@pytest.mark.parametrize("machine", ("macbook_pro", "server42", " winpc"))
+def test_gateway_guard_rejects_noncanonical_internal_machine(machine: str) -> None:
+    with pytest.raises(ValueError, match="machine"):
+        GatewayLeaseGuard(
+            _RuntimeQueue(),
+            token_fingerprint=TOKEN_FINGERPRINT,
+            bot_id=BOT,
+            hermes_bot_id=HERMES_BOT,
+            machine=machine,
+            pid=1234,
+        )
+
+
 def test_gateway_guard_never_acquires_when_worker_is_stale() -> None:
     queue = _RuntimeQueue(ready=False)
     guard = GatewayLeaseGuard(
@@ -469,6 +482,57 @@ def test_main_rejects_token_identity_disguised_by_different_client_id(monkeypatc
 
     with pytest.raises(SystemExit, match="identity"):
         gateway.main()
+
+
+def test_main_normalizes_legacy_worker_machine_before_internal_guard(
+    monkeypatch,
+) -> None:
+    from tools.multi_position_sourcing import discord_hr1
+
+    captured: dict[str, str] = {}
+
+    class Guard:
+        lease_id = "11111111-1111-4111-8111-111111111111"
+        generation = 1
+        readiness = {
+            "worker_machine": "macbook",
+            "worker_ready": True,
+            "worker_pid": 1,
+            "claude_ready": True,
+            "codex_ready": True,
+            "killswitch_engaged": False,
+        }
+
+        def __init__(self, _queue, **kwargs):
+            captured["machine"] = kwargs["machine"]
+
+        def start(self):
+            return self
+
+        def stop(self):
+            return None
+
+    class Client:
+        def run(self, _token: str) -> None:
+            return None
+
+        def stop_after_lease_loss(self, _exc: Exception) -> None:
+            return None
+
+    monkeypatch.setattr(discord_hr1, "GatewayLeaseGuard", Guard)
+    monkeypatch.setattr(
+        gateway, "_minimal_privilege_queue_factory", lambda: lambda: object()
+    )
+    monkeypatch.setattr(gateway, "_build_client", lambda **_kwargs: Client())
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", _bot_token(BOT))
+    monkeypatch.setenv("DISCORD_CLIENT_ID", BOT)
+    monkeypatch.setenv("HERMES_DISCORD_BOT_ID", HERMES_BOT)
+    monkeypatch.setenv("DISCORD_GATEWAY_WORKER_MACHINE", "macbook_pro")
+    monkeypatch.delenv("DISCORD_HR1_EVIDENCE_PATH", raising=False)
+
+    gateway.main()
+
+    assert captured["machine"] == "macbook"
 
 
 def test_main_records_safe_startup_block_reason(tmp_path: Path, monkeypatch) -> None:
