@@ -40,6 +40,8 @@ POLICY_ENTRYPOINTS = (
 SUPERSEDED_PROMPTS = (
     ROOT / "docs/prompts/hermes-login-gate-before-search-skills-2026-07-21.md",
     ROOT / "docs/prompts/linkedin-rps-login-session-fix-2026-07-18.md",
+    ROOT / "docs/engineering/linkedin-managed-autologin-goal-2026-07-26.md",
+    ROOT / "docs/engineering/login-policy-recement-goal-2026-07-08.md",
 )
 
 
@@ -107,6 +109,12 @@ def test_linkedin_machine_decision_table_is_complete_and_fail_closed() -> None:
         "apply_li_at_once_on_selected_machine_exact_existing_target"
     )
     assert decisions["zero_authenticated_machines"]["missing_exact_target"] == "HANDOFF"
+    assert (
+        decisions["zero_authenticated_machines"][
+            "exact_target_candidate_count_not_one"
+        ]
+        == "HANDOFF"
+    )
     assert decisions["zero_authenticated_machines"]["required_apps"] == [
         "APP30",
         "APP31",
@@ -118,6 +126,7 @@ def test_linkedin_machine_decision_table_is_complete_and_fail_closed() -> None:
     assert decisions["one_authenticated_machine"] == {
         "action": "reuse_authenticated_machine_and_exact_target",
         "authentication_mutations": 0,
+        "exact_target_candidate_count_not_one": "HANDOFF",
     }
     conflict = decisions["two_or_more_authenticated_machines"]
     assert conflict["action"] == "AUTH_CONFLICT"
@@ -214,6 +223,12 @@ def test_policy_supersedes_historical_prompts_without_new_hermes_runtime() -> No
             "historical_input_not_executable"
         ),
         "docs/prompts/linkedin-rps-login-session-fix-2026-07-18.md": (
+            "historical_input_not_executable"
+        ),
+        "docs/engineering/linkedin-managed-autologin-goal-2026-07-26.md": (
+            "historical_input_not_executable"
+        ),
+        "docs/engineering/login-policy-recement-goal-2026-07-08.md": (
             "historical_input_not_executable"
         ),
     }
