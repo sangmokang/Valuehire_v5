@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from .embed import Embedder, cosine_similarity, embed_text
+from .machine_identity import MachineId
 from .models import CapturedProfile, Position, PositionMatch, SegmentId, utc_now_iso
 from .reservoir_log import append_reservoir_log, make_reservoir_log_record, validate_reservoir_log_record
 from .scoring import score_profile_for_position
@@ -54,7 +55,7 @@ def match_jd_to_reservoir(
     top_k: int = 20,
     run_id: str,
     today: str,
-    machine: str = "",
+    machine: MachineId,
     log_root: object | None = None,
 ) -> MatchResult:
     """세그먼트 내 top-K 코사인 → scoring 2차 정렬. 결정론 + match 라인 로그.

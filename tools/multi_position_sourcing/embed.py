@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 from .dedup import canonical_profile_url
+from .machine_identity import MachineId
 from .models import CapturedProfile, utc_now_iso
 from .reservoir_log import (
     append_reservoir_log,
@@ -118,7 +119,7 @@ def ingest_profile_embedding(
     store: InMemoryEmbeddingStore,
     run_id: str,
     today: str,
-    machine: str = "",
+    machine: MachineId,
     segment_id: str = "",
     log_root: object | None = None,
 ) -> IngestResult:

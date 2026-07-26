@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from .machine_identity import MachineId
 from .models import utc_now_iso
 from .reservoir_log import (
     append_reservoir_log,
@@ -90,7 +91,7 @@ def score_purity(
     top_n: int = 20,
     run_id: str = "",
     today: str = "",
-    machine: str = "",
+    machine: MachineId,
     log_root: object | None = None,
 ) -> PurityReport:
     """블라인드 적합도 채점 → arm별 top-N 적합도≥threshold 비율 + winner. calibrate 라인 로그.
