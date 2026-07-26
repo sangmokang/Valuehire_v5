@@ -83,6 +83,19 @@ class SafeKeepaliveTarget:
 
 
 @dataclass(frozen=True)
+class BadgeReceipt:
+    agent: str
+    task: str
+    site: Site
+    job_id: str
+    target_suffix: str
+    badge_id: str = "vh-automation-badge"
+    verified: bool = True
+    pointer_events_none: bool = True
+    mutation_count: int = 1
+
+
+@dataclass(frozen=True)
 class LoginWindowLocator:
     """Non-secret locator shown once when AI_ATTACHED hands login to a human."""
 
@@ -99,6 +112,7 @@ class LoginWindowLocator:
     screenshot_size_bytes: int
     presentation_count: int = 1
     application_activated: bool = True
+    badge_receipt: BadgeReceipt | None = None
     _original_title: str = field(default="", repr=False, compare=False)
     _marker: str = field(default="", repr=False, compare=False)
     _document_loader_id: str = field(default="", repr=False, compare=False)
@@ -1110,6 +1124,8 @@ def present_exact_login_window_once(
     ref: BrowserTargetRef,
     *,
     agent: str,
+    task: str = "login",
+    job_id: str = "",
     mutation_gate: Callable[[], None],
     state: str = "AI_ATTACHED",
     episode_id: str = "default",
@@ -1188,7 +1204,9 @@ def present_exact_login_window_once(
         raise ValueError("auth episode id must have a safe non-empty form")
     presentation_key = (ref.site, ref.endpoint, ref.target_id, clean_episode)
     if getattr(tab, "_vh_human_auth_presentation_key", None) == presentation_key:
-        raise RuntimeError("exact login window was already presented for this auth episode")
+        raise RuntimeError(
+            "PRESENTATION_LIMIT_REACHED: exact login window was already presented"
+        )
 
     def require_same_target(phase: str) -> None:
         if (
@@ -1252,7 +1270,7 @@ def present_exact_login_window_once(
     )
     setattr(tab, "_vh_human_auth_cleanup_locator", provisional_locator)
     if not callable(marker_fn) or marker_fn(marker, expected_url=live_url) is not True:
-        raise RuntimeError("visible login-window marker could not be installed")
+        raise RuntimeError("BADGE_MISSING: visible badge could not be verified")
     # Bind cleanup to the document that actually received the badge. A reload
     # can land after the pre-dispatch loader proof but before Runtime.evaluate;
     # the next check must abort, while finally still removes our exact badge
@@ -1335,6 +1353,13 @@ def present_exact_login_window_once(
         screenshot_sha256=hashlib.sha256(png).hexdigest(),
         screenshot_size_bytes=len(png),
         application_activated=True,
+        badge_receipt=BadgeReceipt(
+            agent=re.sub(r"[^A-Za-z0-9_.-]+", "-", str(agent)).strip("-."),
+            task=re.sub(r"[^A-Za-z0-9_.-]+", "-", str(task)).strip("-.")[:64],
+            site=ref.site,
+            job_id=re.sub(r"[^A-Za-z0-9_.-]+", "-", str(job_id)).strip("-.")[:64],
+            target_suffix=suffix,
+        ),
         _original_title=original_title,
         _marker=marker,
         _document_loader_id=document_loader_id,
@@ -1476,7 +1501,7 @@ def _attach_exact_ref(target: Mapping[str, Any], *, badge: bool = False) -> Any:
 
 def _public_locator_payload(locator: LoginWindowLocator) -> dict[str, Any]:
     """Serialize only the intentional non-secret locator surface."""
-    return {
+    payload = {
         "event": "LOGIN_WINDOW_READY",
         "agent": locator.agent,
         "site": locator.site,
@@ -1492,6 +1517,20 @@ def _public_locator_payload(locator: LoginWindowLocator) -> dict[str, Any]:
         "presentation_count": locator.presentation_count,
         "application_activated": locator.application_activated,
     }
+    if locator.badge_receipt is not None:
+        receipt = locator.badge_receipt
+        payload["badge_receipt"] = {
+            "agent": receipt.agent,
+            "task": receipt.task,
+            "site": receipt.site,
+            "job_id": receipt.job_id,
+            "target_suffix": receipt.target_suffix,
+            "badge_id": receipt.badge_id,
+            "verified": receipt.verified,
+            "pointer_events_none": receipt.pointer_events_none,
+            "mutation_count": receipt.mutation_count,
+        }
+    return payload
 
 
 def _disconnect_websocket_only(tab: Any | None) -> bool:
@@ -1578,6 +1617,8 @@ def run_human_auth_episode(
     site: Site,
     *,
     agent: str,
+    task: str = "login",
+    job_id: str = "",
     target_id: str | None = None,
     stop_requested: Callable[[], bool] | None = None,
     owner_snapshot: Callable[[], Any] | None = None,
@@ -1752,13 +1793,14 @@ def run_human_auth_episode(
 
         episode_id = secrets.token_hex(16)
         try:
-            locator = presenter(
-                tab,
-                ref,
-                agent=clean_agent,
-                mutation_gate=presentation_mutation_gate,
-                episode_id=episode_id,
-            )
+            presentation_kwargs: dict[str, Any] = {
+                "agent": clean_agent,
+                "mutation_gate": presentation_mutation_gate,
+                "episode_id": episode_id,
+            }
+            if _presenter is None:
+                presentation_kwargs.update({"task": task, "job_id": job_id})
+            locator = presenter(tab, ref, **presentation_kwargs)
         except _HumanAuthStopRequested:
             return {"status": "human_auth_stopped", "site": site}
         except Exception as exc:
@@ -2384,6 +2426,8 @@ def main(argv: list[str] | None = None) -> int:
     auth = commands.add_parser("human-auth", help="present one exact window and wait read-only")
     auth.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     auth.add_argument("--agent", required=True)
+    auth.add_argument("--task", default="login")
+    auth.add_argument("--job-id", default="")
     auth.add_argument(
         "--target-id",
         default=None,
@@ -2445,6 +2489,8 @@ def main(argv: list[str] | None = None) -> int:
         result = run_human_auth_episode(
             site,
             agent=args.agent,
+            task=args.task,
+            job_id=args.job_id,
             target_id=args.target_id,
             locator_sink=lambda payload: print(json.dumps(payload, ensure_ascii=False)),
         )

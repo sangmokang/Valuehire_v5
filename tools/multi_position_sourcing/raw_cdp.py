@@ -312,8 +312,9 @@ def _badge_object_identity_function(label: str) -> str:
 
 def _badge_js(label: str, *, expected_url: str | None = None) -> str:
     """상단중앙 고정 배지 주입 JS. pointer-events:none 로 사장님 클릭을 막지 않는다.
-    idempotent: 기존 배지를 먼저 제거해 중복이 쌓이지 않는다."""
+    idempotent: 같은 custom element는 갱신하고, 잘못된 tag만 한 번 교체한다."""
     text = json.dumps(label, ensure_ascii=False)
+    tag = json.dumps(_badge_tag(label))
     url_guard = ""
     if expected_url is not None:
         url_guard = (
@@ -325,9 +326,8 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         + url_guard
         + f"var id={json.dumps(_BADGE_ID)};"
         "var e=document.getElementById(id);"
-        "if(e){e.remove();}"
-        f"e=document.createElement({json.dumps(_badge_tag(label))});"
-        "e.id=id;"
+        f"if(e&&e.localName!=={tag}){{e.remove();e=null;}}"
+        f"if(!e){{e=document.createElement({tag});e.id=id;}}"
         f"e.textContent={text};"
         f"e.setAttribute('aria-label',{text});"
         f"e.setAttribute('title',{text});"
@@ -346,7 +346,7 @@ def _badge_js(label: str, *, expected_url: str | None = None) -> str:
         "['mask-image','none'],['mix-blend-mode','normal'],"
         "['backface-visibility','visible'],['contain','none']].forEach(function(p){"
         "e.style.setProperty(p[0],p[1],'important');});"
-        "(document.body||document.documentElement).appendChild(e);"
+        "if(!e.isConnected){(document.body||document.documentElement).appendChild(e);}"
         + _badge_identity_js("e", label, "e.remove();return null;")
         + _badge_visibility_js("e", "e.remove();return null;")
         + "return id;})()"
