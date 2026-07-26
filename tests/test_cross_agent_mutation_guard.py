@@ -60,6 +60,8 @@ def _run(*, leases=None, snaps=None, token="winner", machine="macmini", **change
         now=lambda: NOW,
         sleep=lambda seconds: None,
         machine=machine,
+        owner_pid=100,
+        owner_job="job-7",
         request_id=changes.get("request_id", "req-7"),
         delegated_for_request_id=changes.get("delegated_for_request_id"),
     )
@@ -78,6 +80,44 @@ def test_two_agent_race_only_token_owner_mutates_once():
     assert loser["decision"]["reason"] == "LEASE_CONFLICT"
     assert loser["mutation_count"] == 0
     assert loser_mutations == []
+
+
+def test_two_threads_race_and_loser_mutation_count_stays_zero():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Lock
+
+    mutations = []
+    mutex = Lock()
+
+    def agent(token):
+        rows = iter([_lease("winner"), _lease("winner")])
+        snaps = iter([_snap(), _snap(idle=62)])
+
+        def command():
+            with mutex:
+                mutations.append(token)
+
+        return guarded_mutation(
+            lease_key="login:macmini:linkedin_rps:account-hash",
+            expected_token=token,
+            local_lock=LocalLock(),
+            central_lease_reader=lambda _key: next(rows),
+            owner_snapshot=lambda: next(snaps),
+            command=command,
+            now=lambda: NOW,
+            sleep=lambda _seconds: None,
+            machine="macmini",
+            owner_pid=100,
+            owner_job="job-7",
+            request_id="req-7",
+            delegated_for_request_id=None,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winner, loser = pool.map(agent, ("winner", "loser"))
+    assert winner["mutation_count"] == 1
+    assert loser["mutation_count"] == 0
+    assert mutations == ["winner"]
 
 
 def test_token_swap_and_second_idle_deterioration_block_before_command():
@@ -109,6 +149,8 @@ def test_detection_failure_is_owner_activity_unknown_fail_closed():
         now=lambda: NOW,
         sleep=lambda _seconds: None,
         machine="macmini",
+        owner_pid=100,
+        owner_job="job-7",
         request_id="req-7",
         delegated_for_request_id=None,
     )
@@ -140,6 +182,27 @@ def test_central_ttl_and_heartbeat_fail_closed(changes, reason):
     assert mutations == []
 
 
+def test_non_utc_guard_clock_fails_closed():
+    mutations = []
+    result = guarded_mutation(
+        lease_key="login:macmini:linkedin_rps:account-hash",
+        expected_token="winner",
+        local_lock=LocalLock(),
+        central_lease_reader=lambda _key: _lease(),
+        owner_snapshot=lambda: _snap(),
+        command=lambda: mutations.append(1),
+        now=lambda: datetime(2026, 7, 26, 3, 0),
+        sleep=lambda _seconds: None,
+        machine="macmini",
+        owner_pid=100,
+        owner_job="job-7",
+        request_id="req-7",
+        delegated_for_request_id=None,
+    )
+    assert result["decision"]["reason"] == "LEASE_CONFLICT"
+    assert mutations == []
+
+
 def test_winpc_requires_exact_explicit_delegation_window():
     blocked, mutations = _run(machine="winpc", delegated_for_request_id="old")
     assert blocked["decision"]["reason"] == "LEASE_CONFLICT"
@@ -160,3 +223,19 @@ def test_existing_local_lock_is_atomic_and_has_no_stale_delete_path():
     assert "FileExistsError" in source
     for banned in ("rmtree", "stale", "unlink"):
         assert banned not in source
+
+
+def test_existing_session_guard_uses_fresh_gate_before_mutation_surfaces():
+    import inspect
+    from tools.multi_position_sourcing import session_guard
+
+    source = inspect.getsource(session_guard)
+    assert source.count("mutation_gate()") >= 10
+    keepalive = inspect.getsource(session_guard.execute_keepalive_roundtrip)
+    assert keepalive.index("mutation_gate()") < keepalive.index("click =")
+    assert keepalive.rindex("mutation_gate()") < keepalive.index(
+        'tab.send("Page.navigateToHistoryEntry"'
+    )
+    presentation = inspect.getsource(session_guard.present_exact_login_window_once)
+    assert 'mutation_gate()\n    require_same_target("focus")' in presentation
+    assert 'mutation_gate()\n    require_same_target("application activation")' in presentation
