@@ -237,7 +237,7 @@ def test_dispatch_wrong_command_returns_none():
         authorized_users=_users(), config=_config(), queue=q, owner_role_ids=(OWNER_ROLE,)) is None
 
 
-# ── 이슈 D(2026-07-15 승인) — skill=url 머신 미지정 → 로그인 머신 라우팅 ──
+# ── APP 01/17 경계 — skill=url 머신 미지정은 추측 없이 거부 ──
 
 def _routing_queue(rows=None, raise_rpc=False):
     q = FakeQueue()
@@ -251,29 +251,31 @@ def _routing_queue(rows=None, raise_rpc=False):
     return q
 
 
-def test_url_job_without_machine_routes_to_logged_in_machine():
-    import time
-    now = int(time.time())
-    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
+def test_url_job_without_machine_waits_for_proven_route(monkeypatch):
+    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
+    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": 9_999_999_999,
                               "linkedin_rps_logged_in": True}])
     result = dispatch_fleet_command(
         _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
         authorized_users=_users(), config=_config(), queue=q)
-    assert result["action"] == "enqueued"
-    assert q.enqueued[0]["machine"] == "winpc"
-    assert q.linkedin_calls, "라우팅 조회가 실제로 호출돼야 함"
+    assert result["action"] == "error"
+    assert q.enqueued == []
+    assert not q.linkedin_calls
 
 
-def test_url_job_routing_rpc_failure_falls_back_to_macmini():
+def test_url_job_never_queries_heartbeat_or_falls_back(monkeypatch):
+    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
     q = _routing_queue(raise_rpc=True)
     result = dispatch_fleet_command(
         _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
         authorized_users=_users(), config=_config(), queue=q)
-    assert result["action"] == "enqueued"
-    assert q.enqueued[0]["machine"] == "macmini"
+    assert result["action"] == "error"
+    assert q.enqueued == []
+    assert not q.linkedin_calls
 
 
-def test_url_job_explicit_machine_not_overridden():
+def test_url_job_explicit_machine_not_overridden(monkeypatch):
+    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
     import time
     now = int(time.time())
     q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
@@ -287,7 +289,8 @@ def test_url_job_explicit_machine_not_overridden():
     assert not q.linkedin_calls, "명시 머신이면 라우팅 조회 안 함"
 
 
-def test_non_url_skill_keeps_existing_default():
+def test_non_url_skill_keeps_existing_default(monkeypatch):
+    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
     q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": 9_999_999_999,
                               "linkedin_rps_logged_in": True}])
     result = dispatch_fleet_command(
@@ -298,20 +301,18 @@ def test_non_url_skill_keeps_existing_default():
     assert not q.linkedin_calls
 
 
-def test_url_jobs_share_single_linkedin_seat_lock():
-    """V1(Codex) blocker 수용 — 라우팅으로 머신이 갈라져도 LinkedIn 좌석은 1개다.
-    skill=url 잡은 머신 무관 공유 account_key 로 글로벌 락이 걸려야 동시 2머신 실행이 막힌다."""
-    import time
-    now = int(time.time())
-    q1 = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
-                               "linkedin_rps_logged_in": True}])
+def test_url_jobs_share_single_linkedin_seat_lock(monkeypatch):
+    """APP 17이 증명해 명시한 머신이 달라도 LinkedIn 좌석 락은 하나다."""
+    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
+    q1 = _routing_queue()
     dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
+        _inv("fleet-run", options={"skill": "url", "machine": "winpc",
+                                   "url": "https://career.wrtn.io/ko/o/1"}),
         authorized_users=_users(), config=_config(), queue=q1)
-    q2 = _routing_queue(rows=[{"machine": "macmini", "beat_at_epoch": now - 5,
-                               "linkedin_rps_logged_in": True}])
+    q2 = _routing_queue()
     dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/2"}),
+        _inv("fleet-run", options={"skill": "url", "machine": "macmini",
+                                   "url": "https://career.wrtn.io/ko/o/2"}),
         authorized_users=_users(), config=_config(), queue=q2)
     k1, k2 = q1.enqueued[0]["account_key"], q2.enqueued[0]["account_key"]
     assert q1.enqueued[0]["machine"] == "winpc"
@@ -320,7 +321,8 @@ def test_url_jobs_share_single_linkedin_seat_lock():
     assert "linkedin" in k1
 
 
-def test_non_url_jobs_keep_machine_bound_account_key():
+def test_non_url_jobs_keep_machine_bound_account_key(monkeypatch):
+    monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
     q = _routing_queue()
     dispatch_fleet_command(
         _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}),
