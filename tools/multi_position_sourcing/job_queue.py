@@ -552,12 +552,14 @@ class JobQueueClient:
         # int 0 같은 거짓값도 텍스트로는 "0"(non-empty)이라 인덱스 대상이므로 회수해야 한다(V1).
         idem_raw = (revalidated.get("params") or {}).get("idempotency_key")
         idem = "" if idem_raw is None else str(idem_raw)
+        self.last_enqueue_existing = False
         try:
             rows = self._call("POST", "/jobs", revalidated)
         except urllib.error.HTTPError as exc:
             if exc.code == 409 and idem:
                 existing = self.job_by_idempotency_key(idem)
                 if existing is not None:
+                    self.last_enqueue_existing = True
                     return existing
             raise JobQueueConflictError(f"enqueue 실패(HTTP {exc.code})") from None
         return rows[0] if isinstance(rows, list) and rows else rows
