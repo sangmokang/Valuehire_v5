@@ -1,23 +1,23 @@
 ---
 name: login
-description: "사람인·잡코리아·LinkedIn 로그인 준비, 기존 CDP 브라우저 재사용, 사람 개입 보호, 창·탭 증식 방지, 로그인 세션 보존·수명 측정·안전한 유지가 필요한 모든 작업에서 사용한다. Claude, Codex, Hermes 공용."
+description: "사람인·잡코리아·LinkedIn 로그인 준비, 기존 CDP 브라우저 재사용, 사람 개입 보호, 창·탭 증식 방지, 로그인 세션 보존·수명 측정·안전한 유지가 필요한 모든 작업에서 사용한다. Claude와 Codex 공용."
 ---
 
 # Login — 3사 브라우저 로그인·세션 보존 표준
 
 이 스킬은 macOS와 명시적으로 위임된 WinPC에서 사람인, 잡코리아, LinkedIn Recruiter/RPS를 여는 모든 작업의 선행 절차다.
-Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저 이 스킬을 적용한다. WinPC는 현재 턴에 사장님이 실행 기기를 명시한 경우에만 기존 로그인 세션을 사용하며 idle 기반 자동 재개를 하지 않는다. 그 밖의 운영체제나 위임 없는 WinPC 실행은 `HUMAN_ACTIVE`로 중단하고 macOS와 같은 안전성을 주장하지 않는다.
+Claude와 Codex는 검색·프로필 열람·포지션 등록보다 먼저 이 스킬을 적용한다. WinPC는 현재 턴에 사장님이 실행 기기를 명시한 경우에만 기존 로그인 세션을 사용하며 idle 기반 자동 재개를 하지 않는다. 그 밖의 운영체제나 위임 없는 WinPC 실행은 `HUMAN_ACTIVE`로 중단하고 macOS와 같은 안전성을 주장하지 않는다.
 
 정본 우선순위(앞의 문서가 뒤의 문서보다 우선한다):
-- 기계 판독 안전계약: `skills/login/browser-control-contract.json`
+- 로그인 정책 정본: `docs/sot/26-portal-login-spec.json` (`26-portal-login-spec@1.5.0`)
+- 기계 판독 안전계약: `skills/login/browser-control-contract.json` (정책 필드는 위 정본과 동일해야 함)
 - 사람용 실행 프롬프트: 이 `SKILL.md`
-- 로그인 판정과 차단 신호: `docs/sot/26-portal-login-spec.json`
 - 참고만 하는 과거 기록: `docs/ai-search/portal-login-live-search-runbook-2026-06-17.md`
 - 관리 브라우저 프로세스·endpoint 조회: `scripts/portal_browsers.sh status|cdp`
 - 기존 탭 단일 연결·표시: `tools/multi_position_sourcing/raw_cdp.py`
 - 사람 활동 감지: `tools/multi_position_sourcing/owner_activity.py`
 - 검색 전 실행 프롬프트: `docs/prompts/login-search-execution-contract.md`
-- 금지 경로 강제 Hook: `.claude/hooks/guards/login.py`
+- 레거시·불완전 보호 Hook(정책 권위 아님): `.claude/hooks/guards/login.py`
 
 과거 기록이나 기존 코드가 이 스킬/안전계약과 충돌하면 과거 기록을 따르지 않는다.
 
@@ -32,9 +32,17 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 5. CDP 연결 해제와 브라우저 종료를 구분한다. 작업 종료 시 WebSocket만 끊는다. `context.close()`, `browser.close()`, `page.close()`, Chrome kill, `scripts/portal_browsers.sh stop|restart`를 호출하지 않는다.
 6. 로그인 흐름은 창과 탭을 생성하지 않는다. 기존 브라우저의 정확한 CDP target만 재사용하며 새 창 0개, 새 탭 0개다. 대상 탭이 없으면 임의 페이지를 만들지 말고 정확한 브라우저·프로필·endpoint 정보와 함께 중단한다.
 7. 보안 챌린지는 자동 우회하지 않는다. captcha, 2FA, checkpoint, 이상 접근은 즉시 사람에게 넘기고 같은 제출을 반복하지 않는다. LinkedIn 세션 충돌·multiple-sign-in은 사람 인증 인계가 아닌 terminal `AUTH_CONFLICT`로 즉시 중단한다.
-8. 비밀번호, 쿠키, 토큰, 세션 저장값은 출력·복사·문서화하지 않는다. 저장 자격증명 입력은 검증된 로그인 실행기가 맡는다.
+8. 비밀번호, 쿠키, 토큰, 세션 저장값은 출력·복사·문서화하지 않는다. 사람인·잡코리아는 저장된 아이디·비밀번호를 정확한 기존 탭에 최대 1회 제출한다. LinkedIn은 아이디·비밀번호 제출을 금지하고 `LINKEDIN_LI_AT` 참조만 APP 30/31 제공자·적용기가 소비한다. 비밀 원문과 파생값은 모델·shell 인자·stdout·stderr·로그·영수증·산출물에 넣지 않는다.
 9. AI가 붙은 탭에는 `vh-automation-badge`를 표시한다. 표시 실패 시 몰래 조작하지 말고 AI_ATTACHED 진입을 보류한다.
 10. 로그인 성공은 URL 추측이 아니라 사이트별 로그인 마커로 증명한다. 증명 전에는 검색을 시작하지 않는다.
+
+### 사이트별 허용·금지·인계 표
+
+| 사이트 | 허용 인증 | 금지 행동 | 안전한 종결 |
+|---|---|---|---|
+| 사람인 | 저장 아이디·비밀번호를 정확한 기존 탭에 최대 1회 제출 | 새 탭·반복 제출·챌린지 우회 | 챌린지는 `HUMAN_AUTH`, 정확한 탭이 없으면 `HANDOFF` |
+| 잡코리아 | 저장 아이디·비밀번호를 정확한 기존 탭에 최대 1회 제출 | 새 탭·반복 제출·챌린지 우회 | 챌린지는 `HUMAN_AUTH`, 정확한 탭이 없으면 `HANDOFF` |
+| LinkedIn RPS | 인증 기기 1개면 인증 조작 0회 재사용. 0개로 증명됐고 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리킬 때만 APP 30/31의 `LINKEDIN_LI_AT` 적용을 최대 1회 허용 | 아이디·비밀번호 제출, 새 탭, 다른 기기 자동 로그아웃, Continue/Confirm, 신뢰도 선택 | 기기 수 미증명은 인증 조작 0회 `HANDOFF`, 2개 이상은 terminal `AUTH_CONFLICT` |
 
 ### LinkedIn RPS 단일 세션 보존 (`SESSION_CONTEXT_PRESERVATION`, #156)
 
@@ -43,6 +51,7 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
   다른 프로필의 RPS 세션 신호가 있으면 `AUTH_CONFLICT`로 중단하며 두 번째 프로필에서 로그인하지 않는다.
 - 정확한 기존 target에서 로그인 마커가 이미 참이면 로그인 관련 mutation은 **0회**다. 로그인 URL 이동,
   자격증명 제출, 새 브라우저·새 창·새 탭 생성, 다른 프로필 전환을 하지 않고 같은 target에서 원래 작업만 재개한다.
+- 봉인된 함대 증거가 인증된 LinkedIn 기기 0개를 증명하면 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리키고 정확 후보가 1개일 때만 APP 30/31을 허용한다. 기기 수 미증명·정확 후보 0개/복수·APP 30/31 미준비는 인증 조작 0회 `HANDOFF`다. 정확히 1개면 그 기기와 유일한 target을 인증 조작 0회로 재사용한다. 2개 이상이면 신뢰도나 표 순서로 고르지 않고 terminal `AUTH_CONFLICT`다. 다른 기기 자동 로그아웃·Continue/Confirm은 금지다.
 - `enterprise-authentication/sessions`, `multiple sign-ins`, `Only one session`은 `AUTH_LOST`가 아니라
   terminal `AUTH_CONFLICT`다. 자동 로그인·Continue/Confirm 클릭·세션 종료 선택·reload/navigation retry를
   하지 않는다. 사람이 한 번 해결한 같은 실행에서 재발해도 두 번째 로그인 인계를 만들지 않고 영구 중단한다.
@@ -57,11 +66,11 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 |---|---|---|---|
 | `DISCOVER` | 브라우저·CDP·탭·프로필 조사 중 | 프로세스/endpoint/`/json/list` 읽기 | 대상 탭과 사람 활동 판정 완료 |
 | `HUMAN_ACTIVE` | 사장님이 3사 포털 화면을 만지는 중(크롬 활성 탭이 3사 도메인 + 최근 입력) | 무조작, 상태 읽기, 대기 | OS idle 60초 이상 또는 명시적 양보. 단 로그인 개입 중이면 `HUMAN_AUTH` 우선 |
-| `AI_ATTACHED` | AI가 기존 탭 하나에 연결하고 배지 표시 | 해당 탭만 조작, 사람 인증 인계 시 정확한 창 1회 표면화 | 로그인 필요→자동 로그인, 챌린지→`HUMAN_AUTH`, 세션충돌→`AUTH_CONFLICT`, 성공→`AUTHENTICATED` |
+| `AI_ATTACHED` | AI가 기존 탭 하나에 연결하고 배지 표시 | 해당 탭만 조작, 사람 인증 인계 시 정확한 창 1회 표면화 | 사람인·잡코리아 로그인 필요→저장 자격증명 최대 1회, LinkedIn→0·1·2+ 결정표, 챌린지→`HUMAN_AUTH`, 성공→`AUTHENTICATED` |
 | `HUMAN_AUTH` | 사람이 로그인/보안 챌린지 처리 중 | 무조작, 5초 이상 간격의 읽기 전용 로그인 마커 확인 | 로그인 마커 확인 + 마지막 키 입력/마우스 활동 후 15초 조용함 |
 | `AUTHENTICATED` | 사이트별 로그인 증명 완료 | 증거 기록, 원래 작업 시작 | 사람인·잡코리아 15분/링크드인 30분 경과→`KEEPALIVE`, 로그아웃 신호→`AUTH_LOST` |
 | `KEEPALIVE` | 세션 수명 연장을 위한 안전 확인 | 검증된 읽기 전용 링크 1회 클릭 후 동일 탭의 이전 history entry로 Browser Back | 원래 URL·로그인 마커 재확인→`AUTHENTICATED`, 실패→`AUTH_LOST` |
-| `AUTH_LOST` | 로그인 마커 소실/로그인 화면 전환 | 자동 로그인 1회 또는 사람 인계 | 성공→`AUTHENTICATED`, 챌린지→`HUMAN_AUTH` |
+| `AUTH_LOST` | 로그인 마커 소실/로그인 화면 전환 | 사람인·잡코리아 저장 자격증명 최대 1회; LinkedIn은 0·1·2+ 결정표 | 성공→`AUTHENTICATED`, 챌린지→`HUMAN_AUTH`, LinkedIn 복수 인증 기기→`AUTH_CONFLICT` |
 | `AUTH_CONFLICT` | LinkedIn 단일좌석 세션 충돌 | 읽기 전용 증거 기록 후 영구 중단 | terminal; 자동 로그인·확인 클릭·재표면화·재시도 0회 |
 | `HANDOFF` | 사람에게 안전하게 넘김 | guard 허용 시 title/배지 복원, 아니면 cleanup pending; CDP 연결만 해제 | 종료. 브라우저·창·탭·프로필은 유지 |
 
@@ -70,7 +79,7 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 - 자동 작업 전 `tools.multi_position_sourcing.owner_activity.detect_owner_activity_snapshot()`의 OS idle 신호를 확인한다.
 - (2026-07-20 사장님 지시) 사장님 개입은 **크롬 활성 탭이 3사(사람인·잡코리아·링크드인) 도메인일 때만** 인정한다 — 유튜브 등 다른 화면 사용은 개입이 아니므로 양보하지 않는다. 3사 화면에서 최근 입력으로 idle이 60초 미만이면 `HUMAN_ACTIVE`다. 판정에는 앞창 앱 이름·OS idle·활성 탭 **호스트(도메인)** 만 읽는다 — 페이지 내용·전체 URL·키입력은 보지도 기록하지도 않는다.
 - 감지 실패·권한 부족·값 없음은 fail-closed 한다(단 탭 호스트 판독 실패는 idle 60초 유계 대기 — 무기한 아님).
-- 일반 작업은 60초 idle 후 자동 재개할 수 있다(로그인 우선순위 최상 — 3사 화면을 만지던 중이라도 60초 뒤 자동 로그인). 그러나 AI가 보안 챌린지를 사람에게 넘긴 `HUMAN_AUTH` 상태는 임의 시간초과로 닫거나 재개하지 않는다.
+- 일반 사람 활동으로 멈춘 작업은 60초 idle 후 재개할 수 있다. 그러나 captcha·2FA·checkpoint를 넘긴 `HUMAN_AUTH`는 양성 로그인 마커와 15초 quiet가 모두 확인되기 전 재개하지 않고, LinkedIn `AUTH_CONFLICT`는 시간 경과로 재개하지 않는다.
 - `HUMAN_AUTH`에서 로그인 마커가 나타나도 즉시 클릭하지 않는다. 마지막 사람 활동 뒤 최소 15초 조용함을 확인한 후 `AUTHENTICATED`로 전이한다.
 - 대기 중에는 같은 창을 앞으로 가져오지 않는다. 챌린지를 처음 사람에게 넘기기 직전 `AI_ATTACHED`에서만 정확히 해석된 창을 한 번 보여주고, `HUMAN_AUTH` 진입 후 focus/focus_again은 0회다.
 
@@ -85,9 +94,9 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 5. 스크린샷이 필요하면 전체 화면이 아니라 `screencapture -x -l <CGWindowID>`로 그 창만 캡처한다. 다른 PID의 창 제목은 출력하거나 캡처하지 않는다. 0700 임시 디렉터리와 0600 PNG 삭제가 실패하면 성공으로 숨기지 않고 fail-closed 한다.
 6. `HUMAN_AUTH` 진입 후에는 5초 이상 간격으로 fresh 로그인 마커와 OS idle만 읽는다. 시간제한은 없으며, 성공 마커, `owner_activity_detected=false`, 마지막 사람 입력 후 15초 조용함이 모두 성립해야 재개한다.
 
-### 세 에이전트 공용 점유권
+### 두 에이전트 공용 점유권
 
-Claude, Codex, Hermes가 동시에 같은 사이트를 다루지 못하게 `DISCOVER`보다 먼저 사이트별 점유권을 잡는다.
+Claude와 Codex가 동시에 같은 사이트를 다루지 못하게 `DISCOVER`보다 먼저 사이트별 점유권을 잡는다.
 
 - 경로: `~/.valuehire/browser_locks/login-<site>.lock`
 - 획득: 원자적 디렉터리 생성(`mkdir`)이 성공한 한 실행만 소유자다. 소유자 토큰과 PID를 내부 파일에 기록한다.
@@ -142,7 +151,7 @@ Claude, Codex, Hermes가 동시에 같은 사이트를 다루지 못하게 `DISC
 AI가 조작권을 얻은 대상 탭 하나에만 배지를 붙인다.
 
 ```bash
-export VH_BUSY_AGENT="Claude"   # Codex 또는 Hermes로 실제 실행 주체를 기록
+export VH_BUSY_AGENT="Claude"   # 또는 Codex
 export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 ```
 
@@ -159,9 +168,9 @@ export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 
 1. 세 사이트의 기존 탭과 로그인 마커를 읽기 전용으로 확인한다.
 2. 로그인된 채널은 그대로 보존하고 다시 로그인하지 않는다.
-3. 로그아웃 채널의 현재 target에 검증된 로그인 폼이 있으면 그대로 사용한다. 특히 LinkedIn `/uas/login-cap`에 username/password 필드가 모두 있으면 깨진 `/uas/login`으로 강제 이동하지 않는다. 현재 폼이 없을 때만 동일 target에서 공식 로그인 화면으로 1회 이동하며 새 page/context/browser를 만들지 않는다.
-4. 저장 자격증명은 공용 macOS Keychain 서비스 `valuehire.portal_credentials`에서 실행 프로세스 안으로만 읽고 동일 target의 폼에 1회 제출한다. `.env.local`은 Keychain 초기 적재용이며, 실행 때 shell 인자로 자격증명을 다시 주입하지 않는다. 비밀값을 stdout, shell 인자, 산출물, 모델 대화에 넣지 않는다.
-5. 제출 직후 fresh DOM과 URL을 읽어 보안 챌린지를 먼저 판정한다. captcha/2FA/checkpoint/이상 접근이면 즉시 `HUMAN_AUTH`로 바꾸고 제출·클릭을 멈춘다. LinkedIn 세션 충돌이면 창을 표면화하지 않고 terminal `AUTH_CONFLICT`로 중단한다.
+3. 로그아웃한 사람인·잡코리아는 정확한 기존 target의 검증된 로그인 폼만 사용한다. LinkedIn `/uas/login-cap` 폼은 읽기 전용 상태 증거일 뿐 아이디·비밀번호를 제출하지 않으며 공식 로그인 URL로 이동하지 않는다.
+4. 사람인·잡코리아 저장 자격증명은 실행 프로세스 안에서만 읽고 동일 target의 폼에 최대 1회 제출한다. LinkedIn은 인증 기기 수가 0개로 증명되고 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리킬 때만, APP 30 제공자가 `LINKEDIN_LI_AT` 참조를 모델 비노출 방식으로 제공하고 APP 31 적용기가 그 기기의 정확한 기존 target에 최대 1회 적용한다. APP 30/31이 준비되지 않았거나 기기 수가 증명되지 않으면 인증 조작 0회 `HANDOFF`한다.
+5. 인증 조작 직후 fresh DOM과 URL을 읽어 보안 챌린지를 먼저 판정한다. captcha/2FA/checkpoint/이상 접근이면 즉시 `HUMAN_AUTH`로 바꾸고 추가 조작을 멈춘다. LinkedIn 인증 기기가 2개 이상이거나 세션 충돌 화면이면 terminal `AUTH_CONFLICT`로 중단한다. 다른 기기 자동 로그아웃 금지다.
 6. 챌린지를 한 번 표면화한 뒤 `HUMAN_AUTH`로 진입한다. `HUMAN_AUTH` 중 navigate/reload/back/click/type/submit/popup-close/close/focus/new-page는 금지다. 현재 URL·fresh 로그인 마커·OS idle을 읽는 것 외에는 하지 않는다.
 7. 사람이 해결할 때까지 시간제한 없이 5초 이상 간격으로 읽기 폴링만 한다. 성공 마커와 OS idle 15초를 모두 확인한 뒤 재개한다.
 
@@ -177,20 +186,20 @@ export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 - 사람 개입 대기시간 무제한; 외부 중단 시에도 WebSocket만 해제
 - 모든 사람 안내를 쉬운 한국어로 표시
 
-이 조건을 충족하는 자동 로그인 어댑터가 현재 실행환경에서 확인되지 않으면 위험한 과거 실행기로 대체하지 않는다. 기존 세션을 보존하고 동일 탭을 정식 login session guard의 `HUMAN_AUTH`로 넘긴다. 레거시 사람 대기 함수가 `human_auth_runner_required`를 반환하면 이는 중단 신호가 아니라 정확한 target/window 식별을 갖춘 정식 러너로 전환하라는 fail-closed 신호다. “자동 로그인을 했다”고 거짓 보고하지 않는다.
+이 조건을 충족하는 자동 로그인 어댑터가 현재 실행환경에서 확인되지 않으면 위험한 과거 실행기로 대체하지 않는다. 기존 세션을 보존하고 `HANDOFF`한다. 특히 LinkedIn APP 30/31이 준비되지 않은 상태를 `HUMAN_AUTH`로 바꿔 아이디·비밀번호 로그인을 유도하지 않는다. 레거시 사람 대기 함수가 `human_auth_runner_required`를 반환해도 실제 captcha·2FA·checkpoint가 양성 확인되지 않았다면 `HANDOFF`다. “자동 로그인을 했다”고 거짓 보고하지 않는다.
 
 ### 정식 session guard 실행기
 
-자동 로그인과 사람 인증 인계는 legacy login 함수나 즉석 CDP 스크립트가 아니라 다음 정식 진입점으로 실행한다. 두 명령 모두 `--agent`만 실제 실행 주체로 바꾸며 Claude·Codex·Hermes가 같은 코드와 Keychain을 쓴다. 실행기는 site lease를 먼저 획득하고, 위 절차로 찾은 기존 target 하나에만 attach한다. 정확한 target이 여러 개면 `--target-id`로 하나를 명시하고, 없으면 만들지 않는다.
+사람인·잡코리아 자동 로그인과 실제 captcha·2FA·checkpoint 양성 확인 뒤의 사람 인증 인계는 legacy login 함수나 즉석 CDP 스크립트가 아니라 다음 정식 진입점으로 실행한다. 실행기는 site lease를 먼저 획득하고 위 절차로 찾은 기존 target 하나에만 attach한다. 현재 `session_guard auto-login --site linkedin_rps`는 APP 30/31 경로가 아니므로 호출하지 않는다. `session_guard human-auth --site linkedin_rps`도 실제 captcha·2FA·checkpoint가 양성 확인된 경우에만 허용하며, 일반 로그아웃이나 APP 30/31 미구현 상태에는 호출하지 않는다.
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard auto-login \
-  --site linkedin_rps \
+  --site saramin \
   --agent Codex \
   --target-id '<existing-target-id>'
 ```
 
-`auto-login`은 로그인된 target이면 조작 0회, 기존 `login-cap` 폼이면 그 폼에서만 자격증명 1회 제출, captcha/2FA/checkpoint면 제출 0회 `HUMAN_AUTH`, 멀티세션이면 `AUTH_CONFLICT`, 연결 오류·필드 실종이면 `SELECTOR_DRIFT`로 종료한다. 같은 실패를 원인 변경 없이 반복하지 않는다. 같은 포트를 선언한 Chrome이 여러 개면 정확한 `127.0.0.1:<port>` LISTEN PID로 LinkedIn 프로세스를 고르고 0개/여러 개면 중단한다.
+사람인·잡코리아 `auto-login`은 로그인된 target이면 조작 0회, 정확한 기존 폼 후보가 1개면 저장 자격증명을 최대 1회 제출하고, 후보가 0개/복수면 `HANDOFF`, captcha/2FA/checkpoint면 추가 제출 0회 `HUMAN_AUTH`로 종료한다. LinkedIn은 봉인된 함대 증거상 인증 기기 1개면 유일한 target을 인증 조작 0회 재사용하고, 0개면 현재 턴 승인·APP 17 경로 결정·정확 후보 1개·APP 30/31을 모두 요구한다. 기기 수 미증명은 `HANDOFF`, 2개 이상이면 `AUTH_CONFLICT`다.
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \
@@ -235,6 +244,7 @@ URL 하나만으로 로그인 성공을 선언하지 않는다. fresh DOM에서 
 - Recruiter/RPS: `https://www.linkedin.com/talent/`
 - 성공: `/talent/` home/search/profile이 login-cap이나 enterprise-authentication으로 이동하지 않고 로드되며, Recruiter 계정/메뉴 마커가 함께 보인다. URL만으로 성공 판정하지 않는다.
 - 실패: 일반 로그인, `/uas/login-cap`, authwall, checkpoint.
+- 로그아웃 상태: 아이디·비밀번호 폼을 제출하지 않는다. 인증 기기 0개 증명·현재 턴 승인·APP 17 경로 결정·정확 후보 1개·APP 30/31이 모두 준비된 경우에만 `LINKEDIN_LI_AT` 참조를 최대 1회 적용한다. 기기 수 미증명·정확 후보 0개/복수·APP 30/31 미준비면 인증 조작 0회 `HANDOFF`한다.
 - `enterprise-authentication/sessions`, `multiple sign-ins`, `Only one session`은 세션 충돌이다. 읽기 전용 증거만 기록하고 `AUTH_CONFLICT`로 중단한다. Continue/Confirm 클릭·자동 로그인·사람 인증 인계·재시도는 모두 금지한다.
 
 차단 단어가 일반 안내문에 우연히 포함될 수 있다. 차단 판정 전 실제 화면과 URL을 읽기 전용으로 한 번 교차 확인한다. 실제 챌린지가 맞으면 자동 우회하지 않는다.
@@ -302,27 +312,23 @@ KEEPALIVE는 세션 영구 보장을 뜻하지 않는다. 실제로 관찰한 �
 | 사람이 유튜브 등 3사 외 화면 사용 중 | 개입 아님 — 양보 없이 진행(2026-07-20 사장님 지시) |
 | 로그인 성공 직후 자동화 작업이 끝남 | `HANDOFF`; 배지만 제거하고 창·탭·프로필 유지 |
 | CDP 설정 포트 무응답, 같은 프로필 프로세스 생존 | 재실행 금지; 실제 포트 탐색 후 기다림 |
-| 탭이 여러 개 있음 | 정확 URL·로그인 마커로 1개 선택; 나머지 닫지 않음 |
+| 탭이 여러 개 있음 | 정확 URL·사이트 마커를 모두 만족하는 후보 자체가 1개일 때만 선택; 정확 후보가 0개 또는 복수면 `HANDOFF`; 어떤 탭도 닫지 않음 |
 | 대상 탭 없음, 기존 브라우저 있음 | 새 탭 0개·새 창 0개; 기대한 site/profile/endpoint를 표시하고 `HANDOFF` |
 | captcha/2FA/checkpoint | 앞에 한 번 보여주고 `HUMAN_AUTH`; 자동 우회·재제출 0회 |
-| LinkedIn 세션 충돌 | `AUTH_CONFLICT`로 영구 중단; Continue/Confirm·자동 로그인·사람 인증 인계·재시도 0회 |
-| 로그인 마커 소실 | `AUTH_LOST`; 자동 로그인 1회, 챌린지면 사람 인계 |
+| LinkedIn 세션 충돌 또는 인증 기기 2개 이상 | `AUTH_CONFLICT`로 영구 중단; 다른 기기 자동 로그아웃·Continue/Confirm·자동 로그인·사람 인증 인계·재시도 0회 |
+| 사람인·잡코리아 로그인 마커 소실 | `AUTH_LOST`; 저장 자격증명 최대 1회, 챌린지면 사람 인계 |
+| LinkedIn 로그인 마커 소실 | 봉인된 증거상 인증 기기 1개면 유일한 target 재사용, 0개면 현재 턴 승인·APP 17 경로 결정·정확 후보 1개·APP 30/31 확인, 미증명은 `HANDOFF`, 2개 이상이면 `AUTH_CONFLICT` |
 | keepalive 중 유료/저장 모달 | 닫기조차 자동으로 누르지 말고 중단·보고 |
 
-## 9. 세 에이전트 설치
+## 9. 두 에이전트 저장소 거울
 
-저장소 정본을 세 로컬 스킬 위치에 같은 바이트로 설치한다.
+이 단위에서는 설치기를 실행하지 않는다. 현재 설치기는 다른 에이전트 경로까지 함께 갱신하므로 정책 범위를 벗어난다.
 
-```bash
-python3 -m tools.install_login_skill
-```
+저장소 안의 다음 두 거울만 정본과 같은 바이트로 유지한다.
+- Claude: `.claude/skills/login/`
+- Codex: `.codex/skills/login/`
 
-설치 위치:
-- Claude: `~/.claude/skills/login/`
-- Codex: `~/.codex/skills/login/`
-- Hermes: `~/.hermes/skills/login/`
-
-설치기는 `login` 폴더의 정본 트리(`SKILL.md`, `browser-control-contract.json`, `scripts/` 자산)를 사전 검증한 후 세 위치에 같은 바이트로 재귀 설치하며 다른 스킬을 건드리지 않는다. 설치 후 각 에이전트를 새 세션에서 시작해 `login` 발견 여부를 확인한다.
+사용자 홈의 스킬 설치와 설치기 수정은 별도 구현 단위에서 다룬다. 이 단위의 완료 조건은 저장소 정본과 두 거울의 `SKILL.md`, `browser-control-contract.json` 바이트가 같은지 확인하는 것이다.
 
 ## 10. 실행 전·후 체크리스트
 
@@ -343,12 +349,12 @@ python3 -m tools.install_login_skill
 
 ## 11. 다중 기기 운영 패턴 — 주력 PC와 검색 실행기
 
-이 표는 Hermes login preflight가 매 실행마다 읽는 기기 역할 정본이다. 기존 로그인 세션이 있는 host를 새 로그인보다 항상 우선한다.
+이 표는 기기 역할 설명일 뿐 LinkedIn 자동 선택 순서가 아니다. `26-portal-login-spec@1.5.0`의 봉인된 함대 증거가 인증 기기 1개를 증명하면 그 기기의 유일한 target만 재사용하고, 2개 이상이면 `AUTH_CONFLICT`다. 0개면 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리키고 정확 후보가 1개일 때만 APP 30/31 대상으로 삼는다. 기기 수 미증명은 인증 조작 0회 `HANDOFF`다. 표 순서·신뢰도·시간대로 임의 선택하지 않으며 자동 로그아웃 금지다.
 
 | 역할 | 현재 기기 | 비고 |
 |---|---|---|
 | 주력 PC(primary) | Macmini | Discord gateway와 owner 기본 실행기 |
-| AI Search 실행기 | Macmini, MacBook Pro, WinPC | live session host 우선, 없으면 표 순서 |
+| AI Search 실행기 | Macmini, MacBook Pro, WinPC | 현재 턴 승인과 요청의 정확한 기기 ID가 필요 |
 | LinkedIn 주간 | Macmini(주력 PC) | 기존 RPS 세션 우선 |
 | LinkedIn 야간 | MacBook Pro 또는 WinPC | 현재 턴 owner 위임이 있을 때만 |
 
@@ -359,7 +365,7 @@ python3 -m tools.install_login_skill
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence \
-  --site <saramin|jobkorea|linkedin_rps> --agent <Claude|Codex|Hermes> \
+  --site <saramin|jobkorea|linkedin_rps> --agent <Claude|Codex> \
   --task login --mode evidence --target-id <exact-target-id>
 ```
 

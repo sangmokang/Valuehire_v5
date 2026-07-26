@@ -1,15 +1,99 @@
 {
-  "schema_version": "1.5.0",
+  "schema_version": "1.6.0",
   "skill": "login",
-  "supported_agents": ["claude", "codex", "hermes"],
+  "login_policy_id": "26-portal-login-spec@1.5.0",
+  "supported_agents": ["claude", "codex"],
+  "policy_authority": "26-portal-login-spec@1.5.0",
   "platform": "macos",
   "supported_platform_modes": ["macos", "windows_explicit_owner_delegation_only"],
   "source_priority": [
+    "docs/sot/26-portal-login-spec.json",
     "browser-control-contract.json",
     "SKILL.md",
-    "docs/sot/26-portal-login-spec.json",
     "legacy runbooks"
   ],
+  "authentication_policy": {
+    "saramin": {
+      "provider": "stored_username_password",
+      "max_submissions_per_episode": 1,
+      "exact_existing_target_required": true,
+      "exact_target_candidate_count": 1,
+      "otherwise": "HANDOFF",
+      "challenge_action": "HUMAN_AUTH"
+    },
+    "jobkorea": {
+      "provider": "stored_username_password",
+      "max_submissions_per_episode": 1,
+      "exact_existing_target_required": true,
+      "exact_target_candidate_count": 1,
+      "otherwise": "HANDOFF",
+      "challenge_action": "HUMAN_AUTH"
+    },
+    "linkedin_rps": {
+      "provider": "secret_store_li_at",
+      "secret_reference": "LINKEDIN_LI_AT",
+      "max_cookie_applications_per_episode": 1,
+      "exact_existing_target_required": true,
+      "exact_target_candidate_count": 1,
+      "otherwise": "HANDOFF",
+      "username_password_submit": false,
+      "auto_logout_other_machine": false,
+      "new_target": false
+    }
+  },
+  "linkedin_session_decision": {
+    "zero_authenticated_machines": {
+      "action": "apply_li_at_once_on_selected_machine_exact_existing_target",
+      "selected_machine_requires_current_turn_owner_authorization": true,
+      "selected_machine_requires_app17_route_decision": true,
+      "required_apps": ["APP30", "APP31"],
+      "provider_or_injector_unavailable": "HANDOFF",
+      "exact_target_candidate_count_not_one": "HANDOFF",
+      "missing_exact_target": "HANDOFF"
+    },
+    "one_authenticated_machine": {
+      "action": "reuse_authenticated_machine_and_exact_target",
+      "authentication_mutations": 0,
+      "exact_target_candidate_count_not_one": "HANDOFF"
+    },
+    "two_or_more_authenticated_machines": {
+      "action": "AUTH_CONFLICT",
+      "terminal": true,
+      "forbidden_actions": [
+        "auto_logout_other_machine",
+        "continue",
+        "confirm",
+        "choose_by_reliability",
+        "retry"
+      ]
+    },
+    "unproven_or_invalid_count": {
+      "action": "HANDOFF",
+      "authentication_mutations": 0
+    }
+  },
+  "secret_handling": {
+    "secret_reference_only": true,
+    "secret_value_readable_by_model": false,
+    "derived_secret_output": false,
+    "forbidden_output_destinations": [
+      "stdout",
+      "stderr",
+      "logs",
+      "receipts",
+      "artifacts",
+      "model_messages",
+      "shell_arguments"
+    ],
+    "forbidden_receipt_fields": [
+      "li_at",
+      "cookie",
+      "cookie_value",
+      "password",
+      "secret",
+      "token"
+    ]
+  },
   "state_machine": {
     "DISCOVER": {
       "allowed_actions": ["read_processes", "read_cdp_endpoints", "read_targets", "read_owner_idle"],
@@ -41,7 +125,7 @@
       "next": ["AUTHENTICATED", "AUTH_LOST", "AUTH_CONFLICT", "HANDOFF"]
     },
     "AUTH_LOST": {
-      "allowed_actions": ["one_safe_autologin_attempt", "handoff_on_challenge"],
+      "allowed_actions": ["one_site_policy_auth_attempt", "handoff_on_challenge"],
       "next": ["AUTHENTICATED", "HUMAN_AUTH", "AUTH_CONFLICT", "HANDOFF"]
     },
     "AUTH_CONFLICT": {
@@ -103,7 +187,10 @@
     "kill_browser",
     "portal_browsers stop",
     "portal_browsers restart",
-    "portal_browsers start during login flow"
+    "portal_browsers start during login flow",
+    "linkedin username/password submit",
+    "linkedin auto logout other machine",
+    "linkedin session conflict continue or confirm"
   ],
   "badge": {
     "dom_id": "vh-automation-badge",
@@ -165,7 +252,7 @@
     "cleanup_attempted_on_stop_or_base_exception": true
   },
   "production_entrypoints": {
-    "human_auth": "python3 -m tools.multi_position_sourcing.session_guard human-auth --site <site> --agent <Claude|Codex|Hermes> [--target-id <existing-target-id>]",
+    "human_auth": "python3 -m tools.multi_position_sourcing.session_guard human-auth --site <site> --agent <Claude|Codex> [--target-id <existing-target-id>]",
     "keepalive": "python3 -m tools.multi_position_sourcing.session_guard keepalive --site <site> --agent <agent> --safe-target-json <pre-audited-record>",
     "safe_target_record": "exact_target_same_origin_GET_self_free_readonly_link_pre_audited_by_human",
     "missing_or_invalid_safe_target_record": "fail_closed_skip",
@@ -221,9 +308,15 @@
   },
   "multi_device": {
     "sot": "SKILL.md section 11 declaration table",
-    "cross_machine_coordination": "owner_declaration_only_not_file_lock",
+    "cross_machine_coordination": "sealed_fleet_evidence_for_count_plus_owner_authorization_for_zero_case",
+    "authenticated_machine_count_requires_sealed_fleet_evidence": true,
+    "evidence_unavailable": "HANDOFF",
+    "owner_authorization_is_not_machine_count_evidence": true,
     "session_metadata_requires_host_field": true,
     "prefer_host_with_live_session_before_new_login": true,
+    "linkedin_authenticated_machine_count_policy": "zero=selected_exact_target_li_at_once_when_APP30_31_ready; one=reuse_zero_auth_mutation; two_or_more=terminal_AUTH_CONFLICT",
+    "automatic_machine_choice_by_reliability": false,
+    "automatic_logout_of_other_machine": false,
     "linkedin_handover": {
       "requires_owner_explicit_delegation_current_turn": true,
       "session_takeover_click_allowed_only_if_takeover_declared": false,

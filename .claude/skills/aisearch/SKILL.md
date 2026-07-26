@@ -7,6 +7,8 @@ description: "Valuehire AI Search를 실행·점검·디버깅한다. \"AI Searc
 
 이 스킬은 **Claude Code(레포 스코프) 측 AI Search 엔트리**이며, 외부 HOME 폴더(codex 스킬·다른 ~/.claude 스킬)에 **런타임 의존하지 않는 자립형**이다. 들여온 외부 코드·참조는 `vendor/`에 있고(`vendor/SOURCES.json`이 출처·복사시점·해시 기록), 자립 여부는 `vendor/check_self_contained.py`가 강제한다. 알맹이(단계 로직·채널 셀렉터·출력 계약)는 **레포의 공유 정본(docs/sot·tools·skills)을 가리키며 복제하지 않는다**(분기·드리프트 방지).
 
+로그인 판단은 `docs/sot/26-portal-login-spec.json`의 `26-portal-login-spec@1.5.0`을 따른다. 사람인·잡코리아만 정확한 기존 탭 하나에서 저장 자격증명 최대 1회가 허용된다. LinkedIn은 인증 기기 1개면 인증 조작 0회 재사용하고, 0개로 증명됐을 때만 현재 턴 승인·APP 17 경로 결정·APP 30/31 `LINKEDIN_LI_AT` 조건을 모두 요구한다. 기기 수 미증명은 `HANDOFF`, 2개 이상은 다른 기기 자동 로그아웃 금지와 함께 terminal `AUTH_CONFLICT`다.
+
 기본 레포 루트: `/Users/kangsangmo/Valuehire_v5`. 다른 Valuehire 체크아웃이면 그 루트를 쓰되 동일 SOT 파일 존재를 확인한다.
 
 ## ⛔ 공통 SOT 시작 게이트 (절대 생략 금지)

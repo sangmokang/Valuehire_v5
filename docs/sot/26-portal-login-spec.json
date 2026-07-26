@@ -1,10 +1,108 @@
 {
   "$schema_note": "포털 로그인 빠른 진입 스펙 (spec-driven SOT). 사장님 지시(2026-06-25, /st): 'AI Search 로직이 무너지고 무시하고 진행한 원인 + 로그인이 너무 길었던 원인 모두 적대적으로 찾아 스킬에 반영하고, 스펙을 JSON으로 명확하게 조여 박아라.' 이 파일이 3사(사람인·잡코리아·링크드인) 로그인 진입의 단일 기계 명세다. 기존 스킬이 가리키던 docs/sot/10-auto-login.md(부재)·tools/.../auto-login.mjs(부재)의 죽은 참조를 대체한다.",
   "id": "26-portal-login-spec",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "updated_at": "2026-07-26",
-  "title": "포털 로그인 빠른 진입 스펙 (raw CDP 단일탭 · exact macOS 창 인계 · HUMAN_AUTH 무조작 · 안전 keepalive)",
-  "verified_live": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차 0), 2026-06-09/07-07 링크드인도 시크릿 저장소 자동로그인 대상임을 재확정. 2026-07-18 macOS에서 Python Quartz는 미설치였지만 Swift CoreGraphics CGWindowID 열거와 `screencapture -x -l <CGWindowID>` 단일 창 캡처 기본 동작을 실기기로 확인. 2026-07-26 Mac mini에서 같은 9225를 선언한 IPv4 LinkedIn/IPv6 사람인 Chrome 공존 상태에서 실제 IPv4 LISTEN PID 34202와 기존 login-cap target을 정식 auto-login 러너가 선택했고, Keychain을 shell env 주입 없이 읽어 실제 보안문자/CAPTCHA를 제출 0회 HUMAN_AUTH로 판정했다. CAPTCHA 창의 visible marker 설치는 실패해 사람 인증 완료는 아직 미실증이며 과장하지 않는다.",
+  "policy_id": "26-portal-login-spec@1.5.0",
+  "supported_agents": ["claude", "codex"],
+  "title": "포털 로그인 기준 (사람인·잡코리아 저장 자격증명 1회 · LinkedIn li_at 단일 기기 · exact target · HUMAN_AUTH 무조작)",
+  "verified_live": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차 0). 2026-07-18 exact macOS 창 해석과 단일 창 캡처 기본 동작을 실기기로 확인했다. 2026-07-26 Mac mini에서 정확한 LinkedIn IPv4 LISTEN PID와 기존 login-cap target 선택, CAPTCHA 제출 0회 HUMAN_AUTH 판정까지 확인했다. LinkedIn li_at 제공자·1회 적용기는 APP 30/31 범위로 아직 구현·실기기 검증하지 않았으며, 이 버전은 사용자 결정에 따른 정책과 진입점 지시만 고정한다.",
+  "supersedes": {
+    "docs/prompts/hermes-login-gate-before-search-skills-2026-07-21.md": "historical_input_not_executable",
+    "docs/prompts/linkedin-rps-login-session-fix-2026-07-18.md": "historical_input_not_executable",
+    "docs/engineering/linkedin-managed-autologin-goal-2026-07-26.md": "historical_input_not_executable",
+    "docs/engineering/login-policy-recement-goal-2026-07-08.md": "historical_input_not_executable"
+  },
+  "current_execution_route": ["Discord", "queue", "worker", "Codex_or_Claude"],
+  "implementation_boundary": {
+    "this_unit": "APP 01 policy and entrypoint instructions only",
+    "linkedin_secret_provider": "APP 30",
+    "linkedin_li_at_injector": "APP 31",
+    "provider_or_injector_unavailable": "HANDOFF",
+    "legacy_username_password_fallback": false
+  },
+  "authentication_policy": {
+    "saramin": {
+      "provider": "stored_username_password",
+      "max_submissions_per_episode": 1,
+      "exact_existing_target_required": true,
+      "exact_target_candidate_count": 1,
+      "otherwise": "HANDOFF",
+      "challenge_action": "HUMAN_AUTH"
+    },
+    "jobkorea": {
+      "provider": "stored_username_password",
+      "max_submissions_per_episode": 1,
+      "exact_existing_target_required": true,
+      "exact_target_candidate_count": 1,
+      "otherwise": "HANDOFF",
+      "challenge_action": "HUMAN_AUTH"
+    },
+    "linkedin_rps": {
+      "provider": "secret_store_li_at",
+      "secret_reference": "LINKEDIN_LI_AT",
+      "max_cookie_applications_per_episode": 1,
+      "exact_existing_target_required": true,
+      "exact_target_candidate_count": 1,
+      "otherwise": "HANDOFF",
+      "username_password_submit": false,
+      "auto_logout_other_machine": false,
+      "new_target": false
+    }
+  },
+  "linkedin_session_decision": {
+    "zero_authenticated_machines": {
+      "action": "apply_li_at_once_on_selected_machine_exact_existing_target",
+      "selected_machine_requires_current_turn_owner_authorization": true,
+      "selected_machine_requires_app17_route_decision": true,
+      "required_apps": ["APP30", "APP31"],
+      "provider_or_injector_unavailable": "HANDOFF",
+      "exact_target_candidate_count_not_one": "HANDOFF",
+      "missing_exact_target": "HANDOFF"
+    },
+    "one_authenticated_machine": {
+      "action": "reuse_authenticated_machine_and_exact_target",
+      "authentication_mutations": 0,
+      "exact_target_candidate_count_not_one": "HANDOFF"
+    },
+    "two_or_more_authenticated_machines": {
+      "action": "AUTH_CONFLICT",
+      "terminal": true,
+      "forbidden_actions": [
+        "auto_logout_other_machine",
+        "continue",
+        "confirm",
+        "choose_by_reliability",
+        "retry"
+      ]
+    },
+    "unproven_or_invalid_count": {
+      "action": "HANDOFF",
+      "authentication_mutations": 0
+    }
+  },
+  "secret_handling": {
+    "secret_reference_only": true,
+    "secret_value_readable_by_model": false,
+    "derived_secret_output": false,
+    "forbidden_output_destinations": [
+      "stdout",
+      "stderr",
+      "logs",
+      "receipts",
+      "artifacts",
+      "model_messages",
+      "shell_arguments"
+    ],
+    "forbidden_receipt_fields": [
+      "li_at",
+      "cookie",
+      "cookie_value",
+      "password",
+      "secret",
+      "token"
+    ]
+  },
   "replaces_dead_refs": [
     "docs/sot/10-auto-login.md (스킬이 로그인 SOT로 참조하나 파일 부재)",
     "tools/saramin-bulk-register-from-jobkorea/auto-login.mjs (부재)",
@@ -16,12 +114,12 @@
     ".env.local (SARAMIN_*/JOBKOREA_*)"
   ],
   "invariants": [
-    "INV1: 3사(사람인·잡코리아·링크드인) 로그인은 정확한 기존 관리 브라우저와 기존 target이 있을 때 자동화(에이전트)가 수행한다. 새 브라우저·새 창·새 탭을 자동 생성하지 않는다. 기존 target에서 세션 만료가 확인되면 저장된 자격증명(.env.local)으로 자동 재로그인하고, INV2 챌린지는 사람에게 넘긴다. 관리 프로세스나 정확한 target이 없거나 모호하면 기대한 site/profile/endpoint를 표시하고 HANDOFF한다.",
-    "INV2: 3사 모두 시크릿 저장소/기존 세션으로 자동 로그인한다. **오직** 캡차·2FA·봇차단·멀티세션 락 감지 시에만 그 채널 즉시 STOP하고 사람에게 넘긴다(그 외에는 사람에게 넘기지 않는다). 자동 우회·연속 재시도 금지.",
+    "INV1: 로그인은 정확한 기존 관리 브라우저와 유일한 기존 target에서만 수행한다. 새 브라우저·새 창·새 탭을 만들지 않는다. 사람인·잡코리아는 정확 후보가 1개일 때만 저장된 아이디·비밀번호를 최대 1회 제출한다. LinkedIn은 아이디·비밀번호 제출을 금지하고, 인증 기기 0개가 봉인된 함대 증거로 확인되며 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리키고 정확 후보가 1개이며 APP 30/31이 준비된 경우에만 LINKEDIN_LI_AT을 최대 1회 적용한다. 하나라도 없으면 HANDOFF한다.",
+    "INV2: captcha·2FA·checkpoint·봇차단은 추가 제출 없이 HUMAN_AUTH로 넘긴다. LinkedIn 인증 기기가 정확히 하나면 그 기기와 유일한 target을 조작 0회로 재사용한다. 기기 수 미증명은 인증 조작 0회 HANDOFF, 둘 이상이면 terminal AUTH_CONFLICT로 중단하며 다른 기기 자동 로그아웃·Continue/Confirm·신뢰도 기반 선택·재시도는 금지한다.",
     "INV3: 로그인된 관리 크롬을 kill/close/start/restart 하지 않는다. 고정 포트를 추측하지 않고 site의 정확한 endpoint·profile·target에 attach한다. 로그인 흐름에서 새 브라우저·새 창·새 탭은 모두 0개다.",
     "INV4: 자율(무인) 발송('보내기'/Send/제안발송)은 로그인 흐름과 무관하게 절대 자동 금지 — SOT3/SOT28 자동발송 게이트를 통과한 건만 자동. **단, 사장님이 특정 메일/발송을 '보내라·발송하라'고 명시 지시하면 초안에서 멈추지 않고 Send까지 실행한다(자율 발송이 아니라 사장님 명시 지시 이행).** 발송 실행 도구가 초안(draft)만 지원하면 그 한계를 사장님께 알린다.",
     "INV5: connectOverCDP 전체 attach 금지(탭 과다 시 hang). raw CDP 단일탭만 사용.",
-    "INV6: 사람 개입(2FA·캡차·체크포인트·멀티세션 락)이 필요하면 정확한 CDP target과 해당 endpoint/profile을 가진 기존 Chrome 루트 프로세스 PID를 Swift CoreGraphics의 유일한 CGWindowID에 1:1로 결합한다. title 변경 전 PID+bounds preflight와 title prefix 변경 후 PID+bounds+prefix 해석이 같은 CGWindowID여야 한다. 결과가 0개/여러 개면 fail-closed한다. 해당 창에만 로그인 title·배지를 표시하고 1회 표면화한 후 HUMAN_AUTH에서는 읽기·대기 외 브라우저 조작을 0회로 유지한다.",
+    "INV6: 사람 개입(2FA·캡차·체크포인트)이 필요하면 정확한 CDP target과 해당 endpoint/profile을 가진 기존 Chrome 루트 프로세스 PID를 Swift CoreGraphics의 유일한 CGWindowID에 1:1로 결합한다. title 변경 전 PID+bounds preflight와 title prefix 변경 후 PID+bounds+prefix 해석이 같은 CGWindowID여야 한다. 결과가 0개/여러 개면 fail-closed한다. 해당 창에만 로그인 title·배지를 표시하고 1회 표면화한 후 HUMAN_AUTH에서는 읽기·대기 외 브라우저 조작을 0회로 유지한다. LinkedIn 멀티세션 락은 사람 인증 인계가 아니라 terminal AUTH_CONFLICT다.",
     "INV7: ai-search·humansearch·url·login의 화면 저장은 session_guard capture-evidence 정식 러너 하나로 수행한다. 기존 exact target·site lease·owner idle·positive auth marker를 모두 다시 확인하고, 브라우저 이동·클릭·입력·focus·새 탭·종료 없이 private screenshot·visible text·manifest·SHA-256 receipt가 전부 저장된 경우만 saved다. 하나라도 실패하면 다음 후보 이동·점수화·완료 처리를 금지한다."
   ],
   "human_auth_control": {
@@ -77,14 +175,15 @@
     "retry": false
   },
   "production_entrypoints": {
-    "auto_login": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard auto-login --site <site> --agent <Claude|Codex|Hermes> [--target-id <existing-target-id>]",
-    "human_auth": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth --site <site> --agent <Claude|Codex|Hermes> [--target-id <existing-target-id>]",
+    "auto_login_saramin_jobkorea": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard auto-login --site <saramin|jobkorea> --agent <Claude|Codex> [--target-id <existing-target-id>]",
+    "linkedin_auth": "APP30_31_only_or_reuse_one_existing_authenticated_machine_or_HANDOFF",
+    "human_auth": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth --site <site> --agent <Claude|Codex> [--target-id <existing-target-id>]",
     "keepalive": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard keepalive --site <site> --agent <agent> --safe-target-json <pre-audited-record>",
-    "capture_evidence": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence --site <saramin|jobkorea|linkedin_rps> --agent <Claude|Codex|Hermes> --task <ai-search|humansearch|url|login> --mode <profile|evidence> --target-id <exact-existing-target-id> [--profile-url <exact-profile-url> --position-id <position-id> --candidate-index <1-based-index>]",
+    "capture_evidence": "PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard capture-evidence --site <saramin|jobkorea|linkedin_rps> --agent <Claude|Codex> --task <ai-search|humansearch|url|login> --mode <profile|evidence> --target-id <exact-existing-target-id> [--profile-url <exact-profile-url> --position-id <position-id> --candidate-index <1-based-index>]",
     "safe_target_record": "사전 감사한 exact target의 same-origin GET _self 무료 읽기 전용 링크 레코드. 누락/invalid면 fail-closed SKIP; 존재해도 runner가 denylist·same-origin·fresh DOM·target id·history 왕복을 다시 증명",
-    "runtime_credentials": "macOS Keychain service valuehire.portal_credentials가 Claude·Codex·Hermes 공용 런타임 정본. .env.local은 초기 import에만 사용하고 auto-login shell 인자·stdout·산출물로 비밀값을 전달하지 않는다.",
+    "runtime_credentials": "사람인·잡코리아 아이디·비밀번호는 비밀 저장소의 사이트별 참조를 사용한다. LinkedIn은 LINKEDIN_LI_AT 참조만 허용하며 아이디·비밀번호 경로로 대체하지 않는다. 어떤 비밀값도 shell 인자·stdout·stderr·로그·영수증·산출물·모델 대화로 전달하지 않는다.",
     "process_collision": "같은 --remote-debugging-port를 선언한 루트 Chrome이 여러 개면 정확한 127.0.0.1:<port> LISTEN PID로 1개를 선택한다. LISTEN PID가 0개/여러 개이거나 검사 실패면 fail-closed.",
-    "existing_login_form": "LinkedIn /uas/login-cap current target에 username/password selector가 모두 있으면 그 폼을 보존해 사용하고 /uas/login으로 강제 이동하지 않는다. 현재 폼이 없을 때만 동일 target에서 공식 URL로 1회 이동한다.",
+    "linkedin_logged_out_target": "기존 /uas/login-cap을 포함해 선택된 기기의 정확한 기존 LinkedIn target만 보존한다. 폼 필드는 읽기 전용 상태 증거일 뿐 제출하지 않는다. APP 30/31이 준비되지 않았으면 HANDOFF하며 공식 로그인 URL 이동·아이디/비밀번호 fallback·새 target 생성은 금지한다.",
     "missing_process_or_target": "HANDOFF without browser/window/tab creation",
     "legacy_portal_login": "fail-closed delegation only; not the human-auth or keepalive runner"
   },
@@ -118,7 +217,7 @@
   },
   "tab_selection": {
     "rule": "/json/list 에서 type==page + 채널별 공식 login/talent-pool/holding surface 경로를 정확 매칭한 기존 탭만 사용. 단순 공식 domain 일치만으로는 부족하며 절대 새 탭을 만들지 않는다.",
-    "ignore_stale_tabs": "로그인된 talent-pool/feed exact target을 우선한다. 로그아웃 상태에서는 username/password 필드가 모두 있는 /uas/login-cap exact target은 자동 로그인 대상으로 허용한다. tutorial·일반 /auth·필드 없는 login-cap·enterprise-authentication은 무시하거나 명시적 사람 인계한다.",
+    "ignore_stale_tabs": "로그인된 talent-pool/feed exact target을 우선한다. 로그아웃 상태의 /uas/login-cap은 선택된 기기의 정확한 기존 target일 때만 보존하며 폼 제출 대상으로 사용하지 않는다. tutorial·일반 /auth·모호한 login-cap·enterprise-authentication은 명시적으로 중단한다.",
     "multi_tab_note": "사람인 search·tutorial 여러개, 잡코리아 find 여러개, 링크드인 login-cap 잔여탭 공존 가능 — 정확 URL 매칭으로 1개만 작업"
   },
   "login_state_check": {
@@ -139,9 +238,9 @@
   },
   "block_detection": {
     "unified_regex": "captcha|recaptcha|보안문자|자동입력 방지|checkpoint|unusual activity|verify you|multiple sign-ins|Only one session|enterprise-authentication|이상 접근|2단계|authwall|challenge|인증번호",
-    "on_match": "그 채널 status=BLOCKED. 자동 우회·재시도 금지. 단 /uas/login-cap·li.protechts iframe 단독 신호는 차단으로 보지 않고 저장 자격증명 자동 로그인을 1회 시도한다.",
-    "false_positive_guard": "정규식이 페이지 일반 텍스트(예: '개인정보처리방침')와 우연히 매치될 수 있음 → BLOCKED 판정 전 스크린샷으로 실제 캡차/락 화면인지 1회 교차확인(2026-06-25 잡코리아 captcha 오탐 사례).",
-    "linkedin_multi_session": "enterprise-authentication/sessions + 'multiple sign-ins/Only one session allowed' = RPS 단일세션 락(다른 PC 사용 중). '계속'을 자동으로 누르면 사장님 다른 PC 세션이 끊김 → 절대 자동 클릭 금지. 사람 결정(scripts/rps_switch.sh on/off) 후 재개."
+    "on_match": "실제 captcha·2FA·checkpoint·이상 접근은 HUMAN_AUTH로 중단하고 자동 우회·재시도하지 않는다. LinkedIn multiple-sign-in·Only one session·enterprise-authentication은 terminal AUTH_CONFLICT로 중단하며 인증 조작을 하지 않는다. /uas/login-cap·li.protechts iframe 단독 신호는 AUTH_LOST 후보로만 읽고, 그 자체로 인증 제출을 허가하지 않는다.",
+    "false_positive_guard": "정규식이 페이지 일반 텍스트(예: '개인정보처리방침')와 우연히 매치될 수 있으므로 상태 확정 전 스크린샷으로 실제 챌린지 또는 LinkedIn 멀티세션 화면인지 1회 교차확인한다. 확인된 챌린지는 HUMAN_AUTH, 확인된 LinkedIn 멀티세션은 AUTH_CONFLICT, 오탐은 이전 상태 유지다(2026-06-25 잡코리아 captcha 오탐 사례).",
+    "linkedin_multi_session": "enterprise-authentication/sessions + 'multiple sign-ins/Only one session allowed' = terminal AUTH_CONFLICT. '계속'·Confirm·다른 기기 로그아웃·재시도는 금지한다. APP 34의 현재 턴 명시 인수인계 증거가 구현되기 전에는 재개하지 않는다."
   },
   "channels": {
     "saramin": {
@@ -178,12 +277,12 @@
     "linkedin": {
       "talent_pool_url": "https://www.linkedin.com/talent/search",
       "tab_match_re": "linkedin\\.com\\/talent",
-      "creds": "시크릿 저장소(.env.local import → macOS Keychain valuehire.portal_credentials)의 LINKEDIN_USERNAME/LINKEDIN_PASSWORD 또는 LINKEDIN_RPS_* 로 자동 로그인. 평문 하드코딩·로그 출력 금지.",
+      "auth_method": "봉인된 함대 증거가 인증 기기 0개를 증명하고 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리키며 정확한 기존 target 후보가 1개일 때만, APP 30 제공자가 비밀 저장소의 LINKEDIN_LI_AT 참조를 모델에 원문을 노출하지 않고 반환하고 APP 31 적용기가 최대 1회 적용한다. 기기 수 미증명은 인증 조작 0회 HANDOFF다. 아이디·비밀번호 폼 제출과 다른 기기 자동 로그아웃은 금지한다.",
       "human_gates": [
-        "실제 캡차·2FA·checkpoint = 자동 우회 금지, STOP 후 안전 보고",
-        "멀티세션 락 = scripts/rps_switch.sh 상태 확인 후 기존 세션을 강제 종료하지 않음"
+        "실제 캡차·2FA·checkpoint = HUMAN_AUTH, 자동 우회 금지, 안전 보고",
+        "멀티세션 락 또는 인증 기기 2개 이상 = terminal AUTH_CONFLICT, APP 34 전 재개 금지"
       ],
-      "verified": "2026-06-09 docs/search-access.md + qa-linkedin-autologin-sot: LinkedIn RPS 자동 로그인 금지 재도입은 SOT 위반. 2026-07-07 login-cap/protechts 단독 차단 금지로 재정렬."
+      "verified": "정책 결정은 2026-07-26 사용자 승인으로 확정했다. LINKEDIN_LI_AT 제공자와 적용기의 실제 구현·실기기 검증은 APP 30/31이 수행하며, 그 전에는 기존 인증 세션 재사용 또는 HANDOFF만 허용한다."
     }
   },
   "preflight_batch_login": {
@@ -192,7 +291,7 @@
       "1. 대상 채널 목록 확정(사람인+잡코리아+링크드인 등 전방위)",
       "2. 각 채널 talent-pool 탭 attach → login_state_check 실행",
       "3. logged_out 채널 수집",
-      "4. 사람인·잡코리아·링크드인 = creds 자동 로그인(raw CDP/공식 로그인폼). 실제 캡차·2FA·멀티세션 락이면 STOP",
+      "4. 사람인·잡코리아는 정확 후보 1개에서 저장 아이디·비밀번호 최대 1회. LinkedIn은 봉인된 함대 증거 기준 인증 기기 1개면 인증 조작 0회 재사용, 0개면 현재 턴 승인·APP 17 경로 결정·정확 후보 1개·APP 30/31 LINKEDIN_LI_AT 조건을 모두 요구, 미증명은 HANDOFF, 2개 이상은 AUTH_CONFLICT. 실제 캡차·2FA면 HUMAN_AUTH",
       "5. 모든 대상 채널 logged_in 확인 후에야 등록/검색 단계 진입"
     ],
     "integration": "docs/sot/25 stage 1(점유·캡차 게이트)에 'login_state + 일괄 로그인' 추가. 등록(/position)·검색 전에 완료."
@@ -251,7 +350,7 @@
     "RC9_credential_source_mismatch": {
       "evidence": "portal_login.py:321-330 은 macOS Keychain에서 자격증명을 읽으나, 26-portal-login-spec.json 및 스킬 전체는 .env.local을 SOT로 명시. 두 소스가 다를 경우 silent 로그인 실패 발생.",
       "impact": "환경에 따라 Keychain 값과 .env.local 값이 달라 로그인이 의도치 않게 실패. 원인 파악 불가.",
-      "fix": "런타임 정본을 macOS Keychain valuehire.portal_credentials로 확정하고 .env.local은 초기 import 전용으로 제한한다. session_guard auto-login이 Keychain을 직접 읽어 에이전트별 shell 주입 차이를 제거한다."
+      "fix": "사람인·잡코리아는 비밀 저장소의 사이트별 아이디·비밀번호 참조로 통일한다. LinkedIn은 LINKEDIN_LI_AT 참조만 허용하고 APP 30/31 제공자·적용기 외 경로를 금지한다."
     },
     "RC10_declared_port_collision": {
       "evidence": "2026-07-26 Mac mini에서 LinkedIn PID 34202는 127.0.0.1:9225, 사람인 PID 81025는 [::1]:9225를 LISTEN했지만 둘 다 명령행에 --remote-debugging-port=9225를 선언해 기존 resolver가 match count 2로 중단",
@@ -261,12 +360,12 @@
     "RC11_forced_broken_login_navigation": {
       "evidence": "2026-07-26 기존 /uas/login-cap target을 버리고 /uas/login으로 무조건 이동하자 inputs=0, forms=0, buttons=['새로고침'] 연결 오류 화면으로 종료",
       "impact": "로그인 가능한 기존 폼을 잃고 SELECTOR_DRIFT로 오판하며 반복 시도",
-      "fix": "현재 login-cap에 username/password selector가 모두 있으면 그 폼을 보존한다. 없을 때만 동일 target에서 공식 URL로 1회 이동한다."
+      "fix": "이 과거 폼 제출 우회책은 1.5.0에서 폐기했다. 현재 exact target은 보존하되 LinkedIn 아이디·비밀번호 폼을 제출하거나 공식 로그인 URL로 이동하지 않고, APP 30/31이 없으면 HANDOFF한다."
     },
     "RC12_agent_specific_secret_injection": {
-      "evidence": "초기 session_guard auto-login은 LINKEDIN_USERNAME/PASSWORD env만 읽어 Keychain이 설정돼 있어도 Codex shell에서 command substitution을 별도로 요구",
+      "evidence": "초기 session_guard 자동 로그인은 과거 LinkedIn 아이디·비밀번호 환경변수만 읽어 Keychain이 설정돼 있어도 Codex shell에서 별도 전달을 요구",
       "impact": "Codex·Claude 실행 명령이 달라지고 비밀값 shell 전달 위험이 증가",
-      "fix": "session_guard가 공용 Keychain provider를 직접 읽고 --agent만 실행 주체별로 바꾼다."
+      "fix": "APP 30 제공자가 LINKEDIN_LI_AT 참조만 모델 비노출 방식으로 읽고 APP 31 적용기만 소비한다. shell env·인자·stdout 전달과 아이디·비밀번호 fallback은 금지한다."
     },
     "RC13_captcha_handoff_marker_failure": {
       "evidence": "2026-07-26 실제 LinkedIn 보안문자/CAPTCHA target의 human-auth에서 visible login-window marker 설치 실패가 RuntimeError traceback으로 노출됨",
@@ -281,8 +380,8 @@
     "멀티세션/캡차를 자동 우회·재클릭했는가? → INV2 치명 위반",
     "죽은 참조(10-auto-login.md, auto-login.mjs)를 다시 가리키는가? → RC1/RC2 재발"
     ,"같은 port 선언을 실제 endpoint LISTEN PID 확인 없이 모호성으로만 중단했는가? → RC10 재발"
-    ,"기존 LinkedIn login-cap 폼을 버리고 /uas/login으로 무조건 이동했는가? → RC11 재발"
-    ,"에이전트별 shell에서 자격증명을 env로 재주입했는가? → RC12 재발"
+    ,"LinkedIn 아이디·비밀번호 폼을 제출하거나 공식 로그인 URL로 이동했는가? → INV1/RC11 재발"
+    ,"LINKEDIN_LI_AT 원문 또는 파생값을 shell·로그·영수증·모델 대화로 전달했는가? → secret_handling/RC12 재발"
     ,"visible marker 실패를 traceback으로 노출하거나 임의 focus로 우회했는가? → RC13 재발"
   ]
 }

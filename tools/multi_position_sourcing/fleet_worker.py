@@ -352,7 +352,7 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
     params_line = (
         f"- 추가 파라미터: {json.dumps(params, ensure_ascii=False)}\n" if params else "")
     if skill == "login":
-        # SOT26 로그인 계약(#188) — 자동 로그인 항상, 사람 몫은 2FA·캡차·checkpoint 뿐.
+        # APP01 정책 연결만 담당한다. 인증 제공자·적용기·기기 판정 로직은 후속 APP 범위다.
         machine = str(job.get("machine") or "(미상)")
         return (
             f"[Valuehire 잡 #{job_id}] login 스킬을 발동해 3사(사람인·잡코리아·LinkedIn RPS) "
@@ -361,50 +361,60 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
             f"{params_line}"
             f"- 결과: 한국어로 요약해 stdout 에 출력할 것 (워커가 Discord 로 전달함)\n"
             f"규칙:\n"
-            f"1. 저장 자격증명으로 자동 로그인·재로그인을 항상 수행할 것(SOT26 INV1 — "
-            f"로그인을 막는 대기·회피 금지).\n"
-            f"2. 정식 준비 러너를 사용할 것: PYTHONPATH=. python3 -m "
-            f"tools.multi_position_sourcing.portal_login --channels "
-            f"saramin,jobkorea,linkedin_rps --worker-id {machine} — "
-            f"즉석 raw 자동화로 우회하지 말 것.\n"
-            f"3. 캡차/2FA/checkpoint 만 사람 몫 — 뜨면 그 브라우저 창을 앞으로 띄워 두고 "
+            f"1. 로그인 판단은 26-portal-login-spec@1.5.0만 따른다. 사이트별 상태와 정확한 "
+            f"기존 탭 후보 수를 인증 조작 전에 증명할 것.\n"
+            f"2. 사람인·잡코리아는 정확한 기존 탭 후보가 1개일 때만 저장 아이디·비밀번호를 "
+            f"최대 1회 제출한다. 후보가 0개 또는 복수면 인증 조작 0회 HANDOFF한다.\n"
+            f"3. LinkedIn 인증 기기가 정확히 1개로 증명되면 그 기기와 정확한 기존 탭을 "
+            f"인증 조작 0회로 재사용한다. 0개로 증명된 경우에는 현재 턴 승인과 APP 17 경로 "
+            f"결정이 같은 배정 기기({machine})를 가리키고 정확한 기존 탭 후보가 1개일 때만 "
+            f"APP 30/31의 LINKEDIN_LI_AT 적용을 최대 1회 허용한다. APP 30/31이 준비되지 "
+            f"않았거나 인증 기기 수 미증명·부정확이면 인증 조작 0회 HANDOFF한다.\n"
+            f"4. LinkedIn 인증 기기가 2개 이상이거나 멀티세션이면 terminal AUTH_CONFLICT다. "
+            f"다른 기기 자동 로그아웃·Continue/Confirm·신뢰도 기반 선택·재시도는 0회다.\n"
+            f"5. 캡차/2FA/checkpoint가 양성 확인되면 그 브라우저 창을 앞으로 띄워 두고 "
             f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력한 뒤 즉시 종료할 것"
             f"(자동 우회 금지).\n"
-            f"4. 브라우저 보존: 창·탭·프로필 종료 0건 — 로그인된 크롬 프로필을 "
+            f"6. 브라우저 보존: 창·탭·프로필 종료 0건 — 로그인된 크롬 프로필을 "
             f"로그아웃·삭제·초기화하지 말 것.\n"
-            f"5. 비밀번호·쿠키·토큰을 출력하지 말 것.\n"
-            f"6. 검색·수집·발송은 이 잡 범위 밖 — 시작하지 말 것.\n"
-            f"7. 완료 후 영수증(artifacts/portal_session_status_latest.json) 갱신을 "
-            f"확인하고, 마지막 줄에 {_LOGIN_RECEIPT_MARKER} 뒤로 "
+            f"7. 비밀번호·쿠키·토큰·비밀 원문이나 파생값을 인자·stdout·stderr·로그·영수증·"
+            f"모델 메시지에 출력하지 말 것.\n"
+            f"8. 검색·수집·발송은 이 잡 범위 밖 — 시작하지 말 것.\n"
+            f"9. 모든 채널이 정책에 맞게 READY로 증명된 경우에만 영수증"
+            f"(artifacts/portal_session_status_latest.json)을 확인하고, 마지막 줄에 "
+            f"{_LOGIN_RECEIPT_MARKER} 뒤로 "
             f'{{"channels": {{"saramin": {{"ready": true}}, "jobkorea": {{"ready": true}}, '
             f'"linkedin_rps": {{"ready": true}}}}, "output": "<영수증 경로>"}} 형식 JSON 을 '
-            f"출력할 것. ready 가 아닌 채널이 있으면 이 마커 대신 규칙 3의 PAUSE 마커로 "
-            f"종료할 것(거짓 ready 금지).\n"
+            f"출력할 것. 그 외에는 실제 HUMAN_AUTH·HANDOFF·AUTH_CONFLICT 상태를 그대로 "
+            f"보고하고 거짓 ready를 만들지 말 것.\n"
         )
     login_barrier_rule = (
-        "0. `docs/prompts/login-search-execution-contract.md`를 먼저 읽고 그대로 실행할 것. "
+        "0. `docs/prompts/login-search-execution-contract.md`와 26-portal-login-spec@1.5.0을 "
+        "먼저 읽고 그대로 실행할 것. "
         "워커가 필요한 사이트 전부의 `artifacts/portal_session_status_latest.json` "
         "영수증과 exact target 로그인 마커를 정식 게이트로 검증해 "
         "`LOGIN_BARRIER=PASS` 영수증이 나온 뒤에만 "
-        f"{skill} 스킬의 검색·URL 작업을 시작할 것. BLOCKED이면 검색을 시작하지 말고 "
-        "사이트별 상태와 브라우저 보존 결과를 보고할 것.\n"
+        f"{skill} 스킬의 검색·URL 작업을 시작할 것. READY가 아니면 검색을 시작하지 말고 "
+        "사이트별 HUMAN_AUTH·HANDOFF·AUTH_CONFLICT 상태와 브라우저 보존 결과를 보고할 것.\n"
     )
     url_login_rule = ""
     capture_rule = ""
     if skill == "url":
         assigned_machine = str(job.get("machine") or "(미상)")
         url_login_rule = (
-            "20. LinkedIn RPS 실행 순서: 함대가 macmini/macbook/winpc 중 heartbeat의 "
-            "linkedin_rps_logged_in=true인 머신을 먼저 찾아 이 잡에 배정한다. 현재 배정 머신은 "
-            f"{assigned_machine}이다. 이 머신의 영속 크롬 프로필에서 브라우저를 직접 탐색하고, "
-            "로그인된 브라우저와 RPS 세션을 실제 URL·DOM으로 검증할 것. 검증 전에는 검색을 "
-            "시작하지 말 것. 단순 로그아웃이어도 LOGIN_BARRIER 계약의 검증된 exact-target "
-            "어댑터만 이 잡 전체에서 최대 1회 허용한다. 어댑터가 없으면 session_guard human-auth로 "
-            "인계할 것. 캡차·2FA·checkpoint가 뜨거나 로그인 "
-            "세션을 찾지 못하면 다른 머신을 원격 조작하지 말 것. 운영자가 fleet-status의 "
-            "linkedin_ready로 재배정할 수 있도록 다음 형식의 문장을 마지막 줄에 남기고 즉시 "
-            f"종료할 것: '{_PAUSE_MARKER} portal=linkedin_rps machine={assigned_machine} "
-            f"job={job_id} current_url=<현재 URL> action=linkedin_ready 확인 후 로그인 머신 재배정'.\n")
+            "20. LinkedIn RPS 로그인 판단은 26-portal-login-spec@1.5.0만 따른다. 봉인된 함대 "
+            "증거로 인증 기기가 정확히 1개라고 증명되면 그 기기와 정확한 기존 탭을 인증 조작 0회로 "
+            "재사용한다. 0개로 증명된 경우에는 현재 턴 승인과 APP 17 경로 결정이 현재 배정 기기 "
+            f"{assigned_machine}를 함께 가리키고 정확한 기존 탭 후보가 1개일 때만 APP 30/31의 "
+            "LINKEDIN_LI_AT 적용을 최대 1회 허용한다. 인증 기기 수 미증명·부정확 또는 APP 30/31 "
+            "미준비는 인증 조작 0회 HANDOFF다. 인증 기기 2개 이상이나 멀티세션은 terminal "
+            "AUTH_CONFLICT이며 다른 기기 자동 로그아웃·Continue/Confirm·신뢰도 기반 선택·재시도는 "
+            "0회다. 캡차·2FA·checkpoint 양성은 HUMAN_AUTH다. HUMAN_AUTH일 때만 다음 형식의 "
+            f"문장을 마지막 줄에 남길 것: '{_PAUSE_MARKER} portal=linkedin_rps "
+            f"machine={assigned_machine} job={job_id} current_url=<현재 URL> "
+            "action=사람이 챌린지 해결'. HANDOFF 또는 AUTH_CONFLICT면 PAUSED_FOR_HUMAN 마커와 "
+            "완료 영수증을 출력하지 말고 정확한 상태·근거를 보고해 실패 종결할 것. READY가 아니면 "
+            "검색을 시작하거나 다른 머신을 원격 조작하지 말 것.\n")
     if skill == "aisearch":
         capture_rule = (
             "19. 상세 화면을 연 뒤 다음 화면으로 이동하기 전에 exact target id로 정식 "
@@ -441,9 +451,12 @@ def build_job_prompt(job: Mapping[str, Any]) -> str:
         f"'{_PAUSE_MARKER} <상황>' 을 *마지막 줄*로 출력하고 즉시 종료할 것.\n"
         f"5. params.search_urls가 있으면 그 URL들을 사람이 준비한 검색 결과로 사용하고 "
         f"포지션 URL과 혼동하지 말 것.\n"
-        f"6. 보호 포털이 로그아웃 상태면 LOGIN_BARRIER 계약의 검증된 exact-target 어댑터만 "
-        f"최대 1회 허용한다. 어댑터가 없으면 session_guard human-auth로 인계하고, "
-        f"비밀번호·쿠키·토큰을 출력하지 말 것.\n"
+        f"6. 보호 포털 인증은 26-portal-login-spec@1.5.0의 사이트별 정책만 따른다. 사람인·"
+        f"잡코리아는 정확한 기존 탭 후보 1개에서 저장 자격증명 최대 1회다. LinkedIn은 인증 기기 "
+        f"1개면 인증 조작 0회 재사용하고, 0개로 증명됐을 때만 현재 턴 승인·APP 17 경로 결정·"
+        f"정확 후보 1개·APP 30/31 LINKEDIN_LI_AT 조건을 모두 요구한다. 인증 기기 수 미증명은 "
+        f"인증 조작 0회 HANDOFF, 2개 이상은 AUTH_CONFLICT다. 다른 기기 자동 로그아웃·신뢰도 "
+        f"기반 선택은 금지하며 비밀번호·쿠키·토큰을 출력하지 말 것.\n"
         f"7. aisearch는 ClickUp JD에서 국문·영문·띄어쓰기·약어 변형 검색어를 만들고, "
         f"사람인 OR/AND/NOT 및 잡코리아 키워드 칩·경력 필터를 UI에 직접 입력할 것.\n"
         f"8. 후보 목록은 1페이지에서 끝내지 말고 최소 10페이지 또는 마지막 페이지까지 "

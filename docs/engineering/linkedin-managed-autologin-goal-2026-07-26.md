@@ -1,5 +1,9 @@
 # LinkedIn 관리 브라우저 자동 로그인 실증 목표 — 2026-07-26
 
+> **실행 금지 — `historical_input_not_executable`.** 이 목표는 현재 정책과 충돌하는 과거 입력 기록입니다.
+> LinkedIn 아이디·비밀번호 폼 제출 대신 `26-portal-login-spec@1.5.0`의 기존 인증 기기 재사용
+> 또는 APP 30/31만 허용합니다.
+
 Issue: #210
 
 ## 현재 상태와 근본 원인

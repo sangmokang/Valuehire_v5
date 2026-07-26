@@ -1,5 +1,9 @@
 # Hermes 프롬프트 — url·aisearch·humansearch 스킬 로드 전 login 선행 게이트 (2026-07-21)
 
+> **실행 금지 — `historical_input_not_executable`.** 이 문서는 과거 입력 기록입니다.
+> 현재 실행 경로는 Discord→queue→worker→Codex/Claude이며 로그인 정책은
+> `26-portal-login-spec@1.5.0`만 따릅니다.
+
 > 이 문서는 **Hermes에서 코딩할 때 그대로 붙여 넣는 작업 지시서**다.
 > 규율: `docs/sot/30-strict-mode-contract.md`(strict) + `docs/harness.md` 게이트 + CLAUDE.md SOT 불변식.
 > 등급: **L2**(운영 경로 코드 변경, 인증 흐름 인접). RED→GREEN + verify + 배선 증명 + V1 적대검증 필수.

@@ -9,7 +9,7 @@ This reference consolidates the AI Search specs. It does not replace the repo fi
 - Channel filters and DOM SSOT: `/Users/kangsangmo/Valuehire_v5/docs/sot/22-talent-search-filters.json`
 - Channel summary: `/Users/kangsangmo/Valuehire_v5/docs/sot/22-talent-search-filters.md`
 - JD and scoring SOT: `/Users/kangsangmo/Valuehire_v5/docs/sot/24-position-jd-sot.json`
-- Portal login/blocking SOT: `/Users/kangsangmo/Valuehire_v5/docs/sot/26-portal-login-spec.json`
+- Portal login/blocking SOT: `/Users/kangsangmo/Valuehire_v5/docs/sot/26-portal-login-spec.json` (`26-portal-login-spec@1.5.0`)
 - Top repo invariants: `/Users/kangsangmo/Valuehire_v5/CLAUDE.md`
 
 ## Non-Negotiable Invariants
@@ -18,10 +18,10 @@ This reference consolidates the AI Search specs. It does not replace the repo fi
 - Do not perform ad-hoc search. AI Search must be anchored to a user-provided position ID, ClickUp task URL, hiring URL, JD text, or explicit stage-limited instruction.
 - Do not begin generic web search, portal search, ChatGPT Search, LinkedIn/Saramin/Jobkorea search, or candidate discovery before stage 0-4 establish scope, channel state, JD source, and keyword strategy.
 - Do not weaken, skip, reorder, or silently replace SOT gates for convenience. If a shortcut conflicts with SOT 25/22/24/26, the shortcut is forbidden.
-- Do not improvise around `OCCUPIED` or `BLOCKED` states. Report the state and wait/resume according to the spec.
-- Do not block 3-channel auto-login. Use saved credentials for Saramin, Jobkorea, and LinkedIn RPS; prefer an existing owner-authenticated session when present, but do not reintroduce a LinkedIn human-login-only rule.
+- Do not improvise around `OCCUPIED`, `HUMAN_AUTH`, `HANDOFF`, or `AUTH_CONFLICT`. Report the exact state and follow `26-portal-login-spec@1.5.0`.
+- Authentication is site-specific: Saramin and Jobkorea may submit stored username/password once on the only exact existing target. LinkedIn must never submit username/password; it may reuse the only authenticated machine with zero authentication mutations, or use APP 30/31 `LINKEDIN_LI_AT` once only after a proven zero-machine count, current-turn owner authorization, and the APP 17 route decision select the same exact target.
 - If owner Chrome is occupied, do zero automation and resume only after it is clear.
-- Stop the channel on a real captcha, 2FA, bot block, checkpoint, or LinkedIn multi-session lock. Plain LinkedIn login redirects/login-cap are automatic-login inputs, not human handoff by themselves. Do not bypass or spam retries.
+- A real captcha, 2FA, bot block, or checkpoint is `HUMAN_AUTH`. A LinkedIn multi-session lock or two-or-more authenticated machines is terminal `AUTH_CONFLICT`; automatic logout, Continue/Confirm, reliability selection, and retry are forbidden. An unproven machine count or a missing/non-unique exact target is `HANDOFF` with zero authentication mutations.
 - Do not route channels by role type. Search all target portal channels for every role when live search is in scope.
 - Detailed profile entry/save is treated as zero-credit, but credit-consuming search/send actions require human confirmation.
 - Never auto-send proposal, mail, InMail, Send, 보내기, or 제안 발송.
@@ -44,14 +44,17 @@ Required actions:
 Required actions:
 - Read CDP tab list from `http://127.0.0.1:9222/json`.
 - Detect blocks using the unified regex from SOT 26: captcha, recaptcha, 보안문자, 자동입력 방지, checkpoint, unusual activity, multiple sign-ins, Only one session, enterprise-authentication, 2단계, authwall, challenge, etc. Do not classify `/uas/login-cap` or `li.protechts` alone as a hard block.
-- Before declaring `BLOCKED`, cross-check with screenshot or direct page evidence to avoid plain-text false positives.
-- Run preflight batch login: check all target channels first, then log in logged-out channels before registration/search.
-- Classify each target channel as `READY`, `OCCUPIED`, or `BLOCKED`.
+- Before declaring a terminal or human state, cross-check with screenshot or direct page evidence to avoid plain-text false positives.
+- Run preflight batch state inspection: check all target channels and exact-target candidate counts before any allowed site-specific authentication.
+- Classify each target channel as `READY`, `OCCUPIED`, `HUMAN_AUTH`, `HANDOFF`, or `AUTH_CONFLICT`.
 
 Decision rules:
-- Captcha or multi-session: affected channel is `BLOCKED`; no automatic bypass.
-- Logged-out Saramin/Jobkorea: raw CDP login using `.env.local` credentials.
-- LinkedIn login-cap: try stored-credential login once. LinkedIn multi-session: do not click “continue” automatically because that can terminate another active session.
+- Captcha/2FA/checkpoint: affected channel is `HUMAN_AUTH`; no automatic bypass or repeat submission.
+- Logged-out Saramin/Jobkorea: submit stored credentials at most once only when there is exactly one existing target that matches the site policy; otherwise `HANDOFF`.
+- LinkedIn authenticated-machine count unproven: `HANDOFF` with zero authentication mutations.
+- LinkedIn count one: reuse that machine and its only exact target with zero authentication mutations.
+- LinkedIn count zero: only APP 30/31 may apply `LINKEDIN_LI_AT` at most once when current-turn owner authorization and the APP 17 route decision identify the same machine and there is exactly one existing target; otherwise `HANDOFF`.
+- LinkedIn count two or more or multi-session: terminal `AUTH_CONFLICT`; do not log out another machine, Continue/Confirm, choose by reliability, or retry.
 - Owner occupied: go to stage 2.
 
 ### 2. Yield and Resume

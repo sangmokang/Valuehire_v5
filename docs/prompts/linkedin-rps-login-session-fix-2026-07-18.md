@@ -1,5 +1,9 @@
 # 프롬프트 — LinkedIn RPS 로그인·세션 문제 해결 (humansearch/aisearch 공용)
 
+> **실행 금지 — `historical_input_not_executable`.** 이 문서는 과거 입력 기록입니다.
+> LinkedIn 아이디·비밀번호 경로는 폐기되었고 현재 실행은
+> `26-portal-login-spec@1.5.0`의 기존 인증 기기 재사용 또는 APP 30/31만 따릅니다.
+
 - 작성: 2026-07-18. 증상: humansearch 라이브 순회 시 LinkedIn Recruiter를 자동화로 못 몬다.
 - 목적: 이 문제를 매번 겪지 않도록 원인·해결 절차를 못박는다(구현 워커·다음 세션이 그대로 따른다).
 

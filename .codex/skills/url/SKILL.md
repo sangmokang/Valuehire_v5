@@ -43,14 +43,14 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 ---
 
 ## ⛔ 안전 불변식 (항상 · SOT 약화 금지)
+- **로그인 정책 정본은 `26-portal-login-spec@1.5.0`이다.** LinkedIn 아이디·비밀번호 제출은 금지하며 APP 30/31의 `LINKEDIN_LI_AT` 경로만 허용 후보가 된다.
 - **발송·InMail·제안 "보내기"는 절대 자동 클릭 금지(SOT3).** 이 스킬은 *검색만* 걸어둔다. 후보 접촉 0.
 - **사장님 크롬 점유 시 즉시 양보 → 손 떼면 자동 재개(SOT2/R4).** 창 여닫기·URL 연타·알람 후 무한 재시도 금지. 봇처럼 굴지 않는다.
-- **캡차·봇차단·2FA·checkpoint·멀티세션락 감지 시 즉시 STOP.** retry 금지(RPS 계정 잠금 위험).
-- 단순 로그아웃 화면(예: /uas/login-cap)은 위 STOP 대상이 아니다 — SOT26/SOT 불변식 1에 따라 시크릿 저장소 자동 로그인을 1회 시도한다(아래 세션 규칙과 동일, 2026-07-15 #107 정합화).
+- **캡차·봇차단·2FA·checkpoint는 `HUMAN_AUTH`, 멀티세션락은 terminal `AUTH_CONFLICT`다.** 우회·retry 금지(RPS 계정 잠금 위험).
+- 단순 로그아웃 화면(예: /uas/login-cap)은 `AUTH_LOST` 후보일 뿐 인증 실행 허가가 아니다. 함대 전체 인증 기기 수 미증명은 인증 조작 0회 `HANDOFF`다.
 - **로그인된 RPS 크롬 kill/stop 금지.** 세션 유지(`keep-logged-in-browser-alive`).
-- **LinkedIn 세션 문맥 보존(`SESSION_CONTEXT_PRESERVATION`, #156).** 이미 인증된 exact target 하나만
-  재사용한다. 다른 Chrome 프로필의 RPS 세션 신호·target/profile/endpoint 불일치는 `AUTH_CONFLICT`로
-  중단하며, 새 탭·두 번째 로그인·Continue/Confirm·반복 navigation은 0회다. 후속 `/humansearch`가
+- **LinkedIn 세션 문맥 보존(`SESSION_CONTEXT_PRESERVATION`, #156).** 인증 기기가 정확히 1개라고 증명되면 그 기기의 정확한 기존 target 하나를 인증 조작 0회로 재사용한다. 0개라고 증명된 경우에는 현재 턴 승인과 APP 17 경로 결정이 같은 기기를 가리키고 정확 후보가 1개일 때만 APP 30/31 적용을 허용한다. 2개 이상은 `AUTH_CONFLICT`로
+  중단하며, 다른 기기 자동 로그아웃·새 탭·두 번째 로그인·Continue/Confirm·신뢰도 선택·반복 navigation은 0회다. 후속 `/humansearch`가
   후보를 열 때는 결과 카드의 query 포함 `navigation_url`을 보존하고 canonical `profile_url`은 저장에만 쓴다.
 - 행동 전 **DOM 덤프로 셀렉터 확인**(SOT23 evidence-first). 추측 셀렉터 금지.
 - 보고는 **짧고 쉬운 한국어**(CLAUDE.md 0번 규칙).
@@ -61,8 +61,9 @@ description: "ClickUp 포지션(기본 리스트 901814621569)을 기준으로 L
 - **결과 URL·DOM 수확 = raw CDP 단일탭 OK**(`tools/multi_position_sourcing/raw_cdp.py`, `suppress_origin=True`). 수확 직전 `Page.bringToFront`.
 - **🔴 점유 배지**: raw CDP 로 붙기 전에 `export VH_BUSY_TASK=/url`(Codex 면 `VH_BUSY_AGENT=Codex`). `raw_cdp.attach()` 하면 화면에 "🤖 …자동화 사용중 · /url" 배지가 자동으로 뜬다(사장님이 점유 인지, SOT 투명성). 상세 규약은 humansearch SKILL "브라우저 드라이버" 절.
 - 포트 숫자를 우선하지 않는다. `/login`이 증명한 exact target/profile/endpoint를 그대로 쓴다. 같은
-  target의 일반 로그아웃이고 다른 RPS 세션 신호가 없을 때만 정식 로그인 실행기가 1회 복구할 수 있다.
-  `enterprise-authentication/sessions`는 일반 로그아웃이 아니므로 자동 로그인·사람 재호출 없이 중단한다.
+  target의 일반 로그아웃이어도 인증 기기 수 0개 증명·현재 턴 승인·APP 17 경로 결정·APP 30/31이 모두
+  준비된 경우에만 `LINKEDIN_LI_AT` 적용을 최대 1회 허용한다. `enterprise-authentication/sessions`는
+  terminal `AUTH_CONFLICT`이므로 다른 기기 자동 로그아웃·사람 재호출 없이 중단한다.
 
 ---
 
