@@ -98,18 +98,18 @@ def test_build_fleet_job_payload_happy():
     assert p["status"] == "queued"
 
 
-def test_build_fleet_job_payload_preserves_existing_machine_default():
+def test_build_fleet_job_payload_requires_explicit_machine():
     p = build_fleet_job_payload(
         {"skill": "aisearch", "url": "https://app.clickup.com/t/abc"},
         requested_by="m:member", role="member")
-    assert p is not None and p["machine"] == "macmini"
+    assert p is None
 
 
-def test_build_fleet_job_payload_accepts_normalized_dynamic_machine():
+def test_build_fleet_job_payload_rejects_unknown_dynamic_machine():
     p = build_fleet_job_payload(
         {"skill": "humansearch", "url": "https://x.com/a", "machine": "server42"},
         requested_by="m:member", role="member")
-    assert p is not None and p["machine"] == "server42"
+    assert p is None
 
 
 @pytest.mark.parametrize("opts", [
