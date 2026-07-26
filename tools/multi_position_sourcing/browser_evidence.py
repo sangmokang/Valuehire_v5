@@ -233,6 +233,8 @@ def _read_private_regular(path: Path, maximum_bytes: int) -> bytes:
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
     descriptor = os.open(path, flags)
     try:
         metadata = os.fstat(descriptor)
