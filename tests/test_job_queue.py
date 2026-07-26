@@ -194,7 +194,8 @@ def test_transition_table_only_contains_known_statuses():
 
 def test_claim_payload_valid_machine_only():
     assert claim_next_job_payload("macbook") == {"p_machine": "macbook"}
-    assert claim_next_job_payload("laptop") == {"p_machine": "laptop"}
+    with pytest.raises(ValueError):
+        claim_next_job_payload("laptop")
     with pytest.raises(ValueError):
         claim_next_job_payload(" bad")
     with pytest.raises(ValueError):
@@ -258,7 +259,11 @@ def _fake_client() -> JobQueueClient:
 def test_enqueue_rejects_tampered_payload(monkeypatch):
     c = _fake_client()
     calls = []
-    monkeypatch.setattr(c, "_call", lambda *a, **k: calls.append(a) or [{"id": 1}])
+    monkeypatch.setattr(
+        c,
+        "_call",
+        lambda *a, **k: calls.append(a) or [{"id": 1, "machine": "macmini"}],
+    )
     good = new_job_payload(**_ok_kwargs())
     tampered = dict(good, skill="send")          # 사후 변조
     with pytest.raises(ValueError):
@@ -267,7 +272,7 @@ def test_enqueue_rejects_tampered_payload(monkeypatch):
     with pytest.raises(ValueError):
         c.enqueue(tampered2)
     assert calls == []                            # 무효 페이로드는 HTTP 자체가 안 나감
-    assert c.enqueue(good) == {"id": 1}
+    assert c.enqueue(good) == {"id": 1, "machine": "macmini"}
     assert len(calls) == 1
 
 

@@ -161,7 +161,8 @@ def test_dispatch_fleet_run_enqueues():
     q = FakeQueue()
     r = dispatch_fleet_command(
         _inv("fleet-run", user_id=OWNER_ID, is_dm=True,
-             options={"skill": "humansearch", "url": "https://app.clickup.com/t/abc"}),
+             options={"skill": "humansearch", "url": "https://app.clickup.com/t/abc",
+                      "machine": "macmini"}),
         authorized_users=_users(), config=_config(), queue=q, owner_role_ids=(OWNER_ROLE,))
     assert r["action"] == "enqueued" and r["job"]["id"] == 42
     assert len(q.enqueued) == 1
@@ -303,12 +304,13 @@ def test_url_payload_builder_rejects_caller_invented_route():
     assert payload is None
 
 
-def test_non_url_skill_keeps_existing_default(monkeypatch):
+def test_non_url_skill_uses_explicit_machine_without_auto_selection(monkeypatch):
     monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
     q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": 9_999_999_999,
                               "linkedin_rps_logged_in": True}])
     result = dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}),
+        _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc",
+                                   "machine": "macmini"}),
         authorized_users=_users(), config=_config(), queue=q)
     assert result["action"] == "enqueued"
     assert q.enqueued[0]["machine"] == "macmini"
@@ -327,6 +329,7 @@ def test_non_url_jobs_keep_machine_bound_account_key(monkeypatch):
     monkeypatch.setenv("VALUEHIRE_DIRECT_GATEWAY_PROCESS", "1")
     q = _routing_queue()
     dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}),
+        _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc",
+                                   "machine": "macmini"}),
         authorized_users=_users(), config=_config(), queue=q)
     assert q.enqueued[0]["account_key"] == "portal:macmini"

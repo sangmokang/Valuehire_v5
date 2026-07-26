@@ -28,10 +28,10 @@ def test_heartbeat_payload():
     p = heartbeat_payload("macmini", worker_pid=4242, now_iso="2026-07-11T00:00:00Z")
     assert p == {"machine": "macmini", "beat_at": "2026-07-11T00:00:00Z", "worker_pid": 4242,
                  "linkedin_rps_logged_in": False}
-    dynamic = heartbeat_payload(
-        "office-linux-05", worker_pid=7, now_iso="2026-07-11T00:00:00Z"
-    )
-    assert dynamic["machine"] == "office-linux-05"
+    with pytest.raises(ValueError):
+        heartbeat_payload(
+            "office-linux-05", worker_pid=7, now_iso="2026-07-11T00:00:00Z"
+        )
 
 
 @pytest.mark.parametrize("machine", ["", " bad", "bad ", "bad\n", "MACMINI", None, "a" * 65])
@@ -317,7 +317,7 @@ def test_linkedin_flag_from_portal_status():
         now_epoch=now) is False
 
 
-def test_pick_linkedin_machine_priority_and_fallback():
+def test_pick_linkedin_machine_priority_without_fallback():
     from tools.multi_position_sourcing.fleet_heartbeat import pick_linkedin_machine
     now = 1_800_000_000
     rows = [
@@ -332,16 +332,17 @@ def test_pick_linkedin_machine_priority_and_fallback():
         {"machine": "office-linux-05", "beat_at_epoch": now - 10,
          "linkedin_rps_logged_in": True}
     ]
-    assert pick_linkedin_machine(dynamic, now_epoch=now) == "office-linux-05"
-    # 아무도 로그인 안 됨 → macmini 폴백(무동작보다 낫다, 사장님 승인 설계)
-    assert pick_linkedin_machine([], now_epoch=now) == "macmini"
+    with pytest.raises(ValueError):
+        pick_linkedin_machine(dynamic, now_epoch=now)
+    # 아무도 로그인 안 됨 → 기기를 추측하지 않는다.
+    assert pick_linkedin_machine([], now_epoch=now) is None
     # stale heartbeat(5분 초과)는 제외
     stale = [{"machine": "winpc", "beat_at_epoch": now - 301, "linkedin_rps_logged_in": True}]
-    assert pick_linkedin_machine(stale, now_epoch=now) == "macmini"
+    assert pick_linkedin_machine(stale, now_epoch=now) is None
     # 깨진 행은 무시(fail-closed)
     junk = [{"machine": "winpc", "linkedin_rps_logged_in": True},
             {"beat_at_epoch": now, "linkedin_rps_logged_in": True}]
-    assert pick_linkedin_machine(junk, now_epoch=now) == "macmini"
+    assert pick_linkedin_machine(junk, now_epoch=now) is None
 
 
 def test_linkedin_migration_and_sot29_amended():
