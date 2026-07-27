@@ -211,3 +211,133 @@ class TestCounterAcRequiredGates:
         # 필수요건(경력연차 등)이 없으면 게이트를 만들 수 없으므로 거부(fail-closed)
         with pytest.raises(ValueError):
             build_search_plan(make_jd(requirements={}))
+
+
+# ---------------------------------------------------------------------------
+# V1 적대검증 결함 재현 (fail-fast 강화)
+# ---------------------------------------------------------------------------
+
+
+class TestV1StructureValidation:
+    """결함 1 — 잘못된 keyword_groups 구조를 글자 단위로 분해하지 말고 거부."""
+
+    def test_string_in_group_slot_rejected(self):
+        # ["Python"] 처럼 그룹 자리에 문자열이 오면 글자 단위 분해가 아니라 거부
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=["Python"]))
+
+    def test_top_level_string_rejected(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups="Python"))
+
+    def test_non_string_term_rejected(self):
+        # 그룹 안 비문자열(int 등)을 조용히 걸러내지 말고 거부
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=[["Python", 123]]))
+
+    def test_non_list_group_rejected(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=[{"Python": 1}]))
+
+
+class TestV1BooleanInjection:
+    """결함 2 — 키워드 속 따옴표·OR·AND·괄호는 Boolean 구문 주입 → 명시적 거부."""
+
+    def test_double_quote_in_term_rejected(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=[['Python" OR "Java']]))
+
+    def test_parenthesis_in_term_rejected(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=[["(Python)"]]))
+
+    def test_bare_or_operator_in_term_rejected(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=[["Python OR Java"]]))
+
+    def test_bare_and_operator_in_term_rejected(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=[["Python AND Java"]]))
+
+    def test_bare_not_operator_in_term_rejected(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(keyword_groups=[["Python NOT Java"]]))
+
+    def test_lowercase_or_substring_is_not_injection(self):
+        # "Coordinator" 같은 정상 단어 속 소문자 or/and 는 연산자가 아니다
+        out = build_rps_boolean(
+            make_jd(keyword_groups=[["Coordinator", "Brand Manager"]])
+        )
+        assert '"Coordinator"' in out
+        assert '"Brand Manager"' in out
+
+
+class TestV1AdvanceReasonGate:
+    """결함 3 — 확장 전환은 exhausted 사유만 허용 (E8 catch-all 방지)."""
+
+    def test_advance_with_captcha_reason_rejected(self):
+        plan = build_search_plan(make_jd())
+        with pytest.raises(ValueError):
+            plan.advance(reason="captcha")
+        # 거부됐으면 단계도 그대로여야 한다
+        assert plan.current_stage().name == "seoul_university_priority"
+
+    def test_advance_with_arbitrary_reason_rejected(self):
+        plan = build_search_plan(make_jd())
+        for bad in ("rate_limited", "error", "", "EXHAUSTED "):
+            with pytest.raises(ValueError):
+                plan.advance(reason=bad)
+        assert plan.current_stage().name == "seoul_university_priority"
+
+    def test_advance_with_exhausted_still_works(self):
+        plan = build_search_plan(make_jd())
+        nxt = plan.advance(reason="exhausted")
+        assert nxt is not None and nxt.name == "expanded"
+
+
+class TestV1LocationValidation:
+    """결함 4 — 빈 위치 문자열 거부."""
+
+    def test_empty_location_rejected(self):
+        with pytest.raises(ValueError):
+            build_search_plan(make_jd(), location="")
+
+    def test_whitespace_location_rejected(self):
+        with pytest.raises(ValueError):
+            build_search_plan(make_jd(), location="   ")
+
+
+class TestV1SeoulOnlyCampuses:
+    """결함 5 — 서울 밖 분교/캠퍼스가 목록에 없음을 명시적으로 고정."""
+
+    def test_non_seoul_branch_campuses_excluded(self):
+        banned = {
+            "한양대학교 ERICA",
+            "한양대학교 에리카",
+            "한양대학교(ERICA)",
+            "연세대학교 미래캠퍼스",
+            "연세대학교(미래)",
+            "고려대학교 세종캠퍼스",
+            "고려대학교(세종)",
+            "홍익대학교 세종캠퍼스",
+            "건국대학교 글로컬캠퍼스",
+            "중앙대학교 다빈치캠퍼스",
+            "경희대학교 국제캠퍼스",
+            "한국외국어대학교 글로벌캠퍼스",
+            "상명대학교 천안캠퍼스",
+            "명지대학교 자연캠퍼스",
+        }
+        assert banned.isdisjoint(set(SEOUL_UNIVERSITIES))
+
+    def test_no_entry_mentions_branch_campus_keyword(self):
+        # 목록의 어떤 항목에도 분교/지방 캠퍼스 표기가 섞여 있으면 안 된다
+        for u in SEOUL_UNIVERSITIES:
+            for token in ("ERICA", "에리카", "미래", "세종캠퍼스", "글로컬", "분교", "안산", "원주", "천안"):
+                assert token not in u, u
+
+    def test_data_file_documents_seoul_campus_basis(self):
+        # 데이터 파일 주석에 "서울 캠퍼스 기준"임이 명시돼 있어야 한다
+        import apps.aisearch.core.data.seoul_universities as mod
+
+        assert mod.__doc__ is not None
+        assert "서울 캠퍼스 기준" in mod.__doc__
