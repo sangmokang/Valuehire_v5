@@ -12,6 +12,7 @@ goal: docs/engineering/aisearch-fleet-goal-2026-07-28.md §4 AC-1.
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
@@ -22,6 +23,36 @@ DEFAULT_LOCATION = "South Korea"
 STAGE_SEOUL_UNIVERSITY_PRIORITY = "seoul_university_priority"
 STAGE_EXPANDED = "expanded"
 
+# 확장 단계 전환이 허용되는 유일한 사유. 캡차·rate limit 등은 전환 사유가 아니라
+# 별도 복구 절차 대상이므로 여기서 fail-fast 로 거부한다(E8 catch-all 방지).
+ADVANCE_REASON_EXHAUSTED = "exhausted"
+
+# Boolean 구문 주입 문자: 따옴표·괄호는 위치와 무관하게 구문을 깨뜨린다.
+_FORBIDDEN_CHARS = ('"', "(", ")")
+# 대문자 단독 토큰 OR/AND/NOT 은 RPS Boolean 연산자로 해석된다.
+_OPERATOR_TOKEN_RE = re.compile(r"(?:^|\s)(?:OR|AND|NOT)(?:\s|$)")
+
+
+def _validate_term(term: Any, group: Any) -> str:
+    """키워드 1개를 검증한다 — 비문자열·주입 문자·연산자 토큰은 명시적 거부."""
+    if not isinstance(term, str):
+        raise ValueError(
+            f"키워드는 문자열이어야 합니다: {term!r} (그룹 {group!r})"
+        )
+    stripped = term.strip()
+    for ch in _FORBIDDEN_CHARS:
+        if ch in stripped:
+            raise ValueError(
+                f"키워드에 Boolean 구문 문자({ch!r})가 들어 있습니다 — "
+                f"주입 위험이므로 거부합니다(이스케이프하지 않음): {term!r}"
+            )
+    if _OPERATOR_TOKEN_RE.search(stripped):
+        raise ValueError(
+            "키워드에 Boolean 연산자 토큰(OR/AND/NOT)이 들어 있습니다 — "
+            f"주입 위험이므로 거부합니다: {term!r}"
+        )
+    return stripped
+
 
 def build_rps_boolean(jd: dict[str, Any]) -> str:
     """JD 키워드 그룹을 RPS Keywords 필드용 Boolean 문자열로 조합한다.
@@ -29,12 +60,23 @@ def build_rps_boolean(jd: dict[str, Any]) -> str:
     각 그룹(한/영 동의어)은 OR 로, 그룹끼리는 AND 로 묶고 괄호로 감싼다.
     """
     groups = jd.get("keyword_groups") or []
+    if isinstance(groups, (str, bytes)) or not isinstance(groups, (list, tuple)):
+        raise ValueError(
+            "keyword_groups는 리스트의 리스트여야 합니다(문자열 금지): "
+            f"{groups!r}"
+        )
     if not groups:
         raise ValueError("keyword_groups가 비어 있습니다 — Boolean을 만들 수 없습니다")
 
     and_parts: list[str] = []
     for group in groups:
-        terms = [t.strip() for t in group if isinstance(t, str) and t.strip()]
+        if isinstance(group, (str, bytes)) or not isinstance(group, (list, tuple)):
+            raise ValueError(
+                "키워드 그룹은 문자열 리스트여야 합니다 — 문자열이 그룹 자리에 "
+                f"오면 글자 단위로 분해되므로 거부합니다: {group!r}"
+            )
+        terms = [_validate_term(t, group) for t in group]
+        terms = [t for t in terms if t]
         if not terms:
             raise ValueError(f"빈 키워드 그룹이 있습니다: {group!r}")
         or_part = " OR ".join(f'"{term}"' for term in terms)
@@ -69,8 +111,17 @@ class SearchPlan:
     def current_stage(self) -> SearchStage:
         return self.stages[self._index]
 
-    def advance(self, reason: str = "exhausted") -> Optional[SearchStage]:
-        """현재 단계가 소진되면 다음 단계로 전환한다. 더 없으면 None."""
+    def advance(self, reason: str = ADVANCE_REASON_EXHAUSTED) -> Optional[SearchStage]:
+        """현재 단계가 소진(exhausted)됐을 때만 다음 단계로 전환한다. 더 없으면 None.
+
+        캡차·rate limit·오류 등 소진이 아닌 사유는 확장 전환 사유가 아니므로
+        명시적으로 거부한다(E8 catch-all 방지) — 단계는 그대로 유지된다.
+        """
+        if reason != ADVANCE_REASON_EXHAUSTED:
+            raise ValueError(
+                f"확장 전환은 reason={ADVANCE_REASON_EXHAUSTED!r}만 허용합니다 — "
+                f"{reason!r}는 전환 사유가 아닙니다(캡차·오류는 별도 복구 절차)"
+            )
         if self._index + 1 >= len(self.stages):
             self._index = len(self.stages)
             return None
@@ -89,6 +140,11 @@ def build_search_plan(
     Counter-AC 보증: JD 필수요건(requirements)이 없으면 게이트를 만들 수 없으므로
     fail-closed 로 거부하고, 있으면 방어적 복사본을 모든 단계에 동일하게 싣는다.
     """
+    if not isinstance(location, str) or not location.strip():
+        raise ValueError(
+            f"location이 비어 있습니다 — 빈 위치로는 플랜을 만들지 않습니다: {location!r}"
+        )
+
     requirements = jd.get("requirements") or {}
     if not requirements:
         raise ValueError(
