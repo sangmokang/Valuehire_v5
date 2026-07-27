@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tools.multi_position_sourcing.portal_worker import ProfileLockError
+from tools.multi_position_sourcing.portal_autologin import login_url_for_channel
 from tools.multi_position_sourcing.session_guard import (
     AuthObservation,
     BrowserTargetRef,
@@ -14,11 +15,13 @@ from tools.multi_position_sourcing.session_guard import (
 )
 from tools.multi_position_sourcing.safe_autologin import (
     LoginFormObservation,
+    prepare_jobkorea_searchfirm,
+    read_login_form,
     submit_login_form_once,
 )
 
 
-URL = "https://www.linkedin.com/uas/login-cap"
+URL = "https://www.linkedin.com/login"
 
 
 class Lease:
@@ -44,14 +47,19 @@ class Tab:
 
     def __init__(self, trace: list[str]) -> None:
         self.trace = trace
+        self.url = URL
 
     def current_url(self) -> str:
-        return URL
+        return self.url
 
     def mark_busy(self, _label: str, *, expected_url: str) -> bool:
-        assert expected_url == URL
+        assert expected_url == self.url
         self.trace.append("badge")
         return True
+
+    def navigate(self, url: str) -> None:
+        self.trace.append(f"navigate:{url}")
+        self.url = url
 
     def disconnect(self) -> bool:
         self.trace.append("disconnect")
@@ -99,6 +107,22 @@ def run(trace: list[str], **changes):
         "agent": "Codex",
         "target_id": "target-exact",
         "episode_id": "episode-10",
+        "linkedin_request_id": "request-10",
+        "selected_machine": "macmini",
+        "linkedin_fleet_observations": {
+            "request_id": "request-10",
+            "complete": True,
+            "eligible_machines": ["macmini"],
+            "missing_machines": [],
+            "observations_by_machine": {
+                "macmini": {
+                    "state": "AUTH_LOST",
+                    "ready": True,
+                    "target_id": "target-exact",
+                    "evidence_ref": "snapshot:macmini",
+                }
+            },
+        },
         "_owner_snapshot": lambda: owner(),
         "_lease_factory": lambda _site: Lease(trace),
         "_target_resolver": lambda *_args, **_kwargs: ref(),
@@ -121,6 +145,7 @@ def run(trace: list[str], **changes):
             "reason": "submitted",
         },
         "_mutation_gate": lambda *_args, **_kwargs: trace.append("gate"),
+        "_form_read_attempts": 1,
     }
     options.update(changes)
     return run_auto_login_episode("linkedin_rps", **options)
@@ -144,6 +169,33 @@ def test_authenticated_target_loads_no_credentials_and_mutates_zero_times() -> N
     assert result["submission_count"] == 0
     assert result["state"] == "AUTHENTICATED"
     assert "badge" not in trace and "submit" not in trace
+
+
+def test_linkedin_starts_from_primary_linkedin_login_surface() -> None:
+    assert login_url_for_channel("linkedin_rps") == "https://www.linkedin.com/login"
+
+
+def test_linkedin_reuses_same_target_and_navigates_to_primary_login_first() -> None:
+    trace: list[str] = []
+    tab = Tab(trace)
+    tab.url = "https://www.linkedin.com/uas/login-cap"
+    login_cap_ref = BrowserTargetRef(
+        site="linkedin_rps",
+        endpoint="http://127.0.0.1:9225",
+        target_id="target-exact",
+        websocket_url="ws://target-exact",
+        initial_url=tab.url,
+    )
+    result = run(
+        trace,
+        tab=tab,
+        _target_resolver=lambda *_args, **_kwargs: login_cap_ref,
+        _retry_sleep=lambda _seconds: trace.append("wait"),
+    )
+    assert result["state"] == "AUTHENTICATED"
+    assert tab.url == "https://www.linkedin.com/login"
+    assert trace.count("navigate:https://www.linkedin.com/login") == 1
+    assert trace.count("submit") == 1
 
 
 def test_selector_drift_and_human_activity_mutate_zero_times() -> None:
@@ -183,6 +235,7 @@ def test_fresh_owner_guard_rejection_mutates_zero_times() -> None:
         _mutation_gate=lambda *_args, **_kwargs: (_ for _ in ()).throw(
             ProfileLockError("owner activity blocks raw browser mutation")
         ),
+        _mutation_gate_attempts=1,
     )
     assert result["state"] == "HUMAN_ACTIVE"
     assert result["submission_count"] == 0
@@ -260,3 +313,165 @@ def test_atomic_runtime_submission_marks_episode_without_navigation_or_secret_ou
     assert "dataset.vhLoginEpisode" in scripts[0]
     assert "location.href" in scripts[0]
     assert "navigate" not in scripts[0]
+
+
+@pytest.mark.parametrize(
+    ("site", "url", "site_context"),
+    [
+        (
+            "saramin",
+            "https://www.saramin.co.kr/zf_user/auth?ut=c",
+            {"saraminCorporate": True},
+        ),
+        (
+            "jobkorea",
+            "https://www.jobkorea.co.kr/Login/Login_Tot.asp",
+            {"jobkoreaCorporate": True, "jobkoreaSearchFirm": True},
+        ),
+        (
+            "linkedin_rps",
+            "https://www.linkedin.com/login",
+            {"linkedinPrimaryLogin": True},
+        ),
+    ],
+)
+def test_form_requires_official_surface_same_visible_enabled_form_and_site_context(
+    site: str, url: str, site_context: dict[str, bool],
+) -> None:
+    base = {
+        "url": url,
+        "bodyPresent": True,
+        "selectors": ["#username", "#password", 'button[type="submit"]'],
+        "signature": "strict-signature",
+        "badgePresent": True,
+        "sameForm": True,
+        "visible": True,
+        "enabled": True,
+        "passwordType": True,
+        "formMethod": "POST",
+        "formAction": url,
+        **site_context,
+    }
+
+    class FormTab:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def eval(self, _script):
+            return self.payload
+
+    assert read_login_form(FormTab(base), site).valid is True
+    for change in (
+        {"url": "https://attacker.invalid/login"},
+        {"sameForm": False},
+        {"visible": False},
+        {"enabled": False},
+        {"passwordType": False},
+        {"formMethod": "GET"},
+        {"formAction": "https://attacker.invalid/collect"},
+    ):
+        assert read_login_form(FormTab({**base, **change}), site).valid is False
+
+    context_key = next(iter(site_context))
+    assert read_login_form(
+        FormTab({**base, context_key: False}), site,
+    ).valid is False
+
+
+def test_jobkorea_requires_both_corporate_tab_and_searchfirm_toggle() -> None:
+    payload = {
+        "url": "https://www.jobkorea.co.kr/Login/Login_Tot.asp",
+        "bodyPresent": True,
+        "selectors": ["#M_ID", "#M_PWD", 'button[type="submit"]'],
+        "signature": "jobkorea-strict",
+        "badgePresent": True,
+        "sameForm": True,
+        "visible": True,
+        "enabled": True,
+        "passwordType": True,
+        "formMethod": "POST",
+        "formAction": "https://www.jobkorea.co.kr/Login/Login.asp",
+        "jobkoreaCorporate": True,
+        "jobkoreaSearchFirm": True,
+    }
+
+    class FormTab:
+        def __init__(self, value):
+            self.value = value
+
+        def eval(self, _script):
+            return self.value
+
+    assert read_login_form(FormTab(payload), "jobkorea").valid is True
+    assert read_login_form(
+        FormTab({**payload, "jobkoreaCorporate": False}), "jobkorea",
+    ).valid is False
+    assert read_login_form(
+        FormTab({**payload, "jobkoreaSearchFirm": False}), "jobkorea",
+    ).valid is False
+
+
+def test_jobkorea_preparer_targets_corporate_tab_and_searchfirm_checkbox() -> None:
+    scripts: list[str] = []
+
+    class Tab:
+        def eval(self, script):
+            scripts.append(script)
+            return True
+
+    assert prepare_jobkorea_searchfirm(Tab()) is True
+    assert 'a[data-m-type="Co"]' in scripts[0]
+    assert "#btnCorpMemberType" in scripts[0]
+    assert "checkbox.click()" in scripts[0]
+
+
+def test_temporary_owner_activity_retries_before_mutation_but_never_resubmits() -> None:
+    trace: list[str] = []
+    attempts = iter(("blocked", "blocked", "allowed", "allowed"))
+
+    def gate():
+        trace.append("gate")
+        if next(attempts) == "blocked":
+            raise ProfileLockError("owner activity blocks raw browser mutation")
+
+    result = run(
+        trace,
+        _mutation_gate=gate,
+        _retry_sleep=lambda _seconds: trace.append("wait"),
+        _mutation_gate_attempts=3,
+    )
+
+    assert result["state"] == "AUTHENTICATED"
+    assert result["submission_count"] == 1
+    assert trace.count("wait") == 2
+    assert trace.count("submit") == 1
+
+
+def test_temporarily_incomplete_form_retries_read_only_then_succeeds() -> None:
+    trace: list[str] = []
+    forms = iter((
+        {"valid": False, "fingerprint": "", "url": URL},
+        {"valid": False, "fingerprint": "", "url": URL},
+        {
+            "valid": True,
+            "fingerprint": "linkedin-primary-login-v1",
+            "url": URL,
+            "badge_present": "badge" in trace,
+        },
+        {
+            "valid": True,
+            "fingerprint": "linkedin-primary-login-v1",
+            "url": URL,
+            "badge_present": True,
+        },
+    ))
+    result = run(
+        trace,
+        _form_reader=lambda *_args, **_kwargs: next(forms),
+        _form_read_attempts=3,
+        _retry_sleep=lambda _seconds: trace.append("wait"),
+    )
+    assert result["state"] == "AUTHENTICATED"
+    assert result["submission_count"] == 1
+    assert trace.count("wait") == 2
+    assert trace.count("submit") == 1
