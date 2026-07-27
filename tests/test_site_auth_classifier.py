@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from tools.multi_position_sourcing.auth_classifier import classify_auth_observation
+from tools.multi_position_sourcing.session_guard import read_auth_observation
 
 
 NOW = datetime(2026, 7, 26, 3, 0, tzinfo=timezone.utc).isoformat()
@@ -164,3 +165,26 @@ def test_missing_or_non_boolean_selector_is_selector_drift():
     )
     assert result["state"] == "SELECTOR_DRIFT"
     assert result["block_names"] == ["career_max"]
+
+
+def test_live_auth_probe_uses_json_value_across_cdp_boundary():
+    class Tab:
+        target_id = "page-1"
+
+        def eval(self, script):
+            assert "JSON.stringify" in script
+            return (
+                '{"urlBefore":"https://www.linkedin.com/talent/home",'
+                '"urlAfter":"https://www.linkedin.com/talent/home",'
+                '"challengeControl":false,"hasSessionConflict":false,'
+                '"hasLogout":false,"hasValueConnect":false,'
+                '"saraminSearchInput":false,"saraminCareerMin":false,'
+                '"saraminCareerMax":false,"jobkoreaSearch":false,'
+                '"linkedinAccount":true}'
+            )
+
+    result = read_auth_observation(Tab(), "linkedin_rps")
+
+    assert result.state == "AUTHENTICATED"
+    assert result.url == "https://www.linkedin.com/talent/home"
+    assert result.proof_names == ("talent_surface", "recruiter_marker")
