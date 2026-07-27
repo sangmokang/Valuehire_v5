@@ -16,7 +16,10 @@ from tools.multi_position_sourcing.matching_score_contract import (
 
 from apps.aisearch.core.score_gate import (
     SCORE_GATE_THRESHOLD,
+    BelowThresholdError,
     apply_score_gate,
+    enforce_registration_gate,
+    register_if_eligible,
 )
 
 
@@ -115,3 +118,68 @@ def test_contract_violation_fails_fast_through_the_gate() -> None:
     bad_dimension = _payload({"D1": 9})
     with pytest.raises(MatchingContractError):
         apply_score_gate(bad_dimension)
+
+
+# --- V1 defect fixes: enforcing API (caller cannot ignore the gate) ---
+
+
+def test_enforce_registration_gate_raises_below_threshold() -> None:
+    result = apply_score_gate(_payload({"D5": 2}))  # score 59
+    assert result["score"] == 59
+    with pytest.raises(BelowThresholdError):
+        enforce_registration_gate(result)
+
+
+def test_enforce_registration_gate_returns_result_at_threshold() -> None:
+    result = apply_score_gate(_payload())  # score exactly 60
+    enforced = enforce_registration_gate(result)
+    assert enforced["score"] == 60
+    assert enforced["eligible"] is True
+
+
+def test_below_threshold_error_carries_score_and_threshold() -> None:
+    result = apply_score_gate(
+        _payload(
+            gates=[{"requirement": "req-1", "verdict": "fail", "evidence": "missing"}]
+        )
+    )  # gate cap 49
+    with pytest.raises(BelowThresholdError) as excinfo:
+        enforce_registration_gate(result)
+    assert excinfo.value.score == 49
+    assert excinfo.value.threshold == SCORE_GATE_THRESHOLD
+
+
+def test_register_if_eligible_blocks_59_callback_never_called() -> None:
+    calls: list[dict[str, object]] = []
+
+    def register_fn(result: dict[str, object]) -> None:
+        calls.append(result)
+
+    payload = _payload({"D5": 2})  # score 59
+    with pytest.raises(BelowThresholdError):
+        register_if_eligible(payload, register_fn)
+    assert calls == []  # registration path never entered
+
+
+def test_register_if_eligible_calls_callback_once_at_60() -> None:
+    calls: list[dict[str, object]] = []
+
+    def register_fn(result: dict[str, object]) -> str:
+        calls.append(result)
+        return "registered"
+
+    payload = _payload()  # score exactly 60
+    outcome = register_if_eligible(payload, register_fn)
+    assert len(calls) == 1
+    assert calls[0]["score"] == 60
+    assert calls[0]["eligible"] is True
+    assert outcome == "registered"
+
+
+def test_register_if_eligible_contract_violation_never_calls_callback() -> None:
+    calls: list[object] = []
+    bad = _payload()
+    bad["contract_version"] = "candidate-match-v1"
+    with pytest.raises(MatchingContractError):
+        register_if_eligible(bad, calls.append)
+    assert calls == []
