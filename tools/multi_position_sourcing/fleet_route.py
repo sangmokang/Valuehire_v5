@@ -200,11 +200,10 @@ def decide_fleet_route(
         )
         if not valid:
             return _decision(None, "INVALID_MACHINE", snapshot_id)
-        if site != "linkedin_rps" or not auth_hosts or explicit in auth_hosts:
-            return _decision(
-                explicit, "EXPLICIT_MACHINE", snapshot_id,
-                ["request:explicit_machine"],
-            )
+        return _decision(
+            explicit, "EXPLICIT_MACHINE", snapshot_id,
+            ["request:explicit_machine"],
+        )
 
     if len(receipt_hosts) > 1:
         reason = "AUTH_CONFLICT" if site == "linkedin_rps" else "ROUTE_AMBIGUOUS"

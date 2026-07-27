@@ -42,13 +42,14 @@ def observations(states, *, complete=True, missing=()):
             "NO_AUTHENTICATED_HOST", True,
         ),
         (
-            {"winpc": "AUTHENTICATED"}, "macmini", "SESSION_REUSE",
-            "winpc", "EXISTING_AUTHENTICATED_HOST", False,
+            {"winpc": "AUTHENTICATED"}, "macmini",
+            "LOGIN_ALLOWED_SELECTED_MACHINE", "macmini",
+            "REMOTE_SESSION_DOES_NOT_OVERRIDE_REQUEST", True,
         ),
         (
             {"macmini": "AUTHENTICATED", "winpc": "AUTHENTICATED"},
-            "macmini", "AUTH_CONFLICT", None,
-            "MULTIPLE_AUTHENTICATED_HOSTS", False,
+            "macmini", "SESSION_REUSE_SELECTED_MACHINE", "macmini",
+            "SELECTED_MACHINE_ALREADY_AUTHENTICATED", False,
         ),
     ],
 )
@@ -83,7 +84,8 @@ def test_zero_one_two_authenticated_host_truth_table(
         ),
         (
             observations({"winpc": "AUTH_CONFLICT"}),
-            "macmini", "AUTH_CONFLICT", "MULTIPLE_SIGN_IN",
+            "macmini", "LOGIN_ALLOWED_SELECTED_MACHINE",
+            "REMOTE_SESSION_DOES_NOT_OVERRIDE_REQUEST",
         ),
         (
             observations({}),
@@ -109,7 +111,9 @@ def test_incomplete_conflict_and_unready_are_fail_closed(
     )
     assert decision["state"] == state
     assert decision["reason"] == reason
-    assert decision["login_mutation_allowed"] is False
+    assert decision["login_mutation_allowed"] is (
+        state == "LOGIN_ALLOWED_SELECTED_MACHINE"
+    )
 
 
 def test_authenticated_but_unready_host_is_not_reused() -> None:
@@ -120,8 +124,19 @@ def test_authenticated_but_unready_host_is_not_reused() -> None:
         fleet_observations=payload,
         selected_machine="macmini",
     )
-    assert decision["state"] == "SESSION_HOST_UNREADY"
-    assert decision["session_host"] == "winpc"
+    assert decision["state"] == "LOGIN_ALLOWED_SELECTED_MACHINE"
+    assert decision["session_host"] == "macmini"
+    assert decision["login_mutation_allowed"] is True
+
+
+def test_conflict_on_requested_machine_still_requires_safe_handoff() -> None:
+    decision = decide_linkedin_session(
+        request_id="request-12",
+        fleet_observations=observations({"macmini": "AUTH_CONFLICT"}),
+        selected_machine="macmini",
+    )
+    assert decision["state"] == "AUTH_CONFLICT"
+    assert decision["session_host"] == "macmini"
     assert decision["login_mutation_allowed"] is False
 
 
@@ -140,6 +155,41 @@ def test_guardian_never_echoes_cookie_material_or_defines_takeover_actions() -> 
         "terminate-session", "Network.getCookies", "Storage.getCookies",
     ):
         assert forbidden not in encoded
+
+
+def test_explicit_requested_machine_wins_over_remote_linkedin_session() -> None:
+    snapshot = {
+        "snapshot_id": "snapshot-12",
+        "requested_at": "2026-07-27T09:00:00+00:00",
+        "complete": True,
+        "reports_by_machine": {
+            machine: {
+                "machine_id": machine,
+                "inventory": [{
+                    "targets": ([{
+                        "site": "linkedin_rps",
+                        "target_id": f"{machine}-target",
+                        "type": "page",
+                        "marker_names": ["recruiter_marker"],
+                    }] if machine == "winpc" else []),
+                }],
+            }
+            for machine in MACHINES
+        },
+    }
+    request = {
+        "request_id": "request-12",
+        "site": "linkedin_rps",
+        "requested_machine": "macmini",
+    }
+    route = decide_fleet_route(
+        normalized_request=request,
+        fleet_snapshot=snapshot,
+        login_receipts=[],
+        site_role_defaults={"linkedin_rps": "winpc"},
+    )
+    assert route["selected_machine"] == "macmini"
+    assert route["reason"] == "EXPLICIT_MACHINE"
 
 
 def test_auto_login_rechecks_guardian_before_owner_browser_or_credentials() -> None:

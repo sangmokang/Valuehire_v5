@@ -124,8 +124,8 @@ def test_priority_pairs_and_linkedin_existing_host_special_case():
         requested_machine="macmini",
         receipts=[linkedin_receipt],
     )
-    assert decision["selected_machine"] == "winpc"
-    assert decision["reason"] == "FRESH_RECEIPT"
+    assert decision["selected_machine"] == "macmini"
+    assert decision["reason"] == "EXPLICIT_MACHINE"
 
 
 def test_explicit_winpc_requires_current_request_delegation():

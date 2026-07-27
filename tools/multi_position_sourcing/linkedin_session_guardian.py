@@ -54,6 +54,7 @@ def decide_linkedin_session(
         return _decision("DISCOVERY_INCOMPLETE", "DISCOVERY_INCOMPLETE")
 
     authenticated: list[str] = []
+    conflict_hosts: list[str] = []
     human_auth_hosts: list[str] = []
     evidence_by_host: dict[str, str] = {}
     for machine in eligible:
@@ -70,11 +71,8 @@ def decide_linkedin_session(
         if state == "AUTH_CONFLICT" or (
             isinstance(blocks, list) and "multiple_sign_in" in blocks
         ):
-            return _decision(
-                "AUTH_CONFLICT", "MULTIPLE_SIGN_IN",
-                evidence=[evidence_by_host[machine]]
-                if machine in evidence_by_host else [],
-            )
+            conflict_hosts.append(machine)
+            continue
         if state == "AUTHENTICATED":
             authenticated.append(machine)
         elif state == "HUMAN_AUTH_REQUIRED":
@@ -82,41 +80,48 @@ def decide_linkedin_session(
         elif state in {"AUTH_UNKNOWN", "SELECTOR_DRIFT"}:
             return _decision("DISCOVERY_INCOMPLETE", "DISCOVERY_INCOMPLETE")
 
-    if len(authenticated) > 1:
-        return _decision(
-            "AUTH_CONFLICT", "MULTIPLE_AUTHENTICATED_HOSTS",
-            evidence=[
-                evidence_by_host[machine] for machine in authenticated
-                if machine in evidence_by_host
-            ],
-        )
-    if authenticated:
-        host = authenticated[0]
-        if rows[host].get("ready") is not True:
-            return _decision(
-                "SESSION_HOST_UNREADY", "SESSION_HOST_UNREADY", host=host,
-                evidence=[evidence_by_host[host]]
-                if host in evidence_by_host else [],
-            )
-        return _decision(
-            "SESSION_REUSE", "EXISTING_AUTHENTICATED_HOST", host=host,
-            evidence=[evidence_by_host[host]] if host in evidence_by_host else [],
-        )
-    if human_auth_hosts:
-        return _decision(
-            "SESSION_HOST_UNREADY", "HUMAN_AUTH_PENDING",
-            host=human_auth_hosts[0],
-            evidence=[
-                evidence_by_host[machine] for machine in human_auth_hosts
-                if machine in evidence_by_host
-            ],
-        )
     selected = rows.get(selected_machine) if selected_machine in rows else None
     if (
         not isinstance(selected, Mapping)
         or selected.get("ready") is not True
     ):
         return _decision("SESSION_HOST_UNREADY", "SELECTED_MACHINE_UNREADY")
+    if selected_machine in conflict_hosts:
+        return _decision(
+            "AUTH_CONFLICT", "MULTIPLE_SIGN_IN", host=selected_machine,
+            evidence=[evidence_by_host[selected_machine]]
+            if selected_machine in evidence_by_host else [],
+        )
+    if selected.get("state") == "HUMAN_AUTH_REQUIRED":
+        return _decision(
+            "SESSION_HOST_UNREADY", "HUMAN_AUTH_PENDING",
+            host=selected_machine,
+            evidence=[evidence_by_host[selected_machine]]
+            if selected_machine in evidence_by_host else [],
+        )
+    if selected.get("state") == "AUTHENTICATED":
+        return _decision(
+            "SESSION_REUSE_SELECTED_MACHINE",
+            "SELECTED_MACHINE_ALREADY_AUTHENTICATED",
+            host=selected_machine,
+            evidence=[evidence_by_host[selected_machine]]
+            if selected_machine in evidence_by_host else [],
+        )
+    remote_session_hosts = [
+        machine for machine in (*authenticated, *human_auth_hosts, *conflict_hosts)
+        if machine != selected_machine
+    ]
+    if remote_session_hosts:
+        return _decision(
+            "LOGIN_ALLOWED_SELECTED_MACHINE",
+            "REMOTE_SESSION_DOES_NOT_OVERRIDE_REQUEST",
+            host=selected_machine,
+            evidence=[
+                evidence_by_host[machine] for machine in remote_session_hosts
+                if machine in evidence_by_host
+            ],
+            mutation=True,
+        )
     return _decision(
         "LOGIN_ALLOWED", "NO_AUTHENTICATED_HOST",
         evidence=[evidence_by_host[selected_machine]]

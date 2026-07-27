@@ -2457,10 +2457,11 @@ def run_auto_login_episode(
             fleet_observations=linkedin_fleet_observations or {},
             selected_machine=selected_machine or None,
         )
-        if (
-            decision["state"] != "LOGIN_ALLOWED"
-            or decision["login_mutation_allowed"] is not True
-        ):
+        if decision["state"] not in {
+            "LOGIN_ALLOWED",
+            "LOGIN_ALLOWED_SELECTED_MACHINE",
+            "SESSION_REUSE_SELECTED_MACHINE",
+        }:
             return result(decision["state"], decision["reason"])
     if _owner_snapshot is None:
         from .owner_activity import detect_owner_activity_snapshot
