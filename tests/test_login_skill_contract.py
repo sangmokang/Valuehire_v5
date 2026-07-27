@@ -92,7 +92,9 @@ def test_login_skill_routes_all_agents_through_keychain_autologin_runner() -> No
     assert "session_guard auto-login" in canonical
     assert "valuehire.portal_credentials" in canonical
     assert "Claude·Codex·Hermes가 같은 코드와 Keychain" in canonical
-    assert "LinkedIn `/uas/login-cap`" in canonical
+    assert "https://www.linkedin.com/login" in canonical
+    assert "#btnCorpMemberType" in canonical
+    assert "최대 60초" in canonical
     assert "127.0.0.1:<port>` LISTEN PID" in canonical
     assert "exact_window_presentation_failed" in canonical
 
@@ -185,7 +187,13 @@ def test_codex_sync_classifies_login_as_full(tmp_path: Path) -> None:
 def test_machine_contract_is_identical_and_fail_closed() -> None:
     canonical = json.loads(_text(CONTRACT))
     assert _text(CONTRACT) == _text(CLAUDE_CONTRACT)
-    assert canonical["schema_version"] == "1.5.0"
+    assert canonical["schema_version"] == "1.6.0"
+    form = canonical["login_form"]
+    assert form["jobkorea"]["searchfirm_checked"] is True
+    assert form["linkedin_rps"]["login_first"] == "https://www.linkedin.com/login"
+    assert form["pre_submit_retry"]["max_seconds"] == 60
+    assert canonical["multi_device"]["prefer_requested_machine_over_remote_live_session"] is True
+    assert canonical["multi_device"]["remote_live_session_blocks_requested_machine"] is False
     capture = canonical["browser_evidence_capture"]
     assert capture["runner"].endswith("session_guard capture-evidence")
     assert capture["browser_mutations"] == []

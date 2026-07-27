@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.5.0",
+  "schema_version": "1.6.0",
   "skill": "login",
   "supported_agents": ["claude", "codex", "hermes"],
   "platform": "macos",
@@ -205,6 +205,14 @@
     "owner_active_after_click": "set_restore_pending_and_wait",
     "success_condition": "same_target_original_url_and_auth_marker_restored"
   },
+  "login_form": {
+    "required": ["official_https_surface", "same_form", "visible", "enabled", "password_type", "POST", "same_official_origin"],
+    "pre_submit_retry": {"reasons": ["owner_temporarily_active", "page_still_loading"], "interval_seconds": 5, "max_seconds": 60},
+    "never_retry_after_submit": true,
+    "saramin": {"required_url_query": "ut=c", "member_type": "corporate"},
+    "jobkorea": {"member_tab": "corporate", "searchfirm_toggle": "#btnCorpMemberType", "searchfirm_checked": true},
+    "linkedin_rps": {"login_first": "https://www.linkedin.com/login", "then_verify": "https://www.linkedin.com/talent/"}
+  },
   "site_proof": {
     "saramin": {
       "all": ["account_or_logout_marker", "input.search_input", "#career_min", "#career_max"],
@@ -223,7 +231,8 @@
     "sot": "SKILL.md section 11 declaration table",
     "cross_machine_coordination": "owner_declaration_only_not_file_lock",
     "session_metadata_requires_host_field": true,
-    "prefer_host_with_live_session_before_new_login": true,
+    "prefer_requested_machine_over_remote_live_session": true,
+    "remote_live_session_blocks_requested_machine": false,
     "linkedin_handover": {
       "requires_owner_explicit_delegation_current_turn": true,
       "session_takeover_click_allowed_only_if_takeover_declared": false,
