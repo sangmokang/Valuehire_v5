@@ -166,5 +166,168 @@ class TestFullCapture(unittest.TestCase):
         self.assertEqual(len(store.calls), 2)
 
 
+class UpsertFakeStore:
+    """진짜 upsert 의미의 가짜 저장소 — (table, id) 키로 덮어쓴다(중복 행 불가능)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, str], dict] = {}
+        self.upsert_calls = 0
+
+    def upsert(self, table: str, row: dict) -> None:
+        self.upsert_calls += 1
+        self.rows[(table, row["id"])] = dict(row)
+
+
+class FlakyAckStore(UpsertFakeStore):
+    """저장은 됐지만 확인(ack)이 유실된 상황 — N번째 호출에서 저장 후 예외."""
+
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+        self._failed = False
+
+    def upsert(self, table: str, row: dict) -> None:
+        super().upsert(table, row)  # 저장 자체는 성공
+        if not self._failed and self.upsert_calls == self._fail_on_call:
+            self._failed = True
+            raise ConnectionError("저장확인 응답 유실 (row 는 이미 저장됨)")
+
+
+class TestIdempotentIds(unittest.TestCase):
+    """V1 결함 1 — 매 실행 임의 UUID → 재실행/재시도 시 중복 행."""
+
+    def _run(self, store, *, total_pages=3, details=2):
+        fetch = make_list_fetcher(total_pages=total_pages, details_per_page=details)
+        return ps.paginate_and_store(
+            fetch, fetch_detail, store,
+            channel="saramin", position_ref="pos-idem", machine="macmini",
+        )
+
+    def test_id_is_deterministic_across_runs(self):
+        """같은 channel+url+page_type 이면 실행이 달라도 id 가 같다."""
+        s1, s2 = FakeStore(), FakeStore()
+        self._run(s1)
+        self._run(s2)
+        ids1 = sorted(row["id"] for _, row in s1.calls)
+        ids2 = sorted(row["id"] for _, row in s2.calls)
+        self.assertEqual(ids1, ids2)
+
+    def test_same_run_twice_zero_duplicates(self):
+        """같은 실행을 2회 반복해도 upsert 의미로 중복 행 0."""
+        store = UpsertFakeStore()
+        self._run(store)
+        first = len(store.rows)
+        self._run(store)
+        self.assertEqual(len(store.rows), first)
+        self.assertEqual(first, 3 + 3 * 2)
+
+    def test_retry_after_lost_ack_zero_duplicates(self):
+        """저장확인 유실로 파이프라인이 죽은 뒤 전체 재시도해도 중복 행 0."""
+        store = FlakyAckStore(fail_on_call=4)
+        with self.assertRaises(ConnectionError):
+            self._run(store)
+        self._run(store)  # 재시도
+        self.assertEqual(len(store.rows), 3 + 3 * 2)
+
+    def test_different_page_type_same_url_ids_differ(self):
+        row_a = ps.make_row_id(channel="saramin", page_type="list", url="https://x.test/a")
+        row_b = ps.make_row_id(channel="saramin", page_type="detail", url="https://x.test/a")
+        self.assertNotEqual(row_a, row_b)
+
+
+class TestHasNextFailFast(unittest.TestCase):
+    """V1 결함 2 — has_next 누락을 exhausted 로 조용히 처리하면 안 된다."""
+
+    def test_missing_has_next_is_rejected(self):
+        def fetch(page: int) -> dict:
+            return {
+                "url": f"https://example.test/search?page={page}",
+                "content": "<html>x</html>",
+                "detail_refs": [],
+            }
+
+        with self.assertRaises(ValueError):
+            ps.paginate_and_store(
+                fetch, fetch_detail, FakeStore(),
+                channel="saramin", position_ref="pos-hn", machine="macmini",
+            )
+
+    def test_non_bool_has_next_is_rejected(self):
+        def fetch(page: int) -> dict:
+            return {
+                "url": f"https://example.test/search?page={page}",
+                "content": "<html>x</html>",
+                "detail_refs": [],
+                "has_next": "yes",
+            }
+
+        with self.assertRaises(ValueError):
+            ps.paginate_and_store(
+                fetch, fetch_detail, FakeStore(),
+                channel="saramin", position_ref="pos-hn2", machine="macmini",
+            )
+
+
+class TestCapBeatsExhausted(unittest.TestCase):
+    """V1 결함 3 — D3: 20페이지 도달이면 has_next 와 무관하게 CAP_REACHED 전환."""
+
+    def test_page20_has_next_false_still_switch_boolean_variant(self):
+        fetch = make_list_fetcher(total_pages=20, details_per_page=0, hard_fail_after=20)
+        result = ps.paginate_and_store(
+            fetch, fetch_detail, FakeStore(),
+            channel="saramin", position_ref="pos-cap", machine="macmini",
+        )
+        self.assertEqual(result.pages_crawled, 20)
+        self.assertEqual(result.next_action, "switch_boolean_variant")
+
+    def test_exhausted_only_before_cap(self):
+        fetch = make_list_fetcher(total_pages=19, details_per_page=0)
+        result = ps.paginate_and_store(
+            fetch, fetch_detail, FakeStore(),
+            channel="saramin", position_ref="pos-cap2", machine="macmini",
+        )
+        self.assertEqual(result.pages_crawled, 19)
+        self.assertEqual(result.next_action, "exhausted")
+
+
+class TestPipelineInputFailFast(unittest.TestCase):
+    """V1 결함 5 — channel/position_ref/machine 빈 값은 파이프라인 진입부터 거부."""
+
+    def _assert_rejected(self, **kwargs):
+        fetch = make_list_fetcher(total_pages=1, details_per_page=0)
+        args = {"channel": "saramin", "position_ref": "pos-9", "machine": "macmini"}
+        args.update(kwargs)
+        with self.assertRaises(ValueError):
+            ps.paginate_and_store(fetch, fetch_detail, FakeStore(), **args)
+        self.assertEqual(fetch.calls, [])  # fetch 가 나가기 전에 막아야 한다
+
+    def test_empty_channel(self):
+        self._assert_rejected(channel="")
+
+    def test_blank_position_ref(self):
+        self._assert_rejected(position_ref="   ")
+
+    def test_empty_machine(self):
+        self._assert_rejected(machine="")
+
+
+class TestSchemaDraftLocation(unittest.TestCase):
+    """V1 결함 4 — 오너 미확정 SQL 은 migrations 밖 draft 로만 존재해야 한다."""
+
+    MIGRATION = REPO / "supabase" / "migrations" / "20260728120000_aisearch_pages_raw_draft.sql"
+    DRAFT = REPO / "apps" / "aisearch" / "schema" / "aisearch_pages_raw.draft.sql"
+
+    def test_not_in_supabase_migrations(self):
+        self.assertFalse(self.MIGRATION.exists(), "오너 미확정 스키마가 자동 적용 경로에 있으면 안 된다")
+
+    def test_draft_exists_with_guard_and_idempotency_unique(self):
+        self.assertTrue(self.DRAFT.exists())
+        text = self.DRAFT.read_text(encoding="utf-8")
+        self.assertIn("적용 금지", text)  # 오너 확정 전 적용 금지 명시
+        self.assertIn("unique", text.lower())  # 멱등키 unique 제약
+        for col in ("channel", "url", "page_type"):
+            self.assertIn(col, text)
+
+
 if __name__ == "__main__":
     unittest.main()
