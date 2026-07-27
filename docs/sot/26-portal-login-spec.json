@@ -1,7 +1,7 @@
 {
   "$schema_note": "포털 로그인 빠른 진입 스펙 (spec-driven SOT). 사장님 지시(2026-06-25, /st): 'AI Search 로직이 무너지고 무시하고 진행한 원인 + 로그인이 너무 길었던 원인 모두 적대적으로 찾아 스킬에 반영하고, 스펙을 JSON으로 명확하게 조여 박아라.' 이 파일이 3사(사람인·잡코리아·링크드인) 로그인 진입의 단일 기계 명세다. 기존 스킬이 가리키던 docs/sot/10-auto-login.md(부재)·tools/.../auto-login.mjs(부재)의 죽은 참조를 대체한다.",
   "id": "26-portal-login-spec",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "updated_at": "2026-07-26",
   "title": "포털 로그인 빠른 진입 스펙 (raw CDP 단일탭 · exact macOS 창 인계 · HUMAN_AUTH 무조작 · 안전 keepalive)",
   "verified_live": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차 0), 2026-06-09/07-07 링크드인도 시크릿 저장소 자동로그인 대상임을 재확정. 2026-07-18 macOS에서 Python Quartz는 미설치였지만 Swift CoreGraphics CGWindowID 열거와 `screencapture -x -l <CGWindowID>` 단일 창 캡처 기본 동작을 실기기로 확인. 2026-07-26 Mac mini에서 같은 9225를 선언한 IPv4 LinkedIn/IPv6 사람인 Chrome 공존 상태에서 실제 IPv4 LISTEN PID 34202와 기존 login-cap target을 정식 auto-login 러너가 선택했고, Keychain을 shell env 주입 없이 읽어 실제 보안문자/CAPTCHA를 제출 0회 HUMAN_AUTH로 판정했다. CAPTCHA 창의 visible marker 설치는 실패해 사람 인증 완료는 아직 미실증이며 과장하지 않는다.",
@@ -84,7 +84,8 @@
     "safe_target_record": "사전 감사한 exact target의 same-origin GET _self 무료 읽기 전용 링크 레코드. 누락/invalid면 fail-closed SKIP; 존재해도 runner가 denylist·same-origin·fresh DOM·target id·history 왕복을 다시 증명",
     "runtime_credentials": "macOS Keychain service valuehire.portal_credentials가 Claude·Codex·Hermes 공용 런타임 정본. .env.local은 초기 import에만 사용하고 auto-login shell 인자·stdout·산출물로 비밀값을 전달하지 않는다.",
     "process_collision": "같은 --remote-debugging-port를 선언한 루트 Chrome이 여러 개면 정확한 127.0.0.1:<port> LISTEN PID로 1개를 선택한다. LISTEN PID가 0개/여러 개이거나 검사 실패면 fail-closed.",
-    "existing_login_form": "LinkedIn /uas/login-cap current target에 username/password selector가 모두 있으면 그 폼을 보존해 사용하고 /uas/login으로 강제 이동하지 않는다. 현재 폼이 없을 때만 동일 target에서 공식 URL로 1회 이동한다.",
+    "existing_login_form": "LinkedIn은 같은 exact target을 https://www.linkedin.com/login 공식 일반 로그인 화면에 맞춘 뒤 로그인하고, 성공 후 /talent/ 권한을 확인한다. 사람인은 ut=c 기업회원, 잡코리아는 기업회원 탭 + #btnCorpMemberType 서치펌회원 체크를 요구한다.",
+    "pre_submit_retry": "사람의 일시 사용 또는 화면 로딩은 제출 전 최대 60초 동안 5초 간격으로 다시 확인한다. submit 뒤, captcha/2FA/checkpoint, 요청 기기의 세션 충돌은 자동 재제출하지 않는다.",
     "missing_process_or_target": "HANDOFF without browser/window/tab creation",
     "legacy_portal_login": "fail-closed delegation only; not the human-auth or keepalive runner"
   },
@@ -141,7 +142,7 @@
     "unified_regex": "captcha|recaptcha|보안문자|자동입력 방지|checkpoint|unusual activity|verify you|multiple sign-ins|Only one session|enterprise-authentication|이상 접근|2단계|authwall|challenge|인증번호",
     "on_match": "그 채널 status=BLOCKED. 자동 우회·재시도 금지. 단 /uas/login-cap·li.protechts iframe 단독 신호는 차단으로 보지 않고 저장 자격증명 자동 로그인을 1회 시도한다.",
     "false_positive_guard": "정규식이 페이지 일반 텍스트(예: '개인정보처리방침')와 우연히 매치될 수 있음 → BLOCKED 판정 전 스크린샷으로 실제 캡차/락 화면인지 1회 교차확인(2026-06-25 잡코리아 captcha 오탐 사례).",
-    "linkedin_multi_session": "enterprise-authentication/sessions + 'multiple sign-ins/Only one session allowed' = RPS 단일세션 락(다른 PC 사용 중). '계속'을 자동으로 누르면 사장님 다른 PC 세션이 끊김 → 절대 자동 클릭 금지. 사람 결정(scripts/rps_switch.sh on/off) 후 재개."
+    "linkedin_multi_session": "다른 PC의 인증 세션은 요청 기기를 바꾸는 사유가 아니다. 요청 기기의 exact target에 붙되 다른 PC 세션을 종료하거나 쿠키를 이동하지 않는다. 요청 기기에서 enterprise-authentication/sessions가 나타나면 Continue/Confirm을 자동 클릭하지 않고 사람에게 넘긴다."
   },
   "channels": {
     "saramin": {
@@ -167,7 +168,7 @@
         "id_env": "JOBKOREA_USERNAME",
         "pw_env": "JOBKOREA_PASSWORD"
       },
-      "pre_step": "로그인폼 진입 후 '기업회원' 탭 클릭(corp 로그인). 그 다음 자격증명 입력.",
+      "pre_step": "로그인폼 진입 후 '기업회원' 탭을 클릭하고 #btnCorpMemberType '서치펌회원' 토글을 체크한다. 두 상태를 모두 재확인한 뒤 자격증명을 입력한다.",
       "selectors": {
         "id": "input[name=\"M_ID\"] | #loginId | input[name=\"id\"]",
         "password": "input[name=\"M_PWD\"] | #loginPwd | input[name=\"password\"]",
@@ -176,6 +177,7 @@
       "verified": "2026-06-25 기업회원 탭 클릭 후 raw CDP 로그인 성공 → searchfirm/home 안착(밸류커넥트)"
     },
     "linkedin": {
+      "login_url": "https://www.linkedin.com/login",
       "talent_pool_url": "https://www.linkedin.com/talent/search",
       "tab_match_re": "linkedin\\.com\\/talent",
       "creds": "시크릿 저장소(.env.local import → macOS Keychain valuehire.portal_credentials)의 LINKEDIN_USERNAME/LINKEDIN_PASSWORD 또는 LINKEDIN_RPS_* 로 자동 로그인. 평문 하드코딩·로그 출력 금지.",

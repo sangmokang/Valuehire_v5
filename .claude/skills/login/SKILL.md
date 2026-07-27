@@ -36,16 +36,17 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 9. AI가 붙은 탭에는 `vh-automation-badge`를 표시한다. 표시 실패 시 몰래 조작하지 말고 AI_ATTACHED 진입을 보류한다.
 10. 로그인 성공은 URL 추측이 아니라 사이트별 로그인 마커로 증명한다. 증명 전에는 검색을 시작하지 않는다.
 
-### LinkedIn RPS 단일 세션 보존 (`SESSION_CONTEXT_PRESERVATION`, #156)
+### LinkedIn RPS 요청 기기 우선 (`SESSION_CONTEXT_PRESERVATION` · `REQUESTED_MACHINE_PRECEDENCE`)
 
-- LinkedIn Recruiter는 한 좌석의 세션이 여러 Chrome 프로필에서 서로를 로그아웃시킬 수 있다. 관리용
-  Chrome만 보지 말고, 알려진 Chrome 프로필·endpoint에서 이미 인증된 RPS target이 있는지 먼저 읽는다.
-  다른 프로필의 RPS 세션 신호가 있으면 `AUTH_CONFLICT`로 중단하며 두 번째 프로필에서 로그인하지 않는다.
+- 사장님이 실행 기기를 지정하면 그 기기의 정확한 기존 target을 사용한다. 다른 PC에 인증된 RPS
+  세션이 있어도 요청을 그 PC로 돌리지 않는다. 다른 PC의 창·탭·세션 종료나 쿠키 이동은 하지 않는다.
+- 요청 기기에서는 먼저 `https://www.linkedin.com/login`의 일반 LinkedIn 계정 로그인을 완료하고,
+  같은 target에서 `/talent/`로 이동해 Recruiter 권한을 확인한다.
 - 정확한 기존 target에서 로그인 마커가 이미 참이면 로그인 관련 mutation은 **0회**다. 로그인 URL 이동,
   자격증명 제출, 새 브라우저·새 창·새 탭 생성, 다른 프로필 전환을 하지 않고 같은 target에서 원래 작업만 재개한다.
 - `enterprise-authentication/sessions`, `multiple sign-ins`, `Only one session`은 `AUTH_LOST`가 아니라
-  terminal `AUTH_CONFLICT`다. 자동 로그인·Continue/Confirm 클릭·세션 종료 선택·reload/navigation retry를
-  하지 않는다. 사람이 한 번 해결한 같은 실행에서 재발해도 두 번째 로그인 인계를 만들지 않고 영구 중단한다.
+  요청 기기 자체에서 해당 화면이 나타난 경우의 `AUTH_CONFLICT`다. 자동 로그인·Continue/Confirm 클릭·세션 종료 선택은
+  하지 않고 정확한 요청 기기를 사람에게 넘긴다. 다른 PC의 세션 신호만으로 요청 기기 연결을 막지는 않는다.
 - Recruiter 결과의 bare `profile_url`은 저장·중복제거 식별자일 뿐이다. 프로필 이동은 검색 결과 DOM에서
   수확한 query 포함 원본 `navigation_url`을 그대로 쓰며, 이동 직후 차단 검사를 추출·스크린샷·저장보다 먼저 한다.
 
@@ -108,6 +109,10 @@ Claude, Codex, Hermes가 동시에 같은 사이트를 다루지 못하게 `DISC
 
 어느 검사든 실패하면 예정된 CDP 명령을 보내지 않고 `HUMAN_ACTIVE`로 전이한다. 감지 실패도 동일하다. 읽기 전용 상태 확인은 허용하지만 navigate, focus, popup-close도 변경 조작으로 취급한다.
 
+사람의 일시 사용이나 아직 끝나지 않은 화면 로딩은 제출 전에 최대 60초 동안 5초 간격으로 다시 확인한다.
+허용 상태가 되면 같은 exact target에서 이어서 진행한다. 단, 자격증명 submit 뒤에는 재제출하지 않으며
+captcha·2FA·checkpoint·요청 기기의 세션 충돌은 자동 재시도하지 않는다.
+
 ## 2. 브라우저 선택 순서
 
 아래 순서를 고정한다. 아래 단계가 성공하면 다음 단계로 가지 않는다.
@@ -159,7 +164,10 @@ export VH_BUSY_TASK="login:<saramin|jobkorea|linkedin>"
 
 1. 세 사이트의 기존 탭과 로그인 마커를 읽기 전용으로 확인한다.
 2. 로그인된 채널은 그대로 보존하고 다시 로그인하지 않는다.
-3. 로그아웃 채널의 현재 target에 검증된 로그인 폼이 있으면 그대로 사용한다. 특히 LinkedIn `/uas/login-cap`에 username/password 필드가 모두 있으면 깨진 `/uas/login`으로 강제 이동하지 않는다. 현재 폼이 없을 때만 동일 target에서 공식 로그인 화면으로 1회 이동하며 새 page/context/browser를 만들지 않는다.
+3. 로그아웃 채널의 현재 target을 사이트별 공식 로그인 화면으로 맞춘다. LinkedIn은 반드시
+   `https://www.linkedin.com/login`에서 일반 계정 로그인을 먼저 수행하고, 성공 후 같은 target에서
+   `/talent/` 권한을 확인한다. 사람인은 `ut=c` 기업회원 화면이어야 한다. 잡코리아는 기업회원 탭을
+   선택하고 별도 `#btnCorpMemberType` 서치펌회원 토글까지 체크한 뒤 제출한다.
 4. 저장 자격증명은 공용 macOS Keychain 서비스 `valuehire.portal_credentials`에서 실행 프로세스 안으로만 읽고 동일 target의 폼에 1회 제출한다. `.env.local`은 Keychain 초기 적재용이며, 실행 때 shell 인자로 자격증명을 다시 주입하지 않는다. 비밀값을 stdout, shell 인자, 산출물, 모델 대화에 넣지 않는다.
 5. 제출 직후 fresh DOM과 URL을 읽어 보안 챌린지를 먼저 판정한다. captcha/2FA/checkpoint/이상 접근이면 즉시 `HUMAN_AUTH`로 바꾸고 제출·클릭을 멈춘다. LinkedIn 세션 충돌이면 창을 표면화하지 않고 terminal `AUTH_CONFLICT`로 중단한다.
 6. 챌린지를 한 번 표면화한 뒤 `HUMAN_AUTH`로 진입한다. `HUMAN_AUTH` 중 navigate/reload/back/click/type/submit/popup-close/close/focus/new-page는 금지다. 현재 URL·fresh 로그인 마커·OS idle을 읽는 것 외에는 하지 않는다.
@@ -190,7 +198,11 @@ PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard auto-login \
   --target-id '<existing-target-id>'
 ```
 
-`auto-login`은 로그인된 target이면 조작 0회, 기존 `login-cap` 폼이면 그 폼에서만 자격증명 1회 제출, captcha/2FA/checkpoint면 제출 0회 `HUMAN_AUTH`, 멀티세션이면 `AUTH_CONFLICT`, 연결 오류·필드 실종이면 `SELECTOR_DRIFT`로 종료한다. 같은 실패를 원인 변경 없이 반복하지 않는다. 같은 포트를 선언한 Chrome이 여러 개면 정확한 `127.0.0.1:<port>` LISTEN PID로 LinkedIn 프로세스를 고르고 0개/여러 개면 중단한다.
+`auto-login`은 로그인된 target이면 조작 0회, 공식 로그인 주소·같은 form·표시됨·활성화됨·password
+타입·POST·같은 공식 origin을 모두 확인한 폼에서만 자격증명을 1회 제출한다. 잡코리아는 기업회원 탭과
+서치펌회원 토글을 모두 확인한다. 일시적인 사람 사용은 제출 전 최대 60초 기다렸다 재개하지만,
+captcha/2FA/checkpoint와 제출 후 불명확한 결과는 재제출하지 않는다.
+같은 포트를 선언한 Chrome이 여러 개면 정확한 `127.0.0.1:<port>` LISTEN PID로 대상 프로세스를 고른다.
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \
@@ -229,13 +241,16 @@ URL 하나만으로 로그인 성공을 선언하지 않는다. fresh DOM에서 
 - 성공: 헤더에 `로그아웃`과 기업명/계정 신호가 있고 인재검색 화면이 로드된다.
 - 실패: `로그인` 링크만 있고 `로그아웃`이 없거나 로그인 폼으로 이동한다.
 - 자동 로그인은 기업회원 탭을 선택한 뒤 검증된 실행기가 자격증명을 제출한다.
+- 기업회원 탭만으로 부족하다. `#btnCorpMemberType`의 `서치펌회원` 토글이 체크된 상태까지 확인해야 한다.
 
 ### LinkedIn
 
 - Recruiter/RPS: `https://www.linkedin.com/talent/`
 - 성공: `/talent/` home/search/profile이 login-cap이나 enterprise-authentication으로 이동하지 않고 로드되며, Recruiter 계정/메뉴 마커가 함께 보인다. URL만으로 성공 판정하지 않는다.
 - 실패: 일반 로그인, `/uas/login-cap`, authwall, checkpoint.
-- `enterprise-authentication/sessions`, `multiple sign-ins`, `Only one session`은 세션 충돌이다. 읽기 전용 증거만 기록하고 `AUTH_CONFLICT`로 중단한다. Continue/Confirm 클릭·자동 로그인·사람 인증 인계·재시도는 모두 금지한다.
+- 다른 PC의 인증 세션은 요청 기기를 바꾸는 사유가 아니다. 요청 기기에서 먼저 일반 LinkedIn 로그인을
+  수행한다. 요청 기기 자체에 `enterprise-authentication/sessions`, `multiple sign-ins`,
+  `Only one session`이 나타나면 자동으로 Continue/Confirm이나 다른 세션 종료를 누르지 않고 사람에게 넘긴다.
 
 차단 단어가 일반 안내문에 우연히 포함될 수 있다. 차단 판정 전 실제 화면과 URL을 읽기 전용으로 한 번 교차 확인한다. 실제 챌린지가 맞으면 자동 우회하지 않는다.
 
@@ -305,7 +320,8 @@ KEEPALIVE는 세션 영구 보장을 뜻하지 않는다. 실제로 관찰한 �
 | 탭이 여러 개 있음 | 정확 URL·로그인 마커로 1개 선택; 나머지 닫지 않음 |
 | 대상 탭 없음, 기존 브라우저 있음 | 새 탭 0개·새 창 0개; 기대한 site/profile/endpoint를 표시하고 `HANDOFF` |
 | captcha/2FA/checkpoint | 앞에 한 번 보여주고 `HUMAN_AUTH`; 자동 우회·재제출 0회 |
-| LinkedIn 세션 충돌 | `AUTH_CONFLICT`로 영구 중단; Continue/Confirm·자동 로그인·사람 인증 인계·재시도 0회 |
+| 다른 PC에서 LinkedIn 사용 중 | 요청 기기의 기존 target에 연결; 다른 PC 창·세션은 건드리지 않음 |
+| 요청 기기의 LinkedIn 세션 충돌 화면 | 자동 Continue/Confirm·세션 종료 0회; 정확한 요청 기기를 사람에게 인계 |
 | 로그인 마커 소실 | `AUTH_LOST`; 자동 로그인 1회, 챌린지면 사람 인계 |
 | keepalive 중 유료/저장 모달 | 닫기조차 자동으로 누르지 말고 중단·보고 |
 

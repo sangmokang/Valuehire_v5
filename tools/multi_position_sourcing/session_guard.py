@@ -591,7 +591,7 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
   const challengeControl = visible(
     'iframe[src*="captcha"], [class*="captcha"], [id*="captcha"], input[name*="captcha"], input[autocomplete="one-time-code"]'
   );
-  return {
+  return JSON.stringify({
     urlBefore,
     urlAfter: location.href,
     challengeControl,
@@ -605,12 +605,17 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     saraminCareerMax: !!document.querySelector('#career_max'),
     jobkoreaSearch: !!document.querySelector("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"),
     linkedinAccount: visible('[data-test-recruiter-account-menu], [data-test-recruiter-nav-user-menu]')
-  };
+  });
 })()
 """
     target_before = _tab_target_id(tab) or "unavailable-target"
     raw = tab.eval(script)
     target_after = _tab_target_id(tab) or "unavailable-target"
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = None
     if not isinstance(raw, Mapping):
         return AuthObservation(False, False, "", ())
     from .auth_classifier import classify_auth_observation
@@ -2410,12 +2415,21 @@ def run_auto_login_episode(
     _tab_attacher: Callable[..., Any] | None = None,
     _auth_reader: Callable[[Any, Site], AuthObservation] | None = None,
     _form_reader: Callable[..., Any] | None = None,
+    _context_preparer: Callable[[Any], bool] | None = None,
     _submitter: Callable[..., Mapping[str, Any]] | None = None,
     _mutation_gate: Callable[..., None] | None = None,
+    _mutation_gate_attempts: int = 13,
+    _form_read_attempts: int = 13,
+    _retry_sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Submit Keychain credentials once on one already-open verified form."""
     from .portal_worker import ProfileLockError, assert_raw_browser_mutation_allowed
-    from .safe_autologin import read_login_form, submit_login_form_once
+    from .safe_autologin import (
+        prepare_jobkorea_searchfirm,
+        read_login_form,
+        submit_login_form_once,
+    )
+    from .portal_autologin import login_url_for_channel
 
     def result(
         state: str,
@@ -2513,56 +2527,109 @@ def run_auto_login_episode(
                 observation=initial, resolved_target=ref.target_id,
             )
 
-        form = form_reader(tab, site)
-        valid = bool(
-            form.get("valid") if isinstance(form, Mapping)
-            else getattr(form, "valid", False)
-        )
-        fingerprint = str(
-            form.get("fingerprint", "") if isinstance(form, Mapping)
-            else getattr(form, "fingerprint", "")
-        )
-        form_url = str(
-            form.get("url", "") if isinstance(form, Mapping)
-            else getattr(form, "url", "")
-        )
-        if not valid or not fingerprint:
-            state = (
-                "HUMAN_AUTH_REQUIRED"
-                if "challenge_path" in initial.block_names
-                else "SELECTOR_DRIFT"
-            )
-            return result(
-                state, state, observation=initial,
-                resolved_target=ref.target_id,
-            )
         submitted_episodes = getattr(tab, "_vh_login_submitted_episodes", set())
         if episode_id in submitted_episodes:
             return result(
                 initial.state, "EPISODE_ALREADY_SUBMITTED",
                 observation=initial, resolved_target=ref.target_id,
             )
-        loaded = _load_runtime_login_credentials(
-            site, credential_provider=_credential_provider,
-        )
-        if loaded is None:
-            return result(
-                "CREDENTIAL_MISSING", "CREDENTIAL_MISSING",
-                observation=initial, resolved_target=ref.target_id,
-            )
-        username, password = loaded
-
         gate = _mutation_gate or (
             lambda *_args, **_kwargs: assert_raw_browser_mutation_allowed(
                 lease, owner_snapshot=owner_snapshot,
             )
         )
+
         def gate_allowed() -> bool:
-            try:
-                gate()
-                return True
-            except ProfileLockError:
-                return False
+            attempts = max(1, min(int(_mutation_gate_attempts), 13))
+            for attempt in range(attempts):
+                try:
+                    gate()
+                    return True
+                except ProfileLockError:
+                    if attempt + 1 >= attempts:
+                        return False
+                    _retry_sleep(5.0)
+            return False
+
+        marker = f"[{agent}][auto-login][{ref.target_id[-12:]}]"
+        mark_busy = getattr(tab, "mark_busy", None)
+        if site == "linkedin_rps":
+            official_login_url = login_url_for_channel(site)
+            current_url = _tab_current_url(tab)
+            if current_url != official_login_url:
+                if not gate_allowed():
+                    return result(
+                        "HUMAN_ACTIVE", "HUMAN_ACTIVE",
+                        observation=initial, resolved_target=ref.target_id,
+                    )
+                if (
+                    _tab_target_id(tab) != ref.target_id
+                    or not callable(mark_busy)
+                    or mark_busy(marker, expected_url=current_url) is not True
+                ):
+                    return result(
+                        "TARGET_IDENTITY_CHANGED", "BADGE_OR_TARGET_CHANGED",
+                        observation=initial, resolved_target=ref.target_id,
+                    )
+                navigate = getattr(tab, "navigate", None)
+                if not callable(navigate):
+                    return result(
+                        "SELECTOR_DRIFT", "OFFICIAL_LOGIN_NAVIGATION_UNAVAILABLE",
+                        observation=initial, resolved_target=ref.target_id,
+                    )
+                navigate(official_login_url)
+                _retry_sleep(1.0)
+                if (
+                    _tab_target_id(tab) != ref.target_id
+                    or _tab_current_url(tab) != official_login_url
+                ):
+                    return result(
+                        "TARGET_IDENTITY_CHANGED", "OFFICIAL_LOGIN_NAVIGATION_FAILED",
+                        observation=initial, resolved_target=ref.target_id,
+                    )
+        form: Any | None = None
+        fingerprint = ""
+        form_url = _tab_current_url(tab)
+
+        def read_form_until_valid() -> tuple[Any, bool, str, str]:
+            attempts = max(1, min(int(_form_read_attempts), 13))
+            last: Any = None
+            for attempt in range(attempts):
+                last = form_reader(tab, site)
+                valid_now = bool(
+                    last.get("valid") if isinstance(last, Mapping)
+                    else getattr(last, "valid", False)
+                )
+                fingerprint_now = str(
+                    last.get("fingerprint", "") if isinstance(last, Mapping)
+                    else getattr(last, "fingerprint", "")
+                )
+                url_now = str(
+                    last.get("url", "") if isinstance(last, Mapping)
+                    else getattr(last, "url", "")
+                )
+                if valid_now and fingerprint_now:
+                    return last, True, fingerprint_now, url_now
+                if attempt + 1 < attempts:
+                    _retry_sleep(5.0)
+            return last, False, "", str(
+                last.get("url", "") if isinstance(last, Mapping)
+                else getattr(last, "url", "")
+            )
+
+        if site != "jobkorea":
+            form, valid, fingerprint, form_url = read_form_until_valid()
+            if not valid or not fingerprint:
+                state = (
+                    "HUMAN_AUTH_REQUIRED"
+                    if "challenge_path" in initial.block_names
+                    else "SELECTOR_DRIFT"
+                )
+                return result(
+                    state, state, observation=initial,
+                    resolved_target=ref.target_id,
+                )
+
         if not gate_allowed():
             return result(
                 "HUMAN_ACTIVE", "HUMAN_ACTIVE",
@@ -2573,13 +2640,41 @@ def run_auto_login_episode(
                 "TARGET_IDENTITY_CHANGED", "TARGET_IDENTITY_CHANGED",
                 observation=initial, resolved_target=ref.target_id,
             )
-        marker = f"[{agent}][auto-login][{ref.target_id[-12:]}]"
-        mark_busy = getattr(tab, "mark_busy", None)
         if not callable(mark_busy) or mark_busy(marker, expected_url=form_url) is not True:
             return result(
                 "SELECTOR_DRIFT", "BADGE_MISSING",
                 observation=initial, resolved_target=ref.target_id,
             )
+
+        if site == "jobkorea":
+            if not gate_allowed():
+                return result(
+                    "HUMAN_ACTIVE", "HUMAN_ACTIVE",
+                    observation=initial, resolved_target=ref.target_id,
+                )
+            preparer = _context_preparer or prepare_jobkorea_searchfirm
+            if preparer(tab) is not True:
+                return result(
+                    "SELECTOR_DRIFT", "MEMBERSHIP_CONTEXT_MISSING",
+                    observation=initial, resolved_target=ref.target_id,
+                )
+
+        if site == "jobkorea":
+            form, valid, fingerprint, form_url = read_form_until_valid()
+            if not valid or not fingerprint:
+                return result(
+                    "SELECTOR_DRIFT", "MEMBERSHIP_CONTEXT_MISSING",
+                    observation=initial, resolved_target=ref.target_id,
+                )
+        loaded = _load_runtime_login_credentials(
+            site, credential_provider=_credential_provider,
+        )
+        if loaded is None:
+            return result(
+                "CREDENTIAL_MISSING", "CREDENTIAL_MISSING",
+                observation=initial, resolved_target=ref.target_id,
+            )
+        username, password = loaded
 
         if not gate_allowed():
             return result(

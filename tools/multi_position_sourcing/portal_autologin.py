@@ -13,10 +13,7 @@ SARAMIN_CORPORATE_LOGIN_URL = (
     "https%3A%2F%2Fwww.saramin.co.kr%2Fzf_user%2Fmemcom%2Ftalent-pool%2Fmain%2Fsearch"
 )
 JOBKOREA_LOGIN_URL = "https://www.jobkorea.co.kr/Login/Login_Tot.asp"
-LINKEDIN_RPS_LOGIN_URL = (
-    "https://www.linkedin.com/uas/login?"
-    "session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ftalent%2Fhome&source_app=tsweb"
-)
+LINKEDIN_RPS_LOGIN_URL = "https://www.linkedin.com/login"
 
 
 @dataclass(frozen=True)
