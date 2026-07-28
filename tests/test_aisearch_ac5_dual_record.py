@@ -186,6 +186,157 @@ def test_below_threshold_records_nothing():
     assert dc.messages == []
 
 
+# ── V1 결함 수정 계약 (RED 재현) ─────────────────────────────────────────────
+# 결함1: dry-run 이 recorded=True 로 실제 기록처럼 표시됨 → status 분리
+# 결함2: ClickUp 성공 후 Discord 실패 → 재시도 시 중복 판정으로 Discord 영구 누락
+# 결함3: 중복확인→생성 비원자 → 결정론적 외부 멱등키(profile_url 기반) 계약
+# 결함4: 점수 정수·0~100 범위 검증(101 거부)
+# 결함5: dry-run 에서 부모 Task ID None 인 subtask 계획 → placeholder 참조
+
+
+class FailFirstDiscordClient:
+    """첫 post_message 만 실패하고 이후엔 성공 — 부분 실패 재현용."""
+
+    def __init__(self):
+        self.messages = []
+        self.calls = 0
+
+    def post_message(self, channel_id, content):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("discord down")
+        self.messages.append({"channel_id": channel_id, "content": content})
+        return f"msg-{len(self.messages)}"
+
+
+def test_defect1_dry_run_status_is_dry_run_never_recorded():
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc)
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
+
+    # dry-run 은 절대 recorded 로 표시되면 안 된다
+    assert result.status == "dry_run"
+    assert result.recorded is False
+
+
+def test_defect1_live_success_status_is_recorded():
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
+
+    assert result.status == "recorded"
+    assert result.recorded is True
+    assert result.pending_steps == []
+
+
+def test_defect2_partial_failure_reports_partial_and_pending_steps():
+    cu, dc = FakeClickUpClient(), FailFirstDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
+
+    # ClickUp 은 성공, Discord 결과 게시부터 실패 → partial + 미완 단계 목록
+    assert result.status == "partial"
+    assert result.recorded is False
+    assert result.pending_steps == ["discord_result", "discord_member"]
+    assert len(cu.created_subtasks) == 1
+    assert dc.messages == []
+    assert result.error is not None
+
+
+def test_defect2_resume_completes_only_pending_steps_despite_duplicate():
+    cand = make_candidate()
+    cu, dc = FakeClickUpClient(), FailFirstDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+
+    r1 = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand)
+    assert r1.status == "partial"
+
+    # 실제 상황 재현: 1차에서 subtask 가 이미 생성됐으므로 중복확인은 True 가 된다
+    cu.existing_profile_urls.add(cand.profile_url)
+    dup_checks_before = len(cu.duplicate_checks)
+
+    r2 = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, resume_from=r1)
+
+    # 재시도는 중복 판정으로 skip 되지 않고 미완 단계만 이어서 최종 완결
+    assert r2.status == "recorded"
+    assert r2.duplicate_skipped is False
+    assert r2.pending_steps == []
+    assert len(cu.created_subtasks) == 1  # ClickUp 재생성 없음
+    assert len(cu.duplicate_checks) == dup_checks_before  # 중복확인 재수행 없음
+    channels = [m["channel_id"] for m in dc.messages]
+    assert DISCORD_RESULT_CHANNEL_ID in channels
+    assert DISCORD_MEMBER_CHANNEL_ID in channels
+
+
+def test_defect3_subtask_carries_deterministic_idempotency_key():
+    cand = make_candidate()
+
+    def run_once():
+        cu, dc = FakeClickUpClient(), FakeDiscordClient()
+        rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+        rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand)
+        return cu.created_subtasks[0]["fields"]["idempotency_key"]
+
+    key1, key2 = run_once(), run_once()
+    assert key1 == key2  # profile_url 기반 결정론 — 재시도에도 동일 키
+    assert cand.profile_url not in key1  # 원문 URL 노출 없이 파생 키
+
+    other = make_candidate(profile_url="https://www.linkedin.com/in/other-person/")
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec.record(position_name="빅밸류 세일즈 총괄", candidate=other)
+    assert cu.created_subtasks[0]["fields"]["idempotency_key"] != key1
+
+
+@pytest.mark.parametrize("bad_score", [101, -1, 87.5, "87", True])
+def test_defect4_score_must_be_int_0_to_100(bad_score):
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+
+    result = rec.record(
+        position_name="빅밸류 세일즈 총괄", candidate=make_candidate(score=bad_score)
+    )
+
+    assert result.status == "failed"
+    assert result.recorded is False
+    assert result.error is not None and "score" in result.error
+    assert cu.created_tasks == []
+    assert cu.created_subtasks == []
+    # 에러는 멤버 채널에만 보고
+    assert [m["channel_id"] for m in dc.messages] == [DISCORD_MEMBER_CHANNEL_ID]
+
+
+def test_defect5_dry_run_subtask_plan_uses_parent_placeholder():
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()  # 부모 Task 없음 → 생성 예정
+    rec = DualRecorder(clickup=cu, discord=dc)
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
+
+    sub_plan = next(
+        a for a in result.planned_actions
+        if a["kind"] == "clickup_create_candidate_subtask"
+    )
+    # None 이 아니라 의미가 명확한 placeholder 참조
+    assert sub_plan["parent_task_id"] == "<parent-to-be-created>"
+
+
+def test_defect5_live_subtask_uses_real_created_parent_id():
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
+
+    sub_plan = next(
+        a for a in result.planned_actions
+        if a["kind"] == "clickup_create_candidate_subtask"
+    )
+    assert sub_plan["parent_task_id"] == "task-1"  # 생성된 실제 ID
+    assert cu.created_subtasks[0]["parent_task_id"] == "task-1"
+
+
 def test_missing_required_field_fails_closed_and_reports_error_to_member_channel():
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
     rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
