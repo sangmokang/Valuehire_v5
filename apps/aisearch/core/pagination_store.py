@@ -23,6 +23,11 @@ from typing import Callable, Protocol
 MAX_PAGES = 20  # D3 — 절대 상한. 이 값을 넘는 리스트 페이지 요청은 나가면 안 된다.
 TABLE_NAME = "aisearch_pages_raw"  # 가칭 — 오너 확정 필요(D12·§8-2)
 
+# 멱등키 네임스페이스 — channel+page_type+url 해시로 결정론적 id 를 만든다.
+# 재실행/저장확인 유실 후 재시도가 같은 페이지를 다시 저장해도 같은 id 로
+# upsert 되어 중복 행이 생기지 않는다.
+_ID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "valuehire/aisearch_pages_raw")
+
 # next_action 시그널 값
 NEXT_SWITCH_BOOLEAN_VARIANT = "switch_boolean_variant"  # 20페이지 도달 → 다음 불린 변형
 NEXT_EXHAUSTED = "exhausted"  # cap 전에 결과 소진
@@ -46,6 +51,28 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def make_row_id(*, channel: str, page_type: str, url: str) -> str:
+    """결정론적 멱등키 — 같은 (channel, page_type, url) 은 언제나 같은 id."""
+    return str(uuid.uuid5(_ID_NAMESPACE, f"{channel}\n{page_type}\n{url}"))
+
+
+def _require_non_empty(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} 은(는) 빈 값이면 안 된다 — 파이프라인 진입에서 fail-fast")
+
+
+def _require_has_next(list_page: dict, page: int) -> bool:
+    """has_next 누락/비불리언은 형식 위반 — 조용한 exhausted 처리 금지(fail-fast)."""
+    if "has_next" not in list_page:
+        raise ValueError(f"리스트 페이지 응답(page={page})에 has_next 가 없다 — 형식 위반")
+    has_next = list_page["has_next"]
+    if not isinstance(has_next, bool):
+        raise ValueError(
+            f"리스트 페이지 응답(page={page})의 has_next 는 bool 이어야 한다: {has_next!r}"
+        )
+    return has_next
+
+
 def _make_row(
     *,
     channel: str,
@@ -57,7 +84,7 @@ def _make_row(
     captured_at: str,
 ) -> dict:
     return {
-        "id": str(uuid.uuid4()),
+        "id": make_row_id(channel=channel, page_type=page_type, url=url),
         "channel": channel,
         "page_type": page_type,
         "url": url,
@@ -86,6 +113,10 @@ def paginate_and_store(
     - "switch_boolean_variant": 20페이지까지 다 돌았고 결과가 더 남아 있음(D3 종료 시그널)
     - "exhausted": cap 전에 결과 소진
     """
+    _require_non_empty("channel", channel)
+    _require_non_empty("position_ref", position_ref)
+    _require_non_empty("machine", machine)
+
     pages_crawled = 0
     details_opened = 0
     rows_saved = 0
@@ -93,6 +124,7 @@ def paginate_and_store(
 
     for page in range(1, MAX_PAGES + 1):
         list_page = fetch_list_page(page)
+        has_next = _require_has_next(list_page, page)  # 형식 위반은 저장 전에 거부
         pages_crawled += 1
 
         captured_at = _utcnow_iso()
@@ -127,12 +159,14 @@ def paginate_and_store(
             )
             rows_saved += 1
 
-        if not list_page.get("has_next", False):
-            next_action = NEXT_EXHAUSTED
-            break
         if page == MAX_PAGES:
-            # D3: 결과가 남아 있어도 여기서 끝. 21페이지 요청은 나가지 않는다.
+            # D3: 20페이지 도달이면 has_next 와 무관하게 CAP_REACHED —
+            # 다음 불린 변형 전환 시그널. 21페이지 요청은 나가지 않는다.
             next_action = NEXT_SWITCH_BOOLEAN_VARIANT
+            break
+        if not has_next:
+            # 소진(exhausted)은 20페이지 전에 has_next=False 인 경우만.
+            next_action = NEXT_EXHAUSTED
             break
 
     return PaginationResult(
