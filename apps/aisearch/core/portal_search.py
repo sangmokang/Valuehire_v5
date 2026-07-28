@@ -22,10 +22,14 @@ SARAMIN_LOGIN_URL = (
 # OR 키워드 입력: <input class="search_input" maxlength="30"> in div.search_keyword
 # — docs/search-access.md:142,162
 SARAMIN_OR_SELECTOR = "div.search_keyword input.search_input"
-# AND/NOT 키워드 입력: <input class="search_input result" maxlength="30">
-# — docs/search-access.md:170,176
+# AND 키워드 입력: <input class="search_input result" maxlength="30">
+# — docs/search-access.md:167-170
 SARAMIN_AND_SELECTOR = "input.search_input.result"
-SARAMIN_NOT_SELECTOR = "input.search_input.result"
+# ⛔ NOT 키워드는 미지원(명시적 거부) — docs/search-access.md:173-176 의 NOT 필드는
+# AND 필드(docs/search-access.md:167-170)와 마크업이 완전히 동일한
+# <input type="text" class="search_input result" maxlength="30"> 이라 NOT 전용
+# 셀렉터가 존재하지 않는다. 같은 셀렉터로 NOT 값을 넣으면 AND 필드에 들어가
+# 조용한 오동작(제외어가 필수어로 검색됨)이 되므로, fail-closed 로 거부한다.
 # 경력 select: #career_min / #career_max — docs/search-access.md:193,222
 SARAMIN_CAREER_MIN_SELECTOR = "#career_min"
 SARAMIN_CAREER_MAX_SELECTOR = "#career_max"
@@ -49,8 +53,17 @@ JOBKOREA_CAREER_MIN_SELECTOR = "#txtCareerStart"
 JOBKOREA_CAREER_MAX_SELECTOR = "#txtCareerEnd"
 
 
-def _validate_keywords(name: str, keywords: list[str]) -> list[str]:
+def _validate_keywords(name: str, keywords: object) -> list[str]:
+    # V1 결함 1 수정: 문자열 "SaaS" 를 목록 대신 넣으면 글자별로 분해되던 결함 —
+    # 리스트(원소는 비어있지 않은 str)만 허용하고 그 외 타입은 fail-fast.
+    if keywords is None:
+        return []
+    if not isinstance(keywords, list):
+        raise ValueError(
+            f"{name}: 키워드는 list[str] 만 허용(문자열 단독 입력 금지): {keywords!r}"
+        )
     cleaned: list[str] = []
+    seen: set[str] = set()
     for kw in keywords:
         if not isinstance(kw, str) or not kw.strip():
             raise ValueError(f"{name}: 빈 키워드는 허용되지 않는다: {kw!r}")
@@ -62,8 +75,23 @@ def _validate_keywords(name: str, keywords: list[str]) -> list[str]:
         # Never enter full sentences." (문장형 입력 fail-closed)
         if kw.endswith((".", "。")) or "습니다" in kw or "합니다" in kw:
             raise ValueError(f"{name}: 문장형 입력 금지(키워드만 허용): {kw!r}")
+        # V1 결함 2 수정: 중복 키워드는 순서를 보존하며 제거한다.
+        if kw in seen:
+            continue
+        seen.add(kw)
         cleaned.append(kw)
     return cleaned
+
+
+def _dedup_key(channel: str, or_kw: list[str], and_kw: list[str]) -> str:
+    """V1 결함 4 수정: 같은 디스크립터의 중복 제출을 막는 결정론적 dedup 키.
+
+    채널 + 정규화(casefold·정렬·중복제거) 키워드로만 만들어, 같은 검색 의도면
+    호출 시점·키워드 표기(대소문자·중복·순서)와 무관하게 항상 같은 키가 나온다.
+    """
+    norm_or = ",".join(sorted({kw.casefold() for kw in or_kw}))
+    norm_and = ",".join(sorted({kw.casefold() for kw in and_kw}))
+    return f"{channel}|or={norm_or}|and={norm_and}"
 
 
 def _validate_career(career_min: int | None, career_max: int | None) -> None:
@@ -98,23 +126,31 @@ def build_portal_search_descriptors(
 
     순수 함수: 같은 입력이면 항상 같은 출력, 입력을 변형하지 않으며 I/O 가 없다.
     검증 실패 시 ValueError (fail-closed — 부분 디스크립터를 반환하지 않는다).
+    NOT(제외) 키워드는 미지원 — 값이 오면 명시적으로 거부한다(아래 주석 참조).
     """
-    or_kw = _validate_keywords("or_keywords", list(or_keywords or []))
-    and_kw = _validate_keywords("and_keywords", list(and_keywords or []))
-    not_kw = _validate_keywords("not_keywords", list(not_keywords or []))
-    if not (or_kw or and_kw or not_kw):
+    # V1 결함 3 수정: NOT 키워드는 명시적 거부(미지원). 근거 —
+    # docs/search-access.md:173-176 NOT 필드가 AND 필드(docs/search-access.md:167-170)와
+    # 동일 마크업(input.search_input.result)이라 구분 셀렉터가 없고, 같은 셀렉터로
+    # 넣으면 제외어가 필수어(AND)로 들어가는 조용한 오동작이 되기 때문.
+    if not_keywords:
+        raise ValueError(
+            "not_keywords: 미지원 — 사람인 NOT 필드는 AND 필드와 셀렉터가 동일해 "
+            "(docs/search-access.md:167-176) 안전하게 구분 입력할 수 없다. "
+            "제외 조건 없이 검색한 뒤 후처리로 걸러라."
+        )
+    or_kw = _validate_keywords("or_keywords", or_keywords)
+    and_kw = _validate_keywords("and_keywords", and_keywords)
+    if not (or_kw or and_kw):
         raise ValueError("키워드가 하나도 없다 — 검색 디스크립터를 만들 수 없다")
     _validate_career(career_min, career_max)
 
-    # ── 사람인: OR → AND → NOT → 경력 순 입력 (docs/search-access.md:122 준비된
+    # ── 사람인: OR → AND → 경력 순 입력 (docs/search-access.md:122 준비된
     # 키워드를 불린 의도대로 각 필드에 배치) ──
     saramin_specs: list[tuple[str, str, list[str]]] = []
     if or_kw:
         saramin_specs.append(("or_keywords", SARAMIN_OR_SELECTOR, or_kw))
     if and_kw:
         saramin_specs.append(("and_keywords", SARAMIN_AND_SELECTOR, and_kw))
-    if not_kw:
-        saramin_specs.append(("not_keywords", SARAMIN_NOT_SELECTOR, not_kw))
     if career_min is not None:
         saramin_specs.append(("career_min", SARAMIN_CAREER_MIN_SELECTOR, [str(career_min)]))
     if career_max is not None:
@@ -142,11 +178,14 @@ def build_portal_search_descriptors(
             "channel": "saramin",
             "url": SARAMIN_SEARCH_URL,
             "login_url": SARAMIN_LOGIN_URL,
+            # V1 결함 4 수정: 실행 계획 쪽에서 이 키로 중복 제출을 걸러낸다.
+            "dedup_key": _dedup_key("saramin", or_kw, and_kw),
             "steps": _steps(*saramin_specs),
         },
         {
             "channel": "jobkorea",
             "url": JOBKOREA_SEARCH_URL,
+            "dedup_key": _dedup_key("jobkorea", or_kw, and_kw),
             "steps": _steps(*jobkorea_specs),
         },
     ]
