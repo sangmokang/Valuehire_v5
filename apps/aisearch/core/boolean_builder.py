@@ -23,9 +23,13 @@ DEFAULT_LOCATION = "South Korea"
 STAGE_SEOUL_UNIVERSITY_PRIORITY = "seoul_university_priority"
 STAGE_EXPANDED = "expanded"
 
-# 확장 단계 전환이 허용되는 유일한 사유. 캡차·rate limit 등은 전환 사유가 아니라
+# 단계 전환이 허용되는 사유. 캡차·rate limit 등은 전환 사유가 아니라
 # 별도 복구 절차 대상이므로 여기서 fail-fast 로 거부한다(E8 catch-all 방지).
+# V1 2차 결함 4 수정: D3 — 20페이지 cap 도달(switch_boolean_variant)도
+# "다음 불린 변형 전환" 사유다(소진과 동급의 정상 전환).
 ADVANCE_REASON_EXHAUSTED = "exhausted"
+ADVANCE_REASON_CAP_REACHED = "cap_reached"
+_ADVANCE_REASONS = frozenset({ADVANCE_REASON_EXHAUSTED, ADVANCE_REASON_CAP_REACHED})
 
 # Boolean 구문 주입 문자: 따옴표·괄호는 위치와 무관하게 구문을 깨뜨린다.
 _FORBIDDEN_CHARS = ('"', "(", ")")
@@ -81,7 +85,24 @@ def build_rps_boolean(jd: dict[str, Any]) -> str:
             raise ValueError(f"빈 키워드 그룹이 있습니다: {group!r}")
         or_part = " OR ".join(f'"{term}"' for term in terms)
         and_parts.append(f"({or_part})")
-    return " AND ".join(and_parts)
+    boolean = " AND ".join(and_parts)
+
+    # V1 2차 결함 2 수정: JD 제외어(not_keywords)를 NOT 절로 반영한다.
+    not_keywords = jd.get("not_keywords")
+    if not_keywords:
+        if isinstance(not_keywords, (str, bytes)) or not isinstance(
+            not_keywords, (list, tuple)
+        ):
+            raise ValueError(
+                f"not_keywords는 문자열 리스트여야 합니다(문자열 단독 금지): {not_keywords!r}"
+            )
+        not_terms = [_validate_term(t, not_keywords) for t in not_keywords]
+        not_terms = [t for t in not_terms if t]
+        if not not_terms:
+            raise ValueError(f"not_keywords가 빈 값뿐입니다: {not_keywords!r}")
+        not_part = " OR ".join(f'"{term}"' for term in not_terms)
+        boolean = f"{boolean} NOT ({not_part})"
+    return boolean
 
 
 @dataclass(frozen=True)
@@ -112,14 +133,14 @@ class SearchPlan:
         return self.stages[self._index]
 
     def advance(self, reason: str = ADVANCE_REASON_EXHAUSTED) -> Optional[SearchStage]:
-        """현재 단계가 소진(exhausted)됐을 때만 다음 단계로 전환한다. 더 없으면 None.
+        """소진(exhausted) 또는 20페이지 cap(cap_reached)일 때만 다음 단계로 전환한다.
 
-        캡차·rate limit·오류 등 소진이 아닌 사유는 확장 전환 사유가 아니므로
-        명시적으로 거부한다(E8 catch-all 방지) — 단계는 그대로 유지된다.
+        캡차·rate limit·오류 등은 전환 사유가 아니므로 명시적으로 거부한다
+        (E8 catch-all 방지) — 단계는 그대로 유지된다. 더 없으면 None.
         """
-        if reason != ADVANCE_REASON_EXHAUSTED:
+        if reason not in _ADVANCE_REASONS:
             raise ValueError(
-                f"확장 전환은 reason={ADVANCE_REASON_EXHAUSTED!r}만 허용합니다 — "
+                f"단계 전환은 reason∈{sorted(_ADVANCE_REASONS)}만 허용합니다 — "
                 f"{reason!r}는 전환 사유가 아닙니다(캡차·오류는 별도 복구 절차)"
             )
         if self._index + 1 >= len(self.stages):

@@ -119,6 +119,7 @@ def build_portal_search_descriptors(
     or_keywords: list[str] | None = None,
     and_keywords: list[str] | None = None,
     not_keywords: list[str] | None = None,
+    exclude_keywords: list[str] | None = None,
     career_min: int | None = None,
     career_max: int | None = None,
 ) -> list[dict[str, Any]]:
@@ -126,7 +127,10 @@ def build_portal_search_descriptors(
 
     순수 함수: 같은 입력이면 항상 같은 출력, 입력을 변형하지 않으며 I/O 가 없다.
     검증 실패 시 ValueError (fail-closed — 부분 디스크립터를 반환하지 않는다).
-    NOT(제외) 키워드는 미지원 — 값이 오면 명시적으로 거부한다(아래 주석 참조).
+    NOT(제외) 키워드의 셀렉터 입력은 미지원 — not_keywords 가 오면 명시적으로
+    거부한다(아래 주석 참조). 대신 V1 2차 결함 2 수정으로 exclude_keywords 를
+    받아 각 디스크립터의 post_filter_exclude 로 반영한다 — 검색 입력 단계(steps)에는
+    절대 싣지 않고, 결과 후처리 단계가 이 목록으로 제외를 적용한다.
     """
     # V1 결함 3 수정: NOT 키워드는 명시적 거부(미지원). 근거 —
     # docs/search-access.md:173-176 NOT 필드가 AND 필드(docs/search-access.md:167-170)와
@@ -140,6 +144,7 @@ def build_portal_search_descriptors(
         )
     or_kw = _validate_keywords("or_keywords", or_keywords)
     and_kw = _validate_keywords("and_keywords", and_keywords)
+    exclude_kw = _validate_keywords("exclude_keywords", exclude_keywords)
     if not (or_kw or and_kw):
         raise ValueError("키워드가 하나도 없다 — 검색 디스크립터를 만들 수 없다")
     _validate_career(career_min, career_max)
@@ -181,11 +186,14 @@ def build_portal_search_descriptors(
             # V1 결함 4 수정: 실행 계획 쪽에서 이 키로 중복 제출을 걸러낸다.
             "dedup_key": _dedup_key("saramin", or_kw, and_kw),
             "steps": _steps(*saramin_specs),
+            # V1 2차 결함 2 수정: 제외어는 입력 셀렉터가 아니라 후처리 제외 목록으로.
+            "post_filter_exclude": list(exclude_kw),
         },
         {
             "channel": "jobkorea",
             "url": JOBKOREA_SEARCH_URL,
             "dedup_key": _dedup_key("jobkorea", or_kw, and_kw),
             "steps": _steps(*jobkorea_specs),
+            "post_filter_exclude": list(exclude_kw),
         },
     ]

@@ -71,6 +71,29 @@ def validate_transition(src: MonitorState, dst: MonitorState) -> None:
         )
 
 
+#: V1 2차 결함 10 — 드라이버 이벤트 타입 → 모니터 공급 규격.
+DRIVER_EVENT_HUMAN_INPUT = "human_input"
+DRIVER_EVENT_SIGNAL = "signal"
+
+
+def feed_driver_events(monitor: "InterventionMonitor", events: list[dict]) -> None:
+    """드라이버가 관측한 이벤트를 InterventionMonitor 에 공급하는 어댑터.
+
+    - {"type": "human_input"} → on_human_input() (사람 입력 → 정지)
+    - {"type": "signal", "kind": "captcha"|...} → on_signal(kind) (→ BLOCKED)
+    - 그 밖의 타입은 표에 없는 이벤트 — E8 catch-all 로 명시적 차단한다
+      (임의 추정으로 무시하지 않는다, fail-closed).
+    """
+    for event in events:
+        etype = event.get("type") if isinstance(event, dict) else None
+        if etype == DRIVER_EVENT_HUMAN_INPUT:
+            monitor.on_human_input()
+        elif etype == DRIVER_EVENT_SIGNAL:
+            monitor.on_signal(str(event.get("kind")))
+        else:
+            monitor.on_signal(f"unknown_driver_event:{etype!r}")
+
+
 class InterventionMonitor:
     """사람 개입·차단 신호 상태 기계.
 

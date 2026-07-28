@@ -51,9 +51,16 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def make_row_id(*, channel: str, page_type: str, url: str) -> str:
-    """결정론적 멱등키 — 같은 (channel, page_type, url) 은 언제나 같은 id."""
-    return str(uuid.uuid5(_ID_NAMESPACE, f"{channel}\n{page_type}\n{url}"))
+def make_row_id(*, channel: str, page_type: str, url: str, position_ref: str) -> str:
+    """결정론적 멱등키 — 같은 (channel, page_type, url, position_ref) 은 언제나 같은 id.
+
+    V1 2차 결함 6 수정: position_ref 를 키에 포함한다 — 같은 프로필을 두 포지션이
+    저장할 때 서로 덮어쓰면 안 되고(포지션별 행 보존), 같은 포지션의 재시도는
+    여전히 같은 id 로 수렴해 중복 0 을 유지한다.
+    """
+    return str(
+        uuid.uuid5(_ID_NAMESPACE, f"{channel}\n{page_type}\n{url}\n{position_ref}")
+    )
 
 
 def _require_non_empty(name: str, value: str) -> None:
@@ -84,7 +91,9 @@ def _make_row(
     captured_at: str,
 ) -> dict:
     return {
-        "id": make_row_id(channel=channel, page_type=page_type, url=url),
+        "id": make_row_id(
+            channel=channel, page_type=page_type, url=url, position_ref=position_ref
+        ),
         "channel": channel,
         "page_type": page_type,
         "url": url,
