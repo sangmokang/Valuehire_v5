@@ -95,6 +95,39 @@ def test_content_js_creates_and_removes_banner() -> None:
     assert "자동화" in src, "배너 안내 문구(자동화) 없음"
 
 
+def test_content_js_cancels_pending_attach_on_remove() -> None:
+    """V1 결함 #1 — DOMContentLoaded 전에 표시→제거 신호가 오면,
+    제거 시 예약된 부착(DOMContentLoaded 리스너)을 반드시 취소해야 한다.
+    (취소가 없으면 문서 준비 후 배너가 다시 나타나는 경쟁 조건.)
+    """
+    src = _content_js()
+    # 예약 취소: DOMContentLoaded 리스너 해제 코드가 존재해야 한다.
+    assert re.search(
+        r"removeEventListener\(\s*['\"]DOMContentLoaded['\"]", src
+    ), "제거 경로에서 예약된 DOMContentLoaded 부착을 취소(removeEventListener)하지 않음"
+
+
+def test_content_js_tracks_pending_attach_for_latest_state_wins() -> None:
+    """V1 결함 #1 — 최신 신호가 우선하도록 예약된 부착을 상태로 추적해야 한다.
+
+    구조 계약: 예약된 부착 핸들러를 공유 변수(pendingAttach)에 저장하고,
+    removeBanner 경로에서 그 변수를 참조해 취소·초기화해야 한다.
+    """
+    src = _content_js()
+    assert "pendingAttach" in src, "예약 부착 추적 상태(pendingAttach) 없음"
+
+    # removeBanner 함수 본문 안에서 pendingAttach 취소가 일어나야 한다.
+    match = re.search(
+        r"function\s+removeBanner\s*\(\s*\)\s*\{(.*?)\n  \}", src, re.DOTALL
+    )
+    assert match, "removeBanner 함수 본문 추출 실패"
+    body = match.group(1)
+    assert "pendingAttach" in body, "removeBanner 가 예약된 부착을 취소하지 않음"
+    assert "removeEventListener" in body, (
+        "removeBanner 가 DOMContentLoaded 리스너를 해제하지 않음"
+    )
+
+
 # ---------------------------------------------------------------------------
 # banner.py (dispatch 스니펫 생성 — 브라우저 호출 금지)
 # ---------------------------------------------------------------------------
@@ -139,6 +172,49 @@ def test_dispatch_snippet_escapes_quotes_in_task() -> None:
     assert detail["task"] == tricky
     # </script> 원문이 그대로 남으면 인라인 주입 시 위험 — 이스케이프 강제.
     assert "</script>" not in snippet
+
+
+def test_dispatch_snippet_rejects_non_bool_active() -> None:
+    """V1 결함 #2 — active="false"(문자열)를 True 로 조용히 변환하면 안 된다.
+
+    active 는 bool 만 허용, 그 외 타입은 fail-fast 예외.
+    """
+    import pytest
+
+    from apps.aisearch.core.banner import build_dispatch_snippet
+
+    for bad_active in ("false", "true", 1, 0, None, [], object()):
+        with pytest.raises(TypeError):
+            build_dispatch_snippet(active=bad_active, task="사람인 서치")
+
+
+def test_dispatch_snippet_rejects_non_str_task() -> None:
+    """V1 결함 #2 — task=None 을 "None" 문자열로 조용히 변환하면 안 된다.
+
+    task 는 str 만 허용, 그 외 타입은 fail-fast 예외.
+    """
+    import pytest
+
+    from apps.aisearch.core.banner import build_dispatch_snippet
+
+    for bad_task in (None, 123, ["작업"], {"task": "x"}, object()):
+        with pytest.raises(TypeError):
+            build_dispatch_snippet(active=True, task=bad_task)
+
+
+def test_dispatch_snippet_active_true_requires_nonempty_task() -> None:
+    """V1 결함 #2 — 표시(active=True) 신호의 task 는 비어있지 않은 str 만 허용.
+
+    (제거 신호 active=False 는 payload 문구가 필요 없으므로 빈 문자열 허용 —
+    기존 계약 test_dispatch_snippet_active_false_clears 유지.)
+    """
+    import pytest
+
+    from apps.aisearch.core.banner import build_dispatch_snippet
+
+    for empty_task in ("", "   ", "\n\t"):
+        with pytest.raises(ValueError):
+            build_dispatch_snippet(active=True, task=empty_task)
 
 
 def test_banner_module_does_not_touch_browser() -> None:
