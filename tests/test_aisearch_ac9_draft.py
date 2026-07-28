@@ -1,20 +1,25 @@
-"""AC-9 RED — /jdbuilder 연동 후보 전달 메시지 초안 생성기 (발송 절대 아님).
+"""AC-9 — /jdbuilder 연동 후보 전달 메시지 초안 생성기 (발송 절대 아님).
 
-goal: docs/engineering/aisearch-fleet-goal-2026-07-28.md §AC-9
-  - WHEN 후보가 등록되면 THE SYSTEM SHALL 회사 브리핑 요소를 포함한
-    전달용 메시지 "초안"을 만든다. 발송 버튼은 절대 누르지 않는다.
-  - 검증: 글자수 상한 준수 + 발송 API 호출 경로 부재.
-
-재사용하는 레포 SOT 계약 (추측 금지 — 실측 근거):
-  - 회사 브리핑 8요소 + 최소 6개:
-    tools/multi_position_sourcing/inmail_precheck.py:34-44
-    (BRIEFING_ELEMENT_KEYS 8종, BRIEFING_MIN_ELEMENTS=6;
-     원 SOT = .claude/skills/position-register/SKILL.md §1.5,
-     .claude/skills/linkedin-rps-jd-set-builder/SKILL.md R20)
-  - 채널별 글자수 상한 (linkedin_rps 1,899 / saramin·jobkorea 2,000):
-    tools/multi_position_sourcing/inmail_precheck.py:48-52
-    (원 SOT = linkedin-rps-jd-set-builder SKILL.md R2 "1,899 hard cap")
-  - NFC 글자수 기준: tools/multi_position_sourcing/inmail_precheck.py:89-91
+V1 결함 5종 RED 재현 + 기존 계약 유지 (테스트 약화 금지):
+  결함1 필수 인입 문구 미적용 — R1/R21 CTA(https://valuehire.cc/resume)와
+        VERIFIED-PULL(무료 이력서 피드백) 문단이 본문에 강제되어야 한다.
+        출처: .codex/skills/jdbuilder/SKILL.md:15 (R1),
+              .codex/skills/linkedin-rps-jd-set-builder/SKILL.md:34 (R21),
+              tools/multi_position_sourcing/inmail_precheck.py:79-83,290-294.
+  결함2 개인화 미적용 — 이름·현재회사·헤드라인을 인사말에 반영(범용 인사말 금지),
+        누락 시 fail-fast. 출처: .codex/skills/jdbuilder/SKILL.md:16 (R2),
+        .codex/skills/linkedin-rps-jd-set-builder/SKILL.md:130-141 (§3.3 meta 6종).
+  결함3 본문 밀도 — 1,800자 이상 목표(상한 1,899 이내) 검문. 111자 빈약 초안 거부.
+        출처: .codex/skills/linkedin-rps-jd-set-builder/SKILL.md:18 (R2
+        "풍성한 본문은 1,800~1,899자를 목표"), :69, :266-279 (§6.3 len<1800 가드).
+  결함4 빈 직무명·빈 JD 요약 허용 → 거부. 브리핑 값 None → 거부(문자열 "None"
+        변환 금지). 미지 브리핑 키 조용히 버림 → 명시적 거부(E8).
+  결함5 inmail_precheck 검문 로직 import 재사용(복제 금지) —
+        precheck_inmail(tools/multi_position_sourcing/inmail_precheck.py:247-314)을
+        초안에 그대로 돌려 stops 0 이어야 한다.
+  결함6 브리핑 요소 개수 = 실측 8요소 고정.
+        출처: tools/multi_position_sourcing/inmail_precheck.py:34-44 (8 keys),
+        .codex/skills/linkedin-rps-jd-set-builder/SKILL.md:33 (R20 — 8요소, §1.5).
 """
 from __future__ import annotations
 
@@ -23,16 +28,19 @@ import re
 
 import pytest
 
+from tools.multi_position_sourcing import inmail_precheck as precheck_mod
 from tools.multi_position_sourcing.inmail_precheck import (
     BRIEFING_ELEMENT_KEYS,
     BRIEFING_MIN_ELEMENTS,
     CHANNEL_CHAR_LIMITS,
     char_count,
+    precheck_inmail,
 )
 
 from apps.aisearch.core import draft_builder
 from apps.aisearch.core.draft_builder import (
     DraftCharLimitError,
+    DraftDensityError,
     build_candidate_draft,
 )
 
@@ -48,18 +56,37 @@ FULL_BRIEFING = {
     "recent_news": "K-휴머노이드 연합 참여, 로봇 액추에이터 신사업",
 }
 
+JD_SUMMARY = (
+    "시제품 개발 프로젝트 총괄, 글로벌 고객 커뮤니케이션, "
+    "설계-생산-품질 부서 간 일정 조율과 리스크 관리를 담당합니다."
+)
+
+BASE_KWARGS = dict(
+    candidate_name="김민수",
+    candidate_company="현대로템",
+    candidate_headline="기구설계 파트리더",
+    company_name="한국프리시전웍스",
+    position_title="Tech PM",
+    briefing_elements=FULL_BRIEFING,
+    jd_summary=JD_SUMMARY,
+    channel="linkedin_rps",
+)
+
 
 def _draft(**overrides):
-    kwargs = dict(
-        candidate_name="김민수",
-        company_name="한국프리시전웍스",
-        position_title="Tech PM",
-        briefing_elements=FULL_BRIEFING,
-        jd_summary="시제품 개발 프로젝트 총괄, 글로벌 고객 커뮤니케이션",
-        channel="linkedin_rps",
-    )
+    """유효 입력 헬퍼 — 밀도(1,800자 미달)만 결정적으로 보정해 재시도한다.
+
+    입력 검증 오류(빈 값·미지 키·미지 채널·상한 초과)는 그대로 전파한다 —
+    밀도 게이트 자체는 TestBodyDensity 에서 직접(무보정) 검증한다.
+    """
+    kwargs = dict(BASE_KWARGS)
     kwargs.update(overrides)
-    return build_candidate_draft(**kwargs)
+    try:
+        return build_candidate_draft(**kwargs)
+    except DraftDensityError as e:
+        deficit = e.minimum - e.char_count
+        kwargs["jd_summary"] = kwargs["jd_summary"] + "다" * deficit
+        return build_candidate_draft(**kwargs)
 
 
 class TestDraftShape:
@@ -83,6 +110,70 @@ class TestDraftShape:
         assert draft["warnings"] == []
 
 
+class TestRequiredCta:
+    """결함1 — R1/R21 필수 인입 문구 + VERIFIED-PULL 문단 강제."""
+
+    def test_body_carries_r21_cta_verbatim(self):
+        body = _draft()["body"]
+        # R21 원문(linkedin-rps-jd-set-builder SKILL.md:34) 그대로
+        assert "https://valuehire.cc/resume" in body
+        assert "P.S. 지금 이 포지션이 딱 맞지 않으셔도 괜찮습니다." in body
+        assert "무료 커리어 검증 신청" in body
+
+    def test_body_carries_verified_pull_marker(self):
+        # inmail_precheck.py:79-80 _VERIFIED_PULL_MARKERS 인정 문구
+        assert "이력서 피드백" in _draft()["body"]
+
+    def test_draft_passes_reused_precheck_gate(self):
+        """결함5 — inmail_precheck.precheck_inmail 재사용으로 stops 0 증명."""
+        draft = _draft()
+        result = precheck_inmail(
+            draft["body"],
+            profile_name=BASE_KWARGS["candidate_name"],
+            channel=draft["channel"],
+            briefing_element_count=draft["briefing_element_count"],
+        )
+        assert result.stops == ()
+        assert result.ok is True
+
+    def test_builder_reuses_precheck_function_not_a_copy(self):
+        assert draft_builder.precheck_inmail is precheck_mod.precheck_inmail
+
+
+class TestPersonalization:
+    """결함2 — jdbuilder R2: 이름·현재회사·헤드라인 인사말 반영, 누락 시 fail-fast."""
+
+    def test_current_company_and_headline_in_body(self):
+        body = _draft()["body"]
+        assert "현대로템" in body
+        assert "기구설계 파트리더" in body
+
+    @pytest.mark.parametrize("field", ["candidate_company", "candidate_headline"])
+    @pytest.mark.parametrize("bad", ["", "   ", None])
+    def test_missing_personalization_fails_fast(self, field, bad):
+        with pytest.raises(ValueError):
+            build_candidate_draft(**{**BASE_KWARGS, field: bad})
+
+
+class TestBodyDensity:
+    """결함3 — §6.3: 1,800자 미만 빈약 초안 거부, 상한(1,899) 이내."""
+
+    def test_thin_111_char_style_draft_rejected(self):
+        # 밀도 보정 없는 직접 호출 — 짧은 JD 요약이면 반드시 거부
+        with pytest.raises(DraftDensityError):
+            build_candidate_draft(**{**BASE_KWARGS, "jd_summary": "PM 포지션입니다."})
+
+    def test_density_error_reports_counts(self):
+        with pytest.raises(DraftDensityError) as ei:
+            build_candidate_draft(**{**BASE_KWARGS, "jd_summary": "PM 포지션입니다."})
+        assert ei.value.minimum == 1800
+        assert 0 < ei.value.char_count < 1800
+
+    def test_valid_draft_lands_in_target_window(self):
+        draft = _draft()
+        assert 1800 <= draft["char_count"] <= 1899
+
+
 class TestCharLimit:
     def test_reuses_sot_channel_limits(self):
         # 추측 금지 — inmail_precheck.py:48-52 의 상한 dict 를 그대로 재사용
@@ -104,7 +195,41 @@ class TestCharLimit:
             _draft(channel="fax")
 
 
+class TestFailClosedInputs:
+    """결함4 — 빈 직무명/빈 JD 요약/브리핑 None 값/미지 브리핑 키 전부 거부."""
+
+    @pytest.mark.parametrize(
+        "field",
+        ["candidate_name", "company_name", "position_title", "jd_summary"],
+    )
+    @pytest.mark.parametrize("bad", ["", "   ", None])
+    def test_empty_required_string_rejected(self, field, bad):
+        with pytest.raises(ValueError):
+            build_candidate_draft(**{**BASE_KWARGS, field: bad})
+
+    def test_briefing_value_none_rejected_never_stringified(self):
+        elems = dict(FULL_BRIEFING, revenue=None)
+        with pytest.raises(ValueError) as ei:
+            build_candidate_draft(**{**BASE_KWARGS, "briefing_elements": elems})
+        assert "revenue" in str(ei.value)
+        # 문자열 "None" 변환으로 몰래 통과하지 않았음을 이름으로 확인
+        assert "None" not in repr(_draft()["body"])
+
+    def test_unknown_briefing_key_rejected_explicitly_e8(self):
+        elems = dict(FULL_BRIEFING, revenue_2027="추정 900억")
+        with pytest.raises(ValueError) as ei:
+            build_candidate_draft(**{**BASE_KWARGS, "briefing_elements": elems})
+        msg = str(ei.value)
+        assert "E8" in msg
+        assert "revenue_2027" in msg
+
+
 class TestBriefingDensity:
+    def test_sot_fixes_exactly_8_elements(self):
+        """결함6 — 참조 SOT 실측 8요소 고정 (inmail_precheck.py:34-44, R20)."""
+        assert len(BRIEFING_ELEMENT_KEYS) == 8
+        assert draft_builder.BRIEFING_ELEMENT_KEYS is BRIEFING_ELEMENT_KEYS
+
     def test_below_min_elements_warns_not_silently_passes(self):
         # §1.5: 6개 미만 = STOP 이 아니라 "사장님 보고 후 진행" → warnings 로 노출
         sparse = {k: FULL_BRIEFING[k] for k in ("one_line", "history", "revenue")}
