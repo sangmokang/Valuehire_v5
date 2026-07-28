@@ -22,9 +22,23 @@ def build_dispatch_snippet(active: bool, task: str = "") -> str:
 
     - ``active=True`` 면 배너 표시(``task`` 문구 포함), ``False`` 면 제거.
     - payload 는 JSON 직렬화로 안전하게 이스케이프한다(따옴표·``</script>`` 등).
+    - 엄격 타입 검증(fail-fast): ``active`` 는 bool 만, ``task`` 는 str 만 허용.
+      조용한 변환(``"false"`` → True, ``None`` → ``"None"``) 금지.
+      표시 신호(``active=True``)의 ``task`` 는 비어있지 않아야 한다.
     """
+    if not isinstance(active, bool):
+        raise TypeError(
+            f"active 는 bool 만 허용 (받은 값: {type(active).__name__}={active!r})"
+        )
+    if not isinstance(task, str):
+        raise TypeError(
+            f"task 는 str 만 허용 (받은 값: {type(task).__name__}={task!r})"
+        )
+    if active and not task.strip():
+        raise ValueError("active=True 표시 신호의 task 는 비어있지 않은 str 이어야 한다")
+
     detail = json.dumps(
-        {"active": bool(active), "task": str(task)},
+        {"active": active, "task": task},
         ensure_ascii=False,
     )
     # "</script>" 가 인라인 <script> 에 들어가면 태그가 조기 종료될 수 있어

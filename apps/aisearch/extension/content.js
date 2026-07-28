@@ -9,7 +9,17 @@
 
   const BANNER_ID = "valuehire-automation-banner";
 
+  // 문서 준비(DOMContentLoaded) 전에 표시 신호가 오면 부착을 예약하는데,
+  // 그 사이 제거 신호가 오면 예약을 취소해야 한다(최신 신호 우선).
+  // 취소 없이는 제거 후 문서 준비 시 배너가 다시 나타나는 경쟁 조건이 생긴다.
+  let pendingAttach = null;
+
   function removeBanner() {
+    // 최신 신호 우선 — 예약된 부착이 있으면 취소한다.
+    if (pendingAttach) {
+      document.removeEventListener("DOMContentLoaded", pendingAttach);
+      pendingAttach = null;
+    }
     const existing = document.getElementById(BANNER_ID);
     if (existing) {
       existing.remove();
@@ -44,11 +54,13 @@
     banner.textContent = label;
 
     const attach = () => {
+      pendingAttach = null;
       (document.body || document.documentElement).appendChild(banner);
     };
     if (document.body || document.documentElement) {
       attach();
     } else {
+      pendingAttach = attach;
       document.addEventListener("DOMContentLoaded", attach, { once: true });
     }
   }
