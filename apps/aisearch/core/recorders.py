@@ -9,10 +9,17 @@ L3 외부 쓰기 규율:
   함께일 때만 허용되며, 아니면 LiveGateError 로 fail-closed.
 - dry-run 에서는 외부 쓰기 0건 — 라이브와 동일 모양의 payload 를 계획으로만 남긴다.
   단 중복확인(read)은 SOT25 write_gate 상 등록 전 필수 회수 단계라 dry-run 에서도 수행한다.
+
+상태 계약(V1 결함1 수정):
+- RecordResult.status ∈ {"dry_run", "recorded", "partial", "failed", "skipped"}.
+- dry-run 결과는 절대 "recorded" 로 표시되지 않는다 — 성공적 dry-run 은 "dry_run".
+- "partial" = 일부 외부 쓰기 성공 후 중단 — pending_steps 에 미완 단계가 남으며,
+  record(..., resume_from=이전결과) 로 미완 단계만 이어서 수행해 완결한다(결함2).
 """
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
@@ -26,13 +33,53 @@ SCORE_THRESHOLD = 60  # 60점 이상 후보 확정 시에만 기록
 # SOT25 candidate_subtask_required_fields 중 이 모듈 책임 4필드
 REQUIRED_FIELDS = ("profile_url", "score", "why_fit", "profile_summary")
 
+# 결함5: dry-run 에서 부모 Task 가 아직 없을 때 subtask 계획이 참조하는 placeholder.
+# None 이 아니라 "생성 예정 부모" 라는 의미를 명시한다. live 경로에서는 절대 쓰이지
+# 않으며, live 는 생성된 실제 Task ID 만 사용한다(_run_step 에서 강제).
+PARENT_PLACEHOLDER = "<parent-to-be-created>"
+
+# 기록 단계(순서 고정). 부분 실패 시 이 이름들이 pending_steps 로 반환된다.
+STEP_CLICKUP_PARENT = "clickup_parent"
+STEP_CLICKUP_SUBTASK = "clickup_subtask"
+STEP_DISCORD_RESULT = "discord_result"
+STEP_DISCORD_MEMBER = "discord_member"
+ALL_STEPS = (
+    STEP_CLICKUP_PARENT,
+    STEP_CLICKUP_SUBTASK,
+    STEP_DISCORD_RESULT,
+    STEP_DISCORD_MEMBER,
+)
+
+STATUS_DRY_RUN = "dry_run"
+STATUS_RECORDED = "recorded"
+STATUS_PARTIAL = "partial"
+STATUS_FAILED = "failed"
+STATUS_SKIPPED = "skipped"
+
 
 class LiveGateError(RuntimeError):
     """live=True 인데 오너 사인오프가 없을 때 — fail-closed."""
 
 
+def subtask_idempotency_key(profile_url: str) -> str:
+    """결함3: profile_url 기반 결정론적 외부 멱등키.
+
+    중복확인(read)→생성(write)은 로컬에서 원자적으로 묶을 수 없다(TOCTOU).
+    그래서 생성 요청 자체에 이 키를 실어 보내는 계약으로 바꾼다 — 같은
+    profile_url 은 언제 몇 번 재시도해도 같은 키가 나오므로, 중복 생성의
+    원자적 차단은 이 키를 받은 원격(ClickUp 어댑터/서버)이 보장한다.
+    원문 URL 은 노출하지 않고 sha256 파생값만 쓴다.
+    """
+    digest = hashlib.sha256(profile_url.strip().encode("utf-8")).hexdigest()
+    return f"vh-ac5-{digest[:32]}"
+
+
 class ClickUpClient(Protocol):
-    """주입식 ClickUp 인터페이스. 실제 HTTP 어댑터는 별도 파일, 기본 미사용."""
+    """주입식 ClickUp 인터페이스. 실제 HTTP 어댑터는 별도 파일, 기본 미사용.
+
+    create_candidate_subtask 의 fields 에는 idempotency_key 가 포함된다 —
+    어댑터는 이 키를 원격 생성 요청에 실어 중복 생성을 원자적으로 막아야 한다.
+    """
 
     def find_parent_task(self, list_id: str, position_name: str) -> Optional[str]: ...
 
@@ -65,12 +112,18 @@ class Candidate:
 @dataclass
 class RecordResult:
     dry_run: bool
-    recorded: bool = False
+    status: str = STATUS_SKIPPED
     duplicate_skipped: bool = False
     error: Optional[str] = None
     parent_task_id: Optional[str] = None
     subtask_id: Optional[str] = None
     planned_actions: list[dict[str, Any]] = field(default_factory=list)
+    pending_steps: list[str] = field(default_factory=list)
+
+    @property
+    def recorded(self) -> bool:
+        """결함1: dry-run 은 절대 recorded 로 표시되지 않는다 — status 파생값."""
+        return self.status == STATUS_RECORDED
 
 
 def build_result_message(position_name: str, c: Candidate) -> str:
@@ -92,6 +145,8 @@ class DualRecorder:
     """60점 이상 확정 후보를 ClickUp + Discord 두 곳에 기록한다.
 
     기본은 dry-run(라이브 발신 OFF). 라이브는 live=True + owner_signoff=True 둘 다 필요.
+    부분 실패 시 status="partial" + pending_steps 로 반환하며, 같은 인자에
+    resume_from=이전결과 를 넘기면 미완 단계만 이어서 수행한다.
     """
 
     def __init__(
@@ -120,16 +175,40 @@ class DualRecorder:
 
     # ── 공개 API ─────────────────────────────────────────────────────────────
 
-    def record(self, *, position_name: str, candidate: Candidate) -> RecordResult:
+    def record(
+        self,
+        *,
+        position_name: str,
+        candidate: Candidate,
+        resume_from: Optional[RecordResult] = None,
+    ) -> RecordResult:
         result = RecordResult(dry_run=not self.live)
+
+        # 결함4: 점수 계약 — int(불리언 제외) + 0~100 범위. 위반이면 fail-closed.
+        if (
+            isinstance(candidate.score, bool)
+            or not isinstance(candidate.score, int)
+            or not (0 <= candidate.score <= 100)
+        ):
+            result.status = STATUS_FAILED
+            result.error = (
+                f"score 계약 위반: 정수 0~100 필요, 받은 값 {candidate.score!r}"
+            )
+            self._post_member(
+                result,
+                f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
+            )
+            return result
 
         # 60점 미만 = 확정 아님 — 아무 것도 하지 않는다
         if candidate.score < SCORE_THRESHOLD:
+            result.status = STATUS_SKIPPED
             return result
 
         # 필수 4필드 검증 — 미충족이면 등록 없이 멤버 채널 에러 보고 (fail-closed)
         missing = [f for f in REQUIRED_FIELDS if not getattr(candidate, f)]
         if missing:
+            result.status = STATUS_FAILED
             result.error = f"필수 필드 누락: {', '.join(missing)}"
             self._post_member(
                 result,
@@ -137,63 +216,124 @@ class DualRecorder:
             )
             return result
 
-        # 중복확인(read) — dry-run 에서도 수행 (SOT25 등록 전 필수 회수 단계)
-        if self._clickup.subtask_exists_with_profile_url(
-            CLICKUP_LIST_ID, candidate.profile_url
-        ):
-            result.duplicate_skipped = True
+        if resume_from is not None and resume_from.pending_steps:
+            # 결함2: 재개 경로 — 이전 실행에서 이미 쓴 단계는 건너뛰고 미완 단계만
+            # 수행한다. 중복확인은 재수행하지 않는다: 1차 실행이 만든 subtask 가
+            # 중복으로 판정되어 Discord 게시가 영구 누락되는 결함의 원인이었다.
+            steps = list(resume_from.pending_steps)
+            result.parent_task_id = resume_from.parent_task_id
+            result.subtask_id = resume_from.subtask_id
+        else:
+            # 중복확인(read) — dry-run 에서도 수행 (SOT25 등록 전 필수 회수 단계).
+            # 주의: 이 확인은 원자성 보장이 아니라 조기 skip 최적화다 — 확인과 생성
+            # 사이 경합의 원자적 차단은 subtask_idempotency_key 가 담당한다(결함3).
+            if self._clickup.subtask_exists_with_profile_url(
+                CLICKUP_LIST_ID, candidate.profile_url
+            ):
+                result.duplicate_skipped = True
+                result.status = STATUS_SKIPPED
+                self._post_member(
+                    result,
+                    f"[AI Search 진행] {position_name}: 중복 profile_url — 등록 skip "
+                    f"({candidate.profile_url})",
+                )
+                return result
+            steps = list(ALL_STEPS)
+
+        # 결함2: 단계별 실행 — 실패 시 미완 단계 목록과 함께 partial/failed 반환.
+        completed: list[str] = []
+        for i, step in enumerate(steps):
+            try:
+                self._run_step(step, result, position_name, candidate)
+            except Exception as exc:  # noqa: BLE001 — 외부 쓰기 실패는 종류 불문 수거
+                result.error = f"{step} 실패: {exc}"
+                result.pending_steps = list(steps[i:])
+                already_wrote = bool(completed) or resume_from is not None
+                result.status = STATUS_PARTIAL if already_wrote else STATUS_FAILED
+                return result
+            completed.append(step)
+
+        result.pending_steps = []
+        result.status = STATUS_DRY_RUN if not self.live else STATUS_RECORDED
+        return result
+
+    # ── 단계 실행 ────────────────────────────────────────────────────────────
+
+    def _run_step(
+        self,
+        step: str,
+        result: RecordResult,
+        position_name: str,
+        candidate: Candidate,
+    ) -> None:
+        if step == STEP_CLICKUP_PARENT:
+            # 포지션 부모 Task — 있으면 재사용, 없으면 생성
+            parent_id = self._clickup.find_parent_task(CLICKUP_LIST_ID, position_name)
+            if parent_id is None:
+                parent_id = self._do(
+                    result,
+                    "clickup_create_parent_task",
+                    {"list_id": CLICKUP_LIST_ID, "name": position_name},
+                    lambda: self._clickup.create_parent_task(
+                        CLICKUP_LIST_ID, position_name
+                    ),
+                )
+            result.parent_task_id = parent_id
+
+        elif step == STEP_CLICKUP_SUBTASK:
+            # 후보 Subtask — 필수 4필드 + 멱등키(결함3)
+            fields = {
+                "profile_url": candidate.profile_url,
+                "score": candidate.score,
+                "why_fit": candidate.why_fit,
+                "profile_summary": candidate.profile_summary,
+                "idempotency_key": subtask_idempotency_key(candidate.profile_url),
+            }
+            if self.live:
+                # 결함5: live 경로는 생성된 실제 부모 Task ID 만 사용 — 없으면 중단
+                if result.parent_task_id is None:
+                    raise RuntimeError(
+                        "live 경로에서 부모 Task ID 미확보 — subtask 생성 불가"
+                    )
+                parent_ref = result.parent_task_id
+            else:
+                # 결함5: dry-run 계획은 None 대신 placeholder 로 '생성 예정 부모' 명시
+                parent_ref = (
+                    result.parent_task_id
+                    if result.parent_task_id is not None
+                    else PARENT_PLACEHOLDER
+                )
+            result.subtask_id = self._do(
+                result,
+                "clickup_create_candidate_subtask",
+                {
+                    "list_id": CLICKUP_LIST_ID,
+                    "parent_task_id": parent_ref,
+                    "fields": fields,
+                },
+                lambda: self._clickup.create_candidate_subtask(
+                    CLICKUP_LIST_ID, result.parent_task_id, fields
+                ),
+            )
+
+        elif step == STEP_DISCORD_RESULT:
+            body = build_result_message(position_name, candidate)
+            self._do(
+                result,
+                "discord_result_post",
+                {"channel_id": DISCORD_RESULT_CHANNEL_ID, "content": body},
+                lambda: self._discord.post_message(DISCORD_RESULT_CHANNEL_ID, body),
+            )
+
+        elif step == STEP_DISCORD_MEMBER:
             self._post_member(
                 result,
-                f"[AI Search 진행] {position_name}: 중복 profile_url — 등록 skip "
-                f"({candidate.profile_url})",
+                f"[AI Search 진행] {position_name}: 후보 1건 등록 완료 "
+                f"(점수 {candidate.score}, ClickUp {CLICKUP_LIST_ID})",
             )
-            return result
 
-        # 포지션 부모 Task — 있으면 재사용, 없으면 생성
-        parent_id = self._clickup.find_parent_task(CLICKUP_LIST_ID, position_name)
-        if parent_id is None:
-            parent_id = self._do(
-                result,
-                "clickup_create_parent_task",
-                {"list_id": CLICKUP_LIST_ID, "name": position_name},
-                lambda: self._clickup.create_parent_task(CLICKUP_LIST_ID, position_name),
-            )
-        result.parent_task_id = parent_id
-
-        # 후보 Subtask — 필수 4필드
-        fields = {
-            "profile_url": candidate.profile_url,
-            "score": candidate.score,
-            "why_fit": candidate.why_fit,
-            "profile_summary": candidate.profile_summary,
-        }
-        result.subtask_id = self._do(
-            result,
-            "clickup_create_candidate_subtask",
-            {"list_id": CLICKUP_LIST_ID, "parent_task_id": parent_id, "fields": fields},
-            lambda: self._clickup.create_candidate_subtask(
-                CLICKUP_LIST_ID, parent_id, fields
-            ),
-        )
-
-        # Discord 결과 채널 게시
-        body = build_result_message(position_name, candidate)
-        self._do(
-            result,
-            "discord_result_post",
-            {"channel_id": DISCORD_RESULT_CHANNEL_ID, "content": body},
-            lambda: self._discord.post_message(DISCORD_RESULT_CHANNEL_ID, body),
-        )
-
-        # Discord 멤버 채널 진행상황 요약
-        self._post_member(
-            result,
-            f"[AI Search 진행] {position_name}: 후보 1건 등록 완료 "
-            f"(점수 {candidate.score}, ClickUp {CLICKUP_LIST_ID})",
-        )
-
-        result.recorded = True
-        return result
+        else:  # pragma: no cover — 계약 밖 단계명은 프로그래밍 오류
+            raise ValueError(f"알 수 없는 기록 단계: {step}")
 
     def _post_member(self, result: RecordResult, content: str) -> None:
         self._do(
