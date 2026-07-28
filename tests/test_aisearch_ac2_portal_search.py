@@ -1,4 +1,4 @@
-"""AC-2 (aisearch goal 2026-07-28) — 사람인/잡코리아 인재검색 요청 빌더 RED 테스트.
+"""AC-2 (aisearch goal 2026-07-28) — 사람인/잡코리아 인재검색 요청 빌더 테스트.
 
 스펙: docs/engineering/aisearch-fleet-goal-2026-07-28.md §4 AC-2 —
 "docs/search-access.md 의 기존 DOM 계약(Saramin talent-pool, Jobkorea Corp/Person/Find)을
@@ -12,7 +12,9 @@ docs/search-access.md 에 기록된 실제 URL/셀렉터 그대로 생성하는�
 - Saramin talent-pool URL ......... docs/search-access.md:106
 - Saramin corporate login URL ..... docs/search-access.md:110
 - Saramin OR input.search_input ... docs/search-access.md:162
-- Saramin AND/NOT search_input.result docs/search-access.md:170,176
+- Saramin AND search_input.result . docs/search-access.md:167-170
+- Saramin NOT field ............... docs/search-access.md:173-176 — AND(170)와
+  마크업이 완전히 동일해 셀렉터로 구분 불가 → NOT 키워드는 미지원(명시적 거부)
 - Saramin #career_min/#career_max . docs/search-access.md:193,222 (값 0~20: :133)
 - Jobkorea Corp/Person/Find URL ... docs/search-access.md:259
 - Jobkorea #txtKeyword maxlength 300 docs/search-access.md:284-293
@@ -43,7 +45,6 @@ def _jd_input(**overrides):
     base = dict(
         or_keywords=["product manager", "project manager"],
         and_keywords=["SaaS"],
-        not_keywords=["intern"],
         career_min=3,
         career_max=10,
     )
@@ -80,6 +81,18 @@ def test_doc_contract_still_contains_urls_and_selectors():
         assert needle in doc, f"docs/search-access.md 계약 유실: {needle}"
 
 
+def test_doc_contract_and_not_fields_are_indistinguishable():
+    """NOT 미지원 결정의 근거 고정 — docs/search-access.md:167-176 에서
+    AND 필드와 NOT 필드의 마크업이 동일(구분 셀렉터 없음)해야
+    '미지원 — 명시적 거부' 결정이 유효하다. 문서가 바뀌어 NOT 전용
+    셀렉터가 생기면 이 테스트가 깨져 재검토를 강제한다."""
+    lines = _DOC.read_text(encoding="utf-8").splitlines()
+    and_field = lines[169].strip()  # docs/search-access.md:170
+    not_field = lines[175].strip()  # docs/search-access.md:176
+    assert and_field == '<input type="text" class="search_input result" maxlength="30">'
+    assert and_field == not_field, "NOT 전용 셀렉터가 생겼다 — 미지원 결정을 재검토하라"
+
+
 # ── 기본 모양: 두 채널, 사람인 → 잡코리아 순서 ──
 
 
@@ -111,18 +124,111 @@ def test_saramin_selectors_and_keyword_values():
     assert steps["or_keywords"]["values"] == ["product manager", "project manager"]
     assert steps["and_keywords"]["selector"] == "input.search_input.result"
     assert steps["and_keywords"]["values"] == ["SaaS"]
-    assert steps["not_keywords"]["selector"] == "input.search_input.result"
-    assert steps["not_keywords"]["values"] == ["intern"]
     assert steps["career_min"]["selector"] == "#career_min"
     assert steps["career_min"]["values"] == ["3"]
     assert steps["career_max"]["selector"] == "#career_max"
     assert steps["career_max"]["values"] == ["10"]
 
 
-def test_saramin_step_order_or_and_not_then_career():
+def test_saramin_step_order_or_and_then_career():
     saramin = _by_channel(build_portal_search_descriptors(**_jd_input()))["saramin"]
     fields = [s["field"] for s in saramin["steps"]]
-    assert fields == ["or_keywords", "and_keywords", "not_keywords", "career_min", "career_max"]
+    assert fields == ["or_keywords", "and_keywords", "career_min", "career_max"]
+
+
+# ── V1 결함 3: NOT 키워드 — AND 와 동일 셀렉터라 구분 불가 → 미지원 명시 거부 ──
+# 근거: docs/search-access.md:167-176 (AND field :170 == NOT field :176, 구분자 없음)
+
+
+def test_not_keywords_are_explicitly_rejected_as_unsupported():
+    with pytest.raises(ValueError, match="not_keywords"):
+        build_portal_search_descriptors(**_jd_input(not_keywords=["intern"]))
+
+
+def test_not_keywords_none_or_empty_list_is_ok():
+    # NOT 을 아예 요구하지 않는 호출은 정상 동작해야 한다(조용한 오동작도, 과잉 거부도 없음)
+    for value in (None, []):
+        descriptors = build_portal_search_descriptors(**_jd_input(not_keywords=value))
+        for d in descriptors:
+            assert "not_keywords" not in {s["field"] for s in d["steps"]}
+
+
+def test_no_step_ever_emits_not_keywords_field():
+    # AND 셀렉터로 NOT 값이 흘러들어가는 조용한 오동작 자체가 불가능해야 한다
+    for d in build_portal_search_descriptors(**_jd_input()):
+        for s in d["steps"]:
+            assert s["field"] != "not_keywords"
+
+
+# ── V1 결함 1: keywords 타입 검증 — 문자열을 목록 대신 넣으면 글자별 분해 금지 ──
+
+
+def test_rejects_bare_string_keywords_fail_fast():
+    # "SaaS" 를 목록 대신 넣으면 ['S','a','a','S'] 로 분해되던 결함 — fail-fast 해야 한다
+    with pytest.raises(ValueError, match="and_keywords"):
+        build_portal_search_descriptors(**_jd_input(and_keywords="SaaS"))
+    with pytest.raises(ValueError, match="or_keywords"):
+        build_portal_search_descriptors(**_jd_input(or_keywords="product manager"))
+
+
+def test_rejects_non_list_keyword_containers():
+    for bad in (("PM",), {"PM"}, 123, {"kw": "PM"}):
+        with pytest.raises(ValueError):
+            build_portal_search_descriptors(**_jd_input(or_keywords=bad))
+
+
+def test_rejects_non_string_keyword_items():
+    with pytest.raises(ValueError):
+        build_portal_search_descriptors(**_jd_input(or_keywords=["PM", 3]))
+    with pytest.raises(ValueError):
+        build_portal_search_descriptors(**_jd_input(and_keywords=[None]))
+
+
+# ── V1 결함 2: 중복 키워드 — 순서 보존 중복 제거 ──
+
+
+def test_duplicate_keywords_are_deduped_preserving_order():
+    saramin = _by_channel(
+        build_portal_search_descriptors(
+            **_jd_input(or_keywords=["PM", "PM", "엔지니어", "PM", "엔지니어"])
+        )
+    )["saramin"]
+    assert _steps_by_field(saramin)["or_keywords"]["values"] == ["PM", "엔지니어"]
+
+
+def test_duplicate_keywords_after_strip_are_deduped():
+    saramin = _by_channel(
+        build_portal_search_descriptors(**_jd_input(and_keywords=["SaaS", " SaaS "]))
+    )["saramin"]
+    assert _steps_by_field(saramin)["and_keywords"]["values"] == ["SaaS"]
+
+
+# ── V1 결함 4: 중복 제출 방지 — 결정론적 dedup 키(채널 + 정규화 키워드) ──
+
+
+def test_each_descriptor_has_deterministic_dedup_key():
+    first = build_portal_search_descriptors(**_jd_input())
+    second = build_portal_search_descriptors(**_jd_input())
+    for d1, d2 in zip(first, second):
+        assert isinstance(d1["dedup_key"], str) and d1["dedup_key"]
+        assert d1["dedup_key"] == d2["dedup_key"]
+        assert d1["dedup_key"].startswith(d1["channel"])
+    # 채널이 다르면 키도 달라야 같은 실행 계획에서 서로 충돌하지 않는다
+    assert first[0]["dedup_key"] != first[1]["dedup_key"]
+
+
+def test_dedup_key_is_stable_under_keyword_duplicates_and_case():
+    base = build_portal_search_descriptors(**_jd_input(or_keywords=["PM"]))
+    dup = build_portal_search_descriptors(**_jd_input(or_keywords=["PM", "PM"]))
+    cased = build_portal_search_descriptors(**_jd_input(or_keywords=["pm"]))
+    for a, b, c in zip(base, dup, cased):
+        assert a["dedup_key"] == b["dedup_key"] == c["dedup_key"]
+
+
+def test_dedup_key_differs_for_different_keywords():
+    a = build_portal_search_descriptors(**_jd_input(or_keywords=["PM"]))
+    b = build_portal_search_descriptors(**_jd_input(or_keywords=["designer"]))
+    assert a[0]["dedup_key"] != b[0]["dedup_key"]
 
 
 # ── 잡코리아: URL/셀렉터/값 ──
@@ -171,9 +277,7 @@ def test_career_steps_omitted_when_unspecified():
 
 def test_rejects_empty_keywords():
     with pytest.raises(ValueError):
-        build_portal_search_descriptors(
-            **_jd_input(or_keywords=[], and_keywords=[], not_keywords=[])
-        )
+        build_portal_search_descriptors(**_jd_input(or_keywords=[], and_keywords=[]))
 
 
 def test_rejects_saramin_keyword_over_30_chars():
