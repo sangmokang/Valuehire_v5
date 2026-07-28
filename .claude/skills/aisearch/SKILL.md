@@ -50,6 +50,9 @@ python3 .claude/skills/aisearch/vendor/ai_search_sot_check.py --repo /Users/kang
 
 ## Operating Rules (INV — 약화 금지)
 
+- **LinkedIn RPS Boolean은 좌측 필터의 `Keywords → Profile keywords or boolean`에만 입력한다.** 상단 글로벌 검색창은 새 전역 검색으로 프로젝트·지역·경력 필터를 잃게 하므로 금지한다. 적용 후 `South Korea`·경력 범위·키워드 칩을 화면 근거로 확인한다.
+- CDP 포트와 로그인 탭은 작업 직전 `/json/list`에서 다시 확정한다. 저장 검색 URL이 카드 0/결과수 0으로 렌더되면 그 URL을 반복 호출하지 않고 프로젝트의 현재 검색 탭 DOM을 다시 확인한다.
+
 - **스스로 검색 시작 금지.** AI Search는 사용자가 준 positionId·ClickUp 태스크 URL·채용 URL·JD 본문, 또는 특정 단계 실행 명시 지시에서만 시작한다.
 - stage 0~4(범위·채널상태·JD출처·키워드전략)가 서기 전엔 일반 웹/포털/ChatGPT/LinkedIn·사람인·잡코리아 검색·후보 발굴을 돌리지 않는다.
 - SOT를 편의 판단으로 대체하지 않는다. SOT와 지름길이 충돌하면 SOT 우선. 도구 경로가 없으면 멈추고 막힌 지점을 보고한다.

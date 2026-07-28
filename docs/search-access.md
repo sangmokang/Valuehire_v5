@@ -37,9 +37,14 @@ Server channels fail closed unless `DISCORD_ALLOWED_CHANNEL_IDS` contains the ch
 
 | Name | Alias | Email | Discord ID |
 | --- | --- | --- | --- |
+| 강상모 | (owner) | dev@valueconnect.kr | 814353841088757800 |
 | 이상혁 | Rogan | rogan@valueconnect.kr | 1404643716320329728 |
 | 김충수 |  | kcs@valueconnect.kr | 834330913469890570 |
 | 김형준 | Julian | julian@valueconnect.kr | 1153183633297911848 |
+
+새 팀원을 추가로 쓰게 하려면 이 표에 행 하나만 추가하면 된다 — 정원 제한은 없다.
+`fleet-resume`/`fleet-cancel` 같은 owner 전용 명령은 이 표와 무관하게
+`fleet_dispatch.OWNER_USER_IDS`(또는 `FLEET_OWNER_DISCORD_IDS` 환경변수)로 별도 판정한다.
 
 ## Supabase
 

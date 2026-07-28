@@ -55,3 +55,4 @@ autoresume-daemon-decision	GREEN	#77	PR#77 merged 2026-07-07 — PC-F4a decide_r
 search-machines-2node	GREEN	#81	PR#82 merged 2026-07-10 (merge 6dac4e3) — 2-node search machine startup contract, 31 focused + 1177 full tests, CI green
 candidate-spec-hook	PARKED	#89	2026-07-13 보류. branch task/candidate-spec-hook에 위조 proof·URL 불일치·모호 update 우회 RED 검사 보존(30ceb07). 신뢰 경계 재설계 후 재개.
 fleet-hermes-bridge	GREEN	#92	PR#92 merged — Hermes 플러그인 어댑터. 후속 PR#93(tools 패키지 충돌 수정)도 merged, 라이브 재배포·재시작·왕복 검증(job 15/16 enqueued) 완료. 워크트리 정리됨.
+agent-profile-capture-ac1	GREEN	-	local commits 22a47f2..52e0662 — 79 focused + 1345 full tests, fresh-context adversarial review PASS

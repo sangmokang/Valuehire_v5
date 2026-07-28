@@ -58,6 +58,11 @@ description: 사장님이 채용 사이트(LinkedIn Recruiter/RPS·사람인·�
 판정 로직 단일 출처: `tools/multi_position_sourcing/humansearch.py`.
 
 ## 🖥️ 브라우저 드라이버 — raw CDP 단일탭 주력 (2026-06-26 사장님 지시)
+
+### LinkedIn RPS 검색식 입력 불변식 (2026-07-13)
+- Boolean은 반드시 좌측 필터 패널의 **`Keywords → Profile keywords or boolean`**에 입력한다. 상단 글로벌 검색창은 신규 전역 검색을 만들어 프로젝트·지역·경력 조건을 유실시키므로 금지한다.
+- 적용 직후 `Locations=South Korea`·경력 범위·키워드 칩을 DOM으로 확인한다. 하나라도 없으면 수확하지 않는다.
+- CDP 포트·탭은 각 실행 직전 `/json/list` 전수 조사로만 확정한다. 연결 거부·저장 검색 카드 0은 같은 URL 반복 금지이며, 프로젝트 검색 탭에서 현재 필터 상태부터 복구한다.
 - **주력 = raw CDP 단일탭**: `tools/multi_position_sourcing/raw_cdp.py`. 디버그 크롬에
   websocket 으로 **한 타깃에만** 붙어 `Page.navigate`·`Runtime.evaluate`·`Page.captureScreenshot`.
   탭이 수십 개라 playwright `connect_over_cdp` 전체 attach 가 hang 되므로 단일탭 raw CDP 로 간다.

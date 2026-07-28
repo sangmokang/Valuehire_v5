@@ -27,6 +27,11 @@ description: "사람이 미리 걸어둔 채용사이트 검색결과(LinkedIn R
 - 저장: results.json + `~/.vh-data/ai-search-candidates.db` `ai_search_candidates`
   (url,position_id) upsert — 열어본 프로필 전원, 점수 무관.
 
+## LinkedIn RPS 입력·세션 오류 방지
+
+- 검색식 변경은 상단 글로벌 검색창이 아니라 좌측 `Keywords → Profile keywords or boolean`에서만 한다. 적용 뒤 프로젝트·한국·경력 필터 칩을 확인한다.
+- 직전 `/json/list`로 실제 CDP 포트와 검색 탭을 다시 찾는다. 카드 0인 저장 검색 URL은 반복하지 않고, 프로젝트의 현재 검색 탭에서 필터 상태를 다시 검증한다.
+
 ## 등록 직전 3중 게이트 (순서 고정)
 1. 영문 학교명→한글 신호 보정 재채점 (SKY·성균관 저평가 방지)
 2. `hard_exclude_reason` 전원 재적용 (프리랜서·단기이직 2회+ / '외주' 마커는 문맥 확인)
