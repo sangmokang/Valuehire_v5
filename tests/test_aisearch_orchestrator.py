@@ -28,12 +28,13 @@ from apps.aisearch.core.boolean_builder import (
     STAGE_EXPANDED,
     STAGE_SEOUL_UNIVERSITY_PRIORITY,
 )
-from apps.aisearch.core.intervention import InterventionMonitor
+from apps.aisearch.core.intervention import InterventionMonitor, feed_driver_events
 from apps.aisearch.core.orchestrator import (
     LINKEDIN_CHANNEL,
     STATUS_ABORTED,
     STATUS_BLOCKED,
     STATUS_COMPLETED,
+    STATUS_PARTIAL,
     STATUS_WAITING_RESUME,
     PipelineDeps,
     run_search_pipeline,
@@ -131,14 +132,17 @@ def _candidate(payload: dict[str, object], url: str) -> dict[str, Any]:
 
 
 class FakeDriver:
-    def __init__(self, events: list, fail: bool = False):
+    def __init__(self, events: list, fail: bool = False, release_fail: bool = False):
         self.events = events
         self.fail = fail
+        self.release_fail = release_fail  # 배너 해제(OFF) 스니펫만 실패시킨다
         self.snippets: list[str] = []
 
     def run_js(self, snippet: str) -> None:
         if self.fail:
             raise RuntimeError("driver down")
+        if self.release_fail and '"active": false' in snippet:
+            raise RuntimeError("banner release failed")
         self.snippets.append(snippet)
         self.events.append(("js", snippet))
 
@@ -207,24 +211,44 @@ class SpyMonitor(InterventionMonitor):
 class Harness:
     """페이크 일습 + 이벤트 로그. list_pages_per_channel 로 소진 시점 제어."""
 
-    def __init__(self, pages: int = 2, driver_fail: bool = False, store_fail: bool = False):
+    def __init__(
+        self,
+        pages: int = 2,
+        driver_fail: bool = False,
+        store_fail: bool = False,
+        release_fail: bool = False,
+        live_recorder: bool = False,
+        discord=None,
+    ):
         self.events: list = []
         self.pages = pages
-        self.driver = FakeDriver(self.events, fail=driver_fail)
+        self.driver = FakeDriver(self.events, fail=driver_fail, release_fail=release_fail)
         self.store = FakeStore(self.events, fail=store_fail)
         self.clickup = FakeClickUp()
-        self.discord = FakeDiscord()
+        self.discord = discord if discord is not None else FakeDiscord()
         self.notifier = FakeNotifier()
         self.now = [1000.0]
         self.monitor = SpyMonitor(lambda: self.now[0], self.notifier)
-        self.recorder = DualRecorder(self.clickup, self.discord)  # 기본 dry-run
+        if live_recorder:
+            self.recorder = DualRecorder(
+                self.clickup, self.discord, live=True, owner_signoff=True
+            )
+        else:
+            self.recorder = DualRecorder(self.clickup, self.discord)  # 기본 dry-run
         self.list_calls: list[tuple[str, int]] = []
+        self.search_payloads: list[tuple[str, int, dict]] = []
         self.candidates: dict[str, list[dict]] = {}
         self.list_side_effect = None  # (channel, page) 마다 호출되는 훅
+        self.driver_events: list[dict] = []  # poll_driver_events 로 드레인되는 큐
 
-    def fetch_list_page(self, channel: str, page: int) -> dict:
+    def poll_driver_events(self) -> list[dict]:
+        drained, self.driver_events = self.driver_events, []
+        return drained
+
+    def fetch_list_page(self, channel: str, page: int, search: dict) -> dict:
         self.list_calls.append((channel, page))
         self.events.append(("list", channel, page))
+        self.search_payloads.append((channel, page, search))
         if self.list_side_effect is not None:
             self.list_side_effect(channel, page)
         return {
@@ -236,6 +260,8 @@ class Harness:
 
     def fetch_detail_page(self, channel: str, ref: str) -> dict:
         self.events.append(("detail", channel, ref))
+        if getattr(self, "detail_side_effect", None) is not None:
+            self.detail_side_effect(channel, ref)
         return {"url": f"https://example.test/{channel}/{ref}", "content": "<html>detail</html>"}
 
     def extract_candidates(self, channel: str) -> list[dict]:
@@ -251,6 +277,7 @@ class Harness:
             fetch_detail_page=self.fetch_detail_page,
             extract_candidates=self.extract_candidates,
             machine="macmini",
+            poll_driver_events=self.poll_driver_events,
         )
 
 
@@ -295,18 +322,33 @@ class TestHappyPath:
         report = run_search_pipeline(_jd(), h.deps())
         return h, report
 
-    def test_completed_with_four_variants_in_order(self):
+    def test_completed_with_four_variants_round_robin_interleaved(self):
+        # V1 2차 결함 5 — D6 "3사 동시 착수": 채널별 파이프라인을 라운드로빈으로
+        # 인터리브한다. 한 채널(LinkedIn)의 종료가 다른 채널의 시작 조건이 아니다.
         h, report = self._run()
         assert report.status == STATUS_COMPLETED
         assert [(v.channel, v.task) for v in report.variants] == [
             (LINKEDIN_CHANNEL, f"{LINKEDIN_CHANNEL}:{STAGE_SEOUL_UNIVERSITY_PRIORITY}"),
+            ("saramin", report.variants[1].task),
+            ("jobkorea", report.variants[2].task),
             (LINKEDIN_CHANNEL, f"{LINKEDIN_CHANNEL}:{STAGE_EXPANDED}"),
-            ("saramin", report.variants[2].task),
-            ("jobkorea", report.variants[3].task),
         ]
         # AC2 디스크립터의 dedup_key 가 task 에 실려 있어야 배선 증명이 된다
-        assert "saramin|or=" in report.variants[2].task
-        assert "jobkorea|or=" in report.variants[3].task
+        assert "saramin|or=" in report.variants[1].task
+        assert "jobkorea|or=" in report.variants[2].task
+
+    def test_interleave_proved_by_execution_order(self):
+        # 실행 순서 기록(list fetch 이벤트)으로 인터리브를 증명한다:
+        # 사람인·잡코리아의 첫 fetch 가 LinkedIn 두 번째 변형의 fetch 보다 앞선다.
+        h, _ = self._run()
+        order = [c for c, _p in h.list_calls]
+        first_saramin = order.index("saramin")
+        first_jobkorea = order.index("jobkorea")
+        lk_pages = [i for i, c in enumerate(order) if c == LINKEDIN_CHANNEL]
+        # LinkedIn 은 변형당 pages=2 → 두 번째 변형의 첫 fetch 는 lk_pages[2]
+        second_lk_variant_start = lk_pages[2]
+        assert first_saramin < second_lk_variant_start
+        assert first_jobkorea < second_lk_variant_start
 
     def test_banner_wraps_each_variant_and_pagination_runs_inside(self):
         h, _ = self._run()
@@ -364,15 +406,21 @@ class TestHappyPath:
 
 
 class TestPaginationCap:
-    def test_cap_reached_no_21st_request(self):
+    def test_cap_reached_no_21st_request_and_next_variant_runs(self):
+        # V1 2차 결함 4 — D3: 20페이지 cap 도달은 "다음 불린 변형 전환" 시그널이다.
+        # cap 이후 플랜의 다음 변형(expanded)이 실제로 실행돼야 한다.
         h = Harness(pages=999)  # has_next 항상 True
         report = run_search_pipeline(_jd(), h.deps())
         assert report.status == STATUS_COMPLETED
-        assert max(p for _, p in h.list_calls) == 20
-        # cap 도달 → RPS 는 확장 단계로 넘어가지 않고 종료(준비된 불린 변형 소진)
+        assert max(p for _, p in h.list_calls) == 20  # 21페이지 요청 금지 유지
         lk = [v for v in report.variants if v.channel == LINKEDIN_CHANNEL]
-        assert len(lk) == 1
-        assert lk[0].pagination.next_action == NEXT_SWITCH_BOOLEAN_VARIANT
+        assert [v.task for v in lk] == [
+            f"{LINKEDIN_CHANNEL}:{STAGE_SEOUL_UNIVERSITY_PRIORITY}",
+            f"{LINKEDIN_CHANNEL}:{STAGE_EXPANDED}",
+        ]
+        for v in lk:
+            assert v.pagination.next_action == NEXT_SWITCH_BOOLEAN_VARIANT
+            assert v.pagination.pages_crawled == 20
 
 
 # ── AC7: BLOCKED 즉시 중단 / 사람 개입 대기 시그널 ──
@@ -452,3 +500,230 @@ class TestScoreGateWiring:
         assert h.clickup.writes == [] and h.discord.posts == []
         assert report.registered == [] and report.drafts == []
         assert [b["score"] for b in report.below_threshold] == [59]
+
+
+# ── V1 2차 결함 1: 차단 신호는 매 단계에서 확인 — 후속 호출 0 ──
+
+
+class TestBlockedEveryStage:
+    def test_captcha_during_page_response_stops_before_detail(self):
+        """검색 도중(1페이지 응답 중) 캡차 인입 → 상세조회 0, ClickUp 0, Discord 0."""
+        h = Harness(pages=3)
+        h.candidates[LINKEDIN_CHANNEL] = [
+            _candidate(PAYLOAD_60, "https://lk.example/p/60")
+        ]
+
+        def side_effect(channel: str, page: int) -> None:
+            if page == 1:
+                h.monitor.on_signal("captcha")
+
+        h.list_side_effect = side_effect
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_BLOCKED
+        assert [e for e in h.events if e[0] == "detail"] == []  # 상세조회 0
+        assert h.clickup.dedup_calls == [] and h.clickup.writes == []  # ClickUp 0
+        assert h.discord.posts == []  # Discord 0
+        assert report.registered == [] and report.drafts == []
+
+    def test_captcha_during_detail_stops_before_registration(self):
+        """상세조회 중 캡차 인입 → 등록·기록·초안 경로 진입 0."""
+        h = Harness(pages=1)
+        h.candidates[LINKEDIN_CHANNEL] = [
+            _candidate(PAYLOAD_60, "https://lk.example/p/60")
+        ]
+
+        def detail_side_effect(channel: str, ref: str) -> None:
+            h.monitor.on_signal("captcha")
+
+        h.detail_side_effect = detail_side_effect
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_BLOCKED
+        assert h.clickup.dedup_calls == []  # 등록(중복확인 포함) 진입 0
+        assert h.discord.posts == []
+        assert report.registered == [] and report.drafts == []
+
+
+# ── V1 2차 결함 3: 배너 해제 실패는 삼키지 않고 결과에 보고한다 ──
+
+
+class TestBannerReleaseFailure:
+    def test_release_failure_reported_and_not_completed(self):
+        h = Harness(pages=1, release_fail=True)
+        report = run_search_pipeline(_jd(), h.deps())
+        # 해제 실패가 본 흐름을 죽이지는 않지만, completed 로 조용히 끝나면 안 된다
+        assert report.status == STATUS_PARTIAL
+        assert len(report.banner_errors) == 4  # 변형 4개 전부 해제 실패
+        for err in report.banner_errors:
+            assert "banner release failed" in err["error"]
+            assert err["task"]
+
+    def test_no_release_failure_no_banner_errors(self):
+        h = Harness(pages=1)
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_COMPLETED
+        assert report.banner_errors == []
+
+
+# ── V1 2차 결함 7: partial 기록 재개 — 미완 단계만 이어서 완결 ──
+
+
+class FlakyDiscord(FakeDiscord):
+    """첫 post_message 만 실패 — 이후에는 정상 발신."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail_next = True
+
+    def post_message(self, channel_id: str, content: str) -> str:
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("discord down")
+        return super().post_message(channel_id, content)
+
+
+class TestPartialResume:
+    def test_partial_then_rerun_completes_discord_post(self):
+        url = "https://saramin.example/p/60"
+        h = Harness(pages=1, live_recorder=True, discord=FlakyDiscord())
+        h.candidates["saramin"] = [_candidate(PAYLOAD_60, url)]
+
+        report1 = run_search_pipeline(_jd(), h.deps())
+        assert report1.status == STATUS_PARTIAL
+        state1 = report1.record_states[url]
+        assert state1.status == "partial"
+        assert state1.pending_steps  # 미완 단계가 결과 객체에 보존된다
+        assert h.discord.posts == []  # 1차: Discord 게시 실패
+        assert h.clickup.writes == ["subtask"]  # subtask 는 이미 생성됨
+        assert report1.drafts == []  # 미완결 후보 초안 금지(결함 8과 동일 원칙)
+
+        report2 = run_search_pipeline(_jd(), h.deps(), previous=report1)
+        assert report2.status == STATUS_COMPLETED
+        assert report2.record_states[url].status == "recorded"
+        assert report2.record_states[url].pending_steps == []
+        # Discord 결과 채널 게시 1건 완료 + 미완 단계만 수행(subtask 재생성 0)
+        result_posts = [p for p in h.discord.posts if p[0] == "1470955309089554554"]
+        assert len(result_posts) == 1
+        assert h.clickup.writes == ["subtask"]
+        assert len(report2.drafts) == 1  # 완결됐으므로 초안 생성
+
+
+# ── V1 2차 결함 8: 기록 실패 후보 초안 금지 + 전체 completed 금지 ──
+
+
+class TestRecordFailureNoDraft:
+    def test_failed_record_no_draft_and_status_partial(self):
+        h = Harness(pages=1)
+        bad = _candidate(PAYLOAD_60, "https://saramin.example/p/60")
+        bad["record"]["why_fit"] = ""  # 필수 필드 누락 → recorder 가 failed 반환
+        h.candidates["saramin"] = [bad]
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.drafts == []  # recorded/dry_run 아니면 초안 금지
+        assert report.registered == []
+        assert report.status == STATUS_PARTIAL
+        assert len(report.record_failures) == 1
+        failure = report.record_failures[0]
+        assert failure["channel"] == "saramin"
+        assert failure["status"] == "failed"
+        assert "why_fit" in failure["error"]
+
+
+# ── V1 2차 결함 2·9: 검색 호출 payload — Boolean·대학필터·필수요건·URL·입력단계 ──
+
+
+class TestSearchPayloadRichness:
+    def _run(self) -> Harness:
+        h = Harness(pages=1)
+        jd = _jd()
+        jd["not_keywords"] = ["인턴"]
+        report = run_search_pipeline(jd, h.deps())
+        assert report.status == STATUS_COMPLETED
+        return h
+
+    def test_linkedin_payload_has_boolean_universities_requirements(self):
+        h = self._run()
+        lk = [p for c, _pg, p in h.search_payloads if c == LINKEDIN_CHANNEL]
+        by_stage = {p["stage"]: p for p in lk}
+        first = by_stage[STAGE_SEOUL_UNIVERSITY_PRIORITY]
+        assert '("백엔드" OR "Backend")' in first["keywords"]
+        assert '("PM")' in first["keywords"]
+        assert 'NOT ("인턴")' in first["keywords"]  # 결함 2 — 제외어 반영
+        assert first["required_filters"] == {"min_years": 3}  # RPS 필수요건
+        assert isinstance(first["universities"], tuple) and first["universities"]
+        assert first["location"] == "South Korea"
+        expanded = by_stage[STAGE_EXPANDED]
+        assert expanded["universities"] is None
+        assert expanded["required_filters"] == {"min_years": 3}
+
+    def test_saramin_payload_has_url_login_and_input_steps(self):
+        h = self._run()
+        sp = next(p for c, _pg, p in h.search_payloads if c == "saramin")
+        assert sp["url"].startswith("https://www.saramin.co.kr/")
+        assert "auth" in sp["login_url"]
+        fields = {s["field"]: s for s in sp["steps"]}
+        assert fields["or_keywords"]["values"] == ["백엔드", "Backend"]
+        assert fields["and_keywords"]["values"] == ["Python"]
+        assert fields["career_min"]["values"] == ["3"]
+        assert all(s["selector"] for s in sp["steps"])
+        assert sp["post_filter_exclude"] == ["인턴"]  # 결함 2 — 제외어 전달
+
+    def test_jobkorea_payload_has_url_and_combined_keyword_step(self):
+        h = self._run()
+        jp = next(p for c, _pg, p in h.search_payloads if c == "jobkorea")
+        assert jp["url"] == "https://www.jobkorea.co.kr/Corp/Person/Find"
+        fields = {s["field"]: s for s in jp["steps"]}
+        assert fields["keyword"]["values"] == ["백엔드 Backend Python"]
+        assert fields["keyword"]["selector"] == "#txtKeyword"
+        assert jp["post_filter_exclude"] == ["인턴"]
+
+    def test_exclusions_missing_from_payload_fails(self):
+        """제외어를 전달하지 않으면(반영 누락) 실패해야 한다는 계약의 대우 증명."""
+        h = Harness(pages=1)
+        jd = _jd()
+        jd["not_keywords"] = ["인턴", "신입"]
+        run_search_pipeline(jd, h.deps())
+        for c, _pg, p in h.search_payloads:
+            if c == LINKEDIN_CHANNEL:
+                assert 'NOT ("인턴" OR "신입")' in p["keywords"]
+            else:
+                assert p["post_filter_exclude"] == ["인턴", "신입"]
+
+
+# ── V1 2차 결함 10: 드라이버 이벤트 → InterventionMonitor 어댑터 배선 ──
+
+
+class TestDriverEventFeed:
+    def test_human_input_event_pauses_before_any_fetch(self):
+        h = Harness(pages=2)
+        h.driver_events.append({"type": "human_input"})
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_WAITING_RESUME
+        assert h.list_calls == []  # 정지 — 어떤 페이지 요청도 나가지 않는다
+
+    def test_captcha_event_blocks_before_any_fetch(self):
+        h = Harness(pages=2)
+        h.driver_events.append({"type": "signal", "kind": "captcha"})
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_BLOCKED
+        assert h.list_calls == []
+        assert h.notifier.messages  # 차단 알림 발신됨
+
+    def test_midstream_captcha_event_stops_next_step(self):
+        h = Harness(pages=5)
+
+        def side_effect(channel: str, page: int) -> None:
+            if page == 2:
+                h.driver_events.append({"type": "signal", "kind": "captcha"})
+
+        h.list_side_effect = side_effect
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_BLOCKED
+        assert h.list_calls == [(LINKEDIN_CHANNEL, 1), (LINKEDIN_CHANNEL, 2)]
+        # 이벤트 인입 후에는 상세조회도 나가지 않는다 (2페이지 상세 0)
+        details = [e for e in h.events if e[0] == "detail"]
+        assert all("detail-2" not in e[2] for e in details)
+
+    def test_unknown_event_type_blocks_fail_closed(self):
+        notifier = FakeNotifier()
+        monitor = InterventionMonitor(lambda: 0.0, notifier)
+        feed_driver_events(monitor, [{"type": "weird_event"}])
+        assert monitor.state.value == "blocked"  # E8 — 표에 없는 이벤트는 차단

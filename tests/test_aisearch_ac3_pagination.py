@@ -230,9 +230,55 @@ class TestIdempotentIds(unittest.TestCase):
         self.assertEqual(len(store.rows), 3 + 3 * 2)
 
     def test_different_page_type_same_url_ids_differ(self):
-        row_a = ps.make_row_id(channel="saramin", page_type="list", url="https://x.test/a")
-        row_b = ps.make_row_id(channel="saramin", page_type="detail", url="https://x.test/a")
+        row_a = ps.make_row_id(
+            channel="saramin", page_type="list", url="https://x.test/a",
+            position_ref="pos-idem",
+        )
+        row_b = ps.make_row_id(
+            channel="saramin", page_type="detail", url="https://x.test/a",
+            position_ref="pos-idem",
+        )
         self.assertNotEqual(row_a, row_b)
+
+
+class TestPositionRefInIdempotencyKey(unittest.TestCase):
+    """V1 2차 결함 6 — 멱등키에 position_ref 미포함 → 두 포지션이 서로 덮어씀."""
+
+    def test_same_profile_two_positions_do_not_overwrite(self):
+        """같은 프로필(같은 url)을 두 포지션에서 저장해도 행이 따로 남는다."""
+        store = UpsertFakeStore()
+        for pos in ("pos-A", "pos-B"):
+            fetch = make_list_fetcher(total_pages=1, details_per_page=1)
+            ps.paginate_and_store(
+                fetch, fetch_detail, store,
+                channel="saramin", position_ref=pos, machine="macmini",
+            )
+        # (list 1 + detail 1) × 포지션 2 = 4행 — 덮어쓰기 0
+        self.assertEqual(len(store.rows), 4)
+        by_pos = {row["position_ref"] for row in store.rows.values()}
+        self.assertEqual(by_pos, {"pos-A", "pos-B"})
+
+    def test_make_row_id_differs_by_position_ref(self):
+        a = ps.make_row_id(
+            channel="saramin", page_type="detail", url="https://x.test/p/1",
+            position_ref="pos-A",
+        )
+        b = ps.make_row_id(
+            channel="saramin", page_type="detail", url="https://x.test/p/1",
+            position_ref="pos-B",
+        )
+        self.assertNotEqual(a, b)
+
+    def test_regression_same_position_retry_zero_duplicates(self):
+        """회귀 — 같은 포지션 재시도는 여전히 중복 0."""
+        store = UpsertFakeStore()
+        for _ in range(2):
+            fetch = make_list_fetcher(total_pages=1, details_per_page=1)
+            ps.paginate_and_store(
+                fetch, fetch_detail, store,
+                channel="saramin", position_ref="pos-A", machine="macmini",
+            )
+        self.assertEqual(len(store.rows), 2)
 
 
 class TestHasNextFailFast(unittest.TestCase):

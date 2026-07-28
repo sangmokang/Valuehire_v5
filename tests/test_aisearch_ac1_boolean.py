@@ -341,3 +341,41 @@ class TestV1SeoulOnlyCampuses:
 
         assert mod.__doc__ is not None
         assert "서울 캠퍼스 기준" in mod.__doc__
+
+
+class TestV2NotKeywords:
+    """V1 2차 결함 2 — JD 제외어(not_keywords)가 Boolean 에 반영돼야 한다."""
+
+    def test_not_keywords_emit_not_clause(self):
+        out = build_rps_boolean(make_jd(not_keywords=["인턴", "intern"]))
+        assert out.endswith('NOT ("인턴" OR "intern")')
+        # 기존 AND 그룹은 그대로 유지된다
+        assert '("백엔드" OR "Backend Engineer")' in out
+
+    def test_without_not_keywords_no_not_clause(self):
+        assert "NOT" not in build_rps_boolean(make_jd())
+
+    def test_not_keywords_validated_like_terms(self):
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(not_keywords=['bad"quote']))
+        with pytest.raises(ValueError):
+            build_rps_boolean(make_jd(not_keywords="인턴"))  # 문자열 단독 금지
+
+    def test_not_keywords_carried_into_search_plan_stages(self):
+        plan = build_search_plan(make_jd(not_keywords=["인턴"]))
+        for stage in plan.stages:
+            assert 'NOT ("인턴")' in stage.keywords
+
+
+class TestV2CapReachedAdvance:
+    """V1 2차 결함 4 — D3: 20페이지 cap 도달도 다음 불린 변형 전환 사유다."""
+
+    def test_advance_with_cap_reached_reason_works(self):
+        plan = build_search_plan(make_jd())
+        nxt = plan.advance(reason="cap_reached")
+        assert nxt is not None and nxt.name == "expanded"
+
+    def test_cap_reached_constant_exported(self):
+        from apps.aisearch.core.boolean_builder import ADVANCE_REASON_CAP_REACHED
+
+        assert ADVANCE_REASON_CAP_REACHED == "cap_reached"

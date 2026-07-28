@@ -314,3 +314,35 @@ def test_pure_function_same_input_same_output_and_no_mutation():
     second = build_portal_search_descriptors(**payload)
     assert first == second
     assert payload == snapshot
+
+
+# ── V1 2차 결함 2: JD 제외어 반영 — 셀렉터 주입은 불가하므로 post-filter 로 전달 ──
+
+
+def test_exclude_keywords_reflected_as_post_filter_on_both_channels():
+    descriptors = build_portal_search_descriptors(
+        **_jd_input(), exclude_keywords=["인턴", "intern"]
+    )
+    for d in descriptors:
+        assert d["post_filter_exclude"] == ["인턴", "intern"]
+
+
+def test_exclude_keywords_never_appear_in_input_steps():
+    descriptors = build_portal_search_descriptors(
+        **_jd_input(), exclude_keywords=["인턴"]
+    )
+    for d in descriptors:
+        for step in d["steps"]:
+            assert "인턴" not in " ".join(step["values"])
+
+
+def test_exclude_keywords_default_empty_list():
+    for d in build_portal_search_descriptors(**_jd_input()):
+        assert d["post_filter_exclude"] == []
+
+
+def test_exclude_keywords_validated_fail_closed():
+    with pytest.raises(ValueError, match="exclude_keywords"):
+        build_portal_search_descriptors(**_jd_input(), exclude_keywords="인턴")
+    with pytest.raises(ValueError, match="exclude_keywords"):
+        build_portal_search_descriptors(**_jd_input(), exclude_keywords=[""])
