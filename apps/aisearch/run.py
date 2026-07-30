@@ -1,23 +1,29 @@
-"""apps/aisearch 프로덕션 엔트리포인트 — V1 3차 결함 ④("실행 호출부 0개") 해소.
+"""apps/aisearch 프로덕션 엔트리포인트 — V1 4차 진입점 결함 3건 해소.
 
 goal: docs/engineering/aisearch-fleet-goal-2026-07-28.md §2/§4. JD 파일 경로를
 받아 cdp_driver(raw CDP 어댑터) + run_search_pipeline 을 조립·실행한다.
 
-사용:
-    python -m apps.aisearch.run jd.json --ws-url ws://127.0.0.1:9222/devtools/page/<id>
+3단계 실행 모드(4차 진입점 결함 — --live 없이도 브라우저에 붙던 것 재설계):
+- **기본 = plan-only**: 브라우저 무접촉(CDP 연결 시도 0). AC1 검색 플랜과
+  AC2 포털 디스크립터를 만들어 검증·출력만 한다.
+- **--browser**: 브라우저 부착 dry-run — 페이크/실 트랜스포트로 파이프라인을
+  돌리되 외부 기록(ClickUp/Discord) 0. 채널당 독립 드라이버(각자 탭/연결)를
+  만들어 오케스트레이터에 채널별 드라이버 맵으로 전달한다(4차 결함 ⑩).
+- **--live**: 오너 승인 게이트 — 기록 클라이언트 미구성 상태에서는 fail-closed
+  로 거부한다(조용한 발신 금지 — SOT 발송 불변식과 동일 원칙).
 
-원칙:
-- **기본 dry-run** — ClickUp/Discord 외부 기록 0(계획만 산출). ``--live`` 는
-  명시 플래그이며, 기록 클라이언트가 구성되지 않은 현재는 fail-closed 로
-  거부한다(조용한 발신 금지 — SOT 발송 불변식과 동일 원칙).
+후보 추출기(4차 진입점 결함 — 항상 0명 silent 금지):
+- 채널별 추출기 포트(``extractors``: channel → callable(pages)->[후보 dict])는
+  --browser/--live 실행의 **필수 인자**다. 미배선이면 명시적 실패.
+- 추출기는 전량 저장된 페이지 행(raw_html_or_text 포함)을 받아 후보 dict
+  ({score_payload, record, draft_inputs})를 만들고, 오케스트레이터가 채점·
+  제외·등록 흐름으로 넘긴다.
+
 - CDP 트랜스포트는 주입 가능(``main(..., transport_factory=...)``) — 테스트는
   페이크 트랜스포트로 조립 경로 전체를 검증한다(실 브라우저/9222 접속 0).
 - 열어본 페이지 전량 저장(D4)은 로컬 JSONL(PageStore 계약 upsert)로 남긴다.
   Supabase 어댑터로의 교체는 같은 PageStore 계약을 구현해 주입하면 된다.
 - 자동 발송 경로는 존재하지 않는다(AC-9 초안 생성까지가 끝).
-- 현재 조립은 단일 탭(단일 트랜스포트)에 3채널 스레드가 붙는 구조다 —
-  라이브 다채널 동시 실행은 채널별 탭/트랜스포트 주입(build_deps 재사용)이
-  필요하며, 그 배선은 라이브 검증 단계의 후속 작업으로 명시해 둔다.
 """
 from __future__ import annotations
 
@@ -28,25 +34,35 @@ import threading
 import time
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
+from apps.aisearch.core.boolean_builder import DEFAULT_LOCATION, build_search_plan
 from apps.aisearch.core.cdp_driver import CdpDriver, connect_websocket_transport
 from apps.aisearch.core.intervention import InterventionMonitor
 from apps.aisearch.core.orchestrator import (
+    LINKEDIN_CHANNEL,
     STATUS_COMPLETED,
     PipelineDeps,
     PipelineReport,
     run_search_pipeline,
 )
+from apps.aisearch.core.portal_search import build_portal_search_descriptors
 from apps.aisearch.core.recorders import DualRecorder
 
-__all__ = ["build_deps", "main"]
+__all__ = ["CHANNELS", "build_deps", "main"]
+
+#: 3사 채널 — 채널당 독립 드라이버(탭/연결) 1개가 계약이다(4차 결함 ⑩).
+CHANNELS: tuple[str, ...] = (LINKEDIN_CHANNEL, "saramin", "jobkorea")
+
+#: 추출기 포트 계약 — extractor(저장된 페이지 행 목록) -> 후보 dict 목록.
+Extractor = Callable[[list[dict]], list[dict]]
 
 
 class JsonlPageStore:
     """PageStore 계약(D4 전량 저장)의 로컬 JSONL 구현 — 네트워크 0.
 
     채널 스레드 3개가 동시에 저장하므로 파일 쓰기는 락으로 직렬화한다.
+    ``rows_for(channel)`` 로 저장된 페이지를 추출기에 되돌려 준다(4차 배선).
     """
 
     def __init__(self, path: Path) -> None:
@@ -59,6 +75,15 @@ class JsonlPageStore:
         with self._lock, self._path.open("a", encoding="utf-8") as f:
             f.write(line)
 
+    def rows_for(self, channel: str) -> list[dict]:
+        """채널의 저장 행 전부(원문 raw_html_or_text 포함) — 추출기 입력."""
+        with self._lock:
+            if not self._path.exists():
+                return []
+            lines = self._path.read_text(encoding="utf-8").splitlines()
+        rows = [json.loads(line) for line in lines if line.strip()]
+        return [row for row in rows if row.get("channel") == channel]
+
 
 class StderrNotifier:
     """AC-7 차단 알림의 최소 구현 — 표준에러로 즉시 표면화(삼키지 않는다)."""
@@ -70,8 +95,8 @@ class StderrNotifier:
 class _NotConfiguredClient:
     """dry-run 전용 미구성 클라이언트 — 어떤 호출이 와도 fail-closed.
 
-    dry-run 파이프라인은 후보 추출이 배선되기 전까지 기록 경로에 진입하지
-    않으므로 이 클라이언트는 호출되지 않는다. 호출됐다면 그 자체가 결함이다.
+    후보가 나와 기록 경로에 진입하면 즉시 예외 — 미구성 상태에서 조용히
+    기록된 척하지 않는다(DualRecorder 가 실패로 집계해 partial 로 보고).
     """
 
     def __init__(self, name: str) -> None:
@@ -79,18 +104,9 @@ class _NotConfiguredClient:
 
     def __getattr__(self, item: str) -> Any:
         raise RuntimeError(
-            f"{self._name} 클라이언트 미구성 — dry-run 에서 기록 경로가 "
-            f"호출됐다(fail-closed): {item}"
+            f"{self._name} 클라이언트 미구성 — 기록 경로가 호출됐다"
+            f"(fail-closed): {item}"
         )
-
-
-def _no_candidates(channel: str) -> list[dict]:
-    """후보 추출 기본값 — 저장된 raw 페이지 기반 추출기가 배선되기 전까지 0건.
-
-    조용한 추정 후보 생성 금지(E8): 추출기가 없으면 후보 0건이 정직한 결과다.
-    실제 추출기는 build_deps(extract_candidates=...)로 주입한다.
-    """
-    return []
 
 
 def build_deps(
@@ -99,9 +115,51 @@ def build_deps(
     monitor: InterventionMonitor,
     recorder: DualRecorder,
     machine: str,
-    extract_candidates: Callable[[str], list[dict]] = _no_candidates,
+    extract_candidates: Callable[[str], list[dict]],
+    *,
+    drivers: Optional[Mapping[str, CdpDriver]] = None,
 ) -> PipelineDeps:
-    """cdp_driver 를 오케스트레이터 포트에 그대로 배선한다(결함 ①② 해소 지점)."""
+    """드라이버를 오케스트레이터 포트에 배선한다.
+
+    4차 진입점 결함 수정 — ``extract_candidates`` 는 **필수 인자**다(silent
+    0명 기본값 금지). ``drivers`` 맵이 오면 채널별 독립 드라이버로 배선한다
+    (결함 ⑩ — fetch/폴링/배너 전부 자기 채널 드라이버로만).
+    """
+    if drivers is not None:
+        channel_drivers = dict(drivers)
+
+        def _driver_for(channel: str) -> CdpDriver:
+            d = channel_drivers.get(channel)
+            if d is None:
+                raise RuntimeError(
+                    f"채널 {channel!r} 드라이버 미배선(fail-closed)"
+                )
+            return d
+
+        def fetch_list_page(channel: str, page: int, payload: dict) -> dict:
+            return _driver_for(channel).fetch_list_page(channel, page, payload)
+
+        def fetch_detail_page(channel: str, ref: str) -> dict:
+            return _driver_for(channel).fetch_detail_page(channel, ref)
+
+        def poll_driver_events() -> list[dict]:
+            events: list[dict] = []
+            for d in channel_drivers.values():
+                events.extend(d.poll_events())
+            return events
+
+        return PipelineDeps(
+            driver=driver,
+            store=store,
+            monitor=monitor,
+            recorder=recorder,
+            fetch_list_page=fetch_list_page,
+            fetch_detail_page=fetch_detail_page,
+            extract_candidates=extract_candidates,
+            machine=machine,
+            poll_driver_events=poll_driver_events,
+            drivers=channel_drivers,
+        )
     return PipelineDeps(
         driver=driver,
         store=store,
@@ -115,31 +173,73 @@ def build_deps(
     )
 
 
-def _report_payload(report: PipelineReport, live: bool) -> dict:
-    def _plain(value: Any) -> Any:
-        if is_dataclass(value) and not isinstance(value, type):
-            return {k: _plain(v) for k, v in asdict(value).items()}
-        if isinstance(value, dict):
-            return {k: _plain(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [_plain(v) for v in value]
-        return value
+def _plain(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return {k: _plain(v) for k, v in asdict(value).items()}
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
 
+
+def _report_payload(report: PipelineReport, *, mode: str, live: bool) -> dict:
     payload = _plain(report)
+    payload["mode"] = mode
     payload["live"] = live
     return payload
+
+
+def _write_report(path: Optional[str], payload: dict) -> None:
+    if path:
+        Path(path).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+
+def _run_plan_only(jd: dict, args: argparse.Namespace) -> int:
+    """기본 모드 — 브라우저 무접촉: 계획 산출·검증만 한다(CDP 연결 0)."""
+    plan = build_search_plan(jd, location=jd.get("location", DEFAULT_LOCATION))
+    descriptors = build_portal_search_descriptors(
+        or_keywords=jd.get("or_keywords"),
+        and_keywords=jd.get("and_keywords"),
+        exclude_keywords=jd.get("not_keywords"),
+        career_min=jd.get("career_min"),
+        career_max=jd.get("career_max"),
+    )
+    payload = {
+        "mode": "plan_only",
+        "live": False,
+        "cdp_connections": 0,  # 브라우저 무접촉 증거 — 연결 시도 자체가 없다
+        "position_name": jd["position_name"],
+        "linkedin_stages": [stage.name for stage in plan.stages],
+        "descriptors": descriptors,
+    }
+    _write_report(args.report_out, payload)
+    print(
+        f"[aisearch] mode=plan_only stages={len(plan.stages)} "
+        f"descriptors={len(descriptors)} (브라우저 무접촉 — 실행은 --browser)"
+    )
+    return 0
 
 
 def main(
     argv: Optional[list[str]] = None,
     *,
     transport_factory: Optional[Callable[[str], Any]] = None,
+    extractors: Optional[Mapping[str, Extractor]] = None,
+    recorder: Optional[DualRecorder] = None,
 ) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m apps.aisearch.run",
         description="JD 파일로 3사(RPS/사람인/잡코리아) 검색 파이프라인 실행",
     )
     parser.add_argument("jd_path", help="JD JSON 파일 경로")
+    parser.add_argument(
+        "--browser",
+        action="store_true",
+        help="브라우저 부착 dry-run(외부 기록 0). 기본은 plan-only(브라우저 무접촉).",
+    )
     parser.add_argument(
         "--ws-url",
         default=None,
@@ -155,17 +255,32 @@ def main(
     parser.add_argument(
         "--live",
         action="store_true",
-        help="ClickUp/Discord 라이브 기록(명시 플래그). 기본은 dry-run.",
+        help="ClickUp/Discord 라이브 기록(오너 승인 게이트). 현재 fail-closed 거부.",
     )
     args = parser.parse_args(argv)
 
     if args.live:
-        # 라이브 기록 클라이언트(ClickUp/Discord)가 아직 배선되지 않았다 —
-        # 조용한 dry-run 격하 금지, fail-closed 로 거부한다.
+        # 오너 승인 게이트 — 라이브 기록 클라이언트(ClickUp/Discord)가 아직
+        # 배선되지 않았다. 조용한 dry-run 격하 금지, fail-closed 로 거부한다.
         parser.exit(
             2,
             "--live 거부: ClickUp/Discord 기록 클라이언트 미구성(fail-closed). "
-            "기본 dry-run 으로 실행하십시오.\n",
+            "plan-only(기본) 또는 --browser dry-run 으로 실행하십시오.\n",
+        )
+
+    jd = json.loads(Path(args.jd_path).read_text(encoding="utf-8"))
+
+    if not args.browser:
+        # 기본 = plan-only: 브라우저 무접촉(transport_factory 를 아예 안 부른다).
+        return _run_plan_only(jd, args)
+
+    # ── --browser: 브라우저 부착 dry-run(외부 기록 0) ──────────────────────
+    if extractors is None:
+        # 4차 진입점 결함 — 추출기 미배선 상태로 돌면 후보가 조용히 0명이 된다.
+        parser.exit(
+            2,
+            "--browser 거부: 채널별 후보 추출기(extractors) 미배선(fail-closed). "
+            "silent 0명 실행은 금지 — 추출기 포트를 주입하십시오.\n",
         )
 
     if transport_factory is None:
@@ -173,26 +288,50 @@ def main(
             parser.exit(2, "--ws-url 이 필요합니다(라이브 CDP 연결 대상 탭).\n")
         transport_factory = connect_websocket_transport
 
-    jd = json.loads(Path(args.jd_path).read_text(encoding="utf-8"))
+    # 4차 결함 ⑩ — 채널당 독립 드라이버(각자 탭/연결). 트랜스포트 팩토리를
+    # 채널마다 따로 불러 연결을 공유하지 않는다(같은 연결 공유 = 응답 혼선).
+    drivers: dict[str, CdpDriver] = {
+        channel: CdpDriver(transport_factory(args.ws_url or ""))
+        for channel in CHANNELS
+    }
 
-    driver = CdpDriver(transport_factory(args.ws_url or ""))
     store = JsonlPageStore(Path(args.pages_out))
     monitor = InterventionMonitor(time.monotonic, StderrNotifier())
-    recorder = DualRecorder(
-        _NotConfiguredClient("ClickUp"), _NotConfiguredClient("Discord")
-    )  # 기본 dry-run — 외부 기록 0
+    if recorder is None:
+        recorder = DualRecorder(
+            _NotConfiguredClient("ClickUp"), _NotConfiguredClient("Discord")
+        )  # dry-run — 외부 기록 0(기록 경로 진입 시 fail-closed 로 표면화)
 
-    report = run_search_pipeline(jd, build_deps(driver, store, monitor, recorder, args.machine))
+    channel_extractors = dict(extractors)
 
-    payload = _report_payload(report, live=False)
-    if args.report_out:
-        Path(args.report_out).write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+    def extract_candidates(channel: str) -> list[dict]:
+        extractor = channel_extractors.get(channel)
+        if extractor is None:
+            # silent 0명 금지 — 추출기 없는 채널은 명시적 실패(E8).
+            raise RuntimeError(
+                f"채널 {channel!r} 후보 추출기 미배선(fail-closed) — "
+                "extractors 인자를 확인하십시오"
+            )
+        return extractor(store.rows_for(channel))
+
+    deps = build_deps(
+        drivers[LINKEDIN_CHANNEL],
+        store,
+        monitor,
+        recorder,
+        args.machine,
+        extract_candidates,
+        drivers=drivers,
+    )
+    report = run_search_pipeline(jd, deps)
+
+    payload = _report_payload(report, mode="browser_dry_run", live=False)
+    _write_report(args.report_out, payload)
     print(
-        f"[aisearch] status={report.status} variants={len(report.variants)} "
-        f"registered={len(report.registered)} drafts={len(report.drafts)} "
-        f"excluded={len(report.excluded)} error={report.error or '-'}"
+        f"[aisearch] mode=browser_dry_run status={report.status} "
+        f"variants={len(report.variants)} registered={len(report.registered)} "
+        f"drafts={len(report.drafts)} excluded={len(report.excluded)} "
+        f"error={report.error or '-'}"
     )
     return 0 if report.status == STATUS_COMPLETED else 1
 

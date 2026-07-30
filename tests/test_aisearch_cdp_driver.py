@@ -1,12 +1,12 @@
-"""V1 3차 결함 ①②④ — 실제 브라우저 실행 호출부: raw CDP 드라이버 어댑터 계약.
+"""V1 3차 결함 ①②④(+4차 ①②④⑩) — raw CDP 드라이버 어댑터 계약.
 
-apps/aisearch/core/cdp_driver.py 는 기존 raw CDP 패턴
-(tools/multi_position_sourcing/raw_cdp.py 의 send 프레이밍,
-tools/multi_position_sourcing/raw_page_adapter.py 의 json.dumps 이스케이프 fill/press)
-을 재사용해 오케스트레이터의 드라이버 포트를 구현한다.
+apps/aisearch/core/cdp_driver.py 는 기존 raw CDP 패턴(raw_cdp.py 의 send
+프레이밍, json.dumps 이스케이프)을 재사용해 오케스트레이터의 드라이버 포트를
+구현한다. V1 4차 수정으로 텍스트 입력은 CDP Input 도메인(Input.insertText /
+Input.dispatchKeyEvent) 신뢰 입력이며, 모든 이동 후 로드 완료 대기가 있다.
 
 CDP 트랜스포트는 주입식 — 이 테스트는 페이크 트랜스포트로 전 명령 시퀀스를
-검증하며 실 브라우저/웹소켓(9222)에는 절대 접속하지 않는다.
+검증하며 실 브라우저/웹소켓(9222)에는 절대 접속하지 않는다(실 sleep 0).
 """
 from __future__ import annotations
 
@@ -33,6 +33,16 @@ from apps.aisearch.core.intervention import (
 class FakeTransport:
     """주입식 페이크 트랜스포트 — (method, params) 전량 기록 + 패턴 응답."""
 
+    SNAPSHOT = {
+        "h": 0,
+        "captcha": False,
+        "cloudflare": False,
+        "twofa": False,
+        "checkpoint": False,
+        "multisession": False,
+        "present": True,
+    }
+
     def __init__(self, responder=None):
         self.calls: list[tuple[str, dict]] = []
         self._responder = responder or self.default_responder
@@ -41,9 +51,15 @@ class FakeTransport:
     def default_responder(method: str, params: dict):
         if method == "Page.navigate":
             return {"frameId": "F1", "loaderId": "L1"}
+        if method.startswith("Input."):
+            return {}
         expr = params.get("expression", "")
         value: object = True
-        if "/*vh:count*/" in expr:
+        if "/*vh:ready*/" in expr:
+            value = "complete"
+        elif "/*vh:rect*/" in expr:
+            value = {"x": 120.0, "y": 48.0}
+        elif "/*vh:count*/" in expr:
             value = "1,234명"
         elif "/*vh:html*/" in expr:
             value = "<html>fake</html>"
@@ -54,7 +70,7 @@ class FakeTransport:
         elif "/*vh:has_next*/" in expr:
             value = True
         elif "/*vh:snapshot*/" in expr:
-            value = {"h": 0, "captcha": False, "cloudflare": False}
+            value = dict(FakeTransport.SNAPSHOT)
         return {"result": {"value": value}}
 
     def __call__(self, method: str, params: dict) -> dict:
@@ -68,10 +84,20 @@ class FakeTransport:
             if m == "Runtime.evaluate"
         ]
 
+    def inserted_texts(self) -> list[str]:
+        return [p["text"] for m, p in self.calls if m == "Input.insertText"]
+
+    def enter_key_events(self) -> list[dict]:
+        return [
+            p
+            for m, p in self.calls
+            if m == "Input.dispatchKeyEvent" and p.get("key") == "Enter"
+        ]
+
 
 def _driver(responder=None) -> tuple[CdpDriver, FakeTransport]:
     t = FakeTransport(responder)
-    return CdpDriver(t), t
+    return CdpDriver(t, sleep=lambda s: None), t
 
 
 # ── (e) 배너 dispatch 스니펫 evaluate — BrowserDriverPort.run_js ──
@@ -94,30 +120,45 @@ class TestRunJs:
             driver.run_js("1+1")
 
 
-# ── (a) RPS Keywords 필드 Boolean 입력 → 검색 실행 → 결과건수 읽기 ──
+# ── (a) RPS Keywords 필드 Boolean 신뢰 입력 → 검색 실행 → 결과건수 읽기 ──
 
 
 class TestRpsSearch:
-    def test_rps_command_sequence_fill_submit_count(self):
+    def test_rps_command_sequence_focus_insert_enter_count(self):
         driver, t = _driver()
         boolean = '("백엔드" OR "Backend") AND ("PM") NOT ("인턴")'
         count = driver.run_rps_search(boolean)
         assert count == 1234  # "1,234명" → 1234
-        exprs = t.evaluate_exprs()
-        # 순서: 키워드 fill → 검색 실행(Enter) → 결과건수 읽기
-        fill_idx = next(i for i, e in enumerate(exprs) if "/*vh:fill*/" in e)
-        submit_idx = next(i for i, e in enumerate(exprs) if "/*vh:submit*/" in e)
-        count_idx = next(i for i, e in enumerate(exprs) if "/*vh:count*/" in e)
-        assert fill_idx < submit_idx < count_idx
-        # Keywords 필드 셀렉터(docs/search-access.md:405-415)와 Boolean 문자열이
-        # json.dumps 이스케이프(raw_page_adapter fill 패턴)로 실려 있다.
-        assert json.dumps(RPS_KEYWORDS_SELECTOR) in exprs[fill_idx]
-        assert json.dumps(boolean) in exprs[fill_idx]
+        # 4차 결함 ① — Boolean 은 JS value 대입이 아니라 Input.insertText 로.
+        assert boolean in t.inserted_texts()
+        assert t.enter_key_events(), "검색 실행(Enter 키 이벤트)이 없다"
+        # 순서: Keywords 포커스 → insertText → Enter → 로드 대기 → 건수 읽기
+        seq: list[str] = []
+        for m, p in t.calls:
+            e = p.get("expression", "")
+            if "/*vh:focus*/" in e and json.dumps(RPS_KEYWORDS_SELECTOR) in e:
+                seq.append("focus")
+            elif m == "Input.insertText":
+                seq.append("insert")
+            elif m == "Input.dispatchKeyEvent":
+                seq.append("key")
+            elif "/*vh:ready*/" in e:
+                seq.append("ready")
+            elif "/*vh:count*/" in e:
+                seq.append("count")
+        assert seq.index("focus") < seq.index("insert") < seq.index("key")
+        assert seq.index("key") < seq.index("ready") < seq.index("count")
+        # 합성 입력(value 대입) 금지 — select 전용 마커만 예외.
+        assert not any(
+            ".value=" in e
+            for e in t.evaluate_exprs()
+            if "/*vh:select*/" not in e
+        )
 
     def test_fill_missing_element_fails_closed(self):
         def responder(method, params):
             expr = params.get("expression", "")
-            if "/*vh:fill*/" in expr:
+            if "/*vh:focus*/" in expr:
                 return {"result": {"value": False}}  # 셀렉터 미발견
             return FakeTransport.default_responder(method, params)
 
@@ -137,7 +178,7 @@ class TestRpsSearch:
             driver.run_rps_search("(PM)")
 
 
-# ── (b) 사람인/잡코리아 디스크립터 — URL 이동 + 입력 단계 실행 ──
+# ── (b) 사람인/잡코리아 디스크립터 — URL 이동(로드 대기) + 입력 단계 실행 ──
 
 
 class TestDescriptorExecution:
@@ -150,43 +191,75 @@ class TestDescriptorExecution:
                 "field": "or_keywords",
                 "selector": "div.search_keyword input.search_input",
                 "values": ["백엔드", "Backend"],
+                "kind": "text",
             },
             {
                 "order": 2,
                 "field": "career_min",
                 "selector": "#career_min",
                 "values": ["3"],
+                "kind": "select",
             },
         ],
     }
 
-    def test_navigates_then_fills_steps_in_order(self):
+    def test_navigates_then_inputs_steps_in_order(self):
         driver, t = _driver()
         driver.run_descriptor(self.DESCRIPTOR)
         assert t.calls[0][0] == "Page.navigate"
         assert t.calls[0][1]["url"] == self.DESCRIPTOR["url"]
-        fills = [e for e in t.evaluate_exprs() if "/*vh:fill*/" in e]
-        # 다중 값 스텝은 값마다 fill 1회
-        assert len(fills) == 3
-        assert json.dumps("백엔드") in fills[0]
-        assert json.dumps("Backend") in fills[1]
-        assert json.dumps("#career_min") in fills[2]
-        # 스텝 값은 json.dumps 이스케이프로 주입된다(injection 안전)
-        assert all("json" not in f or True for f in fills)
+        # 텍스트 스텝은 신뢰 입력(Input.insertText) — 다중 값은 값마다 1회.
+        assert t.inserted_texts() == ["백엔드", "Backend"]
+        # select 스텝은 옵션 선택(/*vh:select*/) — 텍스트 입력 금지.
+        selects = [e for e in t.evaluate_exprs() if "/*vh:select*/" in e]
+        assert len(selects) == 1
+        assert json.dumps("#career_min") in selects[0]
+        assert json.dumps("3") in selects[0]
+
+    def test_navigation_waits_for_load_before_inputs(self):
+        driver, t = _driver()
+        driver.run_descriptor(self.DESCRIPTOR)
+        nav_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Page.navigate"
+        )
+        ready_i = next(
+            i
+            for i, (_m, p) in enumerate(t.calls)
+            if "/*vh:ready*/" in p.get("expression", "")
+        )
+        insert_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.insertText"
+        )
+        assert nav_i < ready_i < insert_i, "이동 후 로드 대기 없이 입력했다"
 
     def test_search_submitted_after_all_steps(self):
         driver, t = _driver()
         driver.run_descriptor(self.DESCRIPTOR)
-        exprs = t.evaluate_exprs()
-        submit_idx = [i for i, e in enumerate(exprs) if "/*vh:submit*/" in e]
-        fill_idx = [i for i, e in enumerate(exprs) if "/*vh:fill*/" in e]
-        assert submit_idx, "모든 스텝 입력 후 검색 실행(Enter)이 있어야 한다"
-        assert max(fill_idx) < submit_idx[-1]
+        insert_idx = [
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.insertText"
+        ]
+        enter_idx = [
+            i
+            for i, (m, p) in enumerate(t.calls)
+            if m == "Input.dispatchKeyEvent" and p.get("key") == "Enter"
+        ]
+        assert enter_idx, "모든 스텝 입력 후 검색 실행(Enter)이 있어야 한다"
+        assert max(insert_idx) < enter_idx[-1]
 
     def test_navigation_error_text_fails_closed(self):
         def responder(method, params):
             if method == "Page.navigate":
                 return {"errorText": "net::ERR_BLOCKED"}
+            return FakeTransport.default_responder(method, params)
+
+        driver, _t = _driver(responder)
+        with pytest.raises(CdpDriverError):
+            driver.run_descriptor(self.DESCRIPTOR)
+
+    def test_load_timeout_fails_closed(self):
+        def responder(method, params):
+            if "/*vh:ready*/" in params.get("expression", ""):
+                return {"result": {"value": "loading"}}
             return FakeTransport.default_responder(method, params)
 
         driver, _t = _driver(responder)
@@ -221,13 +294,28 @@ class TestCaptureAndListContract:
         assert all(m != "Page.navigate" for m, _p in t.calls)  # 재검색 금지
         assert any("/*vh:next_page*/" in e for e in t.evaluate_exprs())
 
-    def test_fetch_detail_page_navigates_and_captures(self):
+    def test_next_page_waits_for_load_before_reading(self):
+        driver, t = _driver()
+        driver.fetch_list_page("saramin", 2, dict(self.saramin_payload()))
+        exprs = t.evaluate_exprs()
+        next_i = next(i for i, e in enumerate(exprs) if "/*vh:next_page*/" in e)
+        ready_i = next(
+            i for i, e in enumerate(exprs) if "/*vh:ready*/" in e and i > next_i
+        )
+        html_i = next(i for i, e in enumerate(exprs) if "/*vh:html*/" in e)
+        assert next_i < ready_i < html_i
+
+    def test_fetch_detail_page_navigates_waits_and_captures(self):
         driver, t = _driver()
         detail = driver.fetch_detail_page("saramin", "https://fake.test/p/1")
         assert t.calls[0] == (
             "Page.navigate",
             {"url": "https://fake.test/p/1"},
         )
+        exprs = t.evaluate_exprs()
+        ready_i = next(i for i, e in enumerate(exprs) if "/*vh:ready*/" in e)
+        html_i = next(i for i, e in enumerate(exprs) if "/*vh:html*/" in e)
+        assert ready_i < html_i  # 로드 완료 대기 후에만 HTML 읽기(결함 ⑧)
         assert detail == {
             "url": "https://fake.test/p/1",
             "content": "<html>fake</html>",
@@ -254,7 +342,7 @@ class TestCaptureAndListContract:
             "post_filter_exclude": [],
         }
 
-    def test_linkedin_payload_routes_to_rps_search(self):
+    def test_linkedin_payload_routes_to_rps_search_with_filters(self):
         driver, t = _driver()
         payload = {
             "channel": "linkedin_rps",
@@ -265,11 +353,21 @@ class TestCaptureAndListContract:
             "universities": ("서울대학교",),
         }
         driver.fetch_list_page("linkedin_rps", 1, payload)
-        fills = [e for e in t.evaluate_exprs() if "/*vh:fill*/" in e]
-        assert any(json.dumps('("PM") AND ("SaaS")') in f for f in fills)
+        texts = t.inserted_texts()
+        assert '("PM") AND ("SaaS")' in texts  # Boolean 신뢰 입력
+        # 4차 결함 ① — 필터는 전달이 아니라 실제 입력 시퀀스로 실행된다.
+        assert "South Korea" in texts
+        assert "서울대학교" in texts
+        assert "3" in texts
 
 
 # ── (d) 사람 입력/캡차 폴링 → InterventionMonitor 이벤트 공급 ──
+
+
+def _snapshot(overrides: dict) -> dict:
+    snap = dict(FakeTransport.SNAPSHOT)
+    snap.update(overrides)
+    return snap
 
 
 class TestEventPolling:
@@ -283,9 +381,9 @@ class TestEventPolling:
     def test_human_input_counter_delta_emits_event(self):
         snapshots = iter(
             [
-                {"h": 0, "captcha": False, "cloudflare": False},
-                {"h": 2, "captcha": False, "cloudflare": False},
-                {"h": 2, "captcha": False, "cloudflare": False},
+                _snapshot({"h": 0}),
+                _snapshot({"h": 2}),
+                _snapshot({"h": 2}),
             ]
         )
 
@@ -302,11 +400,7 @@ class TestEventPolling:
     def test_captcha_snapshot_blocks_monitor_via_feed(self):
         def responder(method, params):
             if "/*vh:snapshot*/" in params.get("expression", ""):
-                return {
-                    "result": {
-                        "value": {"h": 0, "captcha": True, "cloudflare": False}
-                    }
-                }
+                return {"result": {"value": _snapshot({"captcha": True})}}
             return FakeTransport.default_responder(method, params)
 
         driver, _t = _driver(responder)
@@ -331,6 +425,23 @@ class TestEventPolling:
         events = driver.poll_events()
         assert len(events) == 1
         assert events[0]["type"] == "signal"
+        assert events[0]["kind"].startswith("driver_snapshot_invalid")
+
+    def test_snapshot_missing_challenge_fields_fails_closed(self):
+        """구(舊) 스냅샷 형식(2FA/체크포인트 필드 없음)은 형식 위반 — 차단."""
+
+        def responder(method, params):
+            if "/*vh:snapshot*/" in params.get("expression", ""):
+                return {
+                    "result": {
+                        "value": {"h": 0, "captcha": False, "cloudflare": False}
+                    }
+                }
+            return FakeTransport.default_responder(method, params)
+
+        driver, _t = _driver(responder)
+        events = driver.poll_events()
+        assert len(events) == 1
         assert events[0]["kind"].startswith("driver_snapshot_invalid")
 
 

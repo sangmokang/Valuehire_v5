@@ -107,10 +107,24 @@ def _validate_career(career_min: int | None, career_max: int | None) -> None:
         raise ValueError(f"경력 범위 역전: min={career_min} > max={career_max}")
 
 
-def _steps(*specs: tuple[str, str, list[str]]) -> list[dict[str, Any]]:
+#: 스텝 입력 종류(V1 4차 결함 ② — 드라이버가 입력 방식을 구분한다):
+#: "text" = 신뢰 텍스트 입력(CDP Input.insertText), "checkbox" = 마우스 클릭
+#: 시퀀스(value 대입 금지), "select" = <select> 옵션 선택.
+STEP_KIND_TEXT = "text"
+STEP_KIND_CHECKBOX = "checkbox"
+STEP_KIND_SELECT = "select"
+
+
+def _steps(*specs: tuple[str, str, list[str], str]) -> list[dict[str, Any]]:
     return [
-        {"order": i, "field": field, "selector": selector, "values": list(values)}
-        for i, (field, selector, values) in enumerate(specs, start=1)
+        {
+            "order": i,
+            "field": field,
+            "selector": selector,
+            "values": list(values),
+            "kind": kind,
+        }
+        for i, (field, selector, values, kind) in enumerate(specs, start=1)
     ]
 
 
@@ -151,15 +165,24 @@ def build_portal_search_descriptors(
 
     # ── 사람인: OR → AND → 경력 순 입력 (docs/search-access.md:122 준비된
     # 키워드를 불린 의도대로 각 필드에 배치) ──
-    saramin_specs: list[tuple[str, str, list[str]]] = []
+    saramin_specs: list[tuple[str, str, list[str], str]] = []
     if or_kw:
-        saramin_specs.append(("or_keywords", SARAMIN_OR_SELECTOR, or_kw))
+        saramin_specs.append(
+            ("or_keywords", SARAMIN_OR_SELECTOR, or_kw, STEP_KIND_TEXT)
+        )
     if and_kw:
-        saramin_specs.append(("and_keywords", SARAMIN_AND_SELECTOR, and_kw))
+        saramin_specs.append(
+            ("and_keywords", SARAMIN_AND_SELECTOR, and_kw, STEP_KIND_TEXT)
+        )
     if career_min is not None:
-        saramin_specs.append(("career_min", SARAMIN_CAREER_MIN_SELECTOR, [str(career_min)]))
+        # 사람인 경력은 <select>(#career_min) — 옵션 선택으로 조작한다.
+        saramin_specs.append(
+            ("career_min", SARAMIN_CAREER_MIN_SELECTOR, [str(career_min)], STEP_KIND_SELECT)
+        )
     if career_max is not None:
-        saramin_specs.append(("career_max", SARAMIN_CAREER_MAX_SELECTOR, [str(career_max)]))
+        saramin_specs.append(
+            ("career_max", SARAMIN_CAREER_MAX_SELECTOR, [str(career_max)], STEP_KIND_SELECT)
+        )
 
     # ── 잡코리아: 통합검색 1필드 — 동일 JD 의 OR+AND 키워드를 공백 결합
     # (NOT 제외는 잡코리아 통합검색이 지원하지 않으므로 넣지 않는다) ──
@@ -169,14 +192,25 @@ def build_portal_search_descriptors(
     if len(jk_query) > JOBKOREA_KEYWORD_MAXLEN:
         # docs/search-access.md:287 — #txtKeyword maxlength=300
         raise ValueError(f"잡코리아 통합검색 300자 초과: {len(jk_query)}자")
-    jobkorea_specs: list[tuple[str, str, list[str]]] = [
-        ("keyword", JOBKOREA_KEYWORD_SELECTOR, [jk_query]),
-        ("education", JOBKOREA_EDUCATION_SELECTOR, [JOBKOREA_EDUCATION_VALUE]),
+    jobkorea_specs: list[tuple[str, str, list[str], str]] = [
+        ("keyword", JOBKOREA_KEYWORD_SELECTOR, [jk_query], STEP_KIND_TEXT),
+        # V1 4차 결함 ② — #education1 은 체크박스: value 대입이 아니라
+        # 클릭 이벤트 시퀀스로 조작해야 한다(kind 로 드라이버에 알린다).
+        (
+            "education",
+            JOBKOREA_EDUCATION_SELECTOR,
+            [JOBKOREA_EDUCATION_VALUE],
+            STEP_KIND_CHECKBOX,
+        ),
     ]
     if career_min is not None:
-        jobkorea_specs.append(("career_min", JOBKOREA_CAREER_MIN_SELECTOR, [str(career_min)]))
+        jobkorea_specs.append(
+            ("career_min", JOBKOREA_CAREER_MIN_SELECTOR, [str(career_min)], STEP_KIND_TEXT)
+        )
     if career_max is not None:
-        jobkorea_specs.append(("career_max", JOBKOREA_CAREER_MAX_SELECTOR, [str(career_max)]))
+        jobkorea_specs.append(
+            ("career_max", JOBKOREA_CAREER_MAX_SELECTOR, [str(career_max)], STEP_KIND_TEXT)
+        )
 
     return [
         {

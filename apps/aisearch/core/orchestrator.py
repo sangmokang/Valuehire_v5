@@ -43,7 +43,7 @@ from __future__ import annotations
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Callable, Mapping, Optional, Protocol
 
 from apps.aisearch.core import recorders
 from apps.aisearch.core.banner import build_dispatch_snippet
@@ -131,6 +131,10 @@ class PipelineDeps:
     #: 드라이버 관측 이벤트(사람 입력/캡차 등)를 돌려주는 폴러(2차 결함 10).
     #: 반환 이벤트는 intervention.feed_driver_events 규격 그대로 모니터에 공급된다.
     poll_driver_events: Optional[Callable[[], list[dict]]] = None
+    #: 4차 결함 ⑩ — 채널별 독립 드라이버(각자 탭/연결) 맵. 주입되면 배너 등
+    #: 채널 국한 드라이버 호출은 반드시 자기 채널 드라이버로만 나간다(혼선 0).
+    #: 맵에 없는 채널은 fail-closed(조용한 공용 드라이버 격하 금지).
+    drivers: Optional[Mapping[str, BrowserDriverPort]] = None
     #: 3차 결함 ⑩ — 채널 스레드 간 공유 상태(개입 모니터·리포트·기록기) 보호 락.
     #: RLock: _register_and_draft(락 보유) 내부에서 _check_monitor(락 취득)를
     #: 다시 부르는 중첩 경로가 있다.
@@ -187,25 +191,35 @@ def _check_monitor(deps: PipelineDeps) -> None:
         )
 
 
+def _iter_strings(value: Any, path: str):
+    """후보 payload 트리(dict/list/tuple/str)의 모든 문자열을 경로와 함께 순회."""
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, Mapping):
+        for key, inner in value.items():
+            yield from _iter_strings(inner, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, inner in enumerate(value):
+            yield from _iter_strings(inner, f"{path}[{index}]")
+
+
 def _find_exclusion_match(
     cand: dict[str, Any], exclusions: list[str]
 ) -> Optional[tuple[str, str]]:
-    """3차 결함 ⑦ — 후보 텍스트에서 제외어 매칭을 찾는다(casefold 부분일치).
+    """3차 결함 ⑦(4차 재수정) — 제외어 매칭을 후보 payload **전체**에서 찾는다.
 
-    검사 대상은 후보의 record/draft_inputs 최상위 문자열 필드 전부.
-    반환: (매칭된 제외어, 매칭 필드 경로) — 없으면 None.
+    최상위 문자열만 보던 결함을 고쳐, score_payload(점수 근거 D1~D8 evidence
+    포함)·record·draft_inputs 등 중첩 dict/list 안의 모든 문자열을 재귀
+    스캔한다(casefold 부분일치). 반환: (매칭된 제외어, 매칭 필드 경로).
     """
-    for source_name in ("record", "draft_inputs"):
-        mapping = cand.get(source_name) or {}
-        if not isinstance(mapping, dict):
-            continue
-        for field_name, value in mapping.items():
-            if not isinstance(value, str):
-                continue
-            folded = value.casefold()
-            for term in exclusions:
-                if term.casefold() in folded:
-                    return term, f"{source_name}.{field_name}"
+    folded_terms = [(term, term.casefold()) for term in exclusions]
+    if not folded_terms:
+        return None
+    for path, text in _iter_strings(cand, "candidate"):
+        folded = text.casefold()
+        for term, folded_term in folded_terms:
+            if folded_term in folded:
+                return term, path
     return None
 
 
@@ -319,9 +333,20 @@ def _run_variant(
     with deps.lock:  # 결함 ⑩ — 리포트는 채널 스레드 공유 상태
         report.variants.append(variant)
 
+    # 4차 결함 ⑩ — 채널별 드라이버 맵이 주입되면 배너 신호는 반드시 자기
+    # 채널 드라이버(자기 탭/연결)로만 나간다. 없는 채널은 fail-closed.
+    if deps.drivers is not None:
+        driver = deps.drivers.get(channel)
+        if driver is None:
+            raise ValueError(
+                f"채널 {channel!r} 드라이버 미배선(fail-closed) — drivers 맵 확인"
+            )
+    else:
+        driver = deps.driver
+
     _check_monitor(deps)  # 변형 시작 전 점검
     # AC8 — "조작 시작" 빨간 띠 표시 신호를 드라이버 포트로 전달
-    deps.driver.run_js(build_dispatch_snippet(True, task))
+    driver.run_js(build_dispatch_snippet(True, task))
     try:
 
         def guarded_list(page: int) -> dict:
@@ -348,7 +373,7 @@ def _run_variant(
         # 해제 실패는 본 오류(차단/예외)를 가리지 않되 조용히 삼키지도 않는다 —
         # banner_errors 로 보고하고, 전체 상태 completed 를 막는다.
         try:
-            deps.driver.run_js(build_dispatch_snippet(False))
+            driver.run_js(build_dispatch_snippet(False))
         except Exception as release_error:  # noqa: BLE001 — 본 오류에 종속, 보고만
             with deps.lock:
                 report.banner_errors.append(
