@@ -19,7 +19,11 @@ from typing import Any, Callable
 
 from .models import Channel
 from .portal_autologin import AUTO_LOGIN_SELECTORS, login_url_for_channel
-from .portal_login import _CHALLENGE_TOKENS, _has_security_challenge
+from .portal_login import (
+    _CHALLENGE_TOKENS,
+    _is_pure_security_challenge,
+    _is_session_conflict,
+)
 
 # SOT-26 login_state_check: URL 아닌 GNB 마커로 판정.
 _AUTH_MARKERS: dict[str, tuple[str, ...]] = {
@@ -53,13 +57,21 @@ def _is_authenticated(site: str, body: str) -> bool:
 
 
 def decide_login_step(site: str, body: str, url: str) -> str:
-    """순수 판정 — 'already_authenticated' | 'security_challenge' | 'fill_credentials'."""
+    """순수 판정 — 'already_authenticated' | 'security_challenge' | 'session_conflict' | 'fill_credentials'.
+
+    2026-07-31(AC-A): 세션충돌(`session_conflict`)은 진짜 보안챌린지(`security_challenge`)와
+    분리된 별도 상태다 — 오너가 명시적으로 기기를 지정하면(`owner_takeover`) 세션충돌만
+    무시하고 진행할 수 있어야 하기 때문. 진짜 챌린지는 항상 `security_challenge`로 우선
+    판정되며 owner_takeover 로도 우회할 수 없다.
+    """
     if site not in AUTO_LOGIN_SELECTORS:
         raise ValueError(f"automatic login is not configured for {site}")
     if _is_authenticated(site, body):
         return "already_authenticated"
-    if _has_security_challenge(body, url):
+    if _is_pure_security_challenge(body, url):
         return "security_challenge"
+    if _is_session_conflict(body, url):
+        return "session_conflict"
     return "fill_credentials"
 
 
@@ -132,8 +144,15 @@ def perform_autologin(
     sleep: Callable[[float], None] = time.sleep,
     settle_seconds: float = 2.5,
     post_submit_polls: int = 4,
+    owner_takeover: bool = False,
 ) -> dict[str, Any]:
-    """기존 target 위에서 세션 보존 자동 로그인 1회. 반환에 비밀값 없음."""
+    """기존 target 위에서 세션 보존 자동 로그인 1회. 반환에 비밀값 없음.
+
+    2026-07-31(AC-A): ``owner_takeover=True``면 세션충돌(다른 기기 로그인)을 이유로
+    멈추지 않고 자격증명 제출까지 진행한다 — 사장님이 명시적으로 이 기기에서
+    로그인하라고 지시한 경우에만 CLI ``--owner-takeover``로 전달된다. 진짜
+    보안챌린지(captcha/2FA/checkpoint)는 이 값과 무관하게 항상 멈춘다.
+    """
     if site not in AUTO_LOGIN_SELECTORS:
         raise ValueError(f"automatic login is not configured for {site}")
     selectors = AUTO_LOGIN_SELECTORS[site]
@@ -168,8 +187,13 @@ def perform_autologin(
         return {"state": "HUMAN_AUTH", "site": site, "mutations": 0,
                 "note": "보안 챌린지 감지 — 제출 0회, 사람 인계 필요",
                 "challenge_markers": _challenge_markers(body, url)}
+    if step == "session_conflict" and not owner_takeover:
+        return {"state": "HUMAN_AUTH", "site": site, "mutations": 0,
+                "note": "세션 충돌(다른 기기 로그인) 감지 — 제출 0회. "
+                        "이 기기에서 로그인하려면 오너가 명시적으로 지정(--owner-takeover) 필요",
+                "challenge_markers": _challenge_markers(body, url)}
 
-    # 일반 로그인 화면: 자격증명 1회 제출(값은 여기서만 흐름).
+    # 일반 로그인 화면 또는 owner_takeover 로 세션충돌을 넘긴 경우: 자격증명 1회 제출.
     ok_id = tab.eval(_fill_js(selectors.username, creds.username))
     ok_pw = tab.eval(_fill_js(selectors.password, creds.password))
     if not (ok_id and ok_pw):
@@ -185,9 +209,12 @@ def perform_autologin(
         sleep(settle_seconds)
         body = _read_body(tab)
         url = tab.current_url()
-        if _has_security_challenge(body, url):
+        if _is_pure_security_challenge(body, url):
             return {"state": "HUMAN_AUTH", "site": site, "mutations": 1,
                     "note": "제출 후 보안 챌린지(2FA/캡차 등) — 제출 재시도 없이 사람 인계"}
+        if _is_session_conflict(body, url) and not owner_takeover:
+            return {"state": "HUMAN_AUTH", "site": site, "mutations": 1,
+                    "note": "제출 후 세션 충돌 감지 — 오너 명시 지정(--owner-takeover) 필요"}
         if _is_authenticated(site, body):
             return {"state": "AUTHENTICATED", "site": site, "mutations": 1,
                     "note": "자동 로그인 성공"}
