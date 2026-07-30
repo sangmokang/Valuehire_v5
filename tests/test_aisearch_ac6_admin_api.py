@@ -19,7 +19,7 @@ from apps.aisearch.core.admin_api import (
 )
 
 BASE = "https://admin.valuehire.cc"
-KEY = "test-internal-key"
+KEY = "test-internal-key-16plus"
 
 
 def candidate(**over):
@@ -119,14 +119,23 @@ class TestAdminApiRecorder:
         assert result["recorded"] is False
         assert t.calls == []
 
-    def test_live_success(self):
-        t = FakeTransport(status=200, body={"ok": True})
+    def test_live_success_201_new_insert(self):
+        # 서버 route.ts:151 — 신규 등록은 201 {ok:true, deduped:false}
+        t = FakeTransport(status=201, body={"ok": True, "deduped": False})
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         result = rec.register(candidate())
         assert result["status"] == "recorded"
         assert result["recorded"] is True
         assert len(t.calls) == 1
         assert t.calls[0]["url"] == BASE + "/api/aisearch/register"
+
+    def test_live_success_200_deduped_update(self):
+        # 서버 route.ts:123 — 같은 jd_id 내 동일인은 200 {ok:true, deduped:true}
+        t = FakeTransport(status=200, body={"ok": True, "deduped": True})
+        rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
+        result = rec.register(candidate())
+        assert result["status"] == "recorded"
+        assert result["response"]["deduped"] is True
 
     @pytest.mark.parametrize("status,body", [
         (400, {"ok": False, "error": "name is required"}),
@@ -145,6 +154,38 @@ class TestAdminApiRecorder:
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         with pytest.raises(AdminApiResponseError):
             rec.register(candidate())
+
+    def test_live_flag_must_be_strict_bool(self):
+        # live="false" 같은 진리값 오용이 실전송을 내면 안 된다 — 엄격 bool 만 허용.
+        t = FakeTransport()
+        with pytest.raises(AdminApiContractError):
+            AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live="false")
+        assert t.calls == []
+
+    def test_key_rules_match_server_min16_and_no_padding(self):
+        # 서버 internalApiKey.ts:17 MIN_INTERNAL_KEY_LENGTH=16 — 16자 미만/여백 포함 키는
+        # 어차피 거부되므로 전송 전에 거부한다.
+        with pytest.raises(AdminApiContractError):
+            build_register_request(candidate(), base_url=BASE, internal_key="short")
+        with pytest.raises(AdminApiContractError):
+            build_register_request(candidate(), base_url=BASE, internal_key=" " + KEY)
+
+    def test_dry_run_result_never_leaks_key(self):
+        t = FakeTransport()
+        rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t)
+        result = rec.register(candidate())
+        import json as _json
+        assert KEY not in _json.dumps(result, ensure_ascii=False)
+
+    def test_trim_semantics_match_server_js_trim(self):
+        # 서버는 JS String.trim() — U+FEFF(BOM)만 있는 값은 공백으로 거부하고,
+        # U+0085(NEL)은 JS 공백이 아니므로 내용으로 인정한다(Python str.strip()과 다름).
+        with pytest.raises(AdminApiContractError):
+            build_register_request(candidate(name="\ufeff"), base_url=BASE,
+                                   internal_key=KEY)
+        req = build_register_request(candidate(name="\u0085김"), base_url=BASE,
+                                     internal_key=KEY)
+        assert "\u0085" in req["json"]["name"]
 
     def test_contract_violation_never_reaches_transport_even_live(self):
         t = FakeTransport()
