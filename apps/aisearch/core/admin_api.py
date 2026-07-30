@@ -31,11 +31,23 @@ class AdminApiResponseError(RuntimeError):
     """서버가 등록을 거부했거나 응답이 계약과 다르다."""
 
 
+# 서버(route.ts)는 JS String.trim() — ECMAScript 공백 집합은 U+FEFF(BOM)를 포함하고
+# U+0085(NEL)를 포함하지 않는다. Python str.strip() 기본과 다르므로 명시 집합으로 맞춘다.
+_JS_WHITESPACE = (
+    "\t\n\v\f\r           "
+    "       　﻿"
+)
+
+
+def _js_trim(value: str) -> str:
+    return value.strip(_JS_WHITESPACE)
+
+
 def _require_text(candidate: Mapping[str, Any], field: str) -> str:
     value = candidate.get(field)
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not _js_trim(value):
         raise AdminApiContractError(f"{field} is required (non-empty str)")
-    return value.strip()
+    return _js_trim(value)
 
 
 def _validate_score(value: Any) -> int | float:
@@ -58,8 +70,16 @@ def build_register_request(
     base_url: str,
     internal_key: str,
 ) -> dict[str, Any]:
-    if not isinstance(internal_key, str) or not internal_key.strip():
-        raise AdminApiContractError("internal_key is required (주입 필수 — 하드코딩 금지)")
+    # 서버 internalApiKey.ts:17 — 16자 미만 키는 항상 거부. 여백이 붙은 키는 정확 일치
+    # 실패로 401 이 되므로 전송 전에 거부한다.
+    if (
+        not isinstance(internal_key, str)
+        or len(internal_key) < 16
+        or _js_trim(internal_key) != internal_key
+    ):
+        raise AdminApiContractError(
+            "internal_key must be >=16 chars, no surrounding whitespace (주입 필수 — 하드코딩 금지)"
+        )
     if not isinstance(base_url, str) or not base_url.startswith("https://"):
         raise AdminApiContractError("base_url must be https://")
 
@@ -113,17 +133,21 @@ class AdminApiRecorder:
         transport: Callable[[Mapping[str, Any]], Mapping[str, Any]],
         live: bool = False,
     ) -> None:
+        if not isinstance(live, bool):
+            raise AdminApiContractError("live must be a strict bool (truthy 오용 금지)")
         self._base_url = base_url
         self._internal_key = internal_key
         self._transport = transport
-        self._live = bool(live)
+        self._live = live
 
     def register(self, candidate: Mapping[str, Any]) -> dict[str, Any]:
         request = build_register_request(
             candidate, base_url=self._base_url, internal_key=self._internal_key
         )
         if not self._live:
-            return {"status": "dry_run", "recorded": False, "request": request}
+            redacted = dict(request)
+            redacted["headers"] = {**request["headers"], "x-internal-key": "***redacted***"}
+            return {"status": "dry_run", "recorded": False, "request": redacted}
 
         response = self._transport(request)
         status = response.get("status")
@@ -133,7 +157,8 @@ class AdminApiRecorder:
             raise AdminApiResponseError(
                 f"non-JSON response (status={status})"
             ) from exc
-        if status != 200 or payload.get("ok") is not True:
+        # 서버 route.ts — 신규 등록 201 {deduped:false}, 동일인 갱신 200 {deduped:true}
+        if status not in (200, 201) or not isinstance(payload, dict) or payload.get("ok") is not True:
             raise AdminApiResponseError(
                 f"register rejected (status={status}): {payload.get('error', 'unknown')}"
             )
