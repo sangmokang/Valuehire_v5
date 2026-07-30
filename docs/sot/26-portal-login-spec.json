@@ -2,7 +2,7 @@
   "$schema_note": "포털 로그인 빠른 진입 스펙 (spec-driven SOT). 사장님 지시(2026-06-25, /st): 'AI Search 로직이 무너지고 무시하고 진행한 원인 + 로그인이 너무 길었던 원인 모두 적대적으로 찾아 스킬에 반영하고, 스펙을 JSON으로 명확하게 조여 박아라.' 이 파일이 3사(사람인·잡코리아·링크드인) 로그인 진입의 단일 기계 명세다. 기존 스킬이 가리키던 docs/sot/10-auto-login.md(부재)·tools/.../auto-login.mjs(부재)의 죽은 참조를 대체한다.",
   "id": "26-portal-login-spec",
   "version": "1.4.0",
-  "updated_at": "2026-07-26",
+  "updated_at": "2026-07-31",
   "title": "포털 로그인 빠른 진입 스펙 (raw CDP 단일탭 · exact macOS 창 인계 · HUMAN_AUTH 무조작 · 안전 keepalive)",
   "verified_live": "2026-06-25 사람인·잡코리아 raw CDP 자동로그인 성공(캡차 0), 2026-06-09/07-07 링크드인도 시크릿 저장소 자동로그인 대상임을 재확정. 2026-07-18 macOS에서 Python Quartz는 미설치였지만 Swift CoreGraphics CGWindowID 열거와 `screencapture -x -l <CGWindowID>` 단일 창 캡처 기본 동작을 실기기로 확인. 2026-07-26 Mac mini에서 같은 9225를 선언한 IPv4 LinkedIn/IPv6 사람인 Chrome 공존 상태에서 실제 IPv4 LISTEN PID 34202와 기존 login-cap target을 정식 auto-login 러너가 선택했고, Keychain을 shell env 주입 없이 읽어 실제 보안문자/CAPTCHA를 제출 0회 HUMAN_AUTH로 판정했다. CAPTCHA 창의 visible marker 설치는 실패해 사람 인증 완료는 아직 미실증이며 과장하지 않는다.",
   "replaces_dead_refs": [
@@ -22,7 +22,9 @@
     "INV4: 자율(무인) 발송('보내기'/Send/제안발송)은 로그인 흐름과 무관하게 절대 자동 금지 — SOT3/SOT28 자동발송 게이트를 통과한 건만 자동. **단, 사장님이 특정 메일/발송을 '보내라·발송하라'고 명시 지시하면 초안에서 멈추지 않고 Send까지 실행한다(자율 발송이 아니라 사장님 명시 지시 이행).** 발송 실행 도구가 초안(draft)만 지원하면 그 한계를 사장님께 알린다.",
     "INV5: connectOverCDP 전체 attach 금지(탭 과다 시 hang). raw CDP 단일탭만 사용.",
     "INV6: 사람 개입(2FA·캡차·체크포인트·멀티세션 락)이 필요하면 정확한 CDP target과 해당 endpoint/profile을 가진 기존 Chrome 루트 프로세스 PID를 Swift CoreGraphics의 유일한 CGWindowID에 1:1로 결합한다. title 변경 전 PID+bounds preflight와 title prefix 변경 후 PID+bounds+prefix 해석이 같은 CGWindowID여야 한다. 결과가 0개/여러 개면 fail-closed한다. 해당 창에만 로그인 title·배지를 표시하고 1회 표면화한 후 HUMAN_AUTH에서는 읽기·대기 외 브라우저 조작을 0회로 유지한다.",
-    "INV7: ai-search·humansearch·url·login의 화면 저장은 session_guard capture-evidence 정식 러너 하나로 수행한다. 기존 exact target·site lease·owner idle·positive auth marker를 모두 다시 확인하고, 브라우저 이동·클릭·입력·focus·새 탭·종료 없이 private screenshot·visible text·manifest·SHA-256 receipt가 전부 저장된 경우만 saved다. 하나라도 실패하면 다음 후보 이동·점수화·완료 처리를 금지한다."
+    "INV7: ai-search·humansearch·url·login의 화면 저장은 session_guard capture-evidence 정식 러너 하나로 수행한다. 기존 exact target·site lease·owner idle·positive auth marker를 모두 다시 확인하고, 브라우저 이동·클릭·입력·focus·새 탭·종료 없이 private screenshot·visible text·manifest·SHA-256 receipt가 전부 저장된 경우만 saved다. 하나라도 실패하면 다음 후보 이동·점수화·완료 처리를 금지한다.",
+    "INV8(2026-07-31 오너 지시, AC-A): INV2의 멀티세션 락(세션충돌) STOP은 기본값으로 유지한다. 단, 사장님이 이 기기에서 명시적으로 로그인을 지시한 경우에만(session_guard auto-login --owner-takeover) 세션충돌 신호를 이유로 멈추지 않고 자격증명 제출까지 진행한다 — 다른 기기의 세션은 LinkedIn 자체 단일좌석 정책으로 자동 무효화되며, 별도 로그아웃 조작을 하지 않는다. 캡차·2FA·checkpoint 등 진짜 보안챌린지는 이 플래그와 무관하게 항상 STOP한다 — 오너 지시의 대상이 아니다.",
+    "INV9(2026-07-31 오너 지시, AC-B): 로그인은 최우선 과제다. 사장님 개입(양보 사유)은 3사 도메인의 아무 화면이 아니라 그 사이트의 **로그인 화면 자체**를 조작 중일 때만 인정한다 — 검색·채용공고 등 다른 3사 화면을 보고 있는 것은 로그인 자동화를 막지 않는다. 로그인 화면 여부 판독이 실패하면 fail-closed로 로그인 화면으로 간주해 양보한다. 구현: tools/multi_position_sourcing/owner_activity.py의 detect_login_screen_snapshot()/is_login_screen_path()."
   ],
   "human_auth_control": {
     "window_resolution": "managed site endpoint -> exact existing root browser process command line(--remote-debugging-port + --user-data-dir) -> browser PID/profile -> exact target id -> Browser.getWindowForTarget bounds -> CoreGraphics PID+bounds offscreen-inclusive preflight -> target-only title prefix+badge -> CoreGraphics same PID+bounds+prefix same CGWindowID -> guarded Page.bringToFront + PID-bound AppKit activation -> same CGWindowID on-screen proof",
@@ -46,8 +48,23 @@
     "ambiguity_policy": "preflight PID+bounds 또는 post-marker PID+bounds+title-prefix 결과가 0개/여러 개이거나 CGWindowID가 바뀌면 focus/capture 0회, HUMAN_ACTIVE/HANDOFF로 fail-closed. visible marker 또는 exact window 증명이 실패하면 traceback 대신 handoff_failed/exact_window_presentation_failed를 반환하고 first window·title contains·임의 focus fallback을 금지한다.",
     "max_presentations_per_episode": 1,
     "presentation_timing": "AI_ATTACHED에서 title prefix+badge+exact window 1회 표면화 후 HUMAN_AUTH 진입",
-    "allowed_during_wait": ["read_auth_marker", "read_owner_idle", "wait"],
-    "forbidden_during_wait": ["navigate", "reload", "back", "click", "type", "submit", "popup_close", "close", "focus", "new_page"],
+    "allowed_during_wait": [
+      "read_auth_marker",
+      "read_owner_idle",
+      "wait"
+    ],
+    "forbidden_during_wait": [
+      "navigate",
+      "reload",
+      "back",
+      "click",
+      "type",
+      "submit",
+      "popup_close",
+      "close",
+      "focus",
+      "new_page"
+    ],
     "poll_interval_seconds_minimum": 5,
     "timeout_seconds": null,
     "quiet_after_owner_input_seconds": 15,
@@ -89,11 +106,33 @@
     "legacy_portal_login": "fail-closed delegation only; not the human-auth or keepalive runner"
   },
   "browser_evidence_capture": {
-    "scope": ["ai-search", "humansearch", "url", "login"],
+    "scope": [
+      "ai-search",
+      "humansearch",
+      "url",
+      "login"
+    ],
     "connection": "raw CDP single exact existing target under the site's existing lease",
-    "required_before_capture": ["exact target id", "fresh owner-idle mutation guard", "positive authenticated DOM marker", "official site URL", "stable URL and visible text"],
+    "required_before_capture": [
+      "exact target id",
+      "fresh owner-idle mutation guard",
+      "positive authenticated DOM marker",
+      "official site URL",
+      "stable URL and visible text"
+    ],
     "browser_mutations": [],
-    "forbidden": ["caller-declared safety string", "new browser/window/tab", "navigate", "reload", "back", "click", "type", "focus", "close", "extension-only success"],
+    "forbidden": [
+      "caller-declared safety string",
+      "new browser/window/tab",
+      "navigate",
+      "reload",
+      "back",
+      "click",
+      "type",
+      "focus",
+      "close",
+      "extension-only success"
+    ],
     "success_condition": "private screenshot + visible text + manifest + SHA-256 receipt all saved",
     "profile_mode": "profile URL identity, position id, 1-based candidate index, and ProfileArchiveStore receipt are additionally required",
     "failure_policy": "fail-closed; saved/score/advance/complete is forbidden and the CDP WebSocket alone is disconnected"
@@ -279,10 +318,10 @@
     "로그인 여부를 URL만으로 단정했는가? → RC4 재발",
     "채널별로 흐름 중간에 따로 로그인했는가? → RC5 재발(선제 일괄 해야)",
     "멀티세션/캡차를 자동 우회·재클릭했는가? → INV2 치명 위반",
-    "죽은 참조(10-auto-login.md, auto-login.mjs)를 다시 가리키는가? → RC1/RC2 재발"
-    ,"같은 port 선언을 실제 endpoint LISTEN PID 확인 없이 모호성으로만 중단했는가? → RC10 재발"
-    ,"기존 LinkedIn login-cap 폼을 버리고 /uas/login으로 무조건 이동했는가? → RC11 재발"
-    ,"에이전트별 shell에서 자격증명을 env로 재주입했는가? → RC12 재발"
-    ,"visible marker 실패를 traceback으로 노출하거나 임의 focus로 우회했는가? → RC13 재발"
+    "죽은 참조(10-auto-login.md, auto-login.mjs)를 다시 가리키는가? → RC1/RC2 재발",
+    "같은 port 선언을 실제 endpoint LISTEN PID 확인 없이 모호성으로만 중단했는가? → RC10 재발",
+    "기존 LinkedIn login-cap 폼을 버리고 /uas/login으로 무조건 이동했는가? → RC11 재발",
+    "에이전트별 shell에서 자격증명을 env로 재주입했는가? → RC12 재발",
+    "visible marker 실패를 traceback으로 노출하거나 임의 focus로 우회했는가? → RC13 재발"
   ]
 }
