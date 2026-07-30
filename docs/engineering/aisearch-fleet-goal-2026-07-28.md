@@ -75,9 +75,11 @@ ClickUp + Discord + admin.valuehire.cc 세 곳에 결과를 남긴다. 발송은
 | D9 | 브라우저 사용중 표시 | **빨간 띠** 오버레이(신규 크롬 익스텐션) |
 | D10 | 디스코드 결과 채널 | `1470955309089554554`(서치 결과 전용, 기존 유지) |
 | D11 | 디스코드 소통 채널 | `1512503041448743092`(밸류커넥트 멤버용 일반 채널, 신규) |
-| D12 | admin.valuehire.cc 연동 방식 | **논의 중 — 미확정.** Supabase 직접쓰기(기존 weekly-update 방식, 의존성 있음) vs
-  신규 API(의존성 없음, 그러나 `valuehire_v4` 레포에 별도 개발 필요). 사장님이 "API 개발 이어나가자"고
-  하셨으나 admin 연동의 최종 방식(직접 DB냐 API냐)은 아직 명시적으로 재확인받지 못했다 — **AC-6 착수 전 재확인 필요**.
+| D12 | admin.valuehire.cc 연동 방식 | **확정 — 신규 API** (2026-07-31 사장님 재확인 "API로 하기로 한거아냐?").
+  서버 측은 valuehire_v4 `POST /api/aisearch/register` (커밋 db7429c2, PR#744)로 **이미 구현됨** —
+  x-internal-key 인증, 필수 {name, profile_url(https), match_score 0-100·60 게이트, why_fit, channel},
+  선택 {profile_summary, jd_id, jd_title, skills[]}, jd_id 내 canonicalIdentityKey dedup(update).
+  v5 쪽은 이 계약을 부르는 클라이언트(AC-6)만 구현. |
 - 인프라 재사용 여부(격리 범위): **완전 독립 구조**(SOT29 미재사용, 확정)
 - zero 문서 취급: **참고만, 의존 안 함**(확정)
 - SOT25 ClickUp 리스트 ID: 사장님 지정 리스트와 **동일**(`901818680208`) — 이중 SOT 문제 없음(확정)
