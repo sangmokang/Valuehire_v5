@@ -90,6 +90,32 @@ def test_already_authenticated_no_mutation():
     assert not any("value" in e or "SUBMIT" in e for e in tab.evals)
 
 
+def test_linkedin_talent_home_user_menu_is_authenticated_without_mutation():
+    """실제 Recruiter 홈은 body에 '/talent' 문자열이 없어도 로그인된 화면이다."""
+    tab = FakeTab([
+        {
+            "url": "https://www.linkedin.com/talent/home",
+            "body": (
+                "0 notifications total\n"
+                "LinkedIn Talent Solutions\n"
+                "Expand the user menu\n"
+                "Value Connect - RPS\n"
+                "Projects\n"
+                "Recruiter search"
+            ),
+        }
+    ])
+
+    result = ssl.perform_autologin(
+        tab, "linkedin_rps", creds(), sleep=lambda _seconds: None
+    )
+
+    assert result["state"] == "AUTHENTICATED"
+    assert result["mutations"] == 0
+    assert tab.navigations == []
+    assert not any("value" in expr or "SUBMIT" in expr for expr in tab.evals)
+
+
 def test_challenge_hands_off_without_submit():
     tab = FakeTab([{"url": "https://www.saramin.co.kr/zf_user/auth?ut=c", "body": "로그인 아이디"},
                    CAPTCHA])  # navigate 후 캡차 등장
