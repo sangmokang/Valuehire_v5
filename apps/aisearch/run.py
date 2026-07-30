@@ -38,6 +38,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from apps.aisearch.core.boolean_builder import DEFAULT_LOCATION, build_search_plan
 from apps.aisearch.core.cdp_driver import CdpDriver, connect_websocket_transport
+from apps.aisearch.core.discord_notify import DiscordNotifier
 from apps.aisearch.core.intervention import InterventionMonitor
 from apps.aisearch.core.orchestrator import (
     LINKEDIN_CHANNEL,
@@ -61,32 +62,68 @@ Extractor = Callable[[list[dict]], list[dict]]
 class JsonlPageStore:
     """PageStore 계약(D4 전량 저장)의 로컬 JSONL 구현 — 네트워크 0.
 
-    채널 스레드 3개가 동시에 저장하므로 파일 쓰기는 락으로 직렬화한다.
-    ``rows_for(channel)`` 로 저장된 페이지를 추출기에 되돌려 준다(4차 배선).
+    5차 결함 ② — append 전용이면 재실행마다 같은 페이지가 중복 적재된다.
+    저장 키 (table, channel, position_ref, url) 로 **upsert**(기존 행 갱신)
+    한다: 초기화 때 기존 파일을 키 인덱스로 적재하고, 갱신 시 파일 전체를
+    다시 쓴다(재실행 = 새 인스턴스여도 중복 0). 키 필드가 없는 행은 id 로
+    구분해 보존한다(다른 테이블 행 오염 방지).
+
+    채널 스레드 3개가 동시에 저장하므로 쓰기는 락으로 직렬화한다.
+    ``rows_for(channel, position_ref)`` 로 **현재 포지션의** 저장 페이지만
+    추출기에 되돌려 준다(예전 실행의 다른 포지션 자료 혼입 금지).
     """
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        #: 저장 키 → 행(테이블 포함). 삽입 순서 보존(dict 순서).
+        self._rows: dict[tuple, dict] = {}
+        if self._path.exists():
+            for line in self._path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                stored = json.loads(line)
+                self._rows[self._key(stored.get("table", ""), stored)] = stored
+
+    @staticmethod
+    def _key(table: str, row: dict) -> tuple:
+        channel = row.get("channel")
+        position_ref = row.get("position_ref")
+        url = row.get("url")
+        if channel and position_ref and url:
+            return (table, channel, position_ref, url)
+        # 키 필드 없는 행 — id(또는 전체 내용)로 구분해 덮어쓰기 방지.
+        return (table, "__no_page_key__", row.get("id") or json.dumps(row, sort_keys=True))
 
     def upsert(self, table: str, row: dict) -> None:
-        line = json.dumps({"table": table, **row}, ensure_ascii=False) + "\n"
-        with self._lock, self._path.open("a", encoding="utf-8") as f:
-            f.write(line)
-
-    def rows_for(self, channel: str) -> list[dict]:
-        """채널의 저장 행 전부(원문 raw_html_or_text 포함) — 추출기 입력."""
         with self._lock:
-            if not self._path.exists():
-                return []
-            lines = self._path.read_text(encoding="utf-8").splitlines()
-        rows = [json.loads(line) for line in lines if line.strip()]
-        return [row for row in rows if row.get("channel") == channel]
+            self._rows[self._key(table, row)] = {"table": table, **row}
+            lines = [
+                json.dumps(stored, ensure_ascii=False)
+                for stored in self._rows.values()
+            ]
+            self._path.write_text(
+                "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
+            )
+
+    def rows_for(self, channel: str, position_ref: str) -> list[dict]:
+        """현재 채널+포지션의 저장 행(원문 포함)만 — 추출기 입력(혼입 0)."""
+        with self._lock:
+            rows = list(self._rows.values())
+        return [
+            row
+            for row in rows
+            if row.get("channel") == channel
+            and row.get("position_ref") == position_ref
+        ]
 
 
 class StderrNotifier:
-    """AC-7 차단 알림의 최소 구현 — 표준에러로 즉시 표면화(삼키지 않는다)."""
+    """(구) stderr 전용 알림 — 5차 결함 ③ 이후 조립 기본은 DiscordNotifier.
+
+    DiscordNotifier 가 stderr 표면화를 포함하므로 조립에서는 더 쓰지 않는다.
+    """
 
     def notify(self, message: str) -> None:
         print(f"[aisearch][차단 알림] {message}", file=sys.stderr)
@@ -229,6 +266,7 @@ def main(
     transport_factory: Optional[Callable[[str], Any]] = None,
     extractors: Optional[Mapping[str, Extractor]] = None,
     recorder: Optional[DualRecorder] = None,
+    notifier: Optional[Any] = None,
 ) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m apps.aisearch.run",
@@ -296,7 +334,12 @@ def main(
     }
 
     store = JsonlPageStore(Path(args.pages_out))
-    monitor = InterventionMonitor(time.monotonic, StderrNotifier())
+    if notifier is None:
+        # 5차 결함 ③ — 차단 알림은 Discord notifier 어댑터(채널
+        # 1512503041448743092)로 배선한다. 실제 발신(send 클라이언트)은
+        # --live 게이트 뒤 — 기본은 payload 계획만 기록(+stderr 표면화).
+        notifier = DiscordNotifier()
+    monitor = InterventionMonitor(time.monotonic, notifier)
     if recorder is None:
         recorder = DualRecorder(
             _NotConfiguredClient("ClickUp"), _NotConfiguredClient("Discord")
@@ -312,7 +355,9 @@ def main(
                 f"채널 {channel!r} 후보 추출기 미배선(fail-closed) — "
                 "extractors 인자를 확인하십시오"
             )
-        return extractor(store.rows_for(channel))
+        # 5차 결함 ② — 예전 실행의 다른 포지션 자료 혼입 금지: 현재
+        # position_ref(JD position_name)의 저장 행만 추출기에 넘긴다.
+        return extractor(store.rows_for(channel, jd["position_name"]))
 
     deps = build_deps(
         drivers[LINKEDIN_CHANNEL],

@@ -298,6 +298,9 @@ class CdpDriver:
         self._last_human_inputs = 0
         #: 결함 ⑩ — 연결 단위 락: 같은 연결 동시 호출 직렬화(응답 혼선 방지).
         self._conn_lock = threading.Lock()
+        #: 5차 결함 ① — 마지막 목록 페이지 URL. 상세 프로필을 현재 탭으로 연
+        #: 뒤 여기로 복귀해야 '다음 페이지' 순회(20페이지)가 이어진다.
+        self._last_list_url: str = ""
 
     # ── 기본 evaluate/navigate ──────────────────────────────────────────
 
@@ -579,8 +582,11 @@ class CdpDriver:
             self.execute_search(search_payload)
         else:
             self.goto_next_page(channel)
+        url = self.current_url()
+        # 5차 결함 ① — 상세 열람 후 복귀 지점으로 목록 URL 을 기억한다.
+        self._last_list_url = url
         return {
-            "url": self.current_url(),
+            "url": url,
             "content": self.capture_html(),
             "detail_refs": self.list_detail_refs(channel),
             "has_next": self.has_next_page(channel),
@@ -590,7 +596,13 @@ class CdpDriver:
         if not isinstance(ref, str) or not ref:
             raise CdpDriverError(f"상세 ref 가 비어 있다(fail-closed): {ref!r}")
         self.navigate(ref)  # 내부에서 로드 완료 대기(결함 ②/⑧)
-        return {"url": ref, "content": self.capture_html()}
+        content = self.capture_html()
+        # 5차 결함 ① — 상세 프로필은 현재 탭으로 열므로, 캡처 후 반드시 목록
+        # 페이지로 복귀(로드 대기 포함)해야 '다음 페이지' 컨트롤을 목록 화면
+        # 기준으로 찾을 수 있다(20페이지 순회 지속).
+        if self._last_list_url:
+            self.navigate(self._last_list_url)  # 내부에서 로드 완료 대기
+        return {"url": ref, "content": content}
 
     # ── (d) 사람 입력/캡차 폴링 → InterventionMonitor 이벤트 공급 ────────
 
