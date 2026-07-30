@@ -100,7 +100,10 @@ class TestRunAssembly:
             for m, p in transport.calls
             if m == "Runtime.evaluate" and "/*vh:fill*/" in p.get("expression", "")
         ]
-        assert any("백엔드" in f for f in fills)  # RPS Boolean 키워드 입력
+        # RPS Boolean 키워드 입력 — fill JS 는 json.dumps(ensure_ascii=True)로
+        # 이스케이프하므로 한글은 \uXXXX 형태로 실린다.
+        escaped_keyword = json.dumps("백엔드")[1:-1]
+        assert any(escaped_keyword in f for f in fills)
 
     def test_live_flag_without_record_clients_fails_closed(self, tmp_path):
         with pytest.raises(SystemExit) as exc:

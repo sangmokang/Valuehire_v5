@@ -112,11 +112,15 @@ def paginate_and_store(
     channel: str,
     position_ref: str,
     machine: str,
+    before_store: Callable[[], None] | None = None,
 ) -> PaginationResult:
     """검색 결과를 1페이지부터 최대 MAX_PAGES 까지 순회하며 전량 저장한다.
 
     fetch_list_page(page) -> {"url", "content", "detail_refs", "has_next"}
     fetch_detail_page(ref) -> {"url", "content"}
+    before_store: 매 upsert "직전"에 호출되는 훅(V1 3차 결함 ⑥ 수정) —
+    응답 수신 도중 개입 신호(캡차 등)가 들어왔으면 여기서 예외를 던져
+    그 페이지가 저장되지 않게 한다. 예외는 그대로 전파된다(fail-closed).
 
     반환 next_action:
     - "switch_boolean_variant": 20페이지까지 다 돌았고 결과가 더 남아 있음(D3 종료 시그널)
@@ -137,6 +141,8 @@ def paginate_and_store(
         pages_crawled += 1
 
         captured_at = _utcnow_iso()
+        if before_store is not None:
+            before_store()  # 결함 ⑥ — 응답 도중 개입 신호면 이 페이지 저장 0건
         store.upsert(
             TABLE_NAME,
             _make_row(
@@ -154,6 +160,8 @@ def paginate_and_store(
         for ref in list_page.get("detail_refs", []):
             detail = fetch_detail_page(ref)
             details_opened += 1
+            if before_store is not None:
+                before_store()  # 결함 ⑥ — 상세 응답 도중 개입 신호면 저장 0건
             store.upsert(
                 TABLE_NAME,
                 _make_row(

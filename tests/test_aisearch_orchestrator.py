@@ -9,6 +9,7 @@ V1 적대검증 BLOCKER("고아 모듈/배선 부재") 해소 계약:
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import pytest
@@ -144,7 +145,9 @@ class FakeDriver:
         if self.release_fail and '"active": false' in snippet:
             raise RuntimeError("banner release failed")
         self.snippets.append(snippet)
-        self.events.append(("js", snippet))
+        # 3차 결함 ⑩ — 채널별 스레드 동시 실행이므로 이벤트에 스레드 id 를
+        # 마지막 원소로 남겨, 채널(스레드) 단위 순서 검증을 가능하게 한다.
+        self.events.append(("js", snippet, threading.get_ident()))
 
 
 class FakeStore:
@@ -157,7 +160,7 @@ class FakeStore:
         if self.fail:
             raise RuntimeError("store down")
         self.rows.append((table, row))
-        self.events.append(("upsert", table, row["page_type"]))
+        self.events.append(("upsert", table, row["page_type"], threading.get_ident()))
 
 
 class FakeClickUp:
@@ -247,7 +250,7 @@ class Harness:
 
     def fetch_list_page(self, channel: str, page: int, search: dict) -> dict:
         self.list_calls.append((channel, page))
-        self.events.append(("list", channel, page))
+        self.events.append(("list", channel, page, threading.get_ident()))
         self.search_payloads.append((channel, page, search))
         if self.list_side_effect is not None:
             self.list_side_effect(channel, page)
@@ -259,7 +262,7 @@ class Harness:
         }
 
     def fetch_detail_page(self, channel: str, ref: str) -> dict:
-        self.events.append(("detail", channel, ref))
+        self.events.append(("detail", channel, ref, threading.get_ident()))
         if getattr(self, "detail_side_effect", None) is not None:
             self.detail_side_effect(channel, ref)
         return {"url": f"https://example.test/{channel}/{ref}", "content": "<html>detail</html>"}
@@ -322,48 +325,67 @@ class TestHappyPath:
         report = run_search_pipeline(_jd(), h.deps())
         return h, report
 
-    def test_completed_with_four_variants_round_robin_interleaved(self):
-        # V1 2차 결함 5 — D6 "3사 동시 착수": 채널별 파이프라인을 라운드로빈으로
-        # 인터리브한다. 한 채널(LinkedIn)의 종료가 다른 채널의 시작 조건이 아니다.
+    def test_completed_with_four_variants_all_channels(self):
+        # V1 2차 결함 5 → 3차 결함 ⑩: 채널별 파이프라인은 스레드로 "실제 동시"
+        # 실행되므로 채널 간 변형 순서는 비결정적이다 — 채널별 순서와 변형
+        # 집합으로 검증한다(동시성 자체는 test_aisearch_v3_still_broken.py 의
+        # threading.Event 기반 테스트가 결정론적으로 증명).
         h, report = self._run()
         assert report.status == STATUS_COMPLETED
-        assert [(v.channel, v.task) for v in report.variants] == [
-            (LINKEDIN_CHANNEL, f"{LINKEDIN_CHANNEL}:{STAGE_SEOUL_UNIVERSITY_PRIORITY}"),
-            ("saramin", report.variants[1].task),
-            ("jobkorea", report.variants[2].task),
-            (LINKEDIN_CHANNEL, f"{LINKEDIN_CHANNEL}:{STAGE_EXPANDED}"),
+        lk_tasks = [v.task for v in report.variants if v.channel == LINKEDIN_CHANNEL]
+        # LinkedIn 채널 내부 순서(서울 우선 → 확장)는 유지된다
+        assert lk_tasks == [
+            f"{LINKEDIN_CHANNEL}:{STAGE_SEOUL_UNIVERSITY_PRIORITY}",
+            f"{LINKEDIN_CHANNEL}:{STAGE_EXPANDED}",
         ]
+        assert len(report.variants) == 4
         # AC2 디스크립터의 dedup_key 가 task 에 실려 있어야 배선 증명이 된다
-        assert "saramin|or=" in report.variants[1].task
-        assert "jobkorea|or=" in report.variants[2].task
+        saramin_task = next(v.task for v in report.variants if v.channel == "saramin")
+        jobkorea_task = next(v.task for v in report.variants if v.channel == "jobkorea")
+        assert "saramin|or=" in saramin_task
+        assert "jobkorea|or=" in jobkorea_task
 
-    def test_interleave_proved_by_execution_order(self):
-        # 실행 순서 기록(list fetch 이벤트)으로 인터리브를 증명한다:
-        # 사람인·잡코리아의 첫 fetch 가 LinkedIn 두 번째 변형의 fetch 보다 앞선다.
+    def test_each_channel_runs_on_its_own_thread(self):
+        # 3차 결함 ⑩ — 채널당 스레드 1개: 채널별 fetch 는 서로 다른 스레드에서,
+        # 같은 채널의 fetch 는 전부 같은 스레드에서 실행된다.
         h, _ = self._run()
-        order = [c for c, _p in h.list_calls]
-        first_saramin = order.index("saramin")
-        first_jobkorea = order.index("jobkorea")
-        lk_pages = [i for i, c in enumerate(order) if c == LINKEDIN_CHANNEL]
-        # LinkedIn 은 변형당 pages=2 → 두 번째 변형의 첫 fetch 는 lk_pages[2]
-        second_lk_variant_start = lk_pages[2]
-        assert first_saramin < second_lk_variant_start
-        assert first_jobkorea < second_lk_variant_start
+        threads_by_channel: dict[str, set[int]] = {}
+        for e in h.events:
+            if e[0] == "list":
+                threads_by_channel.setdefault(e[1], set()).add(e[-1])
+        assert set(threads_by_channel) == {LINKEDIN_CHANNEL, "saramin", "jobkorea"}
+        for channel, tids in threads_by_channel.items():
+            assert len(tids) == 1, f"{channel} 이 여러 스레드에서 실행됐다"
+        # 스레드 id 의 "전부 서로 다름"은 요구하지 않는다 — 페이크는 즉시
+        # 반환하므로 풀이 유휴 워커를 재사용할 수 있다(정상). 블록 시에도
+        # 다른 채널이 진행된다는 실제 동시성은 threading.Event 기반 테스트
+        # (test_aisearch_v3_still_broken.TestTrueConcurrency)가 결정론적으로
+        # 증명한다.
 
     def test_banner_wraps_each_variant_and_pagination_runs_inside(self):
         h, _ = self._run()
         on = [s for s in h.driver.snippets if '"active": true' in s]
         off = [s for s in h.driver.snippets if '"active": false' in s]
         assert len(on) == 4 and len(off) == 4  # 변형마다 표시+해제 1쌍
-        # 이벤트 순서: 각 변형은 배너 ON → list/detail/upsert → 배너 OFF
-        js_idx = [i for i, e in enumerate(h.events) if e[0] == "js"]
-        for k in range(0, len(js_idx), 2):
-            start, end = js_idx[k], js_idx[k + 1]
-            assert '"active": true' in h.events[start][1]
-            assert '"active": false' in h.events[end][1]
-            between = h.events[start + 1 : end]
-            assert between, "배너 ON/OFF 사이에 순회가 있어야 한다"
-            assert all(e[0] in ("list", "detail", "upsert") for e in between)
+        # 이벤트 순서: 각 변형은 배너 ON → list/detail/upsert → 배너 OFF.
+        # 채널 스레드가 동시 실행되므로(결함 ⑩) 스레드(=채널)별 스트림 안에서
+        # 검증한다 — 전역 인터리브는 비결정적이지만 스레드 내 순서는 결정적이다.
+        by_thread: dict[int, list[tuple]] = {}
+        for e in h.events:
+            by_thread.setdefault(e[-1], []).append(e)
+        wrapped_variants = 0
+        for events in by_thread.values():
+            js_idx = [i for i, e in enumerate(events) if e[0] == "js"]
+            assert len(js_idx) % 2 == 0, "배너 ON/OFF 짝이 맞지 않는다"
+            for k in range(0, len(js_idx), 2):
+                start, end = js_idx[k], js_idx[k + 1]
+                assert '"active": true' in events[start][1]
+                assert '"active": false' in events[end][1]
+                between = events[start + 1 : end]
+                assert between, "배너 ON/OFF 사이에 순회가 있어야 한다"
+                assert all(e[0] in ("list", "detail", "upsert") for e in between)
+                wrapped_variants += 1
+        assert wrapped_variants == 4
 
     def test_pagination_saves_every_page_to_contract_table(self):
         h, report = self._run()
@@ -437,8 +459,11 @@ class TestIntervention:
         h.list_side_effect = side_effect
         report = run_search_pipeline(_jd(), h.deps())
         assert report.status == STATUS_BLOCKED
-        # 2페이지 요청은 절대 나가지 않는다 (진행 금지)
-        assert h.list_calls == [(LINKEDIN_CHANNEL, 1)]
+        # 2페이지 요청은 절대 나가지 않는다 (진행 금지). 채널 스레드 동시
+        # 실행(결함 ⑩)이므로 "어느 채널이 먼저였나"는 비결정적이지만,
+        # 모든 채널이 1페이지(캡차 발생 지점)를 넘지 못한 것은 결정적이다.
+        assert h.list_calls, "최소 한 채널은 1페이지를 시도했다"
+        assert all(page == 1 for _c, page in h.list_calls)
         assert h.notifier.messages  # Discord 알림 경로(주입 notifier) 호출됨
         assert report.registered == [] and report.drafts == []
         # 중단 시에도 배너 해제 신호는 발신됐다
@@ -454,7 +479,8 @@ class TestIntervention:
         h.list_side_effect = side_effect
         report = run_search_pipeline(_jd(), h.deps())
         assert report.status == STATUS_WAITING_RESUME
-        assert h.list_calls == [(LINKEDIN_CHANNEL, 1)]
+        # 결함 ⑩ 동시 실행 — 모든 채널이 개입 발생 지점(1페이지)을 넘지 못한다
+        assert h.list_calls and all(page == 1 for _c, page in h.list_calls)
         # 30초 경과 후에는 모니터가 재개 가능 상태로 돌아온다(재실행 전제)
         h.now[0] += 30.0
         assert h.monitor.poll().value == "running"

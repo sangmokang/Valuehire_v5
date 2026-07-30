@@ -9,8 +9,9 @@ goal 문서(docs/engineering/aisearch-fleet-goal-2026-07-28.md) 파이프라인 
    — 사람인/잡코리아 디스크립터. JD 제외어(not_keywords)는 RPS Boolean NOT 절과
    포털 post_filter_exclude 로 전달·반영된다(2차 결함 2).
 2. D6 "3사 동시 착수": 채널별 파이프라인(LinkedIn 플랜 / 사람인 / 잡코리아)을
-   라운드로빈으로 인터리브 실행한다 — 한 채널의 종료가 다른 채널의 시작
-   조건이 아니다(2차 결함 5).
+   스레드(채널당 1, ThreadPoolExecutor)로 실제 동시 실행한다 — 한 채널의
+   드라이버 호출이 블록돼도 다른 채널은 시작·진행된다(2차 결함 5 → 3차 결함 ⑩).
+   공유 상태(개입 모니터·리포트·기록기)는 deps.lock 으로 보호한다.
 3. 각 변형마다 AC8 ``banner.build_dispatch_snippet`` 표시 → AC3
    ``pagination_store.paginate_and_store`` 순회·전량 저장 → 배너 해제.
    해제 실패는 삼키지 않고 ``PipelineReport.banner_errors`` 로 보고하며,
@@ -39,6 +40,8 @@ goal 문서(docs/engineering/aisearch-fleet-goal-2026-07-28.md) 파이프라인 
 """
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 
@@ -128,6 +131,10 @@ class PipelineDeps:
     #: 드라이버 관측 이벤트(사람 입력/캡차 등)를 돌려주는 폴러(2차 결함 10).
     #: 반환 이벤트는 intervention.feed_driver_events 규격 그대로 모니터에 공급된다.
     poll_driver_events: Optional[Callable[[], list[dict]]] = None
+    #: 3차 결함 ⑩ — 채널 스레드 간 공유 상태(개입 모니터·리포트·기록기) 보호 락.
+    #: RLock: _register_and_draft(락 보유) 내부에서 _check_monitor(락 취득)를
+    #: 다시 부르는 중첩 경로가 있다.
+    lock: threading.RLock = field(default_factory=threading.RLock)
 
 
 @dataclass
@@ -152,6 +159,10 @@ class PipelineReport:
     record_states: dict[str, RecordResult] = field(default_factory=dict)
     #: 2차 결함 8 — recorded/dry_run 이 아닌 기록 결과(초안 금지 + completed 금지).
     record_failures: list[dict[str, Any]] = field(default_factory=list)
+    #: 3차 결함 ⑦ — 제외어(not_keywords) 매칭으로 등록·초안 전에 걸러낸 후보
+    #: (제외 사유 기록). 항목: channel, profile_url, matched_keyword,
+    #: matched_field, reason.
+    excluded: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _check_monitor(deps: PipelineDeps) -> None:
@@ -160,10 +171,12 @@ def _check_monitor(deps: PipelineDeps) -> None:
     2차 결함 10: 주입된 드라이버 이벤트 폴러가 있으면 먼저 드레인해
     feed_driver_events 로 모니터에 공급한 뒤 판정한다.
     RUNNING 이 아니면 진행 금지 — BLOCKED 는 즉시 중단.
+    3차 결함 ⑩: 모니터는 채널 스레드 공유 상태 — deps.lock 으로 직렬화한다.
     """
-    if deps.poll_driver_events is not None:
-        feed_driver_events(deps.monitor, deps.poll_driver_events())
-    state = deps.monitor.poll()
+    with deps.lock:
+        if deps.poll_driver_events is not None:
+            feed_driver_events(deps.monitor, deps.poll_driver_events())
+        state = deps.monitor.poll()
     if state is MonitorState.BLOCKED:
         raise _PipelineBlocked(
             "AC7 BLOCKED — 차단 신호(캡차/2FA 등), human_reset 전까지 진행 금지"
@@ -174,18 +187,63 @@ def _check_monitor(deps: PipelineDeps) -> None:
         )
 
 
+def _find_exclusion_match(
+    cand: dict[str, Any], exclusions: list[str]
+) -> Optional[tuple[str, str]]:
+    """3차 결함 ⑦ — 후보 텍스트에서 제외어 매칭을 찾는다(casefold 부분일치).
+
+    검사 대상은 후보의 record/draft_inputs 최상위 문자열 필드 전부.
+    반환: (매칭된 제외어, 매칭 필드 경로) — 없으면 None.
+    """
+    for source_name in ("record", "draft_inputs"):
+        mapping = cand.get(source_name) or {}
+        if not isinstance(mapping, dict):
+            continue
+        for field_name, value in mapping.items():
+            if not isinstance(value, str):
+                continue
+            folded = value.casefold()
+            for term in exclusions:
+                if term.casefold() in folded:
+                    return term, f"{source_name}.{field_name}"
+    return None
+
+
 def _register_and_draft(
     jd: dict[str, Any],
     deps: PipelineDeps,
     report: PipelineReport,
     channel: str,
     previous: Optional[PipelineReport],
+    exclusions: list[str],
 ) -> None:
-    """AC4 강제 게이트 경유 등록 → AC5 기록(재개 지원) → AC9 초안 생성."""
+    """3차 결함 ⑦ exclusion 게이트 → AC4 강제 게이트 경유 등록 →
+    AC5 기록(재개 지원) → AC9 초안 생성."""
     position_name = jd["position_name"]
     for cand in deps.extract_candidates(channel):
         _check_monitor(deps)  # 2차 결함 1 — 등록 전 차단 확인
         profile_url = cand["record"]["profile_url"]
+
+        # 3차 결함 ⑦ — 제외어 매칭 후보는 등록·초안 어느 경로에도 진입 금지.
+        # 검색 payload(NOT 절/post_filter_exclude)와 별개로 후보 단계에서
+        # 최종 강제하고, 제외 사유를 기록한다(fail-closed).
+        matched = _find_exclusion_match(cand, exclusions)
+        if matched is not None:
+            term, field_path = matched
+            with deps.lock:
+                report.excluded.append(
+                    {
+                        "channel": channel,
+                        "profile_url": profile_url,
+                        "matched_keyword": term,
+                        "matched_field": field_path,
+                        "reason": (
+                            f"JD 제외어 '{term}' 이(가) 후보 {field_path} 에서 "
+                            "매칭 — 등록·초안 진입 금지(결함 ⑦ exclusion 게이트)"
+                        ),
+                    }
+                )
+            continue
 
         # 2차 결함 7 — 이전 실행 결과가 있으면 미완 단계만 이어서 수행한다.
         prev_state: Optional[RecordResult] = None
@@ -193,7 +251,8 @@ def _register_and_draft(
             prev_state = previous.record_states.get(profile_url)
             if prev_state is not None and prev_state.status in _RECORD_OK_STATUSES:
                 # 이미 완결된 후보 — 재기록(중복 발신) 금지, 상태만 이월한다.
-                report.record_states[profile_url] = prev_state
+                with deps.lock:
+                    report.record_states[profile_url] = prev_state
                 continue
             if prev_state is not None and not prev_state.pending_steps:
                 prev_state = None  # 재개할 미완 단계가 없으면 처음부터 다시
@@ -207,37 +266,42 @@ def _register_and_draft(
             # register_if_eligible 이 BelowThresholdError 로 여기 진입 자체를 막는다.
             _check_monitor(deps)  # 2차 결함 1 — 기록(외부 쓰기) 전 차단 확인
             candidate = Candidate(score=int(gated["score"]), **_cand["record"])
-            return deps.recorder.record(
-                position_name=position_name,
-                candidate=candidate,
-                resume_from=_resume,
-            )
+            with deps.lock:  # 결함 ⑩ — 기록기(ClickUp/Discord)는 공유 상태
+                return deps.recorder.record(
+                    position_name=position_name,
+                    candidate=candidate,
+                    resume_from=_resume,
+                )
 
         try:
             record_result = register_if_eligible(cand["score_payload"], _register)
         except BelowThresholdError as e:
-            report.below_threshold.append(
-                {"channel": channel, "score": e.score, "threshold": e.threshold}
-            )
-            continue
-        report.record_states[profile_url] = record_result
-
-        # 2차 결함 8 — recorded/dry_run 이 아니면 초안 금지 + 실패로 집계.
-        if record_result.status not in _RECORD_OK_STATUSES:
-            if record_result.status != recorders.STATUS_SKIPPED:
-                report.record_failures.append(
-                    {
-                        "channel": channel,
-                        "profile_url": profile_url,
-                        "status": record_result.status,
-                        "error": record_result.error,
-                    }
+            with deps.lock:
+                report.below_threshold.append(
+                    {"channel": channel, "score": e.score, "threshold": e.threshold}
                 )
             continue
-        report.registered.append(record_result)
+        with deps.lock:
+            report.record_states[profile_url] = record_result
+
+            # 2차 결함 8 — recorded/dry_run 이 아니면 초안 금지 + 실패로 집계.
+            if record_result.status not in _RECORD_OK_STATUSES:
+                if record_result.status != recorders.STATUS_SKIPPED:
+                    report.record_failures.append(
+                        {
+                            "channel": channel,
+                            "profile_url": profile_url,
+                            "status": record_result.status,
+                            "error": record_result.error,
+                        }
+                    )
+                continue
+            report.registered.append(record_result)
         _check_monitor(deps)  # 2차 결함 1 — 초안 생성 전 차단 확인
         # AC9 — 전달 초안만 생성(발송 경로 없음, is_draft_only=True)
-        report.drafts.append(build_candidate_draft(**cand["draft_inputs"]))
+        draft = build_candidate_draft(**cand["draft_inputs"])
+        with deps.lock:
+            report.drafts.append(draft)
 
 
 def _run_variant(
@@ -248,10 +312,12 @@ def _run_variant(
     task: str,
     search_payload: dict[str, Any],
     previous: Optional[PipelineReport],
+    exclusions: list[str],
 ) -> PaginationResult:
     """검색 변형 1개 실행: 배너 ON → AC3 순회·저장 → 배너 OFF → 후보 처리."""
     variant = VariantRun(channel=channel, task=task)
-    report.variants.append(variant)
+    with deps.lock:  # 결함 ⑩ — 리포트는 채널 스레드 공유 상태
+        report.variants.append(variant)
 
     _check_monitor(deps)  # 변형 시작 전 점검
     # AC8 — "조작 시작" 빨간 띠 표시 신호를 드라이버 포트로 전달
@@ -273,6 +339,9 @@ def _run_variant(
             channel=channel,
             position_ref=jd["position_name"],
             machine=deps.machine,
+            # 3차 결함 ⑥ — 목록/상세 "저장 직전"에도 개입 모니터를 재확인한다.
+            # 응답 수신 도중 캡차가 들어오면 그 페이지는 저장 0건으로 중단된다.
+            before_store=lambda: _check_monitor(deps),
         )
     finally:
         # 배너 해제 신호는 중단 경로에서도 반드시 시도한다. 2차 결함 3:
@@ -281,12 +350,13 @@ def _run_variant(
         try:
             deps.driver.run_js(build_dispatch_snippet(False))
         except Exception as release_error:  # noqa: BLE001 — 본 오류에 종속, 보고만
-            report.banner_errors.append(
-                {"channel": channel, "task": task, "error": str(release_error)}
-            )
+            with deps.lock:
+                report.banner_errors.append(
+                    {"channel": channel, "task": task, "error": str(release_error)}
+                )
 
     _check_monitor(deps)  # 2차 결함 1 — 후보 처리(등록 경로) 진입 전 차단 확인
-    _register_and_draft(jd, deps, report, channel, previous)
+    _register_and_draft(jd, deps, report, channel, previous, exclusions)
     return variant.pagination
 
 
@@ -388,23 +458,47 @@ def run_search_pipeline(
             career_max=jd.get("career_max"),
         )
 
-        # 2) D6 "3사 동시 착수"(2차 결함 5) — 채널별 러너를 라운드로빈으로
-        # 인터리브 실행한다. 한 채널의 종료는 다른 채널의 시작 조건이 아니다.
+        # 3차 결함 ⑦ — 제외어는 검색 payload 반영과 별개로 후보 단계에서
+        # 최종 강제한다(exclusion 게이트). 형식은 위 디스크립터 빌더가 이미
+        # fail-closed 로 검증했다(list[str] 강제).
+        exclusions: list[str] = list(jd.get("not_keywords") or [])
+
+        # 2) D6 "3사 동시 착수"(2차 결함 5 → 3차 결함 ⑩ 수정) — 채널별
+        # 파이프라인을 스레드(채널당 1)로 "실제 동시" 실행한다. 한 채널의
+        # 드라이버 호출이 블록돼도 다른 채널은 시작·진행된다. 공유 상태
+        # (개입 모니터·리포트·기록기)는 deps.lock 으로 보호한다.
         runners: list[Any] = [_LinkedInRunner(plan)] + [
             _DescriptorRunner(d) for d in descriptors
         ]
-        active = list(runners)
-        while active:
-            for runner in list(active):
+
+        def _run_channel(runner: Any) -> None:
+            while True:
                 unit = runner.next_unit()
                 if unit is None:
-                    active.remove(runner)
-                    continue
+                    return
                 task, payload = unit
                 pagination = _run_variant(
-                    jd, deps, report, runner.channel, task, payload, previous
+                    jd, deps, report, runner.channel, task, payload,
+                    previous, exclusions,
                 )
                 runner.feed(pagination)
+
+        with ThreadPoolExecutor(
+            max_workers=len(runners), thread_name_prefix="aisearch-channel"
+        ) as pool:
+            futures = [pool.submit(_run_channel, runner) for runner in runners]
+        channel_errors: list[BaseException] = []
+        for future in futures:
+            exc = future.exception()
+            if exc is not None:
+                channel_errors.append(exc)
+        if channel_errors:
+            # 상태 우선순위: BLOCKED(차단) > WAITING(개입) > 그 외(E8 abort).
+            for kind in (_PipelineBlocked, _PipelineWaiting):
+                for exc in channel_errors:
+                    if isinstance(exc, kind):
+                        raise exc
+            raise channel_errors[0]
 
         # 2차 결함 3·8 — 배너 해제 실패나 기록 미완결이 있으면 completed 금지.
         has_pending_records = any(
