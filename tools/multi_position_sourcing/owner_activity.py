@@ -398,3 +398,136 @@ def detect_owner_activity_snapshot(
 
 def detect_owner_activity(**kwargs: Any) -> bool:
     return detect_owner_activity_snapshot(**kwargs).owner_activity_detected
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-31 오너 지시(AC-B) — "로그인은 최우선": 사장님이 3사 도메인의 아무 화면(검색·
+# 채용공고 등)을 보고 있다는 이유만으로 로그인 자동화를 막지 않는다. 오직 그 사이트의
+# **로그인 화면 자체**를 만지고 있을 때만 로그인 태스크는 양보한다. 이 판정은 로그인
+# 태스크 전용이며, 위 ``detect_owner_activity_snapshot``/``compute_yield_decision``의
+# 일반 양보 계약(다른 태스크 전부)은 그대로 둔다 — 여기서 추가만 하고 기존 것은 안 건드림.
+#
+# 경로를 읽는 것은 SOT1 최소화 원칙(호스트만 읽음)의 예외다. 범위를 최대한 좁히기 위해
+# 아래 고정 allow-list 와의 boolean 매칭 결과만 쓰고, 원문 경로는 반환·기록하지 않는다.
+_LOGIN_PATH_MARKERS: dict[str, tuple[str, ...]] = {
+    "saramin": ("/zf_user/auth", "/login"),
+    "jobkorea": ("/login",),
+    "linkedin_rps": ("/uas/login", "/checkpoint", "/authwall", "enterprise-authentication"),
+}
+
+
+def is_login_screen_path(site: str, path: str | None) -> bool:
+    """path 가 site 의 로그인 화면 마커와 일치하는가.
+
+    - path 를 못 읽었으면(None) 판독 불가 → True(fail-closed, 로그인 화면일 수 있다고 본다).
+    - 마커와 일치하면 True. 일치하지 않으면(=확실히 로그인 화면이 아닌 3사 페이지) False.
+    """
+    if path is None:
+        return True
+    markers = _LOGIN_PATH_MARKERS.get(site, ())
+    lowered = path.lower()
+    return any(marker in lowered for marker in markers)
+
+
+def _path_from_url(url: str) -> str | None:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if not parts.scheme.startswith("http"):
+        return None
+    return parts.path or "/"
+
+
+def _macos_active_chrome_tab_url(
+    foreground_app: str, run_command: RunCommand = subprocess.run
+) -> str | None:
+    """AC-B 전용: 로그인 화면 판정에 필요한 경로만 뽑기 위해 URL 전체를 1회 읽는다.
+
+    반환값은 이 함수를 호출한 쪽에서 ``_path_from_url``로 경로만 뽑아 쓰고 버린다 —
+    호출자가 원문 URL을 저장·로그하지 않는 한 SOT1 최소화 범위를 유지한다.
+    """
+    result = _run_text(
+        [
+            "osascript",
+            "-e",
+            f'tell application "{foreground_app}" to get URL of active tab of front window',
+        ],
+        run_command,
+    )
+    if result.returncode != 0:
+        return None
+    url = (result.stdout or "").strip()
+    return url or None
+
+
+def detect_login_screen_snapshot(
+    *,
+    run_command: RunCommand = subprocess.run,
+    system_name: str | None = None,
+    fetch_json: Callable[[str], Any] | None = None,
+) -> bool:
+    """로그인 태스크 전용: 사장님이 지금 3사 로그인 화면 자체를 만지고 있는가?
+
+    True = 로그인 화면(또는 판독 불가) → 로그인 자동화는 양보해야 한다.
+    False = 로그인 화면이 아님(3사 다른 페이지 또는 크롬이 앞이 아님) → 로그인 최우선 진행 가능.
+    """
+    system = system_name or platform.system()
+    if system != "Darwin":
+        # winpc 등 경로 판독 미지원 → fail-closed(양보). macOS 만 이 예외 경로를 지원한다.
+        return True
+    try:
+        foreground_app, foreground_pid = _macos_frontmost_app_and_pid(run_command)
+    except Exception:
+        return True
+    if foreground_app is None:
+        return True
+    if foreground_app not in CHROME_APP_NAMES:
+        return False  # 크롬이 앞이 아니면 로그인 화면을 만지고 있을 수 없다.
+
+    url: str | None = None
+    try:
+        port = (
+            _chrome_debug_port_for_pid(foreground_pid, run_command)
+            if foreground_pid is not None
+            else None
+        )
+        if port is not None:
+            tabs = (fetch_json or _default_fetch_json)(f"http://127.0.0.1:{port}/json/list")
+            if isinstance(tabs, list):
+                pages = [t for t in tabs if isinstance(t, dict) and t.get("type") == "page"]
+                if pages:
+                    url = str(pages[0].get("url") or "") or None
+        else:
+            roots = _chrome_root_instance_count(run_command)
+            if roots is not None and roots <= 1:
+                url = _macos_active_chrome_tab_url(foreground_app, run_command)
+    except Exception:
+        url = None
+
+    if url is None:
+        return True  # 판독 불가 → fail-closed(양보)
+
+    host = _host_from_url(url)
+    if host is None or not _is_portal_host(host):
+        return False  # 3사 아님 → 로그인 화면 아님
+
+    def _host_matches(domain: str) -> bool:
+        return host == domain or host.endswith("." + domain)
+
+    site = next(
+        (s for s, domain in PORTAL_HOSTS_TO_SITE.items() if _host_matches(domain)),
+        None,
+    )
+    path = _path_from_url(url)
+    if site is None:
+        # 호스트는 3사인데 site 코드를 못 좁히면 가장 보수적으로 아무 사이트 마커든 일치하면 양보.
+        return any(is_login_screen_path(s, path) for s in _LOGIN_PATH_MARKERS)
+    return is_login_screen_path(site, path)
+
+
+PORTAL_HOSTS_TO_SITE: dict[str, str] = {
+    "saramin": "saramin.co.kr",
+    "jobkorea": "jobkorea.co.kr",
+    "linkedin_rps": "linkedin.com",
+}

@@ -2313,6 +2313,7 @@ def run_auto_login_episode(
     *,
     agent: str,
     target_id: str | None = None,
+    owner_takeover: bool = False,
     _credential_provider: Any | None = None,
 ) -> dict[str, Any]:
     """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
@@ -2320,10 +2321,15 @@ def run_auto_login_episode(
     lease·owner-idle 게이트를 먼저 통과하고, 정확한 기존 target 하나에만 attach한다.
     비밀번호는 공용 macOS Keychain에서 이 프로세스 안으로만 읽어
     perform_autologin 내부로만 흐른다(반환값 무비밀).
-    캡차·2FA·세션충돌이면 제출 0회로 HUMAN_AUTH를 반환한다. 종료 시 CDP WebSocket만 해제.
+    캡차·2FA면 제출 0회로 HUMAN_AUTH를 반환한다. 세션충돌은 ``owner_takeover``가
+    True일 때만 제출을 진행한다(2026-07-31 AC-A). 종료 시 CDP WebSocket만 해제.
+
+    2026-07-31(AC-B): 사장님 활동 감지는 "3사 도메인 아무 화면"이 아니라 "그 사이트의
+    로그인 화면 자체"일 때만 로그인을 양보시킨다 — 로그인은 최우선 과제이기 때문에,
+    검색 등 다른 3사 화면을 보고 있는 것은 로그인 자동화를 막지 않는다.
     """
     from . import portal_selfservice_login as ssl
-    from .owner_activity import detect_owner_activity_snapshot
+    from .owner_activity import detect_login_screen_snapshot, detect_owner_activity_snapshot
 
     if site not in _SITE_DOMAINS:
         return {"status": "unsupported_site", "site": site}
@@ -2332,8 +2338,14 @@ def run_auto_login_episode(
     except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
         return {"status": "human_active", "site": site, "note": "owner 감지 실패 → 양보"}
     if snapshot.owner_activity_detected:
-        return {"status": "human_active", "site": site,
-                "note": "사장님 활동 감지 — 자동 로그인 보류"}
+        try:
+            on_login_screen = detect_login_screen_snapshot()
+        except Exception:  # noqa: BLE001 — 판독 실패는 fail-closed 양보
+            on_login_screen = True
+        if on_login_screen:
+            return {"status": "human_active", "site": site,
+                    "note": "사장님이 로그인 화면 자체를 조작 중 — 자동 로그인 보류"}
+        # 3사 도메인의 다른 화면(검색 등)일 뿐 로그인 화면은 아님 — 로그인은 최우선 과제이므로 진행.
 
     loaded_credentials = _load_runtime_login_credentials(
         site,
@@ -2357,7 +2369,8 @@ def run_auto_login_episode(
         }, badge=True)
         try:
             outcome = ssl.perform_autologin(
-                tab, site, ssl.PortalCreds(username=username, password=password))
+                tab, site, ssl.PortalCreds(username=username, password=password),
+                owner_takeover=owner_takeover)
         finally:
             try:
                 tab.close()  # raw_cdp.close(): 배지 제거 + WebSocket 해제만(탭/브라우저 보존)
@@ -2412,11 +2425,22 @@ def main(argv: list[str] | None = None) -> int:
     autologin.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     autologin.add_argument("--agent", required=True)
     autologin.add_argument("--target-id", default=None)
+    autologin.add_argument(
+        "--owner-takeover",
+        action="store_true",
+        help=(
+            "2026-07-31 AC-A: 사장님이 이 기기에서 명시적으로 로그인을 지시했을 때만 사용. "
+            "세션 충돌(다른 기기 로그인)을 이유로 멈추지 않고 자격증명 제출까지 진행한다. "
+            "진짜 캡차/2FA/checkpoint 는 이 플래그와 무관하게 항상 멈춘다."
+        ),
+    )
     args = parser.parse_args(argv)
     site: Site = args.site
 
     if args.command == "auto-login":
-        result = run_auto_login_episode(site, agent=args.agent, target_id=args.target_id)
+        result = run_auto_login_episode(
+            site, agent=args.agent, target_id=args.target_id,
+            owner_takeover=args.owner_takeover)
         if result.get("state") == "AUTHENTICATED":
             # 로그인 성공 → 정식 증거 캡처로 login_barrier 영수증까지 발급.
             evidence_result = run_capture_evidence_episode(
