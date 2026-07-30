@@ -140,4 +140,4 @@ aisearch-ac9-jdbuilder-draft	RED	-	worktree ../Valuehire_v5-aisearch-ac9-jdbuild
 aisearch-humansearch-operating-guide	RED	-	worktree ../Valuehire_v5-aisearch-humansearch-operating-guide (branch task/aisearch-humansearch-operating-guide)
 aisearch-orchestrator	RED	-	worktree ../Valuehire_v5-aisearch-orchestrator (branch task/aisearch-orchestrator)
 aisearch-orchestrator	GREEN	#248	PR#248 merged — apps/aisearch 신규(AC-1~5,7~9 + orchestrator + cdp_driver + run.py). aisearch 테스트 321, verify 3141 passed exit 0. Codex 적대검증 5라운드+V2, 자동발송 0, AC-6은 D12 미확정 보류. AC별 워크트리 9개(task/aisearch-ac*, orchestrator) 회수.
-humansearch-authenticated-target	GREEN	#249	실제 9338 Talent 홈을 설정 프로필 불일치에도 발견하고 로그인 상태로 무조작 판정. 라이브 read-only 확인 + focused 150 passed + verify 3150 passed, 4 xfailed, 105 subtests.
+humansearch-authenticated-target	GREEN	#249	실제 9338 Talent 화면을 관리 프로필 이름 불일치에도 발견하고 로그인 상태로 무조작 판정. 개인 Chrome 제외·lease 안 target resolve. 라이브 read-only 확인 + focused 162 passed + 독립검증 63 passed/3 subtests + verify 3151 passed, 4 xfailed, 105 subtests.
