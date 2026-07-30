@@ -249,6 +249,33 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
 
         self.assertEqual(endpoints, ["http://127.0.0.1:9338"])
 
+    def test_stale_profile_fallback_rejects_two_linkedin_endpoints(self) -> None:
+        class MissingConfiguredProfile:
+            returncode = 3
+            stdout = ""
+            stderr = "configured profile not running"
+
+        def list_tabs(endpoint: str):
+            port = endpoint.rsplit(":", 1)[-1]
+            return [
+                {
+                    "id": f"target-{port}",
+                    "type": "page",
+                    "url": "https://www.linkedin.com/talent/home",
+                }
+            ]
+
+        with self.assertRaises(LookupError):
+            resolve_managed_channel_cdp_endpoint(
+                "linkedin_rps",
+                runner=lambda *_args, **_kwargs: MissingConfiguredProfile(),
+                endpoint_discoverer=lambda: [
+                    "http://127.0.0.1:9338",
+                    "http://127.0.0.1:9448",
+                ],
+                list_tabs=list_tabs,
+            )
+
     def test_managed_endpoint_fails_closed_on_ambiguous_or_remote_output(self) -> None:
         class Result:
             returncode = 0

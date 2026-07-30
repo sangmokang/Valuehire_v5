@@ -116,6 +116,24 @@ def test_linkedin_talent_home_user_menu_is_authenticated_without_mutation():
     assert not any("value" in expr or "SUBMIT" in expr for expr in tab.evals)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://www.linkedin.com/talent/home",
+        "https://linkedin.com.evil.example/talent/home",
+        "https://www.linkedin.com/uas/login-cap",
+    ],
+)
+def test_linkedin_user_menu_marker_cannot_authenticate_wrong_surface(url):
+    step = ssl.decide_login_step(
+        "linkedin_rps",
+        "Expand the user menu\nValue Connect - RPS",
+        url,
+    )
+
+    assert step == "fill_credentials"
+
+
 def test_challenge_hands_off_without_submit():
     tab = FakeTab([{"url": "https://www.saramin.co.kr/zf_user/auth?ut=c", "body": "로그인 아이디"},
                    CAPTCHA])  # navigate 후 캡차 등장

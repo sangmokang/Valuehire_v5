@@ -16,6 +16,7 @@ import json
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .models import Channel
 from .portal_autologin import AUTO_LOGIN_SELECTORS, login_url_for_channel
@@ -56,6 +57,33 @@ def _is_authenticated(site: str, body: str) -> bool:
     return any(m.lower() in low for m in markers)
 
 
+def _is_authenticated_page(site: str, body: str, url: str) -> bool:
+    """Recognize an authenticated page from stable body and URL evidence.
+
+    LinkedIn Recruiter pages do not render the literal ``/talent`` text that the
+    legacy body-only check expected.  A real authenticated Talent surface does
+    render the account-menu control, so bind that marker to the official HTTPS
+    Talent URL instead of navigating an already logged-in tab to the login form.
+    """
+    if _is_authenticated(site, body):
+        return True
+    if site != "linkedin_rps" or "expand the user menu" not in body.casefold():
+        return False
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").rstrip(".").casefold()
+    path = (parsed.path or "").casefold()
+    return bool(
+        parsed.scheme.casefold() == "https"
+        and parsed.username is None
+        and parsed.password is None
+        and (host == "linkedin.com" or host.endswith(".linkedin.com"))
+        and (path == "/talent" or path.startswith("/talent/"))
+    )
+
+
 def decide_login_step(site: str, body: str, url: str) -> str:
     """순수 판정 — 'already_authenticated' | 'security_challenge' | 'session_conflict' | 'fill_credentials'.
 
@@ -66,7 +94,7 @@ def decide_login_step(site: str, body: str, url: str) -> str:
     """
     if site not in AUTO_LOGIN_SELECTORS:
         raise ValueError(f"automatic login is not configured for {site}")
-    if _is_authenticated(site, body):
+    if _is_authenticated_page(site, body, url):
         return "already_authenticated"
     if _is_pure_security_challenge(body, url):
         return "security_challenge"
@@ -215,7 +243,7 @@ def perform_autologin(
         if _is_session_conflict(body, url) and not owner_takeover:
             return {"state": "HUMAN_AUTH", "site": site, "mutations": 1,
                     "note": "제출 후 세션 충돌 감지 — 오너 명시 지정(--owner-takeover) 필요"}
-        if _is_authenticated(site, body):
+        if _is_authenticated_page(site, body, url):
             return {"state": "AUTHENTICATED", "site": site, "mutations": 1,
                     "note": "자동 로그인 성공"}
     return {"state": "AUTH_FAILED", "site": site, "mutations": 1,
