@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -49,6 +50,7 @@ from apps.aisearch.core.orchestrator import (
 )
 from apps.aisearch.core.portal_search import build_portal_search_descriptors
 from apps.aisearch.core.recorders import DualRecorder
+from apps.aisearch.core.session_lock import LinkedInSessionLock
 
 __all__ = ["CHANNELS", "build_deps", "main"]
 
@@ -155,6 +157,7 @@ def build_deps(
     extract_candidates: Callable[[str], list[dict]],
     *,
     drivers: Optional[Mapping[str, CdpDriver]] = None,
+    linkedin_session_lock: Optional[Any] = None,
 ) -> PipelineDeps:
     """드라이버를 오케스트레이터 포트에 배선한다.
 
@@ -196,6 +199,7 @@ def build_deps(
             machine=machine,
             poll_driver_events=poll_driver_events,
             drivers=channel_drivers,
+            linkedin_session_lock=linkedin_session_lock,
         )
     return PipelineDeps(
         driver=driver,
@@ -207,6 +211,7 @@ def build_deps(
         extract_candidates=extract_candidates,
         machine=machine,
         poll_driver_events=driver.poll_events,
+        linkedin_session_lock=linkedin_session_lock,
     )
 
 
@@ -399,6 +404,17 @@ def main(
         # position_ref(JD position_name)의 저장 행만 추출기에 넘긴다.
         return extractor(store.rows_for(channel, jd["position_name"]))
 
+    # V1 독립검증 결함4 — 링크드인 채널은 기기 간 세션 락으로 감싼다.
+    # AISEARCH_LINKEDIN_LOCK_DIR(공유 스토리지 경로) 가 설정된 경우에만 실제
+    # 락을 건다 — 테스트/미설정 환경에서 로컬 홈 디렉터리에 조용히 실제 락
+    # 파일을 만들지 않기 위해 env 로 명시 오입력을 요구한다(silent 필로소피
+    # 유지: 미설정 = "이 실행은 기기 간 배제 없음"을 그대로 드러낸다).
+    lock_dir_env = os.environ.get("AISEARCH_LINKEDIN_LOCK_DIR", "").strip()
+    linkedin_session_lock = (
+        LinkedInSessionLock(lock_dir=Path(lock_dir_env) / "linkedin_rps", owner=f"aisearch@{args.machine}")
+        if lock_dir_env
+        else None
+    )
     deps = build_deps(
         drivers[LINKEDIN_CHANNEL],
         store,
@@ -407,6 +423,7 @@ def main(
         args.machine,
         extract_candidates,
         drivers=drivers,
+        linkedin_session_lock=linkedin_session_lock,
     )
     report = run_search_pipeline(jd, deps)
 
