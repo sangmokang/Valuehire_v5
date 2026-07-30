@@ -62,6 +62,17 @@ class FakeDiscordClient:
         return f"msg-{len(self.messages)}"
 
 
+class FakeAdminApiClient:
+    """AC-6 주입식 페이크 — 실제 HTTP 없음. register_candidate 호출 payload 만 기록."""
+
+    def __init__(self):
+        self.registered = []
+
+    def register_candidate(self, payload):
+        self.registered.append(dict(payload))
+        return {"ok": True, "candidate": {"id": f"admin-{len(self.registered)}"}, "deduped": False}
+
+
 def make_candidate(**over):
     base = dict(
         profile_url="https://www.linkedin.com/in/hong-gildong/",
@@ -114,7 +125,7 @@ def test_live_without_owner_signoff_fails_closed():
 
 def test_live_records_to_clickup_and_both_discord_channels():
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
     cand = make_candidate()
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand)
@@ -148,7 +159,7 @@ def test_live_records_to_clickup_and_both_discord_channels():
 def test_existing_parent_task_is_reused_not_duplicated():
     cu = FakeClickUpClient(existing_parent_task_id="task-existing")
     dc = FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
 
@@ -160,7 +171,7 @@ def test_duplicate_profile_url_skips_registration():
     url = "https://www.linkedin.com/in/hong-gildong/"
     cu = FakeClickUpClient(existing_profile_urls=[url])
     dc = FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate(profile_url=url))
 
@@ -176,7 +187,7 @@ def test_duplicate_profile_url_skips_registration():
 
 def test_below_threshold_records_nothing():
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate(score=59))
 
@@ -222,7 +233,7 @@ def test_defect1_dry_run_status_is_dry_run_never_recorded():
 
 def test_defect1_live_success_status_is_recorded():
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
 
@@ -233,7 +244,7 @@ def test_defect1_live_success_status_is_recorded():
 
 def test_defect2_partial_failure_reports_partial_and_pending_steps():
     cu, dc = FakeClickUpClient(), FailFirstDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
 
@@ -249,7 +260,7 @@ def test_defect2_partial_failure_reports_partial_and_pending_steps():
 def test_defect2_resume_completes_only_pending_steps_despite_duplicate():
     cand = make_candidate()
     cu, dc = FakeClickUpClient(), FailFirstDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     r1 = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand)
     assert r1.status == "partial"
@@ -276,7 +287,7 @@ def test_defect3_subtask_carries_deterministic_idempotency_key():
 
     def run_once():
         cu, dc = FakeClickUpClient(), FakeDiscordClient()
-        rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+        rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
         rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand)
         return cu.created_subtasks[0]["fields"]["idempotency_key"]
 
@@ -286,7 +297,7 @@ def test_defect3_subtask_carries_deterministic_idempotency_key():
 
     other = make_candidate(profile_url="https://www.linkedin.com/in/other-person/")
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
     rec.record(position_name="빅밸류 세일즈 총괄", candidate=other)
     assert cu.created_subtasks[0]["fields"]["idempotency_key"] != key1
 
@@ -294,7 +305,7 @@ def test_defect3_subtask_carries_deterministic_idempotency_key():
 @pytest.mark.parametrize("bad_score", [101, -1, 87.5, "87", True])
 def test_defect4_score_must_be_int_0_to_100(bad_score):
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     result = rec.record(
         position_name="빅밸류 세일즈 총괄", candidate=make_candidate(score=bad_score)
@@ -325,7 +336,7 @@ def test_defect5_dry_run_subtask_plan_uses_parent_placeholder():
 
 def test_defect5_live_subtask_uses_real_created_parent_id():
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
 
@@ -339,7 +350,7 @@ def test_defect5_live_subtask_uses_real_created_parent_id():
 
 def test_missing_required_field_fails_closed_and_reports_error_to_member_channel():
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)
+    rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate(why_fit=""))
 
@@ -351,3 +362,74 @@ def test_missing_required_field_fails_closed_and_reports_error_to_member_channel
     channels = [m["channel_id"] for m in dc.messages]
     assert channels == [DISCORD_MEMBER_CHANNEL_ID]
     assert "why_fit" in dc.messages[0]["content"]
+
+
+# ── AC-6 — admin.valuehire.cc(v4) 등록
+# (goal: docs/engineering/aisearch-register-api-goal-2026-07-31.md) ─────────────
+
+
+def test_ac6_dry_run_plans_admin_register_without_calling_admin_client():
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am)  # 기본 dry-run
+
+    result = rec.record(
+        position_name="빅밸류 세일즈 총괄",
+        candidate=make_candidate(name="홍길동"),
+        channel="linkedin",
+    )
+
+    assert result.dry_run is True
+    assert am.registered == []  # dry-run: 실제 호출 0회
+    plan = next(a for a in result.planned_actions if a["kind"] == "admin_register_candidate")
+    assert plan["name"] == "홍길동"
+    assert plan["channel"] == "linkedin"
+    assert plan["match_score"] == 87
+    assert plan["jd_title"] == "빅밸류 세일즈 총괄"
+
+
+def test_ac6_live_calls_admin_register_with_mapped_fields():
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
+    cand = make_candidate(name="홍길동")
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="saramin")
+
+    assert result.status == "recorded"
+    assert len(am.registered) == 1
+    sent = am.registered[0]
+    assert sent["name"] == "홍길동"
+    assert sent["profile_url"] == cand.profile_url
+    assert sent["match_score"] == cand.score
+    assert sent["why_fit"] == cand.why_fit
+    assert sent["profile_summary"] == cand.profile_summary
+    assert sent["channel"] == "saramin"
+
+
+def test_ac6_missing_candidate_name_falls_back_to_profile_url():
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
+    cand = make_candidate()  # name 미지정 — 기본값 ""
+
+    rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
+
+    assert am.registered[0]["name"] == cand.profile_url
+
+
+def test_ac6_missing_channel_falls_back_to_unknown_not_blank():
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
+
+    rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())  # channel 인자 없음
+
+    assert am.registered[0]["channel"] == "unknown"
+
+
+def test_ac6_admin_not_configured_fails_partial_in_live_mode_not_silent_success():
+    """admin 미주입 + live=True 인데 기록 경로에 도달하면 조용히 성공한 척하지 않는다."""
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()
+    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)  # admin 생략
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
+
+    assert result.status in ("partial", "failed")
+    assert result.error is not None

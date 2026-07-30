@@ -342,7 +342,9 @@ def main(
     monitor = InterventionMonitor(time.monotonic, notifier)
     if recorder is None:
         recorder = DualRecorder(
-            _NotConfiguredClient("ClickUp"), _NotConfiguredClient("Discord")
+            _NotConfiguredClient("ClickUp"),
+            _NotConfiguredClient("Discord"),
+            _NotConfiguredClient("Admin"),
         )  # dry-run — 외부 기록 0(기록 경로 진입 시 fail-closed 로 표면화)
 
     channel_extractors = dict(extractors)

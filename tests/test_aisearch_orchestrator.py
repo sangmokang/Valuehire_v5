@@ -193,6 +193,17 @@ class FakeDiscord:
         return "msg-1"
 
 
+class FakeAdmin:
+    """AC-6 — admin.valuehire.cc 등록 페이크(실제 HTTP 없음)."""
+
+    def __init__(self):
+        self.registered: list[dict] = []
+
+    def register_candidate(self, payload: dict) -> dict:
+        self.registered.append(dict(payload))
+        return {"ok": True, "candidate": {"id": f"admin-{len(self.registered)}"}, "deduped": False}
+
+
 class FakeNotifier:
     def __init__(self):
         self.messages: list[str] = []
@@ -229,15 +240,16 @@ class Harness:
         self.store = FakeStore(self.events, fail=store_fail)
         self.clickup = FakeClickUp()
         self.discord = discord if discord is not None else FakeDiscord()
+        self.admin = FakeAdmin()
         self.notifier = FakeNotifier()
         self.now = [1000.0]
         self.monitor = SpyMonitor(lambda: self.now[0], self.notifier)
         if live_recorder:
             self.recorder = DualRecorder(
-                self.clickup, self.discord, live=True, owner_signoff=True
+                self.clickup, self.discord, self.admin, live=True, owner_signoff=True
             )
         else:
-            self.recorder = DualRecorder(self.clickup, self.discord)  # 기본 dry-run
+            self.recorder = DualRecorder(self.clickup, self.discord, self.admin)  # 기본 dry-run
         self.list_calls: list[tuple[str, int]] = []
         self.search_payloads: list[tuple[str, int, dict]] = []
         self.candidates: dict[str, list[dict]] = {}

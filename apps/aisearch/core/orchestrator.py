@@ -284,6 +284,7 @@ def _register_and_draft(
                 return deps.recorder.record(
                     position_name=position_name,
                     candidate=candidate,
+                    channel=channel,
                     resume_from=_resume,
                 )
 

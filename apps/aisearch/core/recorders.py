@@ -1,7 +1,11 @@
-"""AC-5 — ClickUp + Discord 이중 기록 모듈.
+"""AC-5/AC-6 — ClickUp + Discord + admin.valuehire.cc 3중 기록 모듈.
 
 goal: docs/engineering/aisearch-fleet-goal-2026-07-28.md §4 AC-5, §5
 계약: docs/sot/25-ai-search-execution-process.json clickup_registration_contract 재사용.
+AC-6(admin.valuehire.cc 등록)는 별도 goal
+(docs/engineering/aisearch-register-api-goal-2026-07-31.md, valuehire_v4
+POST /api/aisearch/register)의 클라이언트측 배선이다 — D12 확정(전용 API, 오너
+2026-07-31 결정) 후 이 모듈에 추가됐다.
 
 L3 외부 쓰기 규율:
 - 클라이언트는 전부 주입식(Protocol) — 이 모듈에는 HTTP 호출 코드가 없다.
@@ -41,11 +45,13 @@ PARENT_PLACEHOLDER = "<parent-to-be-created>"
 # 기록 단계(순서 고정). 부분 실패 시 이 이름들이 pending_steps 로 반환된다.
 STEP_CLICKUP_PARENT = "clickup_parent"
 STEP_CLICKUP_SUBTASK = "clickup_subtask"
+STEP_ADMIN_REGISTER = "admin_register"  # AC-6 — admin.valuehire.cc(v4) 등록
 STEP_DISCORD_RESULT = "discord_result"
 STEP_DISCORD_MEMBER = "discord_member"
 ALL_STEPS = (
     STEP_CLICKUP_PARENT,
     STEP_CLICKUP_SUBTASK,
+    STEP_ADMIN_REGISTER,
     STEP_DISCORD_RESULT,
     STEP_DISCORD_MEMBER,
 )
@@ -98,6 +104,16 @@ class DiscordClient(Protocol):
     def post_message(self, channel_id: str, content: str) -> str: ...
 
 
+class AdminApiClient(Protocol):
+    """주입식 admin.valuehire.cc 인터페이스.
+
+    실제 HTTP 어댑터는 admin_api_client.py(POST /api/aisearch/register,
+    x-internal-key 인증) — 이 모듈에는 HTTP 호출 코드가 없다.
+    """
+
+    def register_candidate(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True)
 class Candidate:
     profile_url: str
@@ -107,6 +123,7 @@ class Candidate:
     match_basis: str = ""  # 매칭 근거
     education: str = ""  # 학력
     career_brief: str = ""  # 경력 브리핑
+    name: str = ""  # 후보자 이름(AC-6 admin 등록 필수 필드 — 미확보 시 profile_url로 대체)
 
 
 @dataclass
@@ -142,7 +159,11 @@ def build_result_message(position_name: str, c: Candidate) -> str:
 
 
 class DualRecorder:
-    """60점 이상 확정 후보를 ClickUp + Discord 두 곳에 기록한다.
+    """60점 이상 확정 후보를 ClickUp + Discord + admin.valuehire.cc 세 곳에 기록한다.
+
+    이름은 초기 설계(ClickUp+Discord 이중 기록) 그대로 유지한다 — AC-6(admin 등록)
+    추가로 실제로는 3중 기록이지만, 6개 파일이 이 이름을 참조하고 있어 개명은
+    이번 변경 범위 밖(별도 리팩터로 분리).
 
     기본은 dry-run(라이브 발신 OFF). 라이브는 live=True + owner_signoff=True 둘 다 필요.
     부분 실패 시 status="partial" + pending_steps 로 반환하며, 같은 인자에
@@ -153,6 +174,7 @@ class DualRecorder:
         self,
         clickup: ClickUpClient,
         discord: DiscordClient,
+        admin: Optional[AdminApiClient] = None,
         *,
         live: bool = False,
         owner_signoff: bool = False,
@@ -163,6 +185,10 @@ class DualRecorder:
             )
         self._clickup = clickup
         self._discord = discord
+        # admin 미주입 시에도 조용히 건너뛰지 않는다 — live 경로에서 admin_register
+        # 단계가 실행되면 AttributeError 로 실패해 partial/failed 로 표면화된다
+        # (기록된 척하지 않는다는 이 모듈의 원칙, run.py._NotConfiguredClient 와 동형).
+        self._admin = admin
         self.live = live
 
     # ── 내부: dry-run 이면 계획만, 라이브면 실제 클라이언트 호출 ──────────────
@@ -180,6 +206,7 @@ class DualRecorder:
         *,
         position_name: str,
         candidate: Candidate,
+        channel: str = "",
         resume_from: Optional[RecordResult] = None,
     ) -> RecordResult:
         result = RecordResult(dry_run=not self.live)
@@ -244,7 +271,7 @@ class DualRecorder:
         completed: list[str] = []
         for i, step in enumerate(steps):
             try:
-                self._run_step(step, result, position_name, candidate)
+                self._run_step(step, result, position_name, candidate, channel)
             except Exception as exc:  # noqa: BLE001 — 외부 쓰기 실패는 종류 불문 수거
                 result.error = f"{step} 실패: {exc}"
                 result.pending_steps = list(steps[i:])
@@ -265,6 +292,7 @@ class DualRecorder:
         result: RecordResult,
         position_name: str,
         candidate: Candidate,
+        channel: str = "",
     ) -> None:
         if step == STEP_CLICKUP_PARENT:
             # 포지션 부모 Task — 있으면 재사용, 없으면 생성
@@ -314,6 +342,26 @@ class DualRecorder:
                 lambda: self._clickup.create_candidate_subtask(
                     CLICKUP_LIST_ID, result.parent_task_id, fields
                 ),
+            )
+
+        elif step == STEP_ADMIN_REGISTER:
+            # AC-6 — admin.valuehire.cc(v4) POST /api/aisearch/register 등록.
+            # 그 API 계약(docs/engineering/aisearch-register-api-goal-2026-07-31.md):
+            # name 필수(없으면 profile_url 로 대체 — v4는 빈 name 을 400 거부).
+            payload = {
+                "name": candidate.name or candidate.profile_url,
+                "profile_url": candidate.profile_url,
+                "match_score": candidate.score,
+                "why_fit": candidate.why_fit,
+                "profile_summary": candidate.profile_summary,
+                "channel": channel or "unknown",
+                "jd_title": position_name,
+            }
+            self._do(
+                result,
+                "admin_register_candidate",
+                payload,
+                lambda: self._admin.register_candidate(payload),
             )
 
         elif step == STEP_DISCORD_RESULT:
