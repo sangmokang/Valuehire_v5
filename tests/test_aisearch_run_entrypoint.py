@@ -178,3 +178,74 @@ class TestRunAssembly:
         assert code != 0
         report = json.loads(report_out.read_text(encoding="utf-8"))
         assert report["status"] == "blocked"
+
+
+class TestPerChannelWsUrl:
+    """V1 독립검증 결함3 — 실 CDP 경로는 채널당 독립 탭(URL)이 필수다."""
+
+    def test_real_path_rejects_shared_single_ws_url(self, tmp_path, monkeypatch):
+        # transport_factory 미주입(실 경로) + 채널별 --ws-url-<channel> 없이
+        # 공용 --ws-url 만 주면 fail-closed 로 거부해야 한다(같은 탭 공유 금지).
+        monkeypatch.setattr(run_mod, "connect_websocket_transport", lambda url: FakeTransport())
+        with pytest.raises(SystemExit):
+            run_mod.main(
+                [
+                    _write_jd(tmp_path),
+                    "--browser",
+                    "--ws-url",
+                    "ws://shared-tab",
+                    "--pages-out",
+                    str(tmp_path / "pages.jsonl"),
+                ],
+                extractors=_empty_extractors(),
+            )
+
+    def test_real_path_rejects_duplicate_per_channel_urls(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(run_mod, "connect_websocket_transport", lambda url: FakeTransport())
+        with pytest.raises(SystemExit):
+            run_mod.main(
+                [
+                    _write_jd(tmp_path),
+                    "--browser",
+                    "--ws-url-linkedin_rps",
+                    "ws://same",
+                    "--ws-url-saramin",
+                    "ws://same",  # 링크드인과 동일 — 탭 공유, fail-closed 대상
+                    "--ws-url-jobkorea",
+                    "ws://jobkorea-tab",
+                    "--pages-out",
+                    str(tmp_path / "pages.jsonl"),
+                ],
+                extractors=_empty_extractors(),
+            )
+
+    def test_real_path_accepts_three_distinct_per_channel_urls(self, tmp_path, monkeypatch):
+        connected_urls: list[str] = []
+
+        def fake_connect(url: str) -> FakeTransport:
+            connected_urls.append(url)
+            return FakeTransport()
+
+        monkeypatch.setattr(run_mod, "connect_websocket_transport", fake_connect)
+        code = run_mod.main(
+            [
+                _write_jd(tmp_path),
+                "--browser",
+                "--ws-url-linkedin_rps",
+                "ws://linkedin-tab",
+                "--ws-url-saramin",
+                "ws://saramin-tab",
+                "--ws-url-jobkorea",
+                "ws://jobkorea-tab",
+                "--pages-out",
+                str(tmp_path / "pages.jsonl"),
+            ],
+            extractors=_empty_extractors(),
+        )
+        assert code == 0
+        # 3채널 각자 다른 URL로 접속했는지 확인(같은 탭 공유 0건).
+        assert sorted(connected_urls) == [
+            "ws://jobkorea-tab",
+            "ws://linkedin-tab",
+            "ws://saramin-tab",
+        ]

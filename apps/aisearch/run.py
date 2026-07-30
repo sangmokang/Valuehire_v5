@@ -281,8 +281,21 @@ def main(
     parser.add_argument(
         "--ws-url",
         default=None,
-        help="대상 탭의 CDP WebSocket URL (테스트는 transport_factory 주입)",
+        help=(
+            "대상 탭의 CDP WebSocket URL — 테스트(transport_factory 주입) 또는 "
+            "단일 탭 실험용. 실제 3채널 동시 실행(--browser, transport_factory "
+            "미주입)에서는 이 값 하나를 세 채널이 공유하면 같은 탭을 놓고 채널이 "
+            "경합한다(V1 독립검증 결함3) — 그 경로에서는 --ws-url-<channel> 3개를 "
+            "각각 주십시오."
+        ),
     )
+    for _channel in CHANNELS:
+        parser.add_argument(
+            f"--ws-url-{_channel}",
+            dest=f"ws_url_{_channel}",
+            default=None,
+            help=f"{_channel} 채널 전용 CDP WebSocket URL(채널당 독립 탭 — 다른 채널과 달라야 함)",
+        )
     parser.add_argument("--machine", default="macmini", help="실행 머신 식별자")
     parser.add_argument(
         "--pages-out",
@@ -321,15 +334,40 @@ def main(
             "silent 0명 실행은 금지 — 추출기 포트를 주입하십시오.\n",
         )
 
+    channel_urls: dict[str, str] = {
+        channel: (getattr(args, f"ws_url_{channel}") or args.ws_url or "")
+        for channel in CHANNELS
+    }
+
     if transport_factory is None:
-        if not args.ws_url:
-            parser.exit(2, "--ws-url 이 필요합니다(라이브 CDP 연결 대상 탭).\n")
+        # V1 독립검증 결함3 — 실제 CDP 연결 경로에서는 채널당 서로 다른 탭이
+        # 필수다. 같은 URL(탭)을 여러 채널이 공유하면 페이지 이동이 경합해
+        # 후보가 엉뚱한 채널로 저장될 수 있다 — 단일 --ws-url 공용은 여기서 금지.
+        missing = [c for c in CHANNELS if not channel_urls[c]]
+        if missing:
+            parser.exit(
+                2,
+                "--ws-url-<channel> 이 필요합니다(채널당 독립 탭): "
+                f"{', '.join(f'--ws-url-{c}' for c in missing)}\n",
+            )
+        duplicates = {
+            url
+            for url in channel_urls.values()
+            if list(channel_urls.values()).count(url) > 1
+        }
+        if duplicates:
+            parser.exit(
+                2,
+                "채널별 --ws-url-<channel> 값이 서로 달라야 합니다(같은 탭 공유 금지, "
+                f"fail-closed): 중복 URL {sorted(duplicates)!r}\n",
+            )
         transport_factory = connect_websocket_transport
 
     # 4차 결함 ⑩ — 채널당 독립 드라이버(각자 탭/연결). 트랜스포트 팩토리를
     # 채널마다 따로 불러 연결을 공유하지 않는다(같은 연결 공유 = 응답 혼선).
+    # V1 독립검증 결함3 — 각 채널이 자기 전용 URL(탭)로 접속한다(공유 --ws-url 아님).
     drivers: dict[str, CdpDriver] = {
-        channel: CdpDriver(transport_factory(args.ws_url or ""))
+        channel: CdpDriver(transport_factory(channel_urls[channel]))
         for channel in CHANNELS
     }
 

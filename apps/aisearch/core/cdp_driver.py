@@ -154,6 +154,18 @@ class CdpDriverError(RuntimeError):
     """드라이버 실행 실패 — 전부 fail-closed(조용한 무시 금지)."""
 
 
+class DetailPageBlocked(CdpDriverError):
+    """V1 독립검증 결함1 — 상세페이지 자체에서 캡차/2FA/클라우드플레어 등이 감지됨.
+
+    목록 페이지 복귀 후에만 차단신호를 검사하면 이미 늦다(캡차 화면이 그대로
+    후보 데이터로 저장됨) — 그래서 상세페이지에 머무는 동안 캡처 전에 검사한다.
+    """
+
+    def __init__(self, events: list[dict]) -> None:
+        super().__init__(f"상세 페이지 차단 신호 감지: {events!r}")
+        self.events = events
+
+
 class CdpTransportError(RuntimeError):
     """CDP 트랜스포트 오류(error 응답 등)."""
 
@@ -596,6 +608,14 @@ class CdpDriver:
         if not isinstance(ref, str) or not ref:
             raise CdpDriverError(f"상세 ref 가 비어 있다(fail-closed): {ref!r}")
         self.navigate(ref)  # 내부에서 로드 완료 대기(결함 ②/⑧)
+        # V1 독립검증 결함1 — 캡처 전에 "이 상세페이지" 상태로 차단신호를 확인한다.
+        # 목록 페이지 복귀 후에만 검사하면 상세페이지의 캡차/2FA 화면이 그대로
+        # 후보 데이터로 저장된다. human_input 은 여기서 판단하지 않는다(signal만).
+        block_events = [e for e in self.poll_events() if e.get("type") == "signal"]
+        if block_events:
+            if self._last_list_url:
+                self.navigate(self._last_list_url)  # 내부에서 로드 완료 대기
+            raise DetailPageBlocked(block_events)
         content = self.capture_html()
         # 5차 결함 ① — 상세 프로필은 현재 탭으로 열므로, 캡처 후 반드시 목록
         # 페이지로 복귀(로드 대기 포함)해야 '다음 페이지' 컨트롤을 목록 화면

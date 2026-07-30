@@ -47,6 +47,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol
 
 from apps.aisearch.core import recorders
 from apps.aisearch.core.banner import build_dispatch_snippet
+from apps.aisearch.core.cdp_driver import DetailPageBlocked
 from apps.aisearch.core.boolean_builder import (
     ADVANCE_REASON_CAP_REACHED,
     ADVANCE_REASON_EXHAUSTED,
@@ -356,7 +357,19 @@ def _run_variant(
 
         def guarded_detail(ref: str) -> dict:
             _check_monitor(deps)  # 2차 결함 1 — 매 상세 조회 전 차단 확인
-            return deps.fetch_detail_page(channel, ref)
+            try:
+                return deps.fetch_detail_page(channel, ref)
+            except DetailPageBlocked as exc:
+                # V1 독립검증 결함1 — 상세페이지 자체의 차단신호는 목록 페이지
+                # 기준 _check_monitor 이전 검사로는 못 잡는다. 드라이버가 감지해
+                # 올려보낸 이벤트를 여기서 모니터에 공급하고 즉시 BLOCKED 처리한다.
+                with deps.lock:
+                    feed_driver_events(deps.monitor, exc.events)
+                    deps.monitor.poll()
+                raise _PipelineBlocked(
+                    "AC7 BLOCKED — 상세페이지 차단 신호(캡차/2FA 등), "
+                    "human_reset 전까지 진행 금지"
+                ) from exc
 
         variant.pagination = paginate_and_store(
             guarded_list,
