@@ -90,6 +90,69 @@ def test_already_authenticated_no_mutation():
     assert not any("value" in e or "SUBMIT" in e for e in tab.evals)
 
 
+def test_linkedin_talent_home_user_menu_is_authenticated_without_mutation():
+    """실제 Recruiter 홈은 body에 '/talent' 문자열이 없어도 로그인된 화면이다."""
+    tab = FakeTab([
+        {
+            "url": "https://www.linkedin.com/talent/home",
+            "body": (
+                "0 notifications total\n"
+                "LinkedIn Talent Solutions\n"
+                "Expand the user menu\n"
+                "Value Connect - RPS\n"
+                "Projects\n"
+                "Recruiter search"
+            ),
+        }
+    ])
+
+    result = ssl.perform_autologin(
+        tab, "linkedin_rps", creds(), sleep=lambda _seconds: None
+    )
+
+    assert result["state"] == "AUTHENTICATED"
+    assert result["mutations"] == 0
+    assert tab.navigations == []
+    assert not any("value" in expr or "SUBMIT" in expr for expr in tab.evals)
+
+
+@pytest.mark.parametrize(
+    ("url", "body"),
+    [
+        (
+            "http://www.linkedin.com/talent/home",
+            "Expand the user menu\nValue Connect - RPS",
+        ),
+        (
+            "https://linkedin.com.evil.example/talent/home",
+            "Expand the user menu\nValue Connect - RPS",
+        ),
+        (
+            "https://linkedin.com.evil.example/talent/home",
+            "LinkedIn Recruiter /talent",
+        ),
+        (
+            "https://www.linkedin.com/uas/login-cap",
+            "Expand the user menu\nValue Connect - RPS",
+        ),
+    ],
+)
+def test_linkedin_auth_marker_cannot_authenticate_wrong_surface(url, body):
+    step = ssl.decide_login_step("linkedin_rps", body, url)
+
+    assert step == "fill_credentials"
+
+
+def test_linkedin_session_conflict_wins_over_stale_authenticated_markers():
+    step = ssl.decide_login_step(
+        "linkedin_rps",
+        "LinkedIn Recruiter /talent\nExpand the user menu\nmultiple sign-ins detected",
+        "https://www.linkedin.com/enterprise-authentication/sessions",
+    )
+
+    assert step == "session_conflict"
+
+
 def test_challenge_hands_off_without_submit():
     tab = FakeTab([{"url": "https://www.saramin.co.kr/zf_user/auth?ut=c", "body": "로그인 아이디"},
                    CAPTCHA])  # navigate 후 캡차 등장

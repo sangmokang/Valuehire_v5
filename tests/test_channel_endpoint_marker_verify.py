@@ -13,6 +13,7 @@ from __future__ import annotations
 import unittest
 
 from tools.multi_position_sourcing.portal_worker import (
+    discover_local_chrome_cdp_endpoints,
     find_verified_channel_endpoint,
     find_verified_channel_target,
     resolve_managed_channel_cdp_endpoint,
@@ -201,6 +202,96 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
         endpoint = resolve_managed_channel_cdp_endpoint("linkedin_rps", runner=runner)
         self.assertEqual(endpoint, "http://127.0.0.1:9338")
         self.assertEqual(calls[0][-2:], ["cdp", "linkedin"])
+
+    def test_live_talent_target_wins_when_configured_profile_is_stale(self) -> None:
+        class MissingConfiguredProfile:
+            returncode = 3
+            stdout = ""
+            stderr = "configured profile not running"
+
+        endpoint = resolve_managed_channel_cdp_endpoint(
+            "linkedin_rps",
+            runner=lambda *_args, **_kwargs: MissingConfiguredProfile(),
+            endpoint_discoverer=lambda: ["http://127.0.0.1:9338"],
+            list_tabs=lambda candidate: [
+                {
+                    "id": "live-recruiter-search",
+                    "type": "page",
+                    "url": (
+                        "https://www.linkedin.com/talent/hire/1763661452/"
+                        "discover/recruiterSearch"
+                    ),
+                    "webSocketDebuggerUrl": (
+                        "ws://127.0.0.1:9338/devtools/page/live-recruiter-search"
+                    ),
+                }
+            ] if candidate.endswith(":9338") else [],
+        )
+
+        self.assertEqual(endpoint, "http://127.0.0.1:9338")
+
+    def test_live_endpoint_discovery_reads_google_chrome_root_port(self) -> None:
+        class PsResult:
+            returncode = 0
+            stdout = (
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
+                "--remote-debugging-port=9338 "
+                "--user-data-dir=/Users/test/.valuehire/cdp_profiles/linkedin-standby\n"
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
+                "--type=renderer --remote-debugging-port=9338 "
+                "--user-data-dir=/Users/test/.valuehire/cdp_profiles/linkedin-standby\n"
+            )
+            stderr = ""
+
+        endpoints = discover_local_chrome_cdp_endpoints(
+            runner=lambda *_args, **_kwargs: PsResult()
+        )
+
+        self.assertEqual(endpoints, ["http://127.0.0.1:9338"])
+
+    def test_live_endpoint_discovery_ignores_personal_chrome_profile(self) -> None:
+        class PsResult:
+            returncode = 0
+            stdout = (
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
+                "--remote-debugging-port=9448 "
+                "--user-data-dir=/Users/test/Library/Application Support/Google/Chrome\n"
+            )
+            stderr = ""
+
+        endpoints = discover_local_chrome_cdp_endpoints(
+            channel="linkedin_rps",
+            runner=lambda *_args, **_kwargs: PsResult(),
+        )
+
+        self.assertEqual(endpoints, [])
+
+    def test_stale_profile_fallback_rejects_two_linkedin_endpoints(self) -> None:
+        class MissingConfiguredProfile:
+            returncode = 3
+            stdout = ""
+            stderr = "configured profile not running"
+
+        def list_tabs(endpoint: str):
+            port = endpoint.rsplit(":", 1)[-1]
+            return [
+                {
+                    "id": f"target-{port}",
+                    "type": "page",
+                    "url": "https://www.linkedin.com/talent/home",
+                }
+            ]
+
+        with self.assertRaises(LookupError):
+            resolve_managed_channel_cdp_endpoint(
+                "linkedin_rps",
+                runner=lambda *_args, **_kwargs: MissingConfiguredProfile(),
+                endpoint_discoverer=lambda: [
+                    "http://127.0.0.1:9338",
+                    "http://127.0.0.1:9448",
+                ],
+                list_tabs=list_tabs,
+            )
 
     def test_managed_endpoint_fails_closed_on_ambiguous_or_remote_output(self) -> None:
         class Result:

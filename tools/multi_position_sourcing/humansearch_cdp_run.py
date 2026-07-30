@@ -724,6 +724,8 @@ def main(
     evaluation_client=evaluate_candidate_with_claude,
     evaluation_ready_check=assert_live_evaluator_ready,
 ) -> None:
+    if not str(target_id or "").strip():
+        raise _profile_context_error("explicit Recruiter target id is required")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
     lease.acquire()

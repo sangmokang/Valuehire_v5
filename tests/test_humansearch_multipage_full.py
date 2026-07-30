@@ -128,6 +128,16 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
     calls: list[dict] = []
     processed: list[str] = []
 
+    class Lease:
+        def acquire(self) -> None:
+            return None
+
+        def assert_owned(self) -> None:
+            return None
+
+        def release(self) -> None:
+            return None
+
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
     monkeypatch.setattr(
@@ -173,6 +183,8 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hcr, "human_delay", lambda: None)
 
     hcr.main(
+        lease_factory=lambda _site: Lease(),
+        target_id="t1",
         owner_snapshot=lambda: type(
             "Snapshot",
             (),

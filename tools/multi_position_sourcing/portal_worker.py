@@ -107,10 +107,129 @@ _CHANNEL_BROWSER_NAME = {
 }
 
 
+def discover_local_chrome_cdp_endpoints(
+    *,
+    channel: str | None = None,
+    runner: Callable[..., Any] = subprocess.run,
+) -> list[str]:
+    """Return local debugging endpoints declared by live root Chrome processes.
+
+    This is discovery only: callers must still inspect each endpoint's page list
+    and bind it to the requested official portal surface.  Renderer and utility
+    children are ignored.  Only ValueHire-owned profile directories are eligible,
+    so a personal Chrome with a Talent tab can never become the automation target.
+    """
+    try:
+        result = runner(
+            ["ps", "ax", "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if int(getattr(result, "returncode", 1)) != 0:
+        return []
+
+    endpoints: list[str] = []
+    for raw_command in str(getattr(result, "stdout", "") or "").splitlines():
+        command = raw_command.strip()
+        if not command or re.search(r"(?:^|\s)--type(?:=|\s)", command):
+            continue
+        option_start = re.search(r"(?:^|\s)--[A-Za-z0-9]", command)
+        executable = command[:option_start.start()].strip() if option_start else command
+        executable_name = executable.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        if executable_name not in {
+            "chrome",
+            "chrome.exe",
+            "chromium",
+            "chromium.exe",
+            "google chrome",
+            "google chrome for testing",
+        }:
+            continue
+        ports = re.findall(
+            r"(?:^|\s)--remote-debugging-port=([0-9]+)(?=\s|$)",
+            command,
+        )
+        profiles = re.findall(
+            r"(?:^|\s)--user-data-dir=(.*?)(?=\s+--[A-Za-z0-9]|$)",
+            command,
+        )
+        if len(ports) != 1 or len(profiles) != 1:
+            continue
+        profile = profiles[0].strip().strip("'\"").replace("\\", "/")
+        profile_parts = tuple(part.casefold() for part in profile.split("/") if part)
+        channel_token = _CHANNEL_BROWSER_NAME.get(channel or "", "")
+        if (
+            not profile.startswith("/")
+            or any(part in {".", ".."} for part in profile_parts)
+            or ".valuehire" not in profile_parts
+            or (
+                channel_token
+                and not any(
+                    part == channel_token or part.startswith(channel_token + "-")
+                    for part in profile_parts
+                )
+            )
+        ):
+            continue
+        port_text = ports[0]
+        if not port_text.isascii() or not 1 <= int(port_text) <= 65535:
+            continue
+        endpoint = f"http://127.0.0.1:{int(port_text)}"
+        if endpoint not in endpoints:
+            endpoints.append(endpoint)
+    return endpoints
+
+
+def _find_unique_live_channel_endpoint(
+    channel: str,
+    *,
+    candidate_endpoints: list[str],
+    list_tabs: Callable[[str], list[dict]],
+) -> str:
+    """Find one local endpoint containing at least one official channel target."""
+    verified: list[str] = []
+    for raw_endpoint in dict.fromkeys(candidate_endpoints):
+        try:
+            parsed = urlsplit(raw_endpoint)
+            port = parsed.port
+        except ValueError:
+            continue
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"127.0.0.1", "localhost"}
+            or port is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            continue
+        endpoint = f"http://127.0.0.1:{port}"
+        try:
+            tabs = list_tabs(endpoint)
+        except Exception:
+            continue
+        if any(_target_matches_channel(channel, tab) for tab in (tabs or ())):
+            verified.append(endpoint)
+    unique = list(dict.fromkeys(verified))
+    if len(unique) != 1:
+        raise LookupError(
+            f"{channel} live browser endpoint match count was {len(unique)}"
+        )
+    return unique[0]
+
+
 def resolve_managed_channel_cdp_endpoint(
     channel: str,
     *,
     runner: Callable[..., Any] = subprocess.run,
+    endpoint_discoverer: Callable[[], list[str]] | None = None,
+    list_tabs: Callable[[str], list[dict]] | None = None,
 ) -> str:
     """Resolve the live endpoint for the channel's exact managed profile.
 
@@ -133,12 +252,27 @@ def resolve_managed_channel_cdp_endpoint(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise LookupError(f"{channel} 관리 브라우저 endpoint 확인 실패") from exc
     if int(getattr(result, "returncode", 1)) != 0:
-        raise LookupError(f"{channel} 관리 브라우저가 실행 중이지 않음")
-    lines = [
-        line.strip()
-        for line in str(getattr(result, "stdout", "")).splitlines()
-        if line.strip()
-    ]
+        discover = endpoint_discoverer or (
+            lambda: discover_local_chrome_cdp_endpoints(channel=channel)
+        )
+        candidates = discover()
+        if list_tabs is None:
+            from .raw_cdp import list_pages
+
+            list_tabs = list_pages
+        lines = [
+            _find_unique_live_channel_endpoint(
+                channel,
+                candidate_endpoints=candidates,
+                list_tabs=list_tabs,
+            )
+        ]
+    else:
+        lines = [
+            line.strip()
+            for line in str(getattr(result, "stdout", "")).splitlines()
+            if line.strip()
+        ]
     if len(lines) != 1:
         raise LookupError(f"{channel} 관리 브라우저 endpoint 출력이 모호함")
     try:
