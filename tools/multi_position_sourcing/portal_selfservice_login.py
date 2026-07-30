@@ -65,22 +65,24 @@ def _is_authenticated_page(site: str, body: str, url: str) -> bool:
     render the account-menu control, so bind that marker to the official HTTPS
     Talent URL instead of navigating an already logged-in tab to the login form.
     """
-    if _is_authenticated(site, body):
-        return True
-    if site != "linkedin_rps" or "expand the user menu" not in body.casefold():
-        return False
+    if site != "linkedin_rps":
+        return _is_authenticated(site, body)
     try:
         parsed = urlsplit(url)
     except ValueError:
         return False
     host = (parsed.hostname or "").rstrip(".").casefold()
     path = (parsed.path or "").casefold()
-    return bool(
+    official_talent_surface = bool(
         parsed.scheme.casefold() == "https"
         and parsed.username is None
         and parsed.password is None
         and (host == "linkedin.com" or host.endswith(".linkedin.com"))
         and (path == "/talent" or path.startswith("/talent/"))
+    )
+    return official_talent_surface and (
+        _is_authenticated(site, body)
+        or "expand the user menu" in body.casefold()
     )
 
 
@@ -94,12 +96,12 @@ def decide_login_step(site: str, body: str, url: str) -> str:
     """
     if site not in AUTO_LOGIN_SELECTORS:
         raise ValueError(f"automatic login is not configured for {site}")
-    if _is_authenticated_page(site, body, url):
-        return "already_authenticated"
     if _is_pure_security_challenge(body, url):
         return "security_challenge"
     if _is_session_conflict(body, url):
         return "session_conflict"
+    if _is_authenticated_page(site, body, url):
+        return "already_authenticated"
     return "fill_credentials"
 
 

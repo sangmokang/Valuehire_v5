@@ -78,6 +78,7 @@ def test_session_conflict_with_owner_takeover_proceeds_to_submit(monkeypatch) ->
         calls["n"] += 1
         if calls["n"] == 1:
             return "multiple sign-ins detected"
+        _tab._url = "https://www.linkedin.com/talent/home"
         return "AUTHENTICATED"
 
     monkeypatch.setattr(ssl, "_read_body", fake_read_body)

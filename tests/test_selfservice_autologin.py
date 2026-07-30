@@ -117,21 +117,40 @@ def test_linkedin_talent_home_user_menu_is_authenticated_without_mutation():
 
 
 @pytest.mark.parametrize(
-    "url",
+    ("url", "body"),
     [
-        "http://www.linkedin.com/talent/home",
-        "https://linkedin.com.evil.example/talent/home",
-        "https://www.linkedin.com/uas/login-cap",
+        (
+            "http://www.linkedin.com/talent/home",
+            "Expand the user menu\nValue Connect - RPS",
+        ),
+        (
+            "https://linkedin.com.evil.example/talent/home",
+            "Expand the user menu\nValue Connect - RPS",
+        ),
+        (
+            "https://linkedin.com.evil.example/talent/home",
+            "LinkedIn Recruiter /talent",
+        ),
+        (
+            "https://www.linkedin.com/uas/login-cap",
+            "Expand the user menu\nValue Connect - RPS",
+        ),
     ],
 )
-def test_linkedin_user_menu_marker_cannot_authenticate_wrong_surface(url):
-    step = ssl.decide_login_step(
-        "linkedin_rps",
-        "Expand the user menu\nValue Connect - RPS",
-        url,
-    )
+def test_linkedin_auth_marker_cannot_authenticate_wrong_surface(url, body):
+    step = ssl.decide_login_step("linkedin_rps", body, url)
 
     assert step == "fill_credentials"
+
+
+def test_linkedin_session_conflict_wins_over_stale_authenticated_markers():
+    step = ssl.decide_login_step(
+        "linkedin_rps",
+        "LinkedIn Recruiter /talent\nExpand the user menu\nmultiple sign-ins detected",
+        "https://www.linkedin.com/enterprise-authentication/sessions",
+    )
+
+    assert step == "session_conflict"
 
 
 def test_challenge_hands_off_without_submit():
