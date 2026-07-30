@@ -41,9 +41,11 @@ from apps.aisearch.core.boolean_builder import DEFAULT_LOCATION, build_search_pl
 from apps.aisearch.core.cdp_driver import CdpDriver, connect_websocket_transport
 from apps.aisearch.core.discord_notify import DiscordNotifier
 from apps.aisearch.core.intervention import InterventionMonitor
+from apps.aisearch.core.intervention import RESUME_DELAY_SECONDS
 from apps.aisearch.core.orchestrator import (
     LINKEDIN_CHANNEL,
     STATUS_COMPLETED,
+    STATUS_WAITING_RESUME,
     PipelineDeps,
     PipelineReport,
     run_search_pipeline,
@@ -272,6 +274,8 @@ def main(
     extractors: Optional[Mapping[str, Extractor]] = None,
     recorder: Optional[DualRecorder] = None,
     notifier: Optional[Any] = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_resume_attempts: int = 6,
 ) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m apps.aisearch.run",
@@ -426,6 +430,18 @@ def main(
         linkedin_session_lock=linkedin_session_lock,
     )
     report = run_search_pipeline(jd, deps)
+
+    # V1 독립검증 결함5 — PAUSED_HUMAN 은 InterventionMonitor.poll() 이 마지막
+    # 사람 입력으로부터 30초(RESUME_DELAY_SECONDS) 무입력이면 스스로 RUNNING
+    # 으로 되돌리는 상태다. 여기서 실제로 대기·재시도하지 않으면 그 자기복구가
+    # 아무 효력이 없다 — waiting_resume 로 그냥 끝나버려 사람이 잡 전체를
+    # 수동으로 다시 시작해야 했다(결함5). previous=report 로 미완 단계만
+    # 이어서 완결한다(2차 결함 7 재개 경로 재사용).
+    resume_attempts = 0
+    while report.status == STATUS_WAITING_RESUME and resume_attempts < max_resume_attempts:
+        sleep(RESUME_DELAY_SECONDS / max_resume_attempts)
+        resume_attempts += 1
+        report = run_search_pipeline(jd, deps, previous=report)
 
     payload = _report_payload(report, mode="browser_dry_run", live=False)
     _write_report(args.report_out, payload)
