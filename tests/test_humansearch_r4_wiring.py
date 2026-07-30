@@ -235,6 +235,7 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
 
     hcr.main(
         lease_factory=lambda _site: Lease(),
+        target_id="t1",
         owner_snapshot=sentinel,
         mutation_sleep=lambda _seconds: None,
         evaluation_ready_check=lambda: None,

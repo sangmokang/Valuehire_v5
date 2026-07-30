@@ -184,6 +184,7 @@ def test_main_uses_planned_traversal_path(monkeypatch, tmp_path: Path) -> None:
 
     hcr.main(
         lease_factory=lambda _site: Lease(),
+        target_id="t1",
         owner_snapshot=lambda: type(
             "Snapshot",
             (),

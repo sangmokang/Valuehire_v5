@@ -109,13 +109,15 @@ _CHANNEL_BROWSER_NAME = {
 
 def discover_local_chrome_cdp_endpoints(
     *,
+    channel: str | None = None,
     runner: Callable[..., Any] = subprocess.run,
 ) -> list[str]:
     """Return local debugging endpoints declared by live root Chrome processes.
 
     This is discovery only: callers must still inspect each endpoint's page list
     and bind it to the requested official portal surface.  Renderer and utility
-    children are ignored, and no configured profile name is trusted here.
+    children are ignored.  Only ValueHire-owned profile directories are eligible,
+    so a personal Chrome with a Talent tab can never become the automation target.
     """
     try:
         result = runner(
@@ -151,7 +153,27 @@ def discover_local_chrome_cdp_endpoints(
             r"(?:^|\s)--remote-debugging-port=([0-9]+)(?=\s|$)",
             command,
         )
-        if len(ports) != 1:
+        profiles = re.findall(
+            r"(?:^|\s)--user-data-dir=(.*?)(?=\s+--[A-Za-z0-9]|$)",
+            command,
+        )
+        if len(ports) != 1 or len(profiles) != 1:
+            continue
+        profile = profiles[0].strip().strip("'\"").replace("\\", "/")
+        profile_parts = tuple(part.casefold() for part in profile.split("/") if part)
+        channel_token = _CHANNEL_BROWSER_NAME.get(channel or "", "")
+        if (
+            not profile.startswith("/")
+            or any(part in {".", ".."} for part in profile_parts)
+            or ".valuehire" not in profile_parts
+            or (
+                channel_token
+                and not any(
+                    part == channel_token or part.startswith(channel_token + "-")
+                    for part in profile_parts
+                )
+            )
+        ):
             continue
         port_text = ports[0]
         if not port_text.isascii() or not 1 <= int(port_text) <= 65535:
@@ -230,7 +252,9 @@ def resolve_managed_channel_cdp_endpoint(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise LookupError(f"{channel} 관리 브라우저 endpoint 확인 실패") from exc
     if int(getattr(result, "returncode", 1)) != 0:
-        discover = endpoint_discoverer or discover_local_chrome_cdp_endpoints
+        discover = endpoint_discoverer or (
+            lambda: discover_local_chrome_cdp_endpoints(channel=channel)
+        )
         candidates = discover()
         if list_tabs is None:
             from .raw_cdp import list_pages

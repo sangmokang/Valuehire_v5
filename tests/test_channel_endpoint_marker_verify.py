@@ -249,6 +249,23 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
 
         self.assertEqual(endpoints, ["http://127.0.0.1:9338"])
 
+    def test_live_endpoint_discovery_ignores_personal_chrome_profile(self) -> None:
+        class PsResult:
+            returncode = 0
+            stdout = (
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
+                "--remote-debugging-port=9448 "
+                "--user-data-dir=/Users/test/Library/Application Support/Google/Chrome\n"
+            )
+            stderr = ""
+
+        endpoints = discover_local_chrome_cdp_endpoints(
+            channel="linkedin_rps",
+            runner=lambda *_args, **_kwargs: PsResult(),
+        )
+
+        self.assertEqual(endpoints, [])
+
     def test_stale_profile_fallback_rejects_two_linkedin_endpoints(self) -> None:
         class MissingConfiguredProfile:
             returncode = 3
