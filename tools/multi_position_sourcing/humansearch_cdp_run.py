@@ -725,6 +725,10 @@ def main(
     evaluation_ready_check=assert_live_evaluator_ready,
 ) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    t = resolve_exact_recruiter_target(
+        target_id=target_id,
+        target_resolver=target_resolver,
+    )
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
     lease.acquire()
     tab = None
@@ -736,10 +740,6 @@ def main(
             lease,
             owner_snapshot=owner_snapshot,
             sleep=mutation_sleep,
-        )
-        t = resolve_exact_recruiter_target(
-            target_id=target_id,
-            target_resolver=target_resolver,
         )
         mutation_guard()
         tab = cdp.attach(t, badge=False)
