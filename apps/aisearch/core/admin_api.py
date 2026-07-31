@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
 REGISTER_PATH = "/api/aisearch/register"
@@ -122,6 +123,146 @@ def build_register_request(
     }
 
 
+def _describe(value: Any, limit: int = 200) -> str:
+    """모양을 가정하지 않고 안전하게 글자로 만든다.
+
+    오류 메시지를 만들다가 다시 터지는 사고(예: 방금 '사전이 아니다'라고 판정한 값을
+    payload.get() 으로 꺼내 AttributeError)를 구조적으로 불가능하게 하는 함수다.
+    repr() 자체가 예외를 던지는 값도 있으므로(자체 적대검증에서 발견) 그것까지 삼킨다 —
+    이 함수는 어떤 입력에도 절대 예외를 던지지 않는다.
+    """
+    try:
+        text = repr(value)
+        # 자르기·길이 확인도 보호 안에 둔다 — repr() 이 적대적 str 하위형을 돌려줄 수
+        # 있다(Codex 2차 적대검증 발견).
+        return text if len(text) <= limit else text[:limit] + "…"
+    except Exception:
+        pass
+    try:
+        return f"<unrepresentable {type(value).__name__}>"
+    except Exception:
+        return "<unrepresentable>"
+
+
+def _describe_shape(value: Any) -> str:
+    """서버가 준 원문의 '모양'만 알린다 — 내용은 절대 넣지 않는다.
+
+    응답 본문에는 후보 개인정보(이름·연락처)가 들어 있을 수 있고 오류 메시지는
+    로그·원장으로 흘러간다. 진단에 필요한 건 내용이 아니라 타입과 크기다.
+    """
+    try:
+        name = type(value).__name__
+    except Exception:
+        return "<unknown>"
+    try:
+        return f"{name}(len={len(value)})"
+    except Exception:
+        return name
+
+
+@dataclass(frozen=True)
+class RegisterOutcome:
+    """dry-run 과 live 가 공유하는 단일 결과 타입 — 호출자가 한 코드로 다룬다."""
+
+    sent: bool
+    recorded: bool
+    deduped: bool | None
+    status: int | None
+    request: Mapping[str, Any]
+    payload: Mapping[str, Any] | None
+
+
+def _read_envelope(response: Any) -> tuple[int, str]:
+    """전송 계층이 준 봉투를 먼저 검사한다 — 꺼내 쓰기 전에 모양을 확정한다."""
+    if not isinstance(response, Mapping):
+        raise AdminApiResponseError(
+            f"transport must return a mapping: {_describe(response)}"
+        )
+    # Mapping 을 자처해도 .get() 이 터질 수 있다(Codex 2차 적대검증 발견) — 읽기 자체를
+    # 보호해 약속한 계약 오류만 나가게 한다.
+    try:
+        status = response.get("status")
+        text = response.get("text")
+    except Exception as exc:
+        raise AdminApiResponseError(
+            f"transport mapping could not be read: {_describe_shape(response)}"
+        ) from exc
+    # 범위를 먼저 좁힌다 — 자릿수가 극단적인 정수는 오류 문장으로 바꾸는 것만으로도
+    # ValueError 가 난다(2차 적대검증 발견). HTTP 상태값은 100~599 뿐이다.
+    if (
+        isinstance(status, bool)
+        or not isinstance(status, int)
+        or not 100 <= status <= 599
+    ):
+        raise AdminApiResponseError(
+            f"transport status must be an HTTP status int (100..599): "
+            f"{_describe_shape(status)}"
+        )
+    if not isinstance(text, str):
+        raise AdminApiResponseError(f"transport text must be a str: {_describe(text)}")
+    return status, text
+
+
+def parse_register_response(response: Any) -> RegisterOutcome:
+    """서버 응답을 전송 없이 단독 검사 — build_register_request 와 대칭인 순수 함수.
+
+    엄격함의 방향은 요청과 반대다: 요청은 표 밖 필드를 거부(E12)하지만, 응답은 서버가
+    칸을 늘려도 우리 쪽이 멈추면 안 되므로 의존하는 필드만 검사하고 나머지는 관용한다.
+    """
+    status, text = _read_envelope(response)
+    try:
+        payload = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        # 중첩이 깊은 본문의 RecursionError 까지만 함께 흡수한다. 더 넓히면 우리 쪽
+        # 내부 결함까지 '서버 응답 오류'로 둔갑시킨다(2차 적대검증 지적).
+        raise AdminApiResponseError(
+            f"unparseable response (status={status}): {_describe_shape(text)}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AdminApiResponseError(
+            f"response must be a JSON object (status={status}): "
+            f"{_describe_shape(payload)}"
+        )
+    # 여기서부터만 payload.get() 이 안전하다 — 모양이 확정된 뒤다.
+    if status not in (200, 201) or payload.get("ok") is not True:
+        raise AdminApiResponseError(
+            f"register rejected (status={status}): "
+            f"{_describe(payload.get('error', 'unknown'))}"
+        )
+    deduped = payload.get("deduped")
+    if not isinstance(deduped, bool):
+        raise AdminApiResponseError(
+            f"deduped must be a bool (status={status}): {_describe(deduped)}"
+        )
+    # 서버는 성공 시 반드시 저장된 레코드를 돌려준다(route.ts:123 갱신, :151 신규).
+    # 없으면 실제로 저장된 증거가 없는 것이므로 등록 성공으로 인정하지 않는다 —
+    # 거짓 성공은 원장을 거짓으로 만든다(Codex 2차 적대검증 발견).
+    # 사전이기만 해선 부족하다 — 저장된 행을 가리키는 id 가 있어야 실제 저장 증거다
+    # (id 는 uuid primary key, 20260507000000_pipeline.sql:3). 2차 적대검증 지적.
+    record = payload.get("candidate")
+    record_id = record.get("id") if isinstance(record, dict) else None
+    if not isinstance(record_id, str) or not _js_trim(record_id):
+        raise AdminApiResponseError(
+            f"server reported success without an identified candidate record "
+            f"(status={status}): {_describe_shape(record)}"
+        )
+    # 서버 route.ts — 신규 등록 201 {deduped:false}, 동일인 갱신 200 {deduped:true}.
+    # 어긋나면 중간 프록시·목이 거짓말한 것이므로 fail-closed.
+    if (status == 200) is not deduped:
+        raise AdminApiResponseError(
+            f"status/deduped disagree with server contract (status={status}, "
+            f"deduped={deduped})"
+        )
+    return RegisterOutcome(
+        sent=True,
+        recorded=True,
+        deduped=deduped,
+        status=status,
+        request={},
+        payload=payload,
+    )
+
+
 class AdminApiRecorder:
     """admin.valuehire.cc 등록 기록기. 기본 dry-run — live=True 없이는 전송 0."""
 
@@ -140,26 +281,24 @@ class AdminApiRecorder:
         self._transport = transport
         self._live = live
 
-    def register(self, candidate: Mapping[str, Any]) -> dict[str, Any]:
+    def register(self, candidate: Mapping[str, Any]) -> RegisterOutcome:
         request = build_register_request(
             candidate, base_url=self._base_url, internal_key=self._internal_key
         )
+        # 키 가리기는 dry-run·live 양쪽 모두에 적용한다 — 결과는 원장·로그로 흘러간다.
+        redacted = {
+            **request,
+            "headers": {**request["headers"], "x-internal-key": "***redacted***"},
+        }
         if not self._live:
-            redacted = dict(request)
-            redacted["headers"] = {**request["headers"], "x-internal-key": "***redacted***"}
-            return {"status": "dry_run", "recorded": False, "request": redacted}
-
-        response = self._transport(request)
-        status = response.get("status")
-        try:
-            payload = json.loads(response.get("text", ""))
-        except (TypeError, ValueError) as exc:
-            raise AdminApiResponseError(
-                f"non-JSON response (status={status})"
-            ) from exc
-        # 서버 route.ts — 신규 등록 201 {deduped:false}, 동일인 갱신 200 {deduped:true}
-        if status not in (200, 201) or not isinstance(payload, dict) or payload.get("ok") is not True:
-            raise AdminApiResponseError(
-                f"register rejected (status={status}): {payload.get('error', 'unknown')}"
+            return RegisterOutcome(
+                sent=False,
+                recorded=False,
+                deduped=None,
+                status=None,
+                request=redacted,
+                payload=None,
             )
-        return {"status": "recorded", "recorded": True, "response": payload}
+
+        outcome = parse_register_response(self._transport(request))
+        return replace(outcome, request=redacted)
