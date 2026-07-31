@@ -54,8 +54,9 @@ def test_f6_resumes_even_when_owner_uses_chrome_longer_than_30_seconds(
                 if self._snapshot_calls <= self.BUSY_SNAPSHOTS:
                     result["result"]["value"]["h"] = self._snapshot_calls
                 else:
-                    # 손을 뗐다 — 카운터가 더 이상 증가하지 않는다.
-                    result["result"]["value"]["h"] = self.BUSY_SNAPSHOTS
+                    # 손을 뗐다. 실제 페이지 컨텍스트의 입력 카운터는 이동할
+                    # 때마다 0에서 다시 시작하므로 0을 돌려준다(새 입력 없음).
+                    result["result"]["value"]["h"] = 0
             return result
 
     slept: list[float] = []

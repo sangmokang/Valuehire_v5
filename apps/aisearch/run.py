@@ -60,6 +60,11 @@ __all__ = ["CHANNELS", "build_deps", "main"]
 #: 3사 채널 — 채널당 독립 드라이버(탭/연결) 1개가 계약이다(4차 결함 ⑩).
 CHANNELS: tuple[str, ...] = (LINKEDIN_CHANNEL, "saramin", "jobkorea")
 
+#: F6 — 개입이 끝났는지 다시 확인하는 주기(초). RESUME_DELAY_SECONDS(30초)
+#: 무입력이면 모니터가 스스로 RUNNING 으로 돌아오므로, 그보다 촘촘히 확인해
+#: 개입 종료 후 곧바로 이어서 한다. 한 번에 오래 자면 재개가 늦어진다.
+RESUME_POLL_SECONDS: float = RESUME_DELAY_SECONDS / 6
+
 #: 추출기 포트 계약 — extractor(저장된 페이지 행 목록) -> 후보 dict 목록.
 Extractor = Callable[[list[dict]], list[dict]]
 
@@ -292,7 +297,7 @@ def main(
     recorder: Optional[DualRecorder] = None,
     notifier: Optional[Any] = None,
     sleep: Callable[[float], None] = time.sleep,
-    max_resume_attempts: int = 6,
+    max_resume_attempts: Optional[int] = None,
 ) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m apps.aisearch.run",
@@ -464,11 +469,26 @@ def main(
     # 아무 효력이 없다 — waiting_resume 로 그냥 끝나버려 사람이 잡 전체를
     # 수동으로 다시 시작해야 했다(결함5). previous=report 로 미완 단계만
     # 이어서 완결한다(2차 결함 7 재개 경로 재사용).
+    # 2026-07-31 리뷰 F6 — 예전에는 6회(=30초)를 소진하면 waiting_resume 그대로
+    # 끝냈다. 사장님이 30초 넘게 크롬을 쓰시면 작업이 그냥 멈춘 채 방치되는데,
+    # 이는 SOT 불변식 2("멈추고 방치하지 않는다 — 반드시 자동 재개") 위반이다.
+    # 기본값을 **상한 없음**으로 바꾸고, 매 사이클 RESUME_POLL_SECONDS 만큼만
+    # 자면서(바쁜 대기 아님 — 봇처럼 굴지 않는다) 개입이 끝날 때까지 기다린다.
+    # max_resume_attempts 는 운영/테스트가 명시적으로 줄 때만 상한이 된다.
     resume_attempts = 0
-    while report.status == STATUS_WAITING_RESUME and resume_attempts < max_resume_attempts:
-        sleep(RESUME_DELAY_SECONDS / max_resume_attempts)
+    while report.status == STATUS_WAITING_RESUME and (
+        max_resume_attempts is None or resume_attempts < max_resume_attempts
+    ):
+        sleep(RESUME_POLL_SECONDS)
         resume_attempts += 1
         report = run_search_pipeline(jd, deps, previous=report)
+    if report.status == STATUS_WAITING_RESUME:
+        # 명시적 상한을 준 실행에서만 여기 도달한다 — 조용히 끝내지 않고 알린다.
+        print(
+            f"[aisearch] 자동 재개 상한({max_resume_attempts}회) 소진 — 여전히 "
+            "사람 개입 중. 상한 없이 실행하면 개입이 끝날 때까지 기다립니다.",
+            file=sys.stderr,
+        )
 
     payload = _report_payload(
         report,

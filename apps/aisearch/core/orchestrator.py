@@ -282,9 +282,19 @@ def _register_and_draft(
         if previous is not None:
             prev_state = previous.record_states.get(profile_url)
             if prev_state is not None and prev_state.status in _RECORD_OK_STATUSES:
-                # 이미 완결된 후보 — 재기록(중복 발신) 금지, 상태만 이월한다.
+                # 이미 완결된 후보 — 재기록(중복 발신)은 하지 않는다.
+                # 2026-07-31 리뷰 F7: 예전에는 여기서 상태만 이월하고 continue 해서,
+                # 재개가 한 번이라도 돌면 새 리포트의 registered 에서 빠지고 초안도
+                # 만들어지지 않았다(수치 축소 + 전달 초안 영구 누락). 외부 쓰기는
+                # 건너뛰되 **리포트 집계와 초안 생성은 그대로 수행**한다 —
+                # build_candidate_draft 는 순수 함수라 발신이 없다.
                 with deps.lock:
                     report.record_states[profile_url] = prev_state
+                    report.registered.append(prev_state)
+                _check_monitor(deps)
+                carried_draft = build_candidate_draft(**cand["draft_inputs"])
+                with deps.lock:
+                    report.drafts.append(carried_draft)
                 continue
             if prev_state is not None and not prev_state.pending_steps:
                 prev_state = None  # 재개할 미완 단계가 없으면 처음부터 다시
