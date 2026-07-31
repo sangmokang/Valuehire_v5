@@ -6,10 +6,13 @@
 --   페이지 전량(D4)을 담는 원본 스냅샷 테이블. apps/aisearch 는 SOT29 함대
 --   인프라와 완전 독립(§1) — 기존 fleet_* 테이블과 무관한 신규 테이블이다.
 --
--- 멱등성: id 는 앱이 uuid5(namespace, channel\n page_type\n url) 로 결정론적
--- 생성(apps/aisearch/core/pagination_store.py make_row_id). 재실행/재시도가
+-- 멱등성: id 는 앱이 uuid5(namespace, channel\n page_type\n url\n position_ref) 로
+-- 결정론적 생성(apps/aisearch/core/pagination_store.py make_row_id). 재실행/재시도가
 -- 같은 페이지를 다시 저장해도 같은 id 로 upsert 되어 중복 행이 생기지 않는다.
--- (channel, page_type, url) unique 제약이 DB 단에서 이를 이중으로 보증한다.
+-- (channel, page_type, url, position_ref) unique 제약이 DB 단에서 이를 이중으로
+-- 보증한다. 2026-07-31 전수 리뷰 AC-3b — 예전 제약은 position_ref 가 빠져 있어
+-- 코드 멱등키와 어긋났다: 같은 프로필을 두 포지션이 저장하면 DB 가 서로 덮어써
+-- 포지션별 행이 사라졌다(코드는 서로 다른 행으로 취급).
 
 create table if not exists public.aisearch_pages_raw (
   id uuid primary key,  -- 앱 생성 결정론적 uuid5 멱등키 (default 없음 — 임의 UUID 금지)
@@ -20,7 +23,7 @@ create table if not exists public.aisearch_pages_raw (
   raw_html_or_text text not null,
   position_ref text not null,
   machine text not null,
-  constraint aisearch_pages_raw_idem_key unique (channel, page_type, url)
+  constraint aisearch_pages_raw_idem_key unique (channel, page_type, url, position_ref)
 );
 
 comment on table public.aisearch_pages_raw is

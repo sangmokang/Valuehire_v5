@@ -144,7 +144,7 @@ ClickUp + Discord + admin.valuehire.cc 세 곳에 결과를 남긴다. 발송은
 
 - **Supabase 저장 스키마(신규 필요, 미확정)**: 리스트 페이지 스냅샷 + 상세 페이지 스냅샷을 담을 테이블(가칭 `aisearch_pages_raw`). 컬럼 초안: `id, channel, page_type(list|detail), url, captured_at, raw_html_or_text, position_ref, machine`. **오너 확정 필요.**
 - **매칭 점수 입출력**: `docs/sot/24-position-jd-sot.json`의 `matching_prompt_contract` 그대로(D1~D8 근거 + gates + total_years → 결정론적 0-100점).
-- **ClickUp 등록 계약**: `docs/sot/25-ai-search-execution-process.json`의 `clickup_registration_contract`(필수 4필드: profile_url, score, why_fit, profile_summary) 재사용.
+- **ClickUp 등록 계약**: `docs/sot/25-ai-search-execution-process.json`의 `clickup_registration_contract`(필수 **5필드**: profile_url, score, why_fit, profile_summary, saved_profile_evidence) 재사용. `profile_save_evidence_required=true` — **프로필 저장 증거 확인 후에만 후보 Subtask 를 생성**하며, 증거가 없거나 `"missing"` 이면 등록하지 않는다(fail-closed). 구현: `apps/aisearch/core/recorders.py` `REQUIRED_FIELDS`/`saved_profile_evidence_text` (2026-07-31 전수 리뷰 H1 — 이전 문서의 "필수 4필드" 표기는 SOT25 원문과 어긋난 오기였다).
 - **Discord 메시지 계약(신규)**: 결과 채널 메시지 = {매칭점수, 프로필URL, 적합/부적합 사유, 매칭 근거, 학력, 경력 브리핑}. 멤버 채널 메시지 = 진행상황/에러(요약형).
 - **admin.valuehire.cc 계약**: D12 미확정 — Supabase 직접쓰기면 `pipeline_candidates` upsert 계약(기존 재사용), API면 신규 엔드포인트 계약(별도 문서).
 
@@ -216,4 +216,5 @@ V1 5차 기준 STILL-BROKEN 잔여분은 전부 "실제 브라우저·실계정 
 5. 링크드인 멀티세션·enterprise-authentication 문구 등 차단 감지 패턴의 실화면 보강.
 6. 3사 동시 실행 시 채널별 실제 탭 분리(현행: 연결은 분리, 탭 URL 지정은 라이브 세팅 필요).
 7. Supabase 실 테이블 적용(스키마 오너 확정 D12·§8-2), ClickUp/Discord 라이브 1건(L3 owner signoff), 익스텐션 실화면 캡처.
+8. **AC-7 수동 개입 타임스탬프 라이브 검증**(2026-07-31 전수 리뷰 추가): 사장님이 실제 크롬으로 3사 화면을 만졌을 때 ① 개입 감지 시각 ② 자동 조작 정지 시각 ③ 손 뗀 뒤 자동 재개 시각을 실화면에서 타임스탬프로 남겨, 30초 무입력 자동 재개(RESUME_DELAY_SECONDS)와 SOT 불변식 2의 60초 기준이 실제로 지켜지는지 확인한다. 상세 페이지 열람 중 개입도 포함(리뷰 F1 회귀 방지).
 - V1 5차 IMPROVEMENT 3건(제외어 필드 한정, 결과건수 단일 영역 파싱, 추출기 사전 일괄 검사)도 라이브 라운드에서 함께 처리.
