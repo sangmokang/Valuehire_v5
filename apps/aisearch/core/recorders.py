@@ -188,11 +188,19 @@ class DualRecorder:
             raise LiveGateError(
                 "L3 외부 쓰기: live=True 는 owner_signoff=True 없이는 금지 (fail-closed)"
             )
+        # 2026-07-31 리뷰 F5 — admin 은 ALL_STEPS 의 **첫 단계**다. live 인데
+        # 미주입이면 첫 단계가 AttributeError 로 죽어 ClickUp 등록도 Discord
+        # 보고도 한 건도 나가지 않는다(조용한 전면 실패). 그래서 실행 시점이
+        # 아니라 **조립 시점에** 거부한다 — 실패를 늦게 발견할수록 손해가 크다.
+        # dry-run 은 어떤 단계도 실제 호출하지 않으므로 None 을 허용한다.
+        if live and admin is None:
+            raise LiveGateError(
+                "L3 외부 쓰기: live=True 는 admin 클라이언트 주입 없이는 금지 "
+                "(admin_register 가 첫 단계 — 미주입 시 ClickUp·Discord 보고까지 "
+                "전부 유실된다, fail-closed)"
+            )
         self._clickup = clickup
         self._discord = discord
-        # admin 미주입 시에도 조용히 건너뛰지 않는다 — live 경로에서 admin_register
-        # 단계가 실행되면 AttributeError 로 실패해 partial/failed 로 표면화된다
-        # (기록된 척하지 않는다는 이 모듈의 원칙, run.py._NotConfiguredClient 와 동형).
         self._admin = admin
         self.live = live
 

@@ -37,6 +37,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from apps.aisearch.core.admin_api_client import AdminApiConfigError, HttpAdminApiClient
 from apps.aisearch.core.boolean_builder import DEFAULT_LOCATION, build_search_plan
 from apps.aisearch.core.cdp_driver import CdpDriver, connect_websocket_transport
 from apps.aisearch.core.discord_notify import DiscordNotifier
@@ -148,6 +149,22 @@ class _NotConfiguredClient:
             f"{self._name} 클라이언트 미구성 — 기록 경로가 호출됐다"
             f"(fail-closed): {item}"
         )
+
+
+def build_admin_client(*, live: bool) -> Any:
+    """2026-07-31 리뷰 F4 — admin 정본 클라이언트의 **프로덕션 조립 지점**.
+
+    이전에는 HttpAdminApiClient 가 어디에서도 만들어지지 않는 고아 코드였다
+    (테스트만 인스턴스화). 여기서 실제 조립 경로에 붙인다.
+
+    ADMIN_API_BASE_URL/ADMIN_API_INTERNAL_KEY 가 없거나 형식(https·키 16자)이
+    어긋나면 조용히 넘어가지 않고 _NotConfiguredClient 로 바꿔, 기록 경로가
+    실제로 호출될 때 fail-closed 로 표면화한다(미구성인데 성공한 척 금지).
+    """
+    try:
+        return HttpAdminApiClient(live=live)
+    except AdminApiConfigError as exc:
+        return _NotConfiguredClient(f"Admin({exc})")
 
 
 def build_deps(
@@ -401,7 +418,7 @@ def main(
         recorder = DualRecorder(
             _NotConfiguredClient("ClickUp"),
             _NotConfiguredClient("Discord"),
-            _NotConfiguredClient("Admin"),
+            build_admin_client(live=False),
         )  # dry-run — 외부 기록 0(기록 경로 진입 시 fail-closed 로 표면화)
 
     channel_extractors = dict(extractors)

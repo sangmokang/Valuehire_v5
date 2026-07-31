@@ -480,12 +480,21 @@ def test_ac6_missing_channel_falls_back_to_unknown_not_blank():
     assert am.registered[0]["channel"] == "unknown"
 
 
-def test_ac6_admin_not_configured_fails_partial_in_live_mode_not_silent_success():
-    """admin 미주입 + live=True 인데 기록 경로에 도달하면 조용히 성공한 척하지 않는다."""
+def test_ac6_admin_not_configured_is_rejected_at_construction_in_live_mode():
+    """2026-07-31 리뷰 F5 — admin 미주입 + live=True 는 **조립 시점에** 거부한다.
+
+    예전에는 실행 시점에 첫 단계(admin_register)가 AttributeError 로 죽었고,
+    그 결과 ClickUp 등록도 Discord 보고도 한 건도 나가지 않았다(조용한 전면
+    실패). 실패는 가장 이른 시점에 드러나야 한다.
+    """
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
-    rec = DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)  # admin 생략
 
+    with pytest.raises(LiveGateError):
+        DualRecorder(clickup=cu, discord=dc, live=True, owner_signoff=True)  # admin 생략
+
+    # dry-run 은 어떤 단계도 실제 호출하지 않으므로 admin 미주입을 허용한다.
+    rec = DualRecorder(clickup=cu, discord=dc)
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate())
-
-    assert result.status in ("partial", "failed")
-    assert result.error is not None
+    assert result.status == "dry_run"
+    assert dc.messages == [] or all(m["channel_id"] for m in dc.messages)
+    assert result.error is None  # dry-run 은 admin 미주입이어도 정상 완료
