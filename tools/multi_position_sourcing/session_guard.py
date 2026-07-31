@@ -548,6 +548,19 @@ def wait_for_human_auth(
         sleep(poll)
 
 
+# LinkedIn Recruiter(RPS) 계정 메뉴 마커 — 로그인된 Recruiter 앱에서만 렌더된다.
+# 2026-07-31 라이브 사고: LinkedIn 이 nav DOM 을 바꿔 예전 두 마커가 사라졌고,
+# 로그인이 멀쩡한데도 authenticated=False 가 되어 humansearch 증거 저장이 전부 막혔다.
+# 회귀 방지: tests/fixtures/linkedin_recruiter_nav_attrs_2026-07-31.json 의 라이브
+# 속성 목록과 교집합이 비면 테스트가 실패한다. 예전 마커는 하위호환으로 남긴다.
+LINKEDIN_RECRUITER_ACCOUNT_SELECTORS: tuple[str, ...] = (
+    "[data-test-global-nav-right-user-nav]",
+    "[data-test-user-nav]",
+    "[data-test-recruiter-account-menu]",
+    "[data-test-recruiter-nav-user-menu]",
+)
+
+
 def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     """Read fresh site auth/challenge markers without causing navigation or clicks."""
 
@@ -591,10 +604,14 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     saraminSearch: !!document.querySelector('input.search_input') && !!document.querySelector('#career_min') && !!document.querySelector('#career_max'),
     jobkoreaSearch: !!document.querySelector("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"),
     linkedinSearch: visible('a[href*="/talent/search"]'),
-    linkedinAccount: visible('[data-test-recruiter-account-menu], [data-test-recruiter-nav-user-menu]')
+    linkedinAccount: visible('__LINKEDIN_ACCOUNT_SELECTORS__')
   };
 })()
 """
+    script = script.replace(
+        "__LINKEDIN_ACCOUNT_SELECTORS__",
+        ", ".join(LINKEDIN_RECRUITER_ACCOUNT_SELECTORS),
+    )
     raw = tab.eval(script)
     if not isinstance(raw, Mapping):
         return AuthObservation(False, False, "", ())

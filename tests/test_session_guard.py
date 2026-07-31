@@ -258,3 +258,52 @@ def test_safe_target_file_rejects_symlink_and_group_writable_record() -> None:
         link.symlink_to(real)
         with pytest.raises(ValueError, match="protected regular file"):
             load_safe_keepalive_target(link)
+
+
+# --- LinkedIn Recruiter 계정 마커 드리프트 회귀 (2026-07-31 라이브 사고) ---
+#
+# humansearch 가 후보 20명을 수집하고도 첫 프로필 증거 저장에서
+# BrowserEvidenceError("authenticated browser evidence required") 로 전부 멈췄다.
+# 로그인은 정상인데 read_auth_observation 의 Recruiter 계정 마커 selector 가
+# LinkedIn DOM 변경으로 더 이상 존재하지 않아 authenticated=False 가 됐다.
+# 기존 테스트는 linkedinAccount 를 mock 으로 주입해서 selector 드리프트를 못 잡았다.
+
+_LIVE_NAV_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "linkedin_recruiter_nav_attrs_2026-07-31.json"
+)
+
+
+def _live_recruiter_nav_attributes() -> frozenset[str]:
+    data = json.loads(_LIVE_NAV_FIXTURE.read_text(encoding="utf-8"))
+    return frozenset(data["visible_data_attributes"])
+
+
+def _attribute_names_in_selectors(selectors: tuple[str, ...]) -> frozenset[str]:
+    names: set[str] = set()
+    for selector in selectors:
+        for part in selector.split(","):
+            part = part.strip()
+            if part.startswith("[") and part.endswith("]"):
+                names.add(part[1:-1].split("=")[0].strip())
+    return frozenset(names)
+
+
+def test_linkedin_recruiter_account_selectors_match_live_recruiter_nav() -> None:
+    """계정 증명 selector 중 최소 하나는 라이브 Recruiter nav 에 실제로 존재해야 한다."""
+    matched = _attribute_names_in_selectors(
+        session_guard.LINKEDIN_RECRUITER_ACCOUNT_SELECTORS
+    ) & _live_recruiter_nav_attributes()
+    assert matched, (
+        "Recruiter 계정 마커가 라이브 DOM 과 어긋남 — "
+        f"selectors={session_guard.LINKEDIN_RECRUITER_ACCOUNT_SELECTORS}"
+    )
+
+
+def test_linkedin_account_probe_script_uses_the_shared_selector_constant() -> None:
+    """주입 스크립트는 상수를 참조해야 한다 — selector 이중 정의 금지."""
+    source = inspect.getsource(read_auth_observation)
+    assert "LINKEDIN_RECRUITER_ACCOUNT_SELECTORS" in source
+    for selector in session_guard.LINKEDIN_RECRUITER_ACCOUNT_SELECTORS:
+        assert selector not in source, (
+            f"probe script 에 {selector!r} 가 하드코딩됨 — 상수만 써야 드리프트가 한 곳에서 고쳐진다"
+        )
