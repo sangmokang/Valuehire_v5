@@ -254,6 +254,34 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+MATCHING_STAGE_TIMEOUT_ENV = "VH_MATCHING_TIMEOUT_SECONDS"
+DEFAULT_MATCHING_STAGE_TIMEOUT_SECONDS = 180.0
+
+
+def matching_stage_timeout_seconds() -> float:
+    """Stage 1~3 LLM 호출 시간제한(초).
+
+    2026-08-01 라이브 사고: 60초 고정이라 이력서 전문(최대 8,000자)+JD 프롬프트가
+    장비 부하에서 초과해 후보가 채점 없이 유실됐다. 운영 중 조정할 수 있어야 한다.
+    값이 없거나 숫자가 아니거나 0 이하·유한하지 않으면 조용히 기본값으로 넘어가지
+    않고 fail-closed 로 거부한다(잘못된 설정이 무한 대기로 둔갑하지 않도록).
+    """
+    raw = os.environ.get(MATCHING_STAGE_TIMEOUT_ENV)
+    if raw is None:
+        return DEFAULT_MATCHING_STAGE_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise MatchingContractError(
+            f"{MATCHING_STAGE_TIMEOUT_ENV} 는 초 단위 숫자여야 함: {raw!r}"
+        ) from exc
+    if not math.isfinite(value) or value <= 0:
+        raise MatchingContractError(
+            f"{MATCHING_STAGE_TIMEOUT_ENV} 는 0보다 큰 유한한 값이어야 함: {raw!r}"
+        )
+    return value
+
+
 def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object]:
     """Run one temperature-zero-equivalent local Claude JSON extraction step."""
 
@@ -269,6 +297,7 @@ def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object
     finally:
         sys.path[:0] = removed
 
+    timeout_seconds = matching_stage_timeout_seconds()
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
     try:
@@ -279,12 +308,14 @@ def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object
             text=True,
             capture_output=True,
             check=False,
-            timeout=60,
+            timeout=timeout_seconds,
         )
     except FileNotFoundError as exc:
         raise MatchingContractError("claude CLI is not installed") from exc
     except subprocess.TimeoutExpired as exc:
-        raise MatchingContractError("claude matching stage timed out after 60s") from exc
+        raise MatchingContractError(
+            f"claude matching stage timed out after {timeout_seconds:g}s"
+        ) from exc
     if completed.returncode != 0:
         raise MatchingContractError(
             f"claude matching stage failed: {(completed.stderr or '')[:240]}"
