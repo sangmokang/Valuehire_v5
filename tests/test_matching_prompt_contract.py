@@ -661,3 +661,56 @@ def test_stage3_distinct_requirements_are_never_merged_by_normalization() -> Non
     # 반대로 전각·공백·대소문자만 다른 것은 같은 요건이다.
     assert _gate_key("Ｐython") == _gate_key("Python")
     assert _gate_key("Python  3년") == _gate_key("python 3년")
+
+
+# --- D2/D6 not_applicable 표기: 후보를 통째로 버리지 않는다 (2026-08-01 라이브 사고) ---
+#
+# 사고: 게이트 정렬을 고치자 곧바로 "D6 has an invalid shape" 로 후보가 다시 유실됐다.
+# 라이브 LLM 응답을 직접 받아 확인한 실제 값(2026-08-01 재현):
+#     "D2": "not_applicable", "D6": "not_applicable"
+# 즉 LLM 은 not_applicable 을 **차원 값 자체**로 낸다. stage_3 프롬프트가
+# "D2는 not_applicable ... D6는 not_applicable로 출력하세요" 라고 지시하니 자연스러운 해석인데,
+# 코드는 {"score": "not_applicable", "evidence": ...} 객체만 받아 예외를 던졌다.
+
+
+def test_dimension_bare_not_applicable_string_is_accepted_for_d2_and_d6() -> None:
+    """D2·D6 는 문자열 not_applicable 로 와도 객체로 정규화해 받는다."""
+    payload = _payload(score=4)
+    payload["dimensions"]["D2"] = "not_applicable"
+    payload["dimensions"]["D6"] = "not_applicable"
+
+    result = calculate_final_score(payload)
+
+    # 건너뛴 두 차원은 가중치에서 빠지고 나머지로 재분배된다(예외로 후보를 버리지 않는다).
+    assert "D2" not in result["weights_applied"]
+    assert "D6" not in result["weights_applied"]
+    assert sum(result["weights_applied"].values()) == 100
+    assert result["contract_version"] == CONTRACT_VERSION
+    assert isinstance(result["score"], int)
+
+
+def test_bare_not_applicable_is_rejected_for_dimensions_that_cannot_skip() -> None:
+    """D1 등 건너뛸 수 없는 차원은 문자열로 와도 그대로 fail-closed."""
+    payload = _payload(score=4)
+    payload["dimensions"]["D1"] = "not_applicable"
+
+    with pytest.raises(MatchingContractError):
+        calculate_final_score(payload)
+
+
+def test_other_bare_strings_are_still_rejected() -> None:
+    """not_applicable 이 아닌 문자열은 계속 거부한다(검증 약화 금지)."""
+    payload = _payload(score=4)
+    payload["dimensions"]["D6"] = "unknown"
+
+    with pytest.raises(MatchingContractError):
+        calculate_final_score(payload)
+
+
+def test_stage3_prompt_states_not_applicable_is_the_score_value() -> None:
+    """근본 예방: not_applicable 은 score 의 값이며 객체 형태를 유지해야 한다고 명시."""
+    stage3_prompt = _contract()["prompt_templates"]["stage_3"]
+
+    assert "score" in stage3_prompt
+    assert "not_applicable" in stage3_prompt
+    assert '"score":"not_applicable"' in stage3_prompt.replace(" ", "")
