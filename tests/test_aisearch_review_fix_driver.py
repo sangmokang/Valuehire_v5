@@ -164,3 +164,32 @@ def test_m4_no_digits_fail_closed():
 def test_m4_repeated_same_number_is_not_ambiguous():
     # 같은 수가 두 번 보이는 표기(예: "1,234명 (1,234)")는 모호하지 않다.
     assert _driver(_Transport(count_text="1,234명 (1,234)")).run_rps_search("e") == 1234
+
+
+# ── 자체 적대검증 — 목록 페이지 차단도 '차단'으로 보고돼야 한다 ─────────────
+
+
+def test_list_page_block_is_reported_as_blocked_and_alerts():
+    """M1 이 만든 목록 차단이 aborted 로 새어나가면 캡차 알림이 안 나간다.
+
+    상세 페이지 차단과 **같은 계약**이어야 한다: 모니터에 신호 공급 → BLOCKED →
+    Discord 알림. 예전에는 목록 차단 예외를 아무도 받아주지 않아 E8 abort 로
+    떨어졌고, 사장님은 캡차가 떴다는 사실조차 통보받지 못했다.
+    """
+    from apps.aisearch.core.orchestrator import run_search_pipeline
+    from tests.test_aisearch_orchestrator import Harness, _jd
+    from apps.aisearch.core.cdp_driver import DetailPageBlocked
+
+    h = Harness(pages=1)
+
+    def block_on_list(channel: str, page: int) -> None:
+        raise DetailPageBlocked([{"type": "signal", "kind": "captcha"}])
+
+    h.list_side_effect = block_on_list
+
+    report = run_search_pipeline(_jd(), h.deps())
+
+    assert report.status == "blocked", f"목록 차단이 blocked 로 보고되지 않았다: {report.status}"
+    assert any("captcha" in m for m in h.notifier.messages), (
+        "목록 차단인데 차단 알림이 나가지 않았다"
+    )
