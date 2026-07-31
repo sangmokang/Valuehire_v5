@@ -507,10 +507,15 @@ def main(
             file=sys.stderr,
         )
 
+    # F11(2026-07-31 리뷰) — 원장의 live 표기는 **실제 기록기**를 따른다.
+    # 예전에는 --live 플래그만 봤다: recorder= 로 live 레코더를 주입해 실제
+    # ClickUp/Discord/admin 쓰기가 일어나도 원장에는 dry-run 으로 남아, 증거가
+    # 사실과 정반대가 됐다. 둘 중 하나라도 라이브면 라이브로 기록한다.
+    effective_live = bool(args.live or getattr(recorder, "live", False))
     payload = _report_payload(
         report,
-        mode="browser_live" if args.live else "browser_dry_run",
-        live=args.live,
+        mode="browser_live" if effective_live else "browser_dry_run",
+        live=effective_live,
     )
     _write_report(args.report_out, payload)
     print(
