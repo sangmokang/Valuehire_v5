@@ -300,7 +300,10 @@ def test_linkedin_recruiter_account_selectors_match_live_recruiter_nav() -> None
 
 
 def test_linkedin_account_probe_script_uses_the_shared_selector_constant() -> None:
-    """주입 스크립트가 상수를 그대로 써야 한다(이중 정의 금지)."""
+    """주입 스크립트는 상수를 참조해야 한다 — selector 이중 정의 금지."""
     source = inspect.getsource(read_auth_observation)
+    assert "LINKEDIN_RECRUITER_ACCOUNT_SELECTORS" in source
     for selector in session_guard.LINKEDIN_RECRUITER_ACCOUNT_SELECTORS:
-        assert selector in source, f"probe script 에 {selector!r} 가 없음"
+        assert selector not in source, (
+            f"probe script 에 {selector!r} 가 하드코딩됨 — 상수만 써야 드리프트가 한 곳에서 고쳐진다"
+        )
