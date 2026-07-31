@@ -47,6 +47,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol
 
 from apps.aisearch.core import recorders
 from apps.aisearch.core.banner import build_dispatch_snippet
+from apps.aisearch.core.cdp_driver import DetailPageBlocked
 from apps.aisearch.core.boolean_builder import (
     ADVANCE_REASON_CAP_REACHED,
     ADVANCE_REASON_EXHAUSTED,
@@ -139,6 +140,12 @@ class PipelineDeps:
     #: RLock: _register_and_draft(락 보유) 내부에서 _check_monitor(락 취득)를
     #: 다시 부르는 중첩 경로가 있다.
     lock: threading.RLock = field(default_factory=threading.RLock)
+    #: V1 독립검증 결함4 — 링크드인 채널 실행 전체를 감싸는 기기 간 세션 락
+    #: (컨텍스트 매니저, session_lock.LinkedInSessionLock 계약). None 이면
+    #: 기기 간 배제를 하지 않는다(이 프로세스 내부 threading.RLock 만으로는
+    #: 다른 기기의 동시 실행을 막을 수 없다 — 알려진 한계, 주입 안 하면
+    #: 명시적으로 그 한계를 그대로 가져간다).
+    linkedin_session_lock: Optional[Any] = None
 
 
 @dataclass
@@ -284,6 +291,7 @@ def _register_and_draft(
                 return deps.recorder.record(
                     position_name=position_name,
                     candidate=candidate,
+                    channel=channel,
                     resume_from=_resume,
                 )
 
@@ -355,7 +363,19 @@ def _run_variant(
 
         def guarded_detail(ref: str) -> dict:
             _check_monitor(deps)  # 2차 결함 1 — 매 상세 조회 전 차단 확인
-            return deps.fetch_detail_page(channel, ref)
+            try:
+                return deps.fetch_detail_page(channel, ref)
+            except DetailPageBlocked as exc:
+                # V1 독립검증 결함1 — 상세페이지 자체의 차단신호는 목록 페이지
+                # 기준 _check_monitor 이전 검사로는 못 잡는다. 드라이버가 감지해
+                # 올려보낸 이벤트를 여기서 모니터에 공급하고 즉시 BLOCKED 처리한다.
+                with deps.lock:
+                    feed_driver_events(deps.monitor, exc.events)
+                    deps.monitor.poll()
+                raise _PipelineBlocked(
+                    "AC7 BLOCKED — 상세페이지 차단 신호(캡차/2FA 등), "
+                    "human_reset 전까지 진행 금지"
+                ) from exc
 
         variant.pagination = paginate_and_store(
             guarded_list,
@@ -496,7 +516,7 @@ def run_search_pipeline(
             _DescriptorRunner(d) for d in descriptors
         ]
 
-        def _run_channel(runner: Any) -> None:
+        def _run_units(runner: Any) -> None:
             while True:
                 unit = runner.next_unit()
                 if unit is None:
@@ -507,6 +527,16 @@ def run_search_pipeline(
                     previous, exclusions,
                 )
                 runner.feed(pagination)
+
+        def _run_channel(runner: Any) -> None:
+            # V1 독립검증 결함4 — 링크드인 채널 실행 전체를 기기 간 세션 락으로
+            # 감싼다. 다른 기기(또는 이 기기의 다른 프로세스)가 이미 보유 중이면
+            # LinkedInSessionLockError 로 즉시 실패(E4: 계정당 동시 1기기).
+            if runner.channel != LINKEDIN_CHANNEL or deps.linkedin_session_lock is None:
+                _run_units(runner)
+                return
+            with deps.linkedin_session_lock:
+                _run_units(runner)
 
         with ThreadPoolExecutor(
             max_workers=len(runners), thread_name_prefix="aisearch-channel"

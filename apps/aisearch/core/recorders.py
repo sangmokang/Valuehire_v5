@@ -1,7 +1,11 @@
-"""AC-5 — ClickUp + Discord 이중 기록 모듈.
+"""AC-5/AC-6 — ClickUp + Discord + admin.valuehire.cc 3중 기록 모듈.
 
 goal: docs/engineering/aisearch-fleet-goal-2026-07-28.md §4 AC-5, §5
 계약: docs/sot/25-ai-search-execution-process.json clickup_registration_contract 재사용.
+AC-6(admin.valuehire.cc 등록)는 별도 goal
+(docs/engineering/aisearch-register-api-goal-2026-07-31.md, valuehire_v4
+POST /api/aisearch/register)의 클라이언트측 배선이다 — D12 확정(전용 API, 오너
+2026-07-31 결정) 후 이 모듈에 추가됐다.
 
 L3 외부 쓰기 규율:
 - 클라이언트는 전부 주입식(Protocol) — 이 모듈에는 HTTP 호출 코드가 없다.
@@ -20,6 +24,7 @@ L3 외부 쓰기 규율:
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
@@ -41,9 +46,15 @@ PARENT_PLACEHOLDER = "<parent-to-be-created>"
 # 기록 단계(순서 고정). 부분 실패 시 이 이름들이 pending_steps 로 반환된다.
 STEP_CLICKUP_PARENT = "clickup_parent"
 STEP_CLICKUP_SUBTASK = "clickup_subtask"
+STEP_ADMIN_REGISTER = "admin_register"  # AC-6 — admin.valuehire.cc(v4) 등록
 STEP_DISCORD_RESULT = "discord_result"
 STEP_DISCORD_MEMBER = "discord_member"
+# V1 독립검증 결함6 — admin 등록을 ClickUp보다 먼저 시도한다. 이전 순서(ClickUp
+# 먼저)에서는 admin 클라이언트 미구성/실패를 ClickUp에 이미 쓴 뒤에야 발견해,
+# ClickUp에는 있는데 admin엔 없는 반쪽 상태가 롤백 없이 남았다. admin을 먼저
+# 두면 그 misconfiguration/실패가 다른 어떤 외부 쓰기보다도 먼저 표면화된다.
 ALL_STEPS = (
+    STEP_ADMIN_REGISTER,
     STEP_CLICKUP_PARENT,
     STEP_CLICKUP_SUBTASK,
     STEP_DISCORD_RESULT,
@@ -98,6 +109,16 @@ class DiscordClient(Protocol):
     def post_message(self, channel_id: str, content: str) -> str: ...
 
 
+class AdminApiClient(Protocol):
+    """주입식 admin.valuehire.cc 인터페이스.
+
+    실제 HTTP 어댑터는 admin_api_client.py(POST /api/aisearch/register,
+    x-internal-key 인증) — 이 모듈에는 HTTP 호출 코드가 없다.
+    """
+
+    def register_candidate(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True)
 class Candidate:
     profile_url: str
@@ -107,6 +128,7 @@ class Candidate:
     match_basis: str = ""  # 매칭 근거
     education: str = ""  # 학력
     career_brief: str = ""  # 경력 브리핑
+    name: str = ""  # 후보자 이름(AC-6 admin 등록 필수 필드 — 미확보 시 profile_url로 대체)
 
 
 @dataclass
@@ -142,7 +164,11 @@ def build_result_message(position_name: str, c: Candidate) -> str:
 
 
 class DualRecorder:
-    """60점 이상 확정 후보를 ClickUp + Discord 두 곳에 기록한다.
+    """60점 이상 확정 후보를 ClickUp + Discord + admin.valuehire.cc 세 곳에 기록한다.
+
+    이름은 초기 설계(ClickUp+Discord 이중 기록) 그대로 유지한다 — AC-6(admin 등록)
+    추가로 실제로는 3중 기록이지만, 6개 파일이 이 이름을 참조하고 있어 개명은
+    이번 변경 범위 밖(별도 리팩터로 분리).
 
     기본은 dry-run(라이브 발신 OFF). 라이브는 live=True + owner_signoff=True 둘 다 필요.
     부분 실패 시 status="partial" + pending_steps 로 반환하며, 같은 인자에
@@ -153,6 +179,7 @@ class DualRecorder:
         self,
         clickup: ClickUpClient,
         discord: DiscordClient,
+        admin: Optional[AdminApiClient] = None,
         *,
         live: bool = False,
         owner_signoff: bool = False,
@@ -163,6 +190,10 @@ class DualRecorder:
             )
         self._clickup = clickup
         self._discord = discord
+        # admin 미주입 시에도 조용히 건너뛰지 않는다 — live 경로에서 admin_register
+        # 단계가 실행되면 AttributeError 로 실패해 partial/failed 로 표면화된다
+        # (기록된 척하지 않는다는 이 모듈의 원칙, run.py._NotConfiguredClient 와 동형).
+        self._admin = admin
         self.live = live
 
     # ── 내부: dry-run 이면 계획만, 라이브면 실제 클라이언트 호출 ──────────────
@@ -180,6 +211,7 @@ class DualRecorder:
         *,
         position_name: str,
         candidate: Candidate,
+        channel: str = "",
         resume_from: Optional[RecordResult] = None,
     ) -> RecordResult:
         result = RecordResult(dry_run=not self.live)
@@ -216,6 +248,30 @@ class DualRecorder:
             )
             return result
 
+        # V1 독립검증 결함8 — truthy 체크만으로는 "javascript:void(0)" 같은 가짜
+        # URL이나 공백뿐인 텍스트를 걸러내지 못해, ClickUp까지 쓴 뒤에야 admin
+        # 원격 API(400)에서 뒤늦게 걸러졌다. 여기서 형식까지 먼저 검증한다 —
+        # ClickUp을 포함한 모든 외부 쓰기보다 먼저(위 순서 변경과 함께 결함6도 보강).
+        if not re.match(r"^https?://", candidate.profile_url.strip(), re.IGNORECASE):
+            result.status = STATUS_FAILED
+            result.error = f"profile_url 형식 위반(http/https 아님): {candidate.profile_url!r}"
+            self._post_member(
+                result,
+                f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
+            )
+            return result
+        blank_text_fields = [
+            f for f in ("why_fit", "profile_summary") if not getattr(candidate, f).strip()
+        ]
+        if blank_text_fields:
+            result.status = STATUS_FAILED
+            result.error = f"공백뿐인 필드: {', '.join(blank_text_fields)}"
+            self._post_member(
+                result,
+                f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
+            )
+            return result
+
         if resume_from is not None and resume_from.pending_steps:
             # 결함2: 재개 경로 — 이전 실행에서 이미 쓴 단계는 건너뛰고 미완 단계만
             # 수행한다. 중복확인은 재수행하지 않는다: 1차 실행이 만든 subtask 가
@@ -244,7 +300,7 @@ class DualRecorder:
         completed: list[str] = []
         for i, step in enumerate(steps):
             try:
-                self._run_step(step, result, position_name, candidate)
+                self._run_step(step, result, position_name, candidate, channel)
             except Exception as exc:  # noqa: BLE001 — 외부 쓰기 실패는 종류 불문 수거
                 result.error = f"{step} 실패: {exc}"
                 result.pending_steps = list(steps[i:])
@@ -265,6 +321,7 @@ class DualRecorder:
         result: RecordResult,
         position_name: str,
         candidate: Candidate,
+        channel: str = "",
     ) -> None:
         if step == STEP_CLICKUP_PARENT:
             # 포지션 부모 Task — 있으면 재사용, 없으면 생성
@@ -314,6 +371,35 @@ class DualRecorder:
                 lambda: self._clickup.create_candidate_subtask(
                     CLICKUP_LIST_ID, result.parent_task_id, fields
                 ),
+            )
+
+        elif step == STEP_ADMIN_REGISTER:
+            # AC-6 — admin.valuehire.cc(v4) POST /api/aisearch/register 등록.
+            # 그 API 계약(docs/engineering/aisearch-register-api-goal-2026-07-31.md):
+            # name 필수(v4는 빈 name 을 400 거부) — V1 독립검증 결함7: 예전에는
+            # 이름 없으면 profile_url 문자열을 그대로 이름란에 흘려보냈다(프로덕션
+            # 데이터 오염). URL을 이름인 척 보내지 않고 정직한 플레이스홀더를 쓴다.
+            # jd_id — v4 쪽 dedup(같은 jd_id 안에서 canonicalIdentityKey 비교)이
+            # 이 값을 기준으로 삼는다. aisearch의 JD 계약에는 v4 UUID가 없으므로,
+            # 같은 포지션이면 항상 같은 값이 나오는 position_name 을 그대로
+            # jd_id 로 쓴다(ClickUp 부모 Task 조회도 이미 position_name 을
+            # 자연키로 쓰고 있어 일관됨). 예전에는 jd_id 자체가 누락돼 v4 dedup이
+            # 항상 스킵되고 URL 변형만 달라도 중복 등록됐다.
+            payload = {
+                "name": candidate.name or "이름 미확인",
+                "profile_url": candidate.profile_url,
+                "match_score": candidate.score,
+                "why_fit": candidate.why_fit,
+                "profile_summary": candidate.profile_summary,
+                "channel": channel or "unknown",
+                "jd_id": position_name,
+                "jd_title": position_name,
+            }
+            self._do(
+                result,
+                "admin_register_candidate",
+                payload,
+                lambda: self._admin.register_candidate(payload),
             )
 
         elif step == STEP_DISCORD_RESULT:

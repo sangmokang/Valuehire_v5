@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -40,15 +41,18 @@ from apps.aisearch.core.boolean_builder import DEFAULT_LOCATION, build_search_pl
 from apps.aisearch.core.cdp_driver import CdpDriver, connect_websocket_transport
 from apps.aisearch.core.discord_notify import DiscordNotifier
 from apps.aisearch.core.intervention import InterventionMonitor
+from apps.aisearch.core.intervention import RESUME_DELAY_SECONDS
 from apps.aisearch.core.orchestrator import (
     LINKEDIN_CHANNEL,
     STATUS_COMPLETED,
+    STATUS_WAITING_RESUME,
     PipelineDeps,
     PipelineReport,
     run_search_pipeline,
 )
 from apps.aisearch.core.portal_search import build_portal_search_descriptors
 from apps.aisearch.core.recorders import DualRecorder
+from apps.aisearch.core.session_lock import LinkedInSessionLock
 
 __all__ = ["CHANNELS", "build_deps", "main"]
 
@@ -155,6 +159,7 @@ def build_deps(
     extract_candidates: Callable[[str], list[dict]],
     *,
     drivers: Optional[Mapping[str, CdpDriver]] = None,
+    linkedin_session_lock: Optional[Any] = None,
 ) -> PipelineDeps:
     """드라이버를 오케스트레이터 포트에 배선한다.
 
@@ -196,6 +201,7 @@ def build_deps(
             machine=machine,
             poll_driver_events=poll_driver_events,
             drivers=channel_drivers,
+            linkedin_session_lock=linkedin_session_lock,
         )
     return PipelineDeps(
         driver=driver,
@@ -207,6 +213,7 @@ def build_deps(
         extract_candidates=extract_candidates,
         machine=machine,
         poll_driver_events=driver.poll_events,
+        linkedin_session_lock=linkedin_session_lock,
     )
 
 
@@ -267,6 +274,8 @@ def main(
     extractors: Optional[Mapping[str, Extractor]] = None,
     recorder: Optional[DualRecorder] = None,
     notifier: Optional[Any] = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_resume_attempts: int = 6,
 ) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m apps.aisearch.run",
@@ -281,8 +290,21 @@ def main(
     parser.add_argument(
         "--ws-url",
         default=None,
-        help="대상 탭의 CDP WebSocket URL (테스트는 transport_factory 주입)",
+        help=(
+            "대상 탭의 CDP WebSocket URL — 테스트(transport_factory 주입) 또는 "
+            "단일 탭 실험용. 실제 3채널 동시 실행(--browser, transport_factory "
+            "미주입)에서는 이 값 하나를 세 채널이 공유하면 같은 탭을 놓고 채널이 "
+            "경합한다(V1 독립검증 결함3) — 그 경로에서는 --ws-url-<channel> 3개를 "
+            "각각 주십시오."
+        ),
     )
+    for _channel in CHANNELS:
+        parser.add_argument(
+            f"--ws-url-{_channel}",
+            dest=f"ws_url_{_channel}",
+            default=None,
+            help=f"{_channel} 채널 전용 CDP WebSocket URL(채널당 독립 탭 — 다른 채널과 달라야 함)",
+        )
     parser.add_argument("--machine", default="macmini", help="실행 머신 식별자")
     parser.add_argument(
         "--pages-out",
@@ -293,17 +315,27 @@ def main(
     parser.add_argument(
         "--live",
         action="store_true",
-        help="ClickUp/Discord 라이브 기록(오너 승인 게이트). 현재 fail-closed 거부.",
+        help=(
+            "ClickUp/Discord/admin 라이브 기록(오너 승인 게이트). CLI 단독 실행은 "
+            "실제 클라이언트를 만들 방법이 없어 여전히 fail-closed 거부한다 — "
+            "recorder= 인자로 live=True·owner_signoff=True 인 실제 DualRecorder를 "
+            "주입했을 때만 통과한다(V1 독립검증 결함2: 이전에는 주입 여부와 "
+            "무관하게 항상 거부해 admin 등록이 라이브에서 도달 불가능했다)."
+        ),
     )
     args = parser.parse_args(argv)
 
-    if args.live:
-        # 오너 승인 게이트 — 라이브 기록 클라이언트(ClickUp/Discord)가 아직
-        # 배선되지 않았다. 조용한 dry-run 격하 금지, fail-closed 로 거부한다.
+    if args.live and (recorder is None or not recorder.live):
+        # 오너 승인 게이트 — CLI 인자만으로는 실제 라이브 클라이언트를 만들
+        # 방법이 없다(ClickUp/Discord/admin 자격증명을 CLI 플래그로 받지
+        # 않음). 실제 배선은 recorder= 프로그램적 주입으로만 가능하다.
         parser.exit(
             2,
-            "--live 거부: ClickUp/Discord 기록 클라이언트 미구성(fail-closed). "
-            "plan-only(기본) 또는 --browser dry-run 으로 실행하십시오.\n",
+            "--live 거부: live=True 로 구성된 실제 recorder 가 주입되지 않았다"
+            "(fail-closed). CLI 인자만으로는 ClickUp/Discord/admin 라이브 "
+            "클라이언트를 만들 수 없다 — recorder= 로 실제 DualRecorder(..., "
+            "live=True, owner_signoff=True) 를 주입하거나, plan-only(기본)/"
+            "--browser dry-run 으로 실행하십시오.\n",
         )
 
     jd = json.loads(Path(args.jd_path).read_text(encoding="utf-8"))
@@ -321,15 +353,40 @@ def main(
             "silent 0명 실행은 금지 — 추출기 포트를 주입하십시오.\n",
         )
 
+    channel_urls: dict[str, str] = {
+        channel: (getattr(args, f"ws_url_{channel}") or args.ws_url or "")
+        for channel in CHANNELS
+    }
+
     if transport_factory is None:
-        if not args.ws_url:
-            parser.exit(2, "--ws-url 이 필요합니다(라이브 CDP 연결 대상 탭).\n")
+        # V1 독립검증 결함3 — 실제 CDP 연결 경로에서는 채널당 서로 다른 탭이
+        # 필수다. 같은 URL(탭)을 여러 채널이 공유하면 페이지 이동이 경합해
+        # 후보가 엉뚱한 채널로 저장될 수 있다 — 단일 --ws-url 공용은 여기서 금지.
+        missing = [c for c in CHANNELS if not channel_urls[c]]
+        if missing:
+            parser.exit(
+                2,
+                "--ws-url-<channel> 이 필요합니다(채널당 독립 탭): "
+                f"{', '.join(f'--ws-url-{c}' for c in missing)}\n",
+            )
+        duplicates = {
+            url
+            for url in channel_urls.values()
+            if list(channel_urls.values()).count(url) > 1
+        }
+        if duplicates:
+            parser.exit(
+                2,
+                "채널별 --ws-url-<channel> 값이 서로 달라야 합니다(같은 탭 공유 금지, "
+                f"fail-closed): 중복 URL {sorted(duplicates)!r}\n",
+            )
         transport_factory = connect_websocket_transport
 
     # 4차 결함 ⑩ — 채널당 독립 드라이버(각자 탭/연결). 트랜스포트 팩토리를
     # 채널마다 따로 불러 연결을 공유하지 않는다(같은 연결 공유 = 응답 혼선).
+    # V1 독립검증 결함3 — 각 채널이 자기 전용 URL(탭)로 접속한다(공유 --ws-url 아님).
     drivers: dict[str, CdpDriver] = {
-        channel: CdpDriver(transport_factory(args.ws_url or ""))
+        channel: CdpDriver(transport_factory(channel_urls[channel]))
         for channel in CHANNELS
     }
 
@@ -342,7 +399,9 @@ def main(
     monitor = InterventionMonitor(time.monotonic, notifier)
     if recorder is None:
         recorder = DualRecorder(
-            _NotConfiguredClient("ClickUp"), _NotConfiguredClient("Discord")
+            _NotConfiguredClient("ClickUp"),
+            _NotConfiguredClient("Discord"),
+            _NotConfiguredClient("Admin"),
         )  # dry-run — 외부 기록 0(기록 경로 진입 시 fail-closed 로 표면화)
 
     channel_extractors = dict(extractors)
@@ -359,6 +418,17 @@ def main(
         # position_ref(JD position_name)의 저장 행만 추출기에 넘긴다.
         return extractor(store.rows_for(channel, jd["position_name"]))
 
+    # V1 독립검증 결함4 — 링크드인 채널은 기기 간 세션 락으로 감싼다.
+    # AISEARCH_LINKEDIN_LOCK_DIR(공유 스토리지 경로) 가 설정된 경우에만 실제
+    # 락을 건다 — 테스트/미설정 환경에서 로컬 홈 디렉터리에 조용히 실제 락
+    # 파일을 만들지 않기 위해 env 로 명시 오입력을 요구한다(silent 필로소피
+    # 유지: 미설정 = "이 실행은 기기 간 배제 없음"을 그대로 드러낸다).
+    lock_dir_env = os.environ.get("AISEARCH_LINKEDIN_LOCK_DIR", "").strip()
+    linkedin_session_lock = (
+        LinkedInSessionLock(lock_dir=Path(lock_dir_env) / "linkedin_rps", owner=f"aisearch@{args.machine}")
+        if lock_dir_env
+        else None
+    )
     deps = build_deps(
         drivers[LINKEDIN_CHANNEL],
         store,
@@ -367,13 +437,30 @@ def main(
         args.machine,
         extract_candidates,
         drivers=drivers,
+        linkedin_session_lock=linkedin_session_lock,
     )
     report = run_search_pipeline(jd, deps)
 
-    payload = _report_payload(report, mode="browser_dry_run", live=False)
+    # V1 독립검증 결함5 — PAUSED_HUMAN 은 InterventionMonitor.poll() 이 마지막
+    # 사람 입력으로부터 30초(RESUME_DELAY_SECONDS) 무입력이면 스스로 RUNNING
+    # 으로 되돌리는 상태다. 여기서 실제로 대기·재시도하지 않으면 그 자기복구가
+    # 아무 효력이 없다 — waiting_resume 로 그냥 끝나버려 사람이 잡 전체를
+    # 수동으로 다시 시작해야 했다(결함5). previous=report 로 미완 단계만
+    # 이어서 완결한다(2차 결함 7 재개 경로 재사용).
+    resume_attempts = 0
+    while report.status == STATUS_WAITING_RESUME and resume_attempts < max_resume_attempts:
+        sleep(RESUME_DELAY_SECONDS / max_resume_attempts)
+        resume_attempts += 1
+        report = run_search_pipeline(jd, deps, previous=report)
+
+    payload = _report_payload(
+        report,
+        mode="browser_live" if args.live else "browser_dry_run",
+        live=args.live,
+    )
     _write_report(args.report_out, payload)
     print(
-        f"[aisearch] mode=browser_dry_run status={report.status} "
+        f"[aisearch] mode={payload['mode']} status={report.status} "
         f"variants={len(report.variants)} registered={len(report.registered)} "
         f"drafts={len(report.drafts)} excluded={len(report.excluded)} "
         f"error={report.error or '-'}"

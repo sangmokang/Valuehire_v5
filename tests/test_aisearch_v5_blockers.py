@@ -66,6 +66,18 @@ class ListStateTransport:
         elif "/*vh:next_page*/" in expr:
             # 상세 화면에는 목록의 '다음 페이지' 버튼이 없다.
             value = on_list
+        elif "/*vh:snapshot*/" in expr:
+            # V1 독립검증 결함1 재검증 이후: fetch_detail_page 도 poll_events 를
+            # 부른다 — 차단신호 없는 정상 스냅샷 모양을 흉내낸다.
+            value = {
+                "h": 0,
+                "present": True,
+                "captcha": False,
+                "cloudflare": False,
+                "twofa": False,
+                "checkpoint": False,
+                "multisession": False,
+            }
         return {"result": {"value": value}}
 
 
@@ -97,6 +109,122 @@ class TestBlocker1DetailThenNextPage:
         # 상세 2건 열람 후에도 2페이지 요청은 목록 화면 기준으로 실행돼야 한다.
         page2 = driver.fetch_list_page("saramin", 2, SARAMIN_PAYLOAD)
         assert page2["url"] == LIST_URL
+
+
+class _DetailCaptchaTransport(ListStateTransport):
+    """상세 화면(/talent-pool/view/1)에서만 캡차 스냅샷을 반환하는 페이크.
+
+    실제 사고 재현: 목록 화면은 정상인데, 상세 프로필로 이동하는 순간 캡차가
+    뜬다 — V1 독립검증 결함1(cdp_driver.py:595 구버전).
+    """
+
+    CAPTCHA_URL = DETAIL_URLS[0]
+
+    def __call__(self, method: str, params: dict) -> dict:
+        result = super().__call__(method, params)
+        expr = params.get("expression", "")
+        if "/*vh:snapshot*/" in expr and self.current == self.CAPTCHA_URL:
+            result["result"]["value"] = {
+                "h": 0,
+                "present": True,
+                "captcha": True,
+                "cloudflare": False,
+                "twofa": False,
+                "checkpoint": False,
+                "multisession": False,
+            }
+        return result
+
+
+class TestDetailPageBlockDetection:
+    """V1 독립검증 결함1 — 상세페이지 자체의 차단신호는 캡처 전에 잡혀야 한다."""
+
+    def _driver(self):
+        transport = _DetailCaptchaTransport()
+        return CdpDriver(transport, sleep=lambda s: None), transport
+
+    def test_captcha_on_detail_page_raises_before_capture_not_saved_as_content(self):
+        from apps.aisearch.core.cdp_driver import DetailPageBlocked
+
+        driver, transport = self._driver()
+        driver.fetch_list_page("saramin", 1, SARAMIN_PAYLOAD)
+
+        with pytest.raises(DetailPageBlocked) as excinfo:
+            driver.fetch_detail_page("saramin", _DetailCaptchaTransport.CAPTCHA_URL)
+
+        assert any(e.get("kind") == "captcha" for e in excinfo.value.events)
+        # 차단 후에는 목록 화면으로 복귀해 있어야 한다(다음 페이지 순회 지속 가능).
+        assert transport.current == LIST_URL
+
+    def test_full_pipeline_blocks_on_detail_page_captcha_list_page_stays_clean(
+        self, tmp_path
+    ):
+        """전체 파이프라인(run_mod.main) 통합 검증 — 목록은 정상, 상세에서만 캡차.
+
+        기존 test_run_wires_notifier_into_blocked_flow 는 모든 페이지에 캡차를
+        발생시켜(EntryFakeTransport 가 페이지 구분 없이 captcha 고정) 실제로는
+        목록 페이지 차단 경로만 검증했다 — 상세페이지 전용 차단은 이 테스트가
+        처음 커버한다(V1 독립검증 결함1 회귀 방지).
+        """
+        from apps.aisearch.core.discord_notify import DiscordNotifier
+
+        class DetailOnlyCaptchaTransport:
+            DETAIL_URL = "https://fake.test/talent-pool/view/1"
+
+            def __init__(self) -> None:
+                self.current = "https://fake.test/list"
+
+            def __call__(self, method: str, params: dict) -> dict:
+                if method == "Page.navigate":
+                    self.current = params["url"]
+                    return {"frameId": "F1", "loaderId": "L1"}
+                if method.startswith("Input."):
+                    return {}
+                expr = params.get("expression", "")
+                on_detail = self.current == self.DETAIL_URL
+                value: object = True
+                if "/*vh:ready*/" in expr:
+                    value = "complete"
+                elif "/*vh:html*/" in expr:
+                    value = f"<html>{self.current}</html>"
+                elif "/*vh:url*/" in expr:
+                    value = self.current
+                elif "/*vh:detail_refs*/" in expr:
+                    value = [] if on_detail else [self.DETAIL_URL]
+                elif "/*vh:has_next*/" in expr:
+                    value = False
+                elif "/*vh:snapshot*/" in expr:
+                    value = {
+                        "h": 0,
+                        "present": True,
+                        "captcha": on_detail,  # 목록은 정상, 상세만 캡차
+                        "cloudflare": False,
+                        "twofa": False,
+                        "checkpoint": False,
+                        "multisession": False,
+                    }
+                return {"result": {"value": value}}
+
+        sent: list[dict] = []
+        code = run_mod.main(
+            [
+                _write_jd(tmp_path),
+                "--browser",
+                "--ws-url",
+                "ws://injected-not-used",
+                "--pages-out",
+                str(tmp_path / "pages.jsonl"),
+            ],
+            transport_factory=lambda ws_url: DetailOnlyCaptchaTransport(),
+            extractors={ch: (lambda pages: []) for ch in run_mod.CHANNELS},
+            notifier=DiscordNotifier(send=sent.append, live=True),
+        )
+
+        assert code == 1  # 상세페이지 캡차 → 파이프라인 전체가 완료 아님
+        assert any("captcha" in s["content"] for s in sent)  # 차단 알림 실제 감지
+        # 상세페이지 원문("view/1")이 후보 데이터로 저장되지 않았는지 확인.
+        pages_content = (tmp_path / "pages.jsonl").read_text(encoding="utf-8")
+        assert "view/1" not in pages_content
 
 
 def _page_row(position_ref: str, url: str, raw: str) -> dict:
