@@ -279,6 +279,20 @@ class TestParseRegisterResponse:
         assert outcome.recorded is True
         assert outcome.deduped is False
 
+    def test_describe_survives_objects_whose_repr_explodes(self):
+        # 자체 적대검증에서 발견: 설명 함수가 repr() 에 의존하는 한 '메시지 만들다 터지는'
+        # 결함은 사라지지 않는다. repr 이 예외를 던져도 계약 오류만 나와야 한다.
+        class Boom:
+            def __repr__(self):
+                raise RuntimeError("repr exploded")
+
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response(Boom())
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response({"status": Boom(), "text": "{}"})
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response({"status": 201, "text": Boom()})
+
     def test_error_message_carries_server_reason(self):
         with pytest.raises(AdminApiResponseError) as e:
             parse_register_response(_envelope(
