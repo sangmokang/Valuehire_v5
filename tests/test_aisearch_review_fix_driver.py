@@ -79,23 +79,27 @@ def _driver(transport) -> CdpDriver:
 # ── F1 — 상세 열람 중 사람 입력이 유실되지 않는다 ─────────────────────────
 
 
-def test_f1_human_input_during_detail_fetch_reaches_next_poll():
-    # 첫 스냅샷(상세 진입 시 차단 프로브)에서 사람 입력 1건이 관측된다.
+def test_f1_human_input_during_detail_fetch_stops_and_reports():
+    """V1 3차 계약 — 사람 입력을 보면 캡처·복귀 없이 그 자리에서 멈춘다."""
+    from apps.aisearch.core.cdp_driver import HumanInterventionDetected
+
     t = _Transport(snapshots=[{"h": 3}])
     driver = _driver(t)
 
-    driver.fetch_detail_page("saramin", "https://fake.test/p/1")
+    with pytest.raises(HumanInterventionDetected) as exc:
+        driver.fetch_detail_page("saramin", "https://fake.test/p/1")
 
-    events = driver.poll_events()
-    assert any(e.get("type") == "human_input" for e in events), (
-        "상세 열람 중 감지된 사람 입력이 사라졌다 — 모니터가 개입을 알 수 없다"
-    )
+    assert any(e.get("type") == "human_input" for e in exc.value.events)
+    assert t.captured_html_count() == 0, "개입을 본 뒤에도 화면을 캡처했다"
 
 
 def test_f1_human_input_is_delivered_only_once():
+    from apps.aisearch.core.cdp_driver import HumanInterventionDetected
+
     t = _Transport(snapshots=[{"h": 3}])
     driver = _driver(t)
-    driver.fetch_detail_page("saramin", "https://fake.test/p/1")
+    with pytest.raises(HumanInterventionDetected):
+        driver.fetch_detail_page("saramin", "https://fake.test/p/1")
 
     first = driver.poll_events()
     second = driver.poll_events()
@@ -132,10 +136,15 @@ def test_m1_clean_list_page_is_captured():
     assert page["has_next"] is False
 
 
-def test_m1_list_page_human_input_is_preserved_too():
+def test_m1_list_page_human_input_stops_and_is_preserved():
+    from apps.aisearch.core.cdp_driver import HumanInterventionDetected
+
     t = _Transport(snapshots=[{"h": 2}])
     driver = _driver(t)
-    driver.fetch_list_page("saramin", 1, {"channel": "saramin", "url": "https://x", "steps": []})
+    with pytest.raises(HumanInterventionDetected):
+        driver.fetch_list_page(
+            "saramin", 1, {"channel": "saramin", "url": "https://x", "steps": []}
+        )
 
     assert any(e.get("type") == "human_input" for e in driver.poll_events())
 

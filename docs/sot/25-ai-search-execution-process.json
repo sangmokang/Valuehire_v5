@@ -172,7 +172,16 @@
         "captcha_recheck": "BLOCKED 채널은 캡차 해소 전까지 재시도 금지 — 사람이 해제했는지만 확인"
       },
       "pass_criteria": "READY 전환 감지 시 자동 재개 또는 모든 채널 종결사유 보고",
-      "evidence": "각 폴링 사이클의 점유/캡차 스냅샷"
+      "evidence": "각 폴링 사이클의 점유/캡차 스냅샷",
+      "auto_resume_layers": {
+        "in_run_seconds": 60,
+        "in_run_note": "실행 중 사장님 개입(마우스·키보드) 감지 시: 마지막 입력으로부터 60초 무입력이면 그 자리에서 자동 재개한다(CLAUDE.md SOT 불변식 2 · SOT29 INV9). 구현: apps/aisearch/core/intervention.RESUME_DELAY_SECONDS.",
+        "in_run_poll_seconds": 10,
+        "in_run_poll_note": "재개 가능 여부를 다시 확인하는 주기(apps/aisearch/run.RESUME_POLL_SECONDS). 60초 기준보다 촘촘히 확인해 개입이 끝나면 곧바로 이어서 한다.",
+        "long_occupancy_polling_seconds": 1200,
+        "long_occupancy_note": "실행을 아예 시작하지 못하는 장기 점유(사장님이 계속 크롬 사용)일 때의 재시도 주기다 — 위 60초와 다른 층위이며 서로 대체하지 않는다. 아래 polling 블록이 그 규정이다.",
+        "added": "2026-08-01 V1 3차 지적(두 숫자가 충돌해 보인다) 반영해 층위를 명시."
+      }
     },
     {
       "id": "3_jd_intake",

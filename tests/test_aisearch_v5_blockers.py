@@ -35,6 +35,18 @@ SARAMIN_PAYLOAD = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
+
+
 class ListStateTransport:
     """URL 상태를 기억하는 페이크 트랜스포트 — '다음 페이지' 컨트롤은
     목록 화면에서만 존재한다(실 포털과 동일한 제약)."""
@@ -99,7 +111,7 @@ class TestBlocker1DetailThenNextPage:
             assert detail["url"] == ref
             assert ref in detail["content"]  # 상세 원문은 상세 화면에서 캡처
             # 상세 열람 후에는 목록 화면으로 복귀해 있어야 한다(로드 대기 포함).
-            assert transport.current == LIST_URL
+            assert transport.current == LIST_URL  # 정상 순회에서는 목록으로 복귀한다
 
     def test_page2_request_runs_against_list_context(self):
         driver, _ = self._driver()
@@ -154,7 +166,10 @@ class TestDetailPageBlockDetection:
 
         assert any(e.get("kind") == "captcha" for e in excinfo.value.events)
         # 차단 후에는 목록 화면으로 복귀해 있어야 한다(다음 페이지 순회 지속 가능).
-        assert transport.current == LIST_URL
+        # V1 3차 계약 변경 — 차단 화면(캡차/2FA)에서는 목록으로 되돌아가는
+        # 이동조차 하지 않는다. 사장님이 그 화면을 그대로 보고 처리하셔야 한다
+        # (SOT 불변식 1: 2FA·캡차는 사람이). 자동 조작 0 이 우선이다.
+        assert transport.current != LIST_URL
 
     def test_full_pipeline_blocks_on_detail_page_captcha_list_page_stays_clean(
         self, tmp_path

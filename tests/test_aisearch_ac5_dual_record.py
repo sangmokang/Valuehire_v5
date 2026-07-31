@@ -27,6 +27,18 @@ from apps.aisearch.core.recorders import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
+
+
 class FakeClickUpClient:
     """주입식 페이크 — 실제 HTTP 호출 없음. 호출 payload 만 기록."""
 
@@ -87,7 +99,7 @@ def make_evidence(profile_url: str, *, position_id: str = POSITION_NAME) -> dict
 def make_candidate(*, site: str = "linkedin_rps", **over):
     """증거의 site 는 record(channel=...) 로 넘길 채널과 같아야 한다(H1 대조)."""
     base = dict(
-        profile_url="https://www.linkedin.com/in/hong-gildong/",
+        profile_url="https://www.linkedin.com/talent/profile/minhonggildong",
         score=87,
         why_fit="B2B SaaS 세일즈 8년, 좋은학교, 직무 직결",
         profile_summary="현 A사 세일즈 리드, SaaS 신규영업 총괄",
@@ -183,7 +195,7 @@ def test_existing_parent_task_is_reused_not_duplicated():
 
 
 def test_duplicate_profile_url_skips_registration():
-    url = "https://www.linkedin.com/in/hong-gildong/"
+    url = "https://www.linkedin.com/talent/profile/minhonggildong"
     cu = FakeClickUpClient(existing_profile_urls=[url])
     dc = FakeDiscordClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
@@ -310,7 +322,7 @@ def test_defect3_subtask_carries_deterministic_idempotency_key():
     assert key1 == key2  # profile_url 기반 결정론 — 재시도에도 동일 키
     assert cand.profile_url not in key1  # 원문 URL 노출 없이 파생 키
 
-    other = make_candidate(profile_url="https://www.linkedin.com/in/other-person/")
+    other = make_candidate(profile_url="https://www.linkedin.com/talent/profile/minotherperson")
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=FakeAdminApiClient(), live=True, owner_signoff=True)
     rec.record(position_name="빅밸류 세일즈 총괄", candidate=other)
@@ -389,15 +401,15 @@ def test_ac6_dry_run_plans_admin_register_without_calling_admin_client():
 
     result = rec.record(
         position_name="빅밸류 세일즈 총괄",
-        candidate=make_candidate(name="홍길동", site="linkedin"),
-        channel="linkedin",
+        candidate=make_candidate(name="홍길동", site="linkedin_rps"),
+        channel="linkedin_rps",
     )
 
     assert result.dry_run is True
     assert am.registered == []  # dry-run: 실제 호출 0회
     plan = next(a for a in result.planned_actions if a["kind"] == "admin_register_candidate")
     assert plan["name"] == "홍길동"
-    assert plan["channel"] == "linkedin"
+    assert plan["channel"] == "linkedin_rps"
     assert plan["match_score"] == 87
     assert plan["jd_title"] == "빅밸류 세일즈 총괄"
 
@@ -424,9 +436,9 @@ def test_ac6_missing_candidate_name_uses_honest_placeholder_not_url():
     # V1 독립검증 결함7 — profile_url을 이름인 척 흘려보내지 않는다(데이터 오염 방지).
     cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
-    cand = make_candidate(site="linkedin")  # name 미지정 — 기본값 ""
+    cand = make_candidate(site="linkedin_rps")  # name 미지정 — 기본값 ""
 
-    rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
+    rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin_rps")
 
     # F12(2026-07-31 리뷰) — 후보별로 갈라지는 접미사가 붙는다(v4 dedup 병합 방지).
     assert am.registered[0]["name"].startswith("이름 미확인")
@@ -439,9 +451,9 @@ def test_ac6_payload_includes_jd_id_for_v4_dedup():
     # 스킵되던 결함. position_name을 안정적인 jd_id로 사용한다.
     cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
-    cand = make_candidate(name="홍길동", site="linkedin")
+    cand = make_candidate(name="홍길동", site="linkedin_rps")
 
-    rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
+    rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin_rps")
 
     assert am.registered[0]["jd_id"] == "빅밸류 세일즈 총괄"
 

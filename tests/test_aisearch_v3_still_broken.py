@@ -9,6 +9,8 @@ tests/test_aisearch_orchestrator.py 의 Harness 를 재사용한다(복제 금�
 """
 from __future__ import annotations
 
+import pytest
+
 import threading
 
 from test_aisearch_orchestrator import (
@@ -28,6 +30,18 @@ from apps.aisearch.core.pagination_store import paginate_and_store
 
 
 # ── 결함 ⑥ — 목록/상세 "저장 직전" BLOCKED 재확인 ──────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
 
 
 class TestBlockedRecheckBeforeStore:

@@ -163,6 +163,11 @@ class LinkedInSessionLock:
                         "다른 기기가 먼저 가져갔다(경합), fail-closed"
                     ) from exc
                 meta = self._wait_for_meta()
+                if meta is not None and self._age_of(meta) is None:
+                    # V1 3차 — 시각이 없는 메타(예: `{}`)를 "살아 있음"으로 보면
+                    # 죽은 락이 영원히 남는다. 시각 없는 메타는 손상으로 보고
+                    # 디렉터리 나이로 판정한다(아래 경로와 동일).
+                    meta = None
                 if meta is not None:
                     age = self._age_of(meta)
                     if age is None or age < self.stale_seconds:

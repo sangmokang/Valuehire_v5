@@ -246,9 +246,11 @@ def parse_register_response(response: Any) -> RegisterOutcome:
     # 여기서부터만 payload.get() 이 안전하다 — 모양이 확정된 뒤다.
     if status not in (200, 201) or payload.get("ok") is not True:
         # F2 — 200 + {"ok": false} 를 성공으로 세지 않는다.
+        # V1 3차 — 서버 오류 본문에는 후보 이름·연락처가 섞여 들어올 수 있고,
+        # 이 메시지는 로그·원장으로 흘러간다. 내용이 아니라 **모양**만 남긴다.
         raise AdminApiResponseError(
             f"register rejected (status={status}): "
-            f"{_describe(payload.get('error', 'unknown'))}"
+            f"{_describe_shape(payload.get('error', 'unknown'))}"
         )
     deduped = payload.get("deduped")
     if not isinstance(deduped, bool):

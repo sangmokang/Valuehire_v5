@@ -71,6 +71,43 @@ RESUME_POLL_SECONDS: float = RESUME_DELAY_SECONDS / 6
 Extractor = Callable[[list[dict]], list[dict]]
 
 
+def _lock_fd(fd: int) -> None:
+    """파일 디스크립터 배타 잠금 — 맥/리눅스는 flock, 윈도우는 msvcrt.
+
+    V1 3차 지적: `fcntl` 을 무조건 import 해서 윈도우(Winpc — 함대 3대 중 1대)에서는
+    저장 자체가 ModuleNotFoundError 로 죽었다. 운영 대상에 윈도우가 있으므로
+    플랫폼별 구현을 갖되, 어느 쪽도 "남의 잠금을 시간으로 뺏는" 방식은 쓰지 않는다.
+    """
+    try:
+        import fcntl
+    except ModuleNotFoundError:  # 윈도우
+        import msvcrt
+
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                return
+            except OSError:
+                time.sleep(0.05)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def _unlock_fd(fd: int) -> None:
+    try:
+        import fcntl
+    except ModuleNotFoundError:  # 윈도우
+        import msvcrt
+
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
 class JsonlPageStore:
     """PageStore 계약(D4 전량 저장)의 로컬 JSONL 구현 — 네트워크 0.
 
@@ -147,16 +184,14 @@ class JsonlPageStore:
         flock 은 프로세스가 죽으면 커널이 알아서 풀어 주므로 죽은 잠금이라는
         개념 자체가 없다 — 시간 추정이 필요 없다.
         """
-        import fcntl
-
         lock_path = self._lock_path()
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)  # 남이 쥐고 있으면 기다린다(뺏지 않는다)
+            _lock_fd(fd)  # 남이 쥐고 있으면 기다린다(뺏지 않는다)
             try:
                 yield
             finally:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                _unlock_fd(fd)
         finally:
             os.close(fd)
 

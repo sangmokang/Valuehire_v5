@@ -20,7 +20,7 @@ from apps.aisearch.core.orchestrator import (
 
 def _cand(*, record_extra=None, evidence="기구설계 10년 근거", draft_text="일반 JD 요약"):
     record = {
-        "profile_url": "https://linkedin.com/in/x",
+        "profile_url": "https://www.linkedin.com/talent/profile/linkedincominx",
         "why_fit": "필수요건 충족",
         "profile_summary": "기구설계 10년",
         "education": "서울 소재 4년제",
@@ -100,7 +100,7 @@ def test_h2_pipeline_level_jd_exclusion_does_not_drop_candidates():
     h = Harness(pages=1)
     jd = _jd()
     jd["not_keywords"] = ["인턴"]
-    cand = _candidate(PAYLOAD_60, "https://saramin.example/p/1")
+    cand = _candidate(PAYLOAD_60, "https://www.linkedin.com/talent/profile/raminexamplep1")
     # JD 공통 텍스트(초안 입력)에 제외어가 들어 있다 — 후보 자신은 깨끗하다.
     cand["draft_inputs"] = dict(cand["draft_inputs"])
     cand["draft_inputs"]["jd_summary"] = (

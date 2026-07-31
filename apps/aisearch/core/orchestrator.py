@@ -41,13 +41,14 @@ goal 문서(docs/engineering/aisearch-fleet-goal-2026-07-28.md) 파이프라인 
 from __future__ import annotations
 
 import threading
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Protocol
 
 from apps.aisearch.core import recorders
 from apps.aisearch.core.banner import build_dispatch_snippet
-from apps.aisearch.core.cdp_driver import DetailPageBlocked
+from apps.aisearch.core.cdp_driver import DetailPageBlocked, HumanInterventionDetected
 from apps.aisearch.core.boolean_builder import (
     ADVANCE_REASON_CAP_REACHED,
     ADVANCE_REASON_EXHAUSTED,
@@ -257,6 +258,24 @@ EXCLUSION_SCAN_DRAFT_FIELDS: tuple[str, ...] = (
 )
 
 
+#: 매칭 전 정규화에서 지우는 "보이지 않는" 문자(제로폭·워드조이너 등).
+_INVISIBLE_CHARS = dict.fromkeys(
+    [0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD], None
+)
+
+
+def _normalize_for_match(text: Any) -> str:
+    """제외어 비교용 정규화 — V1 3차 지적(앞뒤 공백·전각·보이지 않는 문자).
+
+    ``" 인턴 "`` 처럼 여백이 붙은 제외어를 놓치거나, ``프리<제로폭>랜서``·전각
+    ``ＦＲＥＥＬＡＮＣＥ`` 같은 표기를 지나치지 않도록 같은 잣대로 맞춘다.
+    """
+    if not isinstance(text, str):
+        return ""
+    normalized = unicodedata.normalize("NFKC", text).translate(_INVISIBLE_CHARS)
+    return normalized.casefold().strip()
+
+
 def _iter_evidence_values(value: Any, path: str):
     """점수자료 트리에서 ``evidence`` 칸만 골라 낸다(후보를 보고 쓴 근거)."""
     if isinstance(value, Mapping):
@@ -279,12 +298,16 @@ def _find_exclusion_match(
     후보 고유 영역(EXCLUSION_SCAN_ROOTS) 안의 중첩 dict/list 문자열만 재귀
     스캔한다(casefold 부분일치). 반환: (매칭된 제외어, 매칭 필드 경로).
     """
-    folded_terms = [(term, term.casefold()) for term in exclusions]
+    folded_terms = [
+        (term, _normalize_for_match(term))
+        for term in exclusions
+        if _normalize_for_match(term)
+    ]
     if not folded_terms:
         return None
     def _scan(value: Any, path: str) -> Optional[tuple[str, str]]:
         for found_path, text in _iter_strings(value, path):
-            folded = text.casefold()
+            folded = _normalize_for_match(text)
             for term, folded_term in folded_terms:
                 if folded_term in folded:
                     return term, found_path
@@ -343,6 +366,13 @@ def _register_and_draft(
         if matched is not None:
             term, field_path = matched
             with deps.lock:
+                already_excluded = any(
+                    e.get("profile_url") == profile_url and e.get("channel") == channel
+                    for e in report.excluded
+                )
+            if already_excluded:
+                continue  # V1 3차 — 재개 시 같은 제외 기록이 두 번 쌓이던 것 방지
+            with deps.lock:
                 report.excluded.append(
                     {
                         "channel": channel,
@@ -374,7 +404,6 @@ def _register_and_draft(
                     already_counted = profile_url in report.counted_profile_urls
                     report.record_states[profile_url] = prev_state
                     if not already_counted:
-                        report.counted_profile_urls.add(profile_url)
                         report.registered.append(prev_state)
                 if already_counted:
                     continue
@@ -382,6 +411,7 @@ def _register_and_draft(
                 carried_draft = build_candidate_draft(**cand["draft_inputs"])
                 with deps.lock:
                     report.drafts.append(carried_draft)
+                    report.counted_profile_urls.add(profile_url)
                 continue
             if prev_state is not None and not prev_state.pending_steps:
                 prev_state = None  # 재개할 미완 단계가 없으면 처음부터 다시
@@ -432,13 +462,16 @@ def _register_and_draft(
                 continue
             if not first_time:
                 continue  # 이미 센 후보 — 중복 집계·중복 초안 금지
-            report.counted_profile_urls.add(profile_url)
             report.registered.append(record_result)
         _check_monitor(deps)  # 2차 결함 1 — 초안 생성 전 차단 확인
         # AC9 — 전달 초안만 생성(발송 경로 없음, is_draft_only=True)
         draft = build_candidate_draft(**cand["draft_inputs"])
         with deps.lock:
             report.drafts.append(draft)
+            # V1 3차 — "센 후보" 표식은 **초안까지 마친 뒤**에 찍는다. 등록 직후에
+            # 찍으면 초안 생성 전에 중단됐을 때 재개가 "이미 셌다"며 건너뛰어
+            # 전달 초안이 영구 누락됐다.
+            report.counted_profile_urls.add(profile_url)
 
 
 def _run_variant(
@@ -511,6 +544,13 @@ def _run_variant(
             _beat_session_lock()
             try:
                 return deps.fetch_list_page(channel, page, search_payload)
+            except HumanInterventionDetected as exc:
+                with deps.lock:
+                    feed_driver_events(deps.monitor, exc.events)
+                    deps.monitor.poll()
+                raise _PipelineWaiting(
+                    "AC7 사람 개입 감지(드라이버) — 자동 조작 즉시 중단, 무입력 후 재개"
+                ) from exc
             except DetailPageBlocked as exc:
                 _handle_page_block(exc)
                 raise _PipelineBlocked(
@@ -524,6 +564,13 @@ def _run_variant(
             _beat_session_lock()
             try:
                 return deps.fetch_detail_page(channel, ref)
+            except HumanInterventionDetected as exc:
+                with deps.lock:
+                    feed_driver_events(deps.monitor, exc.events)
+                    deps.monitor.poll()
+                raise _PipelineWaiting(
+                    "AC7 사람 개입 감지(드라이버) — 자동 조작 즉시 중단, 무입력 후 재개"
+                ) from exc
             except DetailPageBlocked as exc:
                 # V1 독립검증 결함1 — 상세페이지 자체의 차단신호는 목록 페이지
                 # 기준 _check_monitor 이전 검사로는 못 잡는다. 드라이버가 감지해

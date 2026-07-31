@@ -46,6 +46,18 @@ from apps.aisearch.core.recorders import DualRecorder
 CHANNELS = (LINKEDIN_CHANNEL, "saramin", "jobkorea")
 
 
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
+
+
 class FakeTransport:
     """페이크 CDP 트랜스포트 — 전 명령 기록 + 패턴 응답(신 스냅샷 계약)."""
 
@@ -361,7 +373,7 @@ class TestRecursiveExclusionScan:
         h = Harness(pages=1)
         payload = _score_payload()
         payload["dimensions"]["D3"]["evidence"] = "삼성전자 인턴 6개월 경험"
-        cand = _candidate(payload, "https://saramin.example/p/deep")
+        cand = _candidate(payload, "https://www.linkedin.com/talent/profile/inexamplepdeep")
         h.candidates["saramin"] = [cand]
         jd = _jd()
         jd["not_keywords"] = ["인턴"]
@@ -382,7 +394,7 @@ class TestRecursiveExclusionScan:
             {"requirement": "req-1", "verdict": "pass", "evidence": "인턴십 수료"}
         ]
         h.candidates["jobkorea"] = [
-            _candidate(payload, "https://jk.example/p/nested")
+            _candidate(payload, "https://www.linkedin.com/talent/profile/examplepnested")
         ]
         jd = _jd()
         jd["not_keywords"] = ["인턴"]
@@ -614,9 +626,9 @@ class TestExtractorWiring:
             excluded_payload = _score_payload()
             excluded_payload["dimensions"]["D2"]["evidence"] = "스타트업 인턴"
             return [
-                _candidate(PAYLOAD_60, "https://saramin.example/p/ok", site="saramin"),
+                _candidate(PAYLOAD_60, "https://www.linkedin.com/talent/profile/aminexamplepok", site="saramin"),
                 _candidate(
-                    excluded_payload, "https://saramin.example/p/intern", site="saramin"
+                    excluded_payload, "https://www.linkedin.com/talent/profile/examplepintern", site="saramin"
                 ),
             ]
 

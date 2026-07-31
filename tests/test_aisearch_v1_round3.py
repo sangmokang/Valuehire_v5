@@ -18,32 +18,21 @@ from pathlib import Path
 
 import pytest
 
+from tests.aisearch_evidence import canonical_profile_url, make_evidence
+
 from apps.aisearch.core.recorders import Candidate, DualRecorder, has_saved_profile_evidence
 from apps.aisearch.core.orchestrator import _find_exclusion_match
 from apps.aisearch.core.pagination_store import TABLE_NAME, make_row_id
 from apps.aisearch.run import JsonlPageStore
 
 POSITION = "Tech PM"
-URL = "https://www.linkedin.com/in/hong/"
+URL = canonical_profile_url("linkedin_rps", "hong-gildong")
 CHANNEL = "linkedin_rps"
 
 
 def _make_real_evidence(tmp_path: Path) -> dict:
-    """실제로 존재하는 manifest + 실제 스크린샷 해시로 만든 영수증."""
-    shot = tmp_path / "profile.png"
-    shot.write_bytes(b"fake-screenshot-bytes")
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"profile_url": URL}), encoding="utf-8")
-    return {
-        "profile_url": URL,
-        "site": CHANNEL,
-        "position_id": POSITION,
-        "task": "aisearch",
-        "mode": "profile",
-        "manifest_path": str(manifest),
-        "screenshot_path": str(shot),
-        "screenshot_sha256": hashlib.sha256(shot.read_bytes()).hexdigest(),
-    }
+    """정본 검증기가 실제로 인정하는 영수증(파일·아카이브까지 진짜)."""
+    return dict(make_evidence(URL, position_id=POSITION, site=CHANNEL))
 
 
 # ── ① 증거는 디스크에 실재해야 한다 ────────────────────────────────────────
@@ -271,3 +260,38 @@ def test_v1r3_slow_writer_lock_is_not_stolen(tmp_path):
         if line.strip()
     ]
     assert {r["url"] for r in rows} == {"https://p/1", "https://p/2"}
+
+
+# ── 위임 잠금 — 프로덕션은 정본 검증기를 쓴다 ─────────────────────────────
+
+
+def test_v1r3_production_default_verifier_is_the_canonical_one():
+    """단위 테스트가 갈아끼우는 지점이 기본값까지 바꿔 놓지 않도록 잠근다."""
+    import importlib
+
+    from tools.multi_position_sourcing.browser_evidence import complete_evidence_payload
+
+    fresh = importlib.reload(importlib.import_module("apps.aisearch.core.recorders"))
+    assert fresh.EVIDENCE_VERIFIER is complete_evidence_payload, (
+        "프로덕션 증거 검증이 정본(browser_evidence.complete_evidence_payload)이 아니다"
+    )
+    assert fresh.EVIDENCE_TASK == "ai-search", (
+        "실제 캡처 도구가 쓰는 작업명과 달라 진짜 영수증이 거부된다"
+    )
+
+
+def test_v1r3_exclusion_matching_is_normalized():
+    """앞뒤 공백·전각·보이지 않는 문자에 걸려 제외어를 놓치지 않는다."""
+    cand = {
+        "record": {"profile_url": URL, "profile_summary": "프리​랜서 디자이너"},
+        "score_payload": {},
+        "draft_inputs": {},
+    }
+    assert _find_exclusion_match(cand, ["  프리랜서  "]) is not None
+
+    fullwidth = {
+        "record": {"profile_url": URL, "profile_summary": "ＦＲＥＥＬＡＮＣＥ designer"},
+        "score_payload": {},
+        "draft_inputs": {},
+    }
+    assert _find_exclusion_match(fullwidth, ["freelance"]) is not None

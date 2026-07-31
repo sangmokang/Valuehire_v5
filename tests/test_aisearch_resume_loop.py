@@ -30,6 +30,18 @@ JD = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
+
+
 def _write_jd(tmp_path) -> str:
     jd_path = tmp_path / "jd.json"
     jd_path.write_text(json.dumps(JD, ensure_ascii=False), encoding="utf-8")

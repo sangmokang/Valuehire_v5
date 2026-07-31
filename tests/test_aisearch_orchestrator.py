@@ -51,6 +51,18 @@ from apps.aisearch.core.recorders import DualRecorder
 # ── 픽스처: AC4 계약 통과 payload (test_aisearch_ac4_score_gate.py 와 동일 구조) ──
 
 
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
+
+
 def _score_payload(scores: dict[str, object] | None = None) -> dict[str, object]:
     dimensions: dict[str, dict[str, object]] = {}
     for index in range(1, 9):
@@ -363,8 +375,8 @@ class TestHappyPath:
     def _run(self) -> tuple[Harness, Any]:
         h = Harness(pages=2)
         h.candidates["saramin"] = [
-            _candidate(PAYLOAD_60, "https://saramin.example/p/60"),
-            _candidate(PAYLOAD_59, "https://saramin.example/p/59"),
+            _candidate(PAYLOAD_60, "https://www.linkedin.com/talent/profile/aminexamplep60"),
+            _candidate(PAYLOAD_59, "https://www.linkedin.com/talent/profile/aminexamplep59"),
         ]
         report = run_search_pipeline(_jd(), h.deps())
         return h, report
@@ -449,7 +461,7 @@ class TestHappyPath:
     def test_sub60_never_reaches_registration_and_60_registers_dry_run(self):
         h, report = self._run()
         # 60점 후보만 등록 경로 진입 — 59점은 중복확인(read)조차 호출되지 않음
-        assert h.clickup.dedup_calls == ["https://saramin.example/p/60"]
+        assert h.clickup.dedup_calls == ["https://www.linkedin.com/talent/profile/aminexamplep60"]
         assert h.clickup.writes == []  # dry-run: 외부 쓰기 0
         assert h.discord.posts == []  # dry-run: Discord 발신 0
         assert len(report.registered) == 1
@@ -575,7 +587,7 @@ class TestExplicitAbort:
 class TestScoreGateWiring:
     def test_only_sub60_candidates_registration_never_called(self):
         h = Harness(pages=1)
-        h.candidates["jobkorea"] = [_candidate(PAYLOAD_59, "https://jk.example/p/59")]
+        h.candidates["jobkorea"] = [_candidate(PAYLOAD_59, "https://www.linkedin.com/talent/profile/psjkexamplep59")]
         report = run_search_pipeline(_jd(), h.deps())
         assert report.status == STATUS_COMPLETED
         assert h.clickup.dedup_calls == []  # 등록 경로(중복확인 포함) 진입 0
@@ -665,7 +677,7 @@ class FlakyDiscord(FakeDiscord):
 
 class TestPartialResume:
     def test_partial_then_rerun_completes_discord_post(self):
-        url = "https://saramin.example/p/60"
+        url = "https://www.linkedin.com/talent/profile/aminexamplep60"
         h = Harness(pages=1, live_recorder=True, discord=FlakyDiscord())
         h.candidates["saramin"] = [_candidate(PAYLOAD_60, url)]
 
@@ -699,8 +711,8 @@ class TestPartialResume:
         A가 아예 없어져(누적 리스트가 매번 새로 시작) 이번 라운드에 새로
         완료된 B만 남았다 — A가 등록됐다는 사실 자체가 보고서에서 사라졌다.
         """
-        url_a = "https://saramin.example/p/a"
-        url_b = "https://saramin.example/p/b"
+        url_a = "https://www.linkedin.com/talent/profile/raminexamplepa"
+        url_b = "https://www.linkedin.com/talent/profile/raminexamplepb"
         h = Harness(pages=1)  # 기본 dry-run — status는 "dry_run"(완료 취급)
         h.candidates["saramin"] = [_candidate(PAYLOAD_60, url_a)]
 
@@ -727,7 +739,7 @@ class TestPartialResume:
 class TestRecordFailureNoDraft:
     def test_failed_record_no_draft_and_status_partial(self):
         h = Harness(pages=1)
-        bad = _candidate(PAYLOAD_60, "https://saramin.example/p/60")
+        bad = _candidate(PAYLOAD_60, "https://www.linkedin.com/talent/profile/aminexamplep60")
         bad["record"]["why_fit"] = ""  # 필수 필드 누락 → recorder 가 failed 반환
         h.candidates["saramin"] = [bad]
         report = run_search_pipeline(_jd(), h.deps())

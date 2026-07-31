@@ -11,6 +11,8 @@ SOT 불변식 2(CLAUDE.md): "멈추고 방치하지 않는다 — 반드시 자�
 """
 from __future__ import annotations
 
+import pytest
+
 import inspect
 import json
 
@@ -25,6 +27,18 @@ from tests.test_aisearch_resume_loop import (
 
 
 # ── F6 — 기본은 무제한 재개(멈추고 방치 금지) ──────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
 
 
 def test_f6_default_has_no_resume_attempt_cap():
@@ -133,7 +147,7 @@ def test_f7_resume_keeps_completed_candidates_in_report_and_drafts():
 
     h = Harness(pages=1)
     jd = _jd()
-    cand = _candidate(PAYLOAD_60, "https://saramin.example/p/60")
+    cand = _candidate(PAYLOAD_60, "https://www.linkedin.com/talent/profile/aminexamplep60")
     for channel in ("linkedin_rps", "saramin", "jobkorea"):
         h.candidates[channel] = [dict(cand)]
 
@@ -168,7 +182,7 @@ def test_f7_resume_does_not_write_externally_twice():
     jd = _jd()
     for channel in ("linkedin_rps", "saramin", "jobkorea"):
         h.candidates[channel] = [
-            _candidate(PAYLOAD_60, f"https://{channel}.example/p/60")
+            _candidate(PAYLOAD_60, f"https://www.linkedin.com/talent/profile/{channel}60")
         ]
 
     first = run_search_pipeline(jd, h.deps())

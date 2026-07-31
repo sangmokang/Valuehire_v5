@@ -239,3 +239,24 @@ base_url 스킴 != https                -> AdminApiConfigError (평문 전송 �
 | SOT 숫자 충돌(60초 vs 20분) | SOT25 `2_occupancy_captcha_gate.auto_resume_layers` 로 두 층위(실행 중 60초 / 장기 점유 20분)를 명시 |
 | 원격 미병합 | `7743c95` 병합 완료 — `git log HEAD..origin/task/aisearch-orchestrator` 빈 출력 |
 | 동일 URL 서로 다른 후보 | **결정**: profile_url 을 신원 키로 삼는다(SOT25 dedup·멱등키와 동일 기준). 같은 URL = 같은 사람으로 본다 |
+
+### V1 3차 검토 (2026-08-01, codex fresh·read-only) — **FAIL(10항목 중 9)**
+운영을 막는 실제 결함이 나왔다. 전부 조치했다.
+
+| 지적 | 조치 |
+|---|---|
+| 실제 캡처 도구는 `task="ai-search"` 인데 게이트는 `"aisearch"` 만 인정 → **진짜 영수증이 전부 거부** | `EVIDENCE_TASK="ai-search"` 로 정정 |
+| manifest 내용 미검증(아무 파일이나 지정 가능) | **정본 검증기에 위임** — `browser_evidence.complete_evidence_payload`(PNG·본문 해시·manifest 내용·아카이브 행·권한). 중복 구현 폐기 |
+| `channel=""` 이면 site 무검증 | site 필수 + 정본 검증기가 채널 유효성까지 검사 |
+| 제외어 공백·전각·제로폭 문자 누락 | `_normalize_for_match()` — NFKC + 보이지 않는 문자 제거 + casefold + strip |
+| JD 요구문구가 점수자료에서 오탐 | score_payload 는 **evidence 칸만** 스캔 |
+| 개입·차단 후에도 캡처·복귀 이동 | `HumanInterventionDetected` 신설 — 사람 입력 감지 즉시 중단(캡처 0). 차단 화면에서 목록 복귀 이동도 폐지(SOT 불변식 1: 캡차는 사람이) |
+| 윈도우에서 `fcntl` 부재로 저장 자체 실패 | `_lock_fd/_unlock_fd` — 맥/리눅스 flock, 윈도우 msvcrt |
+| 시각 없는 락 메타(`{}`)가 영원히 "살아 있음" | 시각 없는 메타는 손상으로 보고 디렉터리 나이로 판정 |
+| 등록 집계 후 초안 전 중단 시 초안 영구 누락 | 집계 표식은 **초안까지 마친 뒤** 찍는다 |
+| 재개 시 제외 기록 중복 | 같은 (채널, profile_url) 제외는 1회만 기록 |
+| admin 오류 메시지에 서버 원문(개인정보 가능) 노출 | 내용 대신 **모양**(타입·길이)만 남긴다 |
+| SOT25 층위 명시가 실제로 반영 안 됨(잘못된 stage id) | `2_yield_resume.auto_resume_layers` 에 60초/10초/20분 층위 명시 |
+
+**남은 한계(정직 기록)**: 두 프로세스 실측은 flock 계약과 단일 프로세스 2인스턴스
+테스트로 대신했고, 윈도우 경로는 코드상 분기만 확인했다(실기 검증은 라이브 백로그).

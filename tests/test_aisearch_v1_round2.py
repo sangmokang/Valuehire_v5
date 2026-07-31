@@ -35,10 +35,22 @@ from apps.aisearch.core.session_lock import (
 from apps.aisearch.run import JsonlPageStore
 
 POSITION = "빅밸류 세일즈 총괄"
-PROFILE_URL = "https://www.linkedin.com/in/hong-gildong/"
+PROFILE_URL = "https://www.linkedin.com/talent/profile/minhonggildong"
 CHANNEL = "linkedin_rps"
 
 GOOD_EVIDENCE = make_evidence(PROFILE_URL, position_id=POSITION, site=CHANNEL)
+
+
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
 
 
 class FakeClickUp:
@@ -110,7 +122,7 @@ def _cand(**over) -> Candidate:
         {"manifest_path": "/m.json"},  # 해시 없음
         {"screenshot_sha256": "a" * 64},  # manifest 없음
         {**GOOD_EVIDENCE, "screenshot_sha256": "짧은해시"},  # 해시 형식 위반
-        {**GOOD_EVIDENCE, "profile_url": "https://other.example/p/9"},  # 다른 후보 증거
+        {**GOOD_EVIDENCE, "profile_url": "https://www.linkedin.com/talent/profile/otherexamplep9"},  # 다른 후보 증거
         {**GOOD_EVIDENCE, "position_id": "다른 포지션"},  # 다른 포지션 증거
         {**GOOD_EVIDENCE, "task": "humansearch"},  # 다른 작업의 증거
         {**GOOD_EVIDENCE, "mode": "list"},  # 목록 캡처(프로필 저장 아님)
@@ -221,7 +233,7 @@ def test_v1_4_resume_does_not_double_count_same_candidate():
 
     h = Harness(pages=1)
     jd = _jd()
-    same = _candidate(PAYLOAD_60, "https://saramin.example/p/60")
+    same = _candidate(PAYLOAD_60, "https://www.linkedin.com/talent/profile/aminexamplep60")
     # 같은 후보가 한 채널 결과에 두 번 들어온 경우(추출기 중복)
     for channel in ("linkedin_rps", "saramin", "jobkorea"):
         h.candidates[channel] = [dict(same), dict(same)]
@@ -293,7 +305,7 @@ def test_v1_7_stop_signal_halts_detail_and_registration_too():
     jd = _jd()
     for channel in ("linkedin_rps", "saramin", "jobkorea"):
         h.candidates[channel] = [
-            _candidate(PAYLOAD_60, f"https://{channel}.example/p/60")
+            _candidate(PAYLOAD_60, f"https://www.linkedin.com/talent/profile/{channel}60")
         ]
 
     failed = threading.Event()

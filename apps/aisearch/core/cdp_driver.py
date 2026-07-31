@@ -59,6 +59,7 @@ __all__ = [
     "RPS_YEARS_MIN_SELECTOR",
     "CdpDriver",
     "CdpDriverError",
+    "HumanInterventionDetected",
     "CdpTransportError",
     "WebSocketCdpTransport",
     "connect_websocket_transport",
@@ -152,6 +153,19 @@ _AUTO_FLAG_KEY = "__vh_auto_active"
 
 class CdpDriverError(RuntimeError):
     """드라이버 실행 실패 — 전부 fail-closed(조용한 무시 금지)."""
+
+
+class HumanInterventionDetected(CdpDriverError):
+    """V1 3차 — 사람 입력이 관측된 순간 그 자리에서 멈춘다.
+
+    예전에는 사람 입력을 보관만 하고 상세 HTML 캡처·목록 복귀 이동을 계속했다.
+    SOT 불변식 2 는 "사장님이 만지는 동안 자동 작업은 잠깐 멈춘다" 이므로,
+    감지 즉시 어떤 브라우저 명령도 더 보내지 않는다.
+    """
+
+    def __init__(self, events: list[dict]) -> None:
+        super().__init__(f"사람 개입 감지 — 즉시 중단: {events!r}")
+        self.events = events
 
 
 class DetailPageBlocked(CdpDriverError):
@@ -651,7 +665,11 @@ class CdpDriver:
         """
         events = self.poll_events()
         signals = [e for e in events if e.get("type") == "signal"]
-        self._carried_events.extend(e for e in events if e.get("type") != "signal")
+        others = [e for e in events if e.get("type") != "signal"]
+        self._carried_events.extend(others)
+        if not signals and any(e.get("type") == "human_input" for e in others):
+            # V1 3차 — 사람 입력을 봤으면 여기서 끝낸다(캡처·복귀 이동 금지).
+            raise HumanInterventionDetected(list(others))
         return signals
 
     def fetch_list_page(
@@ -694,8 +712,9 @@ class CdpDriver:
         # 후보 데이터로 저장된다. human_input 은 여기서 판단하지 않는다(signal만).
         block_events = self._probe_blocking_signals()
         if block_events:
-            if self._last_list_url:
-                self.navigate(self._last_list_url)  # 내부에서 로드 완료 대기
+            # V1 3차 — 차단 화면을 본 뒤 목록으로 되돌아가는 것도 자동 조작이다.
+            # 캡차/2FA 화면은 사장님이 직접 처리하셔야 하므로 그 화면 그대로 둔다
+            # (SOT 불변식 1: 2FA·캡차는 사람이, 그때 창을 앞으로 띄운다).
             raise DetailPageBlocked(block_events)
         content = self.capture_html()
         # 5차 결함 ① — 상세 프로필은 현재 탭으로 열므로, 캡처 후 반드시 목록

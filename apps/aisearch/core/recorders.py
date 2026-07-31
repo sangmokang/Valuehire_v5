@@ -30,6 +30,16 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Protocol
 from urllib.parse import urlsplit
 
+from tools.multi_position_sourcing.browser_evidence import complete_evidence_payload
+
+#: 영수증 실물 검증기 — **정본은 browser_evidence.complete_evidence_payload** 다
+#: (PNG·본문 해시·manifest 내용·아카이브 행·파일 권한까지 검사). 이 이름을 통해
+#: 부르는 이유는 단위 테스트가 파일 무결성까지 매번 만들지 않고 이 지점만 갈아끼울
+#: 수 있게 하기 위해서다 — 실물 무결성 자체는 전용 테스트가 지킨다
+#: (tests/test_browser_evidence_capture.py, tests/test_aisearch_v1_round3.py).
+#: 프로덕션 기본값이 정본 검증기라는 사실은 테스트로 잠가 둔다.
+EVIDENCE_VERIFIER = complete_evidence_payload
+
 # SOT25 clickup_registration_contract / goal 문서 D10·D11 고정값
 CLICKUP_LIST_ID = "901818680208"  # FY26AI_Search
 DISCORD_RESULT_CHANNEL_ID = "1470955309089554554"  # 서치 결과 전용
@@ -52,11 +62,9 @@ REQUIRED_FIELDS = (
 #: 증거 부재 표기 — humansearch_register.py:345 와 동일 문자열 계약.
 EVIDENCE_MISSING = "missing"
 
-#: 스크린샷 해시 형식(sha256 = 64자리 16진수).
-_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
-
-#: 이 파이프라인이 만든 증거만 인정한다 — humansearch 증거를 빌려 쓸 수 없다.
-EVIDENCE_TASK = "aisearch"
+#: 실제 캡처 도구(session_guard --task)가 쓰는 작업명. "aisearch" 가 아니다 —
+#: V1 3차 지적: 우리가 임의로 "aisearch" 를 요구해 **진짜 영수증이 전부 거부**됐다.
+EVIDENCE_TASK = "ai-search"
 #: 프로필 상세를 실제로 저장한 캡처만 인정한다(목록 화면 캡처는 증거가 아니다).
 EVIDENCE_MODE = "profile"
 
@@ -64,40 +72,19 @@ EVIDENCE_MODE = "profile"
 def has_saved_profile_evidence(
     evidence: Any, *, profile_url: str, channel: str, position_id: str
 ) -> bool:
-    """실제 파일·해시에 결합된 캡처 영수증만 인정한다.
+    """실제 파일·아카이브에 결합된 캡처 영수증만 인정한다.
 
-    계약은 tools/multi_position_sourcing/humansearch_register.py:230
-    ``has_saved_profile_evidence`` 와 **동형**이다. V1 독립 적대검증(2026-07-31)
-    이 재현한 결함: 예전 게이트는 빈 값과 정확히 "missing" 만 거부해서,
-    ``saved_profile_evidence="x"`` 같은 아무 문자열이나 통과하고 후보 subtask 가
-    만들어졌다 — 증거를 요구하는 의미가 없었다.
+    **정본 검증기에 위임한다** — `tools/multi_position_sourcing/browser_evidence.
+    complete_evidence_payload` 가 PNG 유효성·본문 해시·manifest 내용 일치·
+    아카이브 DB 행·파일 권한까지 검사한다. humansearch_register.py:230 과 같은
+    계약이며, aisearch 가 별도 사본을 두지 않는다(중복 구현 금지).
 
-    이제 증거는 **사전(dict)** 이어야 하며 다음을 전부 만족해야 한다:
-    - manifest_path 와 screenshot_sha256(64자리 16진수)이 둘 다 있을 것
-    - 그 증거가 **이 후보**의 것일 것(profile_url 일치)
-    - 그 증거가 **이 포지션**의 것일 것(position_id 일치)
-    - 이 파이프라인의 프로필 캡처일 것(task=aisearch, mode=profile)
-    - 채널이 주어졌으면 그 채널의 캡처일 것(site 일치)
+    V1 3차 지적 반영: 자체 검사(경로 문자열 + 해시 형식)만 하던 때는 아무 파일이나
+    manifest 로 지정해도 통과했고, 작업명도 실제와 달랐다.
+
+    여기서 추가로 보는 것은 "그 영수증이 **이 후보·이 포지션·이 채널**의 것인가"뿐이다.
     """
     if not isinstance(evidence, Mapping):
-        return False
-    manifest = str(evidence.get("manifest_path") or "").strip()
-    digest = str(evidence.get("screenshot_sha256") or "").strip()
-    shot = str(evidence.get("screenshot_path") or "").strip()
-    if not manifest or not shot or not _SHA256_RE.match(digest):
-        return False
-    # V1 3라운드 — "영수증 모양"만으로는 부족하다. 없는 경로와 아무 64자리
-    # 해시를 적어 넣어도 통과했다(등록·admin 전송까지 진행됨). 실제로 저장이
-    # 일어났는지는 **파일이 디스크에 있고 그 파일의 해시가 맞는지**로만 알 수 있다.
-    manifest_file = Path(manifest)
-    shot_file = Path(shot)
-    if not manifest_file.is_file() or not shot_file.is_file():
-        return False
-    try:
-        actual = hashlib.sha256(shot_file.read_bytes()).hexdigest()
-    except OSError:
-        return False
-    if actual.lower() != digest.lower():
         return False
     if str(evidence.get("profile_url") or "").strip() != profile_url.strip():
         return False
@@ -105,14 +92,14 @@ def has_saved_profile_evidence(
         return False
     if evidence.get("task") != EVIDENCE_TASK or evidence.get("mode") != EVIDENCE_MODE:
         return False
-    # V1 3라운드 — site 는 **필수**다. 생략을 허용하면 채널 대조 자체를
-    # 건너뛸 수 있어(다른 채널 캡처 재사용) 대조가 무의미해진다.
     site = str(evidence.get("site") or "").strip()
     if not site:
         return False
+    # channel 이 비어 있으면(호출자가 채널을 안 넘긴 경우) 영수증의 site 를 그대로
+    # 신뢰하지 않고, 최소한 정본 검증기가 아는 채널인지까지만 확인한다.
     if channel and site != channel.strip():
         return False
-    return True
+    return bool(EVIDENCE_VERIFIER(dict(evidence)))
 
 
 def saved_profile_evidence_text(evidence: Any) -> str:

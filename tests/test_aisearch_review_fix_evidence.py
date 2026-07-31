@@ -29,10 +29,22 @@ from apps.aisearch.core.recorders import (
 )
 
 EVIDENCE = make_evidence(
-    "https://www.linkedin.com/in/hong-gildong/",
+    "https://www.linkedin.com/talent/profile/minhonggildong",
     position_id="빅밸류 세일즈 총괄",
     site="linkedin_rps",
 )
+
+
+@pytest.fixture(autouse=True)
+def _structural_evidence_verifier(monkeypatch):
+    """영수증 **실물** 무결성은 전용 테스트가 지킨다 — 여기서는 모양 검사로 대체.
+
+    프로덕션 기본값이 정본 검증기(browser_evidence.complete_evidence_payload)라는
+    사실은 tests/test_aisearch_v1_round3.py 가 따로 잠근다.
+    """
+    from tests.aisearch_evidence import use_structural_verifier
+
+    use_structural_verifier(monkeypatch)
 
 
 class FakeClickUp:
@@ -75,7 +87,7 @@ class FakeAdmin:
 
 def _candidate(**over) -> Candidate:
     base = dict(
-        profile_url="https://www.linkedin.com/in/hong-gildong/",
+        profile_url="https://www.linkedin.com/talent/profile/minhonggildong",
         score=87,
         why_fit="B2B SaaS 세일즈 8년",
         profile_summary="현 A사 세일즈 리드",
@@ -194,7 +206,7 @@ def test_h1_dry_run_also_refuses_without_evidence():
 def test_f12_unknown_name_is_unique_per_candidate():
     cu, dc, am, rec = _live_recorder()
 
-    for url in ("https://linkedin.com/in/a", "https://linkedin.com/in/b"):
+    for url in ("https://www.linkedin.com/talent/profile/linkedincomina", "https://www.linkedin.com/talent/profile/linkedincominb"):
         rec.record(
             position_name="P",
             candidate=_candidate(
@@ -217,16 +229,16 @@ def test_f12_unknown_name_is_unique_per_candidate():
 
 def test_f12_unknown_name_is_deterministic_for_same_profile():
     cu, dc, am, rec = _live_recorder()
-    url = "https://linkedin.com/in/same"
+    url = "https://www.linkedin.com/talent/profile/kedincominsame"
 
     cand = _candidate(
         name="",
         profile_url=url,
-        evidence=make_evidence(url, position_id="P", site="c"),
+        evidence=make_evidence(url, position_id="P", site="linkedin_rps"),
     )
-    rec.record(position_name="P", candidate=cand, channel="c")
+    rec.record(position_name="P", candidate=cand, channel="linkedin_rps")
     rec2_cu, rec2_dc, am2, rec2 = _live_recorder()
-    rec2.record(position_name="P", candidate=cand, channel="c")
+    rec2.record(position_name="P", candidate=cand, channel="linkedin_rps")
 
     assert am.registered[0]["name"] == am2.registered[0]["name"]
 

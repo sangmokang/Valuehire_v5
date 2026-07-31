@@ -187,7 +187,10 @@ class TestAdminApiRecorder:
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         with pytest.raises(AdminApiResponseError) as e:
             rec.register(candidate())
-        assert body["error"] in str(e.value)
+        # V1 3차 — 서버 오류 본문에는 후보 개인정보가 섞일 수 있고 이 메시지는
+        # 로그·원장으로 흘러간다. 내용이 아니라 모양(타입·길이)만 남긴다.
+        assert body["error"] not in str(e.value)
+        assert f"status={status}" in str(e.value)
 
     def test_live_non_json_response_is_explicit_failure(self):
         t = FakeTransport(status=200, raw="<html>gateway error</html>")
@@ -452,8 +455,9 @@ class TestParseRegisterResponse:
         with pytest.raises(AdminApiResponseError):
             parse_register_response(_envelope(status=201, text="[" * 200_000))
 
-    def test_error_message_carries_server_reason(self):
+    def test_error_message_hides_server_reason_content(self):
         with pytest.raises(AdminApiResponseError) as e:
             parse_register_response(_envelope(
                 status=401, text='{"ok": false, "error": "Unauthorized"}'))
-        assert "Unauthorized" in str(e.value)
+        assert "Unauthorized" not in str(e.value)  # 개인정보 유출 방지(V1 3차)
+        assert "status=401" in str(e.value)
