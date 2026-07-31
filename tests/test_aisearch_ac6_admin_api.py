@@ -15,7 +15,9 @@ from apps.aisearch.core.admin_api import (
     AdminApiContractError,
     AdminApiRecorder,
     AdminApiResponseError,
+    RegisterOutcome,
     build_register_request,
+    parse_register_response,
 )
 
 BASE = "https://admin.valuehire.cc"
@@ -114,18 +116,20 @@ class TestAdminApiRecorder:
     def test_dry_run_default_sends_nothing(self):
         t = FakeTransport()
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t)
-        result = rec.register(candidate())
-        assert result["status"] == "dry_run"
-        assert result["recorded"] is False
+        outcome = rec.register(candidate())
+        assert outcome.sent is False
+        assert outcome.recorded is False
         assert t.calls == []
 
     def test_live_success_201_new_insert(self):
         # 서버 route.ts:151 — 신규 등록은 201 {ok:true, deduped:false}
         t = FakeTransport(status=201, body={"ok": True, "deduped": False})
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
-        result = rec.register(candidate())
-        assert result["status"] == "recorded"
-        assert result["recorded"] is True
+        outcome = rec.register(candidate())
+        assert outcome.sent is True
+        assert outcome.recorded is True
+        assert outcome.deduped is False
+        assert outcome.status == 201
         assert len(t.calls) == 1
         assert t.calls[0]["url"] == BASE + "/api/aisearch/register"
 
@@ -133,9 +137,10 @@ class TestAdminApiRecorder:
         # 서버 route.ts:123 — 같은 jd_id 내 동일인은 200 {ok:true, deduped:true}
         t = FakeTransport(status=200, body={"ok": True, "deduped": True})
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
-        result = rec.register(candidate())
-        assert result["status"] == "recorded"
-        assert result["response"]["deduped"] is True
+        outcome = rec.register(candidate())
+        assert outcome.recorded is True
+        assert outcome.deduped is True
+        assert outcome.status == 200
 
     @pytest.mark.parametrize("status,body", [
         (400, {"ok": False, "error": "name is required"}),
@@ -173,9 +178,8 @@ class TestAdminApiRecorder:
     def test_dry_run_result_never_leaks_key(self):
         t = FakeTransport()
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t)
-        result = rec.register(candidate())
-        import json as _json
-        assert KEY not in _json.dumps(result, ensure_ascii=False)
+        outcome = rec.register(candidate())
+        assert KEY not in repr(outcome)
 
     def test_trim_semantics_match_server_js_trim(self):
         # 서버는 JS String.trim() — U+FEFF(BOM)만 있는 값은 공백으로 거부하고,
@@ -193,3 +197,90 @@ class TestAdminApiRecorder:
         with pytest.raises(AdminApiContractError):
             rec.register(candidate(match_score=42))
         assert t.calls == []
+
+    def test_dry_run_and_live_share_one_result_shape(self):
+        # 근본 결함: dry-run 은 'request', live 는 'response' 키를 뱉어 호출자가 한 코드로
+        # 두 경우를 다룰 수 없었다. 같은 타입·같은 속성 집합이어야 한다.
+        dry = AdminApiRecorder(base_url=BASE, internal_key=KEY,
+                               transport=FakeTransport()).register(candidate())
+        live = AdminApiRecorder(
+            base_url=BASE, internal_key=KEY, live=True,
+            transport=FakeTransport(status=201, body={"ok": True, "deduped": False}),
+        ).register(candidate())
+        assert isinstance(dry, RegisterOutcome) and isinstance(live, RegisterOutcome)
+        assert vars(dry).keys() == vars(live).keys()
+
+    def test_live_outcome_never_leaks_key(self):
+        # dry-run 만 가리고 live 는 안 가리면 로그·원장에 키가 샌다.
+        rec = AdminApiRecorder(
+            base_url=BASE, internal_key=KEY, live=True,
+            transport=FakeTransport(status=201, body={"ok": True, "deduped": False}),
+        )
+        assert KEY not in repr(rec.register(candidate()))
+
+
+# 서버 응답을 전송 없이 단독 검사 — build_register_request 와 대칭인 순수 함수.
+def _envelope(status=201, text='{"ok": true, "deduped": false}'):
+    return {"status": status, "text": text}
+
+
+class TestParseRegisterResponse:
+    """근본 결함: 응답은 검사 함수 자체가 없었고, 오류 메시지를 만들 때 방금 '사전이
+    아니다'라고 판정한 값을 다시 사전처럼 꺼내 써서 AttributeError 로 죽었다."""
+
+    @pytest.mark.parametrize("text", [
+        "null", "[]", '"ok"', "123", "true", "[{\"ok\": true}]",  # JSON 이지만 객체 아님
+    ])
+    def test_non_object_json_raises_contract_error_not_crash(self, text):
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response(_envelope(status=500, text=text))
+
+    @pytest.mark.parametrize("body", [
+        {}, {"ok": False}, {"ok": "true"}, {"ok": 1}, {"ok": None},
+        {"ok": True},                                  # deduped 누락
+        {"ok": True, "deduped": "false"},              # deduped 타입 위반
+        {"ok": True, "deduped": None},
+    ])
+    def test_object_missing_or_wrong_confirmation_is_explicit_failure(self, body):
+        import json as _json
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response(_envelope(status=201, text=_json.dumps(body)))
+
+    @pytest.mark.parametrize("envelope", [
+        None, [], "text", 42,                                  # Mapping 이 아님
+        {"text": '{"ok": true}'},                              # status 누락
+        {"status": "201", "text": '{"ok": true}'},             # status 가 문자열
+        {"status": True, "text": '{"ok": true}'},              # bool 은 int 오용
+        {"status": None, "text": '{"ok": true}'},
+        {"status": 201},                                       # text 누락
+        {"status": 201, "text": None},
+        {"status": 201, "text": b'{"ok": true}'},              # bytes 는 계약 밖
+    ])
+    def test_malformed_transport_envelope_is_explicit_failure(self, envelope):
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response(envelope)
+
+    def test_status_and_deduped_must_agree_with_server_contract(self):
+        # route.ts — 201↔deduped:false(신규), 200↔deduped:true(갱신). 어긋나면 중간
+        # 프록시·목이 거짓말한 것이므로 fail-closed.
+        import json as _json
+        for status, deduped in ((201, True), (200, False)):
+            with pytest.raises(AdminApiResponseError):
+                parse_register_response(_envelope(
+                    status=status,
+                    text=_json.dumps({"ok": True, "deduped": deduped})))
+
+    def test_unknown_response_fields_are_tolerated(self):
+        # 비대칭 규율: 요청은 모르는 필드를 거부(E12), 응답은 서버가 칸을 늘려도
+        # 우리 쪽이 멈추면 안 되므로 관용한다.
+        outcome = parse_register_response(_envelope(
+            status=201,
+            text='{"ok": true, "deduped": false, "candidate": {"id": 7}, "v2_field": 1}'))
+        assert outcome.recorded is True
+        assert outcome.deduped is False
+
+    def test_error_message_carries_server_reason(self):
+        with pytest.raises(AdminApiResponseError) as e:
+            parse_register_response(_envelope(
+                status=401, text='{"ok": false, "error": "Unauthorized"}'))
+        assert "Unauthorized" in str(e.value)
