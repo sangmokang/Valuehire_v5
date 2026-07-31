@@ -101,7 +101,7 @@ class FakeTransport:
     def __init__(self, status=200, body=None, raw=None):
         self.calls = []
         self.status = status
-        self.body = {"ok": True} if body is None else body
+        self.body = {"ok": True, "candidate": {"id": "c1"}, "deduped": False} if body is None else body
         self.raw = raw
 
     def __call__(self, request):
@@ -123,7 +123,7 @@ class TestAdminApiRecorder:
 
     def test_live_success_201_new_insert(self):
         # 서버 route.ts:151 — 신규 등록은 201 {ok:true, deduped:false}
-        t = FakeTransport(status=201, body={"ok": True, "deduped": False})
+        t = FakeTransport(status=201, body={"ok": True, "candidate": {"id": "c1"}, "deduped": False})
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         outcome = rec.register(candidate())
         assert outcome.sent is True
@@ -135,7 +135,7 @@ class TestAdminApiRecorder:
 
     def test_live_success_200_deduped_update(self):
         # 서버 route.ts:123 — 같은 jd_id 내 동일인은 200 {ok:true, deduped:true}
-        t = FakeTransport(status=200, body={"ok": True, "deduped": True})
+        t = FakeTransport(status=200, body={"ok": True, "candidate": {"id": "c1"}, "deduped": True})
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         outcome = rec.register(candidate())
         assert outcome.recorded is True
@@ -205,7 +205,7 @@ class TestAdminApiRecorder:
                                transport=FakeTransport()).register(candidate())
         live = AdminApiRecorder(
             base_url=BASE, internal_key=KEY, live=True,
-            transport=FakeTransport(status=201, body={"ok": True, "deduped": False}),
+            transport=FakeTransport(status=201, body={"ok": True, "candidate": {"id": "c1"}, "deduped": False}),
         ).register(candidate())
         assert isinstance(dry, RegisterOutcome) and isinstance(live, RegisterOutcome)
         assert vars(dry).keys() == vars(live).keys()
@@ -214,13 +214,14 @@ class TestAdminApiRecorder:
         # dry-run 만 가리고 live 는 안 가리면 로그·원장에 키가 샌다.
         rec = AdminApiRecorder(
             base_url=BASE, internal_key=KEY, live=True,
-            transport=FakeTransport(status=201, body={"ok": True, "deduped": False}),
+            transport=FakeTransport(status=201, body={"ok": True, "candidate": {"id": "c1"}, "deduped": False}),
         )
         assert KEY not in repr(rec.register(candidate()))
 
 
 # 서버 응답을 전송 없이 단독 검사 — build_register_request 와 대칭인 순수 함수.
-def _envelope(status=201, text='{"ok": true, "deduped": false}'):
+def _envelope(status=201,
+              text='{"ok": true, "candidate": {"id": "c1"}, "deduped": false}'):
     return {"status": status, "text": text}
 
 
@@ -307,6 +308,54 @@ class TestParseRegisterResponse:
         assert "홍길동" not in message
         assert "010-1234-5678" not in message
         assert "502" in message  # 진단에 필요한 정보는 남아 있어야 한다
+
+    @pytest.mark.parametrize("body", [
+        '{"ok": true, "deduped": false}',                      # candidate 누락
+        '{"ok": true, "deduped": false, "candidate": null}',
+        '{"ok": true, "deduped": false, "candidate": "x"}',
+        '{"ok": true, "deduped": false, "candidate": []}',
+    ])
+    def test_missing_candidate_record_is_not_a_successful_registration(self, body):
+        # Codex 2차 적대검증 발견(high): 서버는 성공 시 반드시 candidate 레코드를 준다
+        # (route.ts:123, :151). 없는데도 recorded=True 로 보고하면 원장이 거짓이 된다.
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response(_envelope(status=201, text=body))
+
+    def test_hostile_mapping_whose_get_explodes_is_contract_error(self):
+        # Codex 2차 적대검증 발견(low): Mapping 인지만 확인하고 .get() 은 보호가 없었다.
+        from collections.abc import Mapping as _Mapping
+
+        class HostileMapping(_Mapping):
+            def __getitem__(self, key):
+                raise RuntimeError("get exploded")
+
+            def __iter__(self):
+                return iter(())
+
+            def __len__(self):
+                return 0
+
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response(HostileMapping())
+
+    def test_describe_is_total_even_when_len_explodes(self):
+        # Codex 2차 적대검증 발견(low): repr() 은 보호했지만 길이 확인·자르기는 보호 밖.
+        from apps.aisearch.core.admin_api import _describe
+
+        class BadLen(str):
+            def __len__(self):
+                raise RuntimeError("len exploded")
+
+        class BadRepr:
+            def __repr__(self):
+                return BadLen("hostile")
+
+        assert isinstance(_describe(BadRepr()), str)
+
+    def test_deeply_nested_json_does_not_blow_the_stack(self):
+        # 자체 3차 적대검증 발견: 중첩이 깊은 응답이 오면 RecursionError 로 죽었다.
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response(_envelope(status=201, text="[" * 200_000))
 
     def test_error_message_carries_server_reason(self):
         with pytest.raises(AdminApiResponseError) as e:

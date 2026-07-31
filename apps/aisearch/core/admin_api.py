@@ -133,12 +133,15 @@ def _describe(value: Any, limit: int = 200) -> str:
     """
     try:
         text = repr(value)
+        # 자르기·길이 확인도 보호 안에 둔다 — repr() 이 적대적 str 하위형을 돌려줄 수
+        # 있다(Codex 2차 적대검증 발견).
+        return text if len(text) <= limit else text[:limit] + "…"
     except Exception:
-        try:
-            text = f"<unrepresentable {type(value).__name__}>"
-        except Exception:
-            text = "<unrepresentable>"
-    return text if len(text) <= limit else text[:limit] + "…"
+        pass
+    try:
+        return f"<unrepresentable {type(value).__name__}>"
+    except Exception:
+        return "<unrepresentable>"
 
 
 def _describe_shape(value: Any) -> str:
@@ -175,12 +178,19 @@ def _read_envelope(response: Any) -> tuple[int, str]:
         raise AdminApiResponseError(
             f"transport must return a mapping: {_describe(response)}"
         )
-    status = response.get("status")
+    # Mapping 을 자처해도 .get() 이 터질 수 있다(Codex 2차 적대검증 발견) — 읽기 자체를
+    # 보호해 약속한 계약 오류만 나가게 한다.
+    try:
+        status = response.get("status")
+        text = response.get("text")
+    except Exception as exc:
+        raise AdminApiResponseError(
+            f"transport mapping could not be read: {_describe_shape(response)}"
+        ) from exc
     if isinstance(status, bool) or not isinstance(status, int):
         raise AdminApiResponseError(
             f"transport status must be an int: {_describe(status)}"
         )
-    text = response.get("text")
     if not isinstance(text, str):
         raise AdminApiResponseError(f"transport text must be a str: {_describe(text)}")
     return status, text
@@ -195,9 +205,11 @@ def parse_register_response(response: Any) -> RegisterOutcome:
     status, text = _read_envelope(response)
     try:
         payload = json.loads(text)
-    except ValueError as exc:
+    except Exception as exc:
+        # ValueError 뿐 아니라 중첩이 깊은 본문의 RecursionError 도 여기서 흡수한다
+        # (자체 3차 적대검증 발견) — 파싱 실패는 전부 '해석 불가 응답'이다.
         raise AdminApiResponseError(
-            f"non-JSON response (status={status}): {_describe_shape(text)}"
+            f"unparseable response (status={status}): {_describe_shape(text)}"
         ) from exc
     if not isinstance(payload, dict):
         raise AdminApiResponseError(
@@ -214,6 +226,14 @@ def parse_register_response(response: Any) -> RegisterOutcome:
     if not isinstance(deduped, bool):
         raise AdminApiResponseError(
             f"deduped must be a bool (status={status}): {_describe(deduped)}"
+        )
+    # 서버는 성공 시 반드시 저장된 레코드를 돌려준다(route.ts:123 갱신, :151 신규).
+    # 없으면 실제로 저장된 증거가 없는 것이므로 등록 성공으로 인정하지 않는다 —
+    # 거짓 성공은 원장을 거짓으로 만든다(Codex 2차 적대검증 발견).
+    if not isinstance(payload.get("candidate"), dict):
+        raise AdminApiResponseError(
+            f"server reported success without a candidate record (status={status}): "
+            f"{_describe_shape(payload.get('candidate'))}"
         )
     # 서버 route.ts — 신규 등록 201 {deduped:false}, 동일인 갱신 200 {deduped:true}.
     # 어긋나면 중간 프록시·목이 거짓말한 것이므로 fail-closed.
