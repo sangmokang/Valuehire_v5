@@ -449,3 +449,100 @@ class TestParseRegisterResponse:
             parse_register_response(_envelope(
                 status=401, text='{"ok": false, "error": "Unauthorized"}'))
         assert "Unauthorized" in str(e.value)
+
+
+# ── 후속 결함(PR#254 이후): 응답에서 온 값이 오류 문장·결과에 그대로 실려
+#    개인정보(이름·연락처)와 내부키가 로그·원장으로 새는 경로가 남아 있었다.
+#    오류는 '내용'이 아니라 '모양'만, 결과는 '안전한 영수증'만 남겨야 한다.
+_PII_NAME = "홍길동"
+_PII_PHONE = "010-1234-5678"
+_PII_TEXT = f"{_PII_NAME} {_PII_PHONE}"
+
+
+class TestResponseNeverLeaksPrivateData:
+    def _assert_no_pii(self, probe: str) -> None:
+        assert _PII_NAME not in probe
+        assert _PII_PHONE not in probe
+
+    def test_server_error_field_is_not_echoed_into_the_message(self):
+        # 재현 1 — status=400, error 에 후보 이름·연락처가 담겨 오는 경우.
+        import json as _json
+
+        with pytest.raises(AdminApiResponseError) as e:
+            parse_register_response(_envelope(
+                status=400,
+                text=_json.dumps({"ok": False, "error": _PII_TEXT})))
+        message = str(e.value)
+        self._assert_no_pii(message)
+        assert "400" in message  # 진단에 필요한 모양 정보는 남는다
+
+    def test_non_bool_deduped_value_is_not_echoed_into_the_message(self):
+        # 재현 2 — 성공 모양이지만 deduped 자리에 개인정보 문자열이 온 경우.
+        import json as _json
+
+        with pytest.raises(AdminApiResponseError, match="deduped must be a bool") as e:
+            parse_register_response(_envelope(
+                status=201,
+                text=_json.dumps({
+                    "ok": True,
+                    "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"},
+                    "deduped": _PII_TEXT,
+                })))
+        self._assert_no_pii(str(e.value))
+
+    def test_non_mapping_envelope_content_is_not_echoed_into_the_message(self):
+        # 재현 3 — 전송 계층이 사전이 아닌 껍데기를 돌려준 경우.
+        with pytest.raises(AdminApiResponseError, match="must return a mapping") as e:
+            parse_register_response([_PII_TEXT])
+        self._assert_no_pii(str(e.value))
+
+    def test_bytes_text_content_is_not_echoed_into_the_message(self):
+        # 재현 4 — text 가 개인정보를 담은 bytes 로 온 경우.
+        with pytest.raises(AdminApiResponseError, match="text must be a str") as e:
+            parse_register_response({"status": 201, "text": _PII_TEXT.encode("utf-8")})
+        self._assert_no_pii(str(e.value))
+
+    def test_success_outcome_keeps_only_a_safe_receipt(self):
+        # 재현 5 — 정상 201 응답에 후보 개인정보와 내부키가 실려 와도 결과에 남으면 안 된다.
+        # 요청 쪽 값과 구분되도록 서버 응답에는 다른 이름·연락처를 쓴다.
+        import json as _json
+
+        server_name, server_phone = "김서버", "010-9999-8888"
+        cid = "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"
+        text = _json.dumps({
+            "ok": True,
+            "deduped": False,
+            "candidate": {"id": cid, "name": server_name, "phone": server_phone},
+            "debug_key": KEY,
+        })
+
+        outcome = parse_register_response(_envelope(status=201, text=text))
+        probe = repr(outcome) + repr(vars(outcome))
+        assert server_name not in probe
+        assert server_phone not in probe
+        assert KEY not in probe
+        # 안전한 영수증은 그대로 남아 있어야 한다 — 지워버리는 것으로 통과하면 안 된다.
+        assert outcome.recorded is True
+        assert outcome.deduped is False
+        assert outcome.status == 201
+        assert outcome.candidate_id == cid
+
+    def test_live_success_outcome_keeps_only_a_safe_receipt(self):
+        # 같은 누출을 실제 호출 경로(AdminApiRecorder.live)에서도 막는지 고정한다.
+        server_name, server_phone = "김서버", "010-9999-8888"
+        cid = "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"
+        rec = AdminApiRecorder(
+            base_url=BASE, internal_key=KEY, live=True,
+            transport=FakeTransport(status=201, body={
+                "ok": True,
+                "deduped": False,
+                "candidate": {"id": cid, "name": server_name, "phone": server_phone},
+                "debug_key": KEY,
+            }),
+        )
+        outcome = rec.register(candidate())
+        probe = repr(outcome) + repr(vars(outcome))
+        assert server_name not in probe
+        assert server_phone not in probe
+        assert KEY not in probe
+        assert outcome.candidate_id == cid
