@@ -12,6 +12,7 @@ import math
 import os
 import shutil
 import sys
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -58,6 +59,18 @@ def _nonblank(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise MatchingContractError(f"{field} must be a non-blank string")
     return value.strip()
+
+
+def _gate_key(value: object) -> str:
+    """필수요건 문자열의 표기 흔들림을 흡수한 비교용 키.
+
+    Stage 3 는 Stage 1 의 요건을 그대로 돌려주는 것이 계약이지만, LLM 은 공백을
+    다듬거나 대소문자를 바꾸는 정도의 흔들림을 낸다. 그 정도로 후보를 버리면
+    근거가 멀쩡한 사람이 유실된다(2026-08-01 라이브). 의미가 달라지는 차이는
+    그대로 남겨 fail-closed 가 유지되도록, 유니코드 정규화·소문자화·공백 축약만 한다.
+    """
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    return " ".join(text.casefold().split())
 
 
 def _validate_gates(value: object) -> tuple[dict[str, str], ...]:
@@ -408,20 +421,37 @@ def evaluate_candidate_contract(
         for item in must_have
         if isinstance(item, dict)
     ]
-    gates = evaluation["gates"]
-    actual = (
-        [
-            str(item.get("requirement", "")).strip()
-            for item in gates
-            if isinstance(item, dict)
-        ]
-        if isinstance(gates, list)
-        else []
-    )
-    if not expected or actual != expected:
+    gates = evaluation["gates"] if isinstance(evaluation["gates"], list) else []
+    if not expected:
         raise MatchingContractError(
             "Stage 3 gates must match Stage 1 must-have requirements in order"
         )
+    # 요건 **집합**이 같으면 같은 심사다. 공백·대소문자·순서만 다른 표기 때문에 근거가
+    # 멀쩡한 후보를 통째로 버리지 않는다(2026-08-01 라이브: 후보 절반 유실). 대신
+    # 저장값은 Stage 1 정본 표기·정본 순서로 되돌려 하류 비교가 흔들리지 않게 한다.
+    # 요건이 빠지거나 남거나 짝이 안 맞으면 지금까지처럼 fail-closed 다.
+    remaining: dict[str, list[dict]] = {}
+    for item in gates:
+        if not isinstance(item, dict):
+            raise MatchingContractError(
+                "Stage 3 gates must match Stage 1 must-have requirements in order"
+            )
+        remaining.setdefault(_gate_key(item.get("requirement")), []).append(item)
+    aligned: list[dict] = []
+    for requirement in expected:
+        bucket = remaining.get(_gate_key(requirement))
+        if not bucket:
+            raise MatchingContractError(
+                "Stage 3 gates must match Stage 1 must-have requirements in order"
+            )
+        item = dict(bucket.pop(0))
+        item["requirement"] = requirement
+        aligned.append(item)
+    if any(bucket for bucket in remaining.values()):
+        raise MatchingContractError(
+            "Stage 3 gates must match Stage 1 must-have requirements in order"
+        )
+    evaluation["gates"] = aligned
     calculate_final_score(evaluation)
     return evaluation
 
