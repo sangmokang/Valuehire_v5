@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parent.parent
 PROMPT = REPO / "docs/prompts/aisearch-zero-completion-goal-2026-07-31.md"
+EXPECTED_SHA256 = "pending-independent-review"
 SECTIONS = {
     "실행 지시": ("본문 자체가 실행 계약", "make red-ledger", "make task NAME="),
     "먼저 읽고 회수할 것": ("재발 원장", "저장소 밖의 필수 근거가 없으면", "선행 이슈 `#255`(엄격 재발 근거 휴대성)"),
@@ -29,8 +31,8 @@ SECTIONS = {
         "## 5. 다음 행동 (사장님이 뭘 해야 하는지)",
     ),
 }
-FORBIDDEN = ("$HOME", "~/", "~/.claude", "~/.codex", "Valuehire_v4", "이 문서는 강제력이 없습니다")
-ABSOLUTE_PATH = re.compile(r"(?<![.\w])(?:/[A-Za-z][^\s`|]*|[A-Za-z]:\\)")
+FORBIDDEN = ("$HOME", "${HOME}", "%USERPROFILE%", "~/", "~/.claude", "~/.codex", "Valuehire_v4", "이 문서는 강제력이 없습니다")
+ABSOLUTE_PATH = re.compile(r"(?<![.\w])(?:/(?!/)[^\s`|]+|[A-Za-z]:\\|\\\\)")
 
 
 def _text() -> str:
@@ -49,7 +51,8 @@ def _contract_errors(text: str) -> list[str]:
     errors = []
     for name, markers in SECTIONS.items():
         body = _section(text, name)
-        if not body or text.count(f"## {name}\n") != 1:
+        headings = re.findall(rf"^## {re.escape(name)}.*$", text, re.MULTILINE)
+        if not body or headings != [f"## {name}"]:
             errors.append(f"missing or duplicate section: {name}")
         errors.extend(f"{name}: {marker}" for marker in markers if marker not in body)
     errors.extend(f"forbidden: {marker}" for marker in FORBIDDEN if marker in text)
@@ -85,14 +88,6 @@ def test_prompt_defines_portable_review_product_and_proof() -> None:
         assert (REPO / relative).is_file(), relative
 
 
-def test_contract_checker_rejects_deleted_gate_and_fail_open_mutation() -> None:
-    text = _text()
-    without_machine_checks = re.sub(
-        r"^## 기계 검증\n.*?(?=^## |\Z)", "", text, flags=re.MULTILINE | re.DOTALL
-    )
-    assert _contract_errors(without_machine_checks)
-    fail_open = text.replace(
-        "두 번째 Mac 검증 불가 | 로컬 검사는 남기되 휴대 가능 완료 선언 금지",
-        "두 번째 Mac 검증 불가 | 로컬 검사만으로 완료를 선언합니다",
-    )
-    assert _contract_errors(fail_open)
+def test_prompt_matches_independently_reviewed_snapshot() -> None:
+    digest = hashlib.sha256(_text().encode("utf-8")).hexdigest()
+    assert digest == EXPECTED_SHA256
