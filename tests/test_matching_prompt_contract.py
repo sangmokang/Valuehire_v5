@@ -583,3 +583,81 @@ def test_stage3_prompt_orders_llm_to_copy_must_have_verbatim() -> None:
     assert "must_have" in stage3_prompt
     assert "그대로" in stage3_prompt
     assert "같은 순서" in stage3_prompt
+
+
+def test_stage3_duplicate_requirement_keys_do_not_change_the_score() -> None:
+    """Stage 1 이 사실상 같은 요건을 두 번 낸 병리 케이스에서도 총점은 흔들리지 않는다.
+
+    "Python"/"python" 처럼 정규화하면 같은 키가 되는 요건이 둘이면 verdict 를 어느 쪽에
+    붙일지는 원리적으로 정할 수 없다. 그래도 verdict **멀티셋**은 보존되므로 하드제외와
+    총점은 동일하다 — 예전처럼 후보를 통째로 버리는 것보다 낫다는 것을 여기서 고정한다.
+    """
+    profile = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/dup",
+        source_channel="linkedin_rps",
+        visible_text="A사 Python API 4년",
+        summary="backend engineer",
+        captured_at="2026-07-24T00:00:00+09:00",
+        years_experience=4,
+        education="부산대학교 학사",
+    )
+    position = Position(
+        position_id="P1",
+        company_name="B",
+        role_title="Backend Engineer",
+        jd_text="Python",
+        must_haves=("Python", "python"),
+    )
+
+    def _run(gates: list[dict]) -> int:
+        responses = [
+            {
+                "position_title": "Backend Engineer",
+                "must_have": [
+                    {"type": "skill", "requirement": "Python", "min_years": None},
+                    {"type": "skill", "requirement": "python", "min_years": None},
+                ],
+                "nice_to_have": [],
+            },
+            {"total_years": 4, "careers": [], "skills": [], "achievements": []},
+            {
+                "gates": gates,
+                "dimensions": _payload(score=4)["dimensions"],
+                "one_line_verdict": "v",
+            },
+        ]
+        evaluation = evaluate_candidate_contract(
+            profile,
+            position,
+            llm_json_client=lambda prompt: responses.pop(0),
+            company_tier_map={},
+            school_tier_map={},
+        )
+        assert [gate["requirement"] for gate in evaluation["gates"]] == ["Python", "python"]
+        return calculate_final_score(evaluation)["score"]
+
+    forward = _run(
+        [
+            {"requirement": "Python", "verdict": "pass", "evidence": "e2"},
+            {"requirement": "python", "verdict": "fail", "evidence": "e1"},
+        ]
+    )
+    reversed_ = _run(
+        [
+            {"requirement": "python", "verdict": "fail", "evidence": "e1"},
+            {"requirement": "Python", "verdict": "pass", "evidence": "e2"},
+        ]
+    )
+
+    assert forward == reversed_
+
+
+def test_stage3_distinct_requirements_are_never_merged_by_normalization() -> None:
+    """의미가 다른 표기는 절대 같은 요건으로 합쳐지지 않는다(정규화 과잉 방지)."""
+    from tools.multi_position_sourcing.matching_score_contract import _gate_key
+
+    assert _gate_key("5년 이상") != _gate_key("5년이상")
+    assert _gate_key("Python 3년") != _gate_key("Python 3 년")
+    # 반대로 전각·공백·대소문자만 다른 것은 같은 요건이다.
+    assert _gate_key("Ｐython") == _gate_key("Python")
+    assert _gate_key("Python  3년") == _gate_key("python 3년")
