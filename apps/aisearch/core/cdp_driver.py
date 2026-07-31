@@ -274,6 +274,26 @@ def _checked_js(selector: str) -> str:
     )
 
 
+def _parse_result_count(text: Any) -> int:
+    """M4(2026-07-31 리뷰) — 결과건수 텍스트에서 **하나의 수**만 읽는다.
+
+    예전에는 숫자가 아닌 글자를 모두 지우고 남은 자릿수를 그대로 이어붙였다.
+    "1,234명 중 20명 표시" 같은 문구가 오면 123420 이라는 있지도 않은 수가
+    나온다. 이제는 수 단위로 끊어 읽고, 서로 다른 수가 둘 이상이면 무엇이
+    결과건수인지 확정할 수 없으므로 **명시적으로 실패**한다(조용한 추정 금지).
+    """
+    raw = str(text or "")
+    numbers = {int(m.replace(",", "")) for m in re.findall(r"\d[\d,]*", raw)}
+    if not numbers:
+        raise CdpDriverError(f"RPS 결과건수를 읽지 못했다(fail-closed): {text!r}")
+    if len(numbers) > 1:
+        raise CdpDriverError(
+            f"RPS 결과건수가 모호하다 — 한 요소에 서로 다른 수가 여럿 있다"
+            f"(fail-closed): {text!r} -> {sorted(numbers)}"
+        )
+    return numbers.pop()
+
+
 #: Enter 키 이벤트 3종(rawKeyDown/char/keyUp) — Input.dispatchKeyEvent 파라미터.
 _ENTER_KEY_EVENTS: tuple[dict, ...] = (
     {
@@ -321,6 +341,11 @@ class CdpDriver:
         self._load_timeout = load_timeout
         self._observers_installed = False
         self._last_human_inputs = 0
+        #: 2026-07-31 리뷰 F1 — 차단 프로브(_probe_blocking_signals)가 관측했지만
+        #: 아직 모니터에 전달하지 못한 비-차단 이벤트(사람 입력 등). poll_events()
+        #: 는 워터마크를 전진시키는 상태 변경 함수라, 여기서 보관하지 않으면 그
+        #: 입력은 영영 사라진다(상세 열람 중 사장님 개입이 무시됐던 원인).
+        self._carried_events: list[dict] = []
         #: 결함 ⑩ — 연결 단위 락: 같은 연결 동시 호출 직렬화(응답 혼선 방지).
         self._conn_lock = threading.Lock()
         #: 5차 결함 ① — 마지막 목록 페이지 URL. 상세 프로필을 현재 탭으로 연
@@ -487,12 +512,7 @@ class CdpDriver:
             "if(e&&e.innerText)return e.innerText;}"
             "return '';})()"
         )
-        digits = re.sub(r"[^0-9]", "", str(text or ""))
-        if not digits:
-            raise CdpDriverError(
-                f"RPS 결과건수를 읽지 못했다(fail-closed): {text!r}"
-            )
-        return int(digits)
+        return _parse_result_count(text)
 
     def apply_rps_filters(self, payload: Mapping[str, Any]) -> None:
         """결함 ① — 지역·대학·경력 필터를 "전달"이 아니라 실제 입력 시퀀스로
@@ -621,6 +641,19 @@ class CdpDriver:
         # 결함 ②/⑧ — 다음 페이지 로드 완료 전에는 어떤 읽기도 하지 않는다.
         self.wait_for_load()
 
+    def _probe_blocking_signals(self) -> list[dict]:
+        """저장 직전 차단 프로브 — 차단 신호만 돌려주고, 그 밖의 이벤트는 보관한다.
+
+        2026-07-31 리뷰 F1/M1. poll_events() 는 사람 입력 워터마크를 전진시키는
+        상태 변경 함수다. 여기서 signal 만 골라 쓰고 나머지를 버리면 그 사이의
+        사람 입력이 오케스트레이터 모니터에 도달하지 못한다 — 그래서 버리지 않고
+        _carried_events 에 넣어 다음 poll_events() 가 함께 돌려주게 한다.
+        """
+        events = self.poll_events()
+        signals = [e for e in events if e.get("type") == "signal"]
+        self._carried_events.extend(e for e in events if e.get("type") != "signal")
+        return signals
+
     def fetch_list_page(
         self, channel: str, page: int, search_payload: Mapping[str, Any]
     ) -> dict:
@@ -637,6 +670,12 @@ class CdpDriver:
         else:
             self.goto_next_page(channel)
         url = self.current_url()
+        # M1(2026-07-31 리뷰) — 캡처 직전 차단 재확인. 검색 실행/페이지 이동
+        # 도중에 캡차·2FA 화면으로 바뀌었으면 그 HTML 이 후보 데이터로 저장되면
+        # 안 된다. 상세 페이지와 같은 계약으로 즉시 중단한다.
+        block_events = self._probe_blocking_signals()
+        if block_events:
+            raise DetailPageBlocked(block_events)
         # 5차 결함 ① — 상세 열람 후 복귀 지점으로 목록 URL 을 기억한다.
         self._last_list_url = url
         return {
@@ -653,7 +692,7 @@ class CdpDriver:
         # V1 독립검증 결함1 — 캡처 전에 "이 상세페이지" 상태로 차단신호를 확인한다.
         # 목록 페이지 복귀 후에만 검사하면 상세페이지의 캡차/2FA 화면이 그대로
         # 후보 데이터로 저장된다. human_input 은 여기서 판단하지 않는다(signal만).
-        block_events = [e for e in self.poll_events() if e.get("type") == "signal"]
+        block_events = self._probe_blocking_signals()
         if block_events:
             if self._last_list_url:
                 self.navigate(self._last_list_url)  # 내부에서 로드 완료 대기
@@ -698,6 +737,8 @@ class CdpDriver:
         """
         if not self._observers_installed:
             self.install_observers()
+        # F1 — 차단 프로브가 보관해 둔 이벤트를 먼저 흘려보낸다(한 번만).
+        carried, self._carried_events = self._carried_events, []
         snapshot = self._evaluate(
             "/*vh:snapshot*/(function(){return{"
             f"h:(window.{_OBSERVER_KEY}||0),"
@@ -723,13 +764,13 @@ class CdpDriver:
             or isinstance(snapshot.get("h"), bool)
             or not all(isinstance(snapshot.get(f), bool) for f in bool_fields)
         ):
-            return [
+            return carried + [
                 {
                     "type": "signal",
                     "kind": f"driver_snapshot_invalid:{snapshot!r}",
                 }
             ]
-        events: list[dict] = []
+        events: list[dict] = list(carried)
         if snapshot["present"]:
             human_inputs = snapshot["h"]
             if human_inputs > self._last_human_inputs:
