@@ -264,19 +264,24 @@ class TestParseRegisterResponse:
     def test_status_and_deduped_must_agree_with_server_contract(self):
         # route.ts — 201↔deduped:false(신규), 200↔deduped:true(갱신). 어긋나면 중간
         # 프록시·목이 거짓말한 것이므로 fail-closed.
+        # 2차 적대검증 지적: 이 입력에 candidate 가 없어서 candidate 검사에 먼저 걸렸고,
+        # 상태↔deduped 검사 코드를 지워도 통과하는 헛테스트였다. 정본 응답을 준 뒤
+        # '걸린 이유'까지 확인한다.
         import json as _json
         for status, deduped in ((201, True), (200, False)):
-            with pytest.raises(AdminApiResponseError):
+            with pytest.raises(AdminApiResponseError, match="status/deduped disagree"):
                 parse_register_response(_envelope(
                     status=status,
-                    text=_json.dumps({"ok": True, "deduped": deduped})))
+                    text=_json.dumps({"ok": True, "candidate": {"id": "c1"},
+                                      "deduped": deduped})))
 
     def test_unknown_response_fields_are_tolerated(self):
         # 비대칭 규율: 요청은 모르는 필드를 거부(E12), 응답은 서버가 칸을 늘려도
         # 우리 쪽이 멈추면 안 되므로 관용한다.
         outcome = parse_register_response(_envelope(
             status=201,
-            text='{"ok": true, "deduped": false, "candidate": {"id": 7}, "v2_field": 1}'))
+            text='{"ok": true, "deduped": false, '
+                 '"candidate": {"id": "c1", "new_column": 1}, "v2_field": 1}'))
         assert outcome.recorded is True
         assert outcome.deduped is False
 
@@ -314,6 +319,13 @@ class TestParseRegisterResponse:
         '{"ok": true, "deduped": false, "candidate": null}',
         '{"ok": true, "deduped": false, "candidate": "x"}',
         '{"ok": true, "deduped": false, "candidate": []}',
+        # 2차 적대검증 지적: 사전이기만 하면 통과해 빈 레코드도 성공으로 인정됐다.
+        # 서버 표의 id 는 uuid primary key(20260507000000_pipeline.sql:3) 라 항상 있다.
+        '{"ok": true, "deduped": false, "candidate": {}}',
+        '{"ok": true, "deduped": false, "candidate": {"id": null}}',
+        '{"ok": true, "deduped": false, "candidate": {"id": ""}}',
+        '{"ok": true, "deduped": false, "candidate": {"id": "   "}}',
+        '{"ok": true, "deduped": false, "candidate": {"id": 7}}',
     ])
     def test_missing_candidate_record_is_not_a_successful_registration(self, body):
         # Codex 2차 적대검증 발견(high): 서버는 성공 시 반드시 candidate 레코드를 준다
@@ -351,6 +363,17 @@ class TestParseRegisterResponse:
                 return BadLen("hostile")
 
         assert isinstance(_describe(BadRepr()), str)
+
+    @pytest.mark.parametrize("status", [-1, 0, 99, 600, 1000])
+    def test_out_of_range_status_codes_are_contract_errors(self, status):
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response({"status": status, "text": "{}"})
+
+    def test_absurdly_large_status_int_is_contract_error_not_crash(self):
+        # 2차 적대검증 지적: 자릿수가 극단적인 정수를 오류 문장에 넣다 ValueError 로 죽었다.
+        # (parametrize 로 넘기면 pytest 가 이름표를 만들다 같은 이유로 죽으므로 본문에서 만든다)
+        with pytest.raises(AdminApiResponseError):
+            parse_register_response({"status": 10 ** 5000, "text": "{}"})
 
     def test_deeply_nested_json_does_not_blow_the_stack(self):
         # 자체 3차 적대검증 발견: 중첩이 깊은 응답이 오면 RecursionError 로 죽었다.

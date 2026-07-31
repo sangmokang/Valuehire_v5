@@ -187,9 +187,16 @@ def _read_envelope(response: Any) -> tuple[int, str]:
         raise AdminApiResponseError(
             f"transport mapping could not be read: {_describe_shape(response)}"
         ) from exc
-    if isinstance(status, bool) or not isinstance(status, int):
+    # 범위를 먼저 좁힌다 — 자릿수가 극단적인 정수는 오류 문장으로 바꾸는 것만으로도
+    # ValueError 가 난다(2차 적대검증 발견). HTTP 상태값은 100~599 뿐이다.
+    if (
+        isinstance(status, bool)
+        or not isinstance(status, int)
+        or not 100 <= status <= 599
+    ):
         raise AdminApiResponseError(
-            f"transport status must be an int: {_describe(status)}"
+            f"transport status must be an HTTP status int (100..599): "
+            f"{_describe_shape(status)}"
         )
     if not isinstance(text, str):
         raise AdminApiResponseError(f"transport text must be a str: {_describe(text)}")
@@ -205,9 +212,9 @@ def parse_register_response(response: Any) -> RegisterOutcome:
     status, text = _read_envelope(response)
     try:
         payload = json.loads(text)
-    except Exception as exc:
-        # ValueError 뿐 아니라 중첩이 깊은 본문의 RecursionError 도 여기서 흡수한다
-        # (자체 3차 적대검증 발견) — 파싱 실패는 전부 '해석 불가 응답'이다.
+    except (ValueError, RecursionError) as exc:
+        # 중첩이 깊은 본문의 RecursionError 까지만 함께 흡수한다. 더 넓히면 우리 쪽
+        # 내부 결함까지 '서버 응답 오류'로 둔갑시킨다(2차 적대검증 지적).
         raise AdminApiResponseError(
             f"unparseable response (status={status}): {_describe_shape(text)}"
         ) from exc
@@ -230,10 +237,14 @@ def parse_register_response(response: Any) -> RegisterOutcome:
     # 서버는 성공 시 반드시 저장된 레코드를 돌려준다(route.ts:123 갱신, :151 신규).
     # 없으면 실제로 저장된 증거가 없는 것이므로 등록 성공으로 인정하지 않는다 —
     # 거짓 성공은 원장을 거짓으로 만든다(Codex 2차 적대검증 발견).
-    if not isinstance(payload.get("candidate"), dict):
+    # 사전이기만 해선 부족하다 — 저장된 행을 가리키는 id 가 있어야 실제 저장 증거다
+    # (id 는 uuid primary key, 20260507000000_pipeline.sql:3). 2차 적대검증 지적.
+    record = payload.get("candidate")
+    record_id = record.get("id") if isinstance(record, dict) else None
+    if not isinstance(record_id, str) or not _js_trim(record_id):
         raise AdminApiResponseError(
-            f"server reported success without a candidate record (status={status}): "
-            f"{_describe_shape(payload.get('candidate'))}"
+            f"server reported success without an identified candidate record "
+            f"(status={status}): {_describe_shape(record)}"
         )
     # 서버 route.ts — 신규 등록 201 {deduped:false}, 동일인 갱신 200 {deduped:true}.
     # 어긋나면 중간 프록시·목이 거짓말한 것이므로 fail-closed.
