@@ -96,3 +96,26 @@ def test_promotions_no_longer_inflate_short_tenure_hops() -> None:
 def test_empty_or_missing_experience_section_is_safe() -> None:
     assert build_company_tenures("") == ()
     assert build_company_tenures("Open to work\nEducation\nSeoul National University\n") == ()
+
+
+# --- 러너 배선: 실제 채점 입력이 회사 단위여야 한다 ---
+
+from tools.multi_position_sourcing.humansearch_cdp_run import tenures_for_profile
+
+
+def test_runner_uses_company_grouped_tenures() -> None:
+    tenures = tenures_for_profile({"full": PROFILE_TEXT, "dates": []})
+    assert [t.company for t in tenures] == [
+        "Kurly", "(주)우아한형제들 (Woowa Bros.)", "ZOYI"
+    ]
+    assert count_short_tenure_hops(tenures) == 1
+
+
+def test_runner_falls_back_to_date_list_when_experience_section_is_missing() -> None:
+    info = {
+        "full": "Open to work\nEducation\nSeoul National University\n",
+        "dates": [{"start": "Jan 2020", "end": "Present"}],
+    }
+    tenures = tenures_for_profile(info)
+    assert len(tenures) == 1
+    assert tenures[0].start_month == "2020-01"
