@@ -86,6 +86,33 @@ class TestBuildRegisterRequest:
                                      internal_key=KEY)
         assert req["json"]["match_score"] == 60
 
+    # 전수 돌연변이 조사에서 발견: 아래 선택 항목 검사들은 테스트가 하나도 없어서
+    # 통째로 지워도 80개가 전부 통과했다(검사하는 척만 하던 구간).
+    @pytest.mark.parametrize("value", [123, None, [], {}, True])
+    def test_non_str_profile_summary_rejected(self, value):
+        with pytest.raises(AdminApiContractError, match="profile_summary"):
+            build_register_request(candidate(profile_summary=value), base_url=BASE,
+                                   internal_key=KEY)
+
+    @pytest.mark.parametrize("field", ["jd_id", "jd_title"])
+    @pytest.mark.parametrize("value", ["", 123, None, [], True])
+    def test_empty_or_non_str_jd_fields_rejected(self, field, value):
+        with pytest.raises(AdminApiContractError, match=field):
+            build_register_request(candidate(**{field: value}), base_url=BASE,
+                                   internal_key=KEY)
+
+    @pytest.mark.parametrize("value", ["b2b", 123, None, ["b2b", 7], [None], {"a": 1}])
+    def test_skills_must_be_a_list_of_str(self, value):
+        with pytest.raises(AdminApiContractError, match="skills"):
+            build_register_request(candidate(skills=value), base_url=BASE,
+                                   internal_key=KEY)
+
+    def test_nan_score_is_rejected_by_its_own_guard(self):
+        # NaN 은 범위 검사에도 걸리지만, 어느 검사가 잡았는지 고정해 둔다.
+        with pytest.raises(AdminApiContractError, match="NaN"):
+            build_register_request(candidate(match_score=float("nan")), base_url=BASE,
+                                   internal_key=KEY)
+
     def test_unknown_field_rejected_catch_all(self):
         with pytest.raises(AdminApiContractError):
             build_register_request(candidate(evil="x"), base_url=BASE, internal_key=KEY)
@@ -260,6 +287,22 @@ class TestParseRegisterResponse:
     def test_malformed_transport_envelope_is_explicit_failure(self, envelope):
         with pytest.raises(AdminApiResponseError):
             parse_register_response(envelope)
+
+    @pytest.mark.parametrize("envelope", [None, [], "text", 42])
+    def test_non_mapping_envelope_is_caught_by_its_own_guard(self, envelope):
+        # 전수 돌연변이 조사에서 발견: Mapping 검사를 지워도 뒤쪽 읽기 보호가 같은
+        # 예외를 내서 통과했다 — 어느 검사가 잡았는지 고정한다.
+        with pytest.raises(AdminApiResponseError, match="must return a mapping"):
+            parse_register_response(envelope)
+
+    @pytest.mark.parametrize("deduped", ['"false"', "null", "1", "[]"])
+    def test_non_bool_deduped_is_caught_by_its_own_guard(self, deduped):
+        # 같은 이유 — 지우면 상태↔deduped 검사가 대신 잡아서 통과했다.
+        with pytest.raises(AdminApiResponseError, match="deduped must be a bool"):
+            parse_register_response(_envelope(
+                status=201,
+                text='{"ok": true, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-'
+                     '2c3d4e5a6b71"}, "deduped": ' + deduped + "}"))
 
     def test_status_and_deduped_must_agree_with_server_contract(self):
         # route.ts — 201↔deduped:false(신규), 200↔deduped:true(갱신). 어긋나면 중간
