@@ -81,7 +81,7 @@ def _candidate(**over) -> Candidate:
         score=87,
         why_fit="B2B SaaS 세일즈 8년",
         profile_summary="현 A사 세일즈 리드",
-        saved_profile_evidence=saved_profile_evidence_text(EVIDENCE),
+        evidence=dict(EVIDENCE),
         name="홍길동",
     )
     base.update(over)
@@ -119,7 +119,7 @@ def test_h1_missing_evidence_rejects_before_any_external_write():
 
     result = rec.record(
         position_name="빅밸류 세일즈 총괄",
-        candidate=_candidate(saved_profile_evidence=""),
+        candidate=_candidate(evidence=None),
         channel="linkedin_rps",
     )
 
@@ -135,7 +135,7 @@ def test_h1_literal_missing_marker_is_rejected():
 
     result = rec.record(
         position_name="빅밸류 세일즈 총괄",
-        candidate=_candidate(saved_profile_evidence="missing"),
+        candidate=_candidate(evidence="missing"),
         channel="linkedin_rps",
     )
 
@@ -180,7 +180,7 @@ def test_h1_dry_run_also_refuses_without_evidence():
 
     result = rec.record(
         position_name="빅밸류 세일즈 총괄",
-        candidate=_candidate(saved_profile_evidence=""),
+        candidate=_candidate(evidence=None),
         channel="linkedin_rps",
     )
 
@@ -196,16 +196,16 @@ def test_h1_dry_run_also_refuses_without_evidence():
 def test_f12_unknown_name_is_unique_per_candidate():
     cu, dc, am, rec = _live_recorder()
 
-    rec.record(
-        position_name="P",
-        candidate=_candidate(name="", profile_url="https://linkedin.com/in/a"),
-        channel="linkedin_rps",
-    )
-    rec.record(
-        position_name="P",
-        candidate=_candidate(name="", profile_url="https://linkedin.com/in/b"),
-        channel="linkedin_rps",
-    )
+    for url in ("https://linkedin.com/in/a", "https://linkedin.com/in/b"):
+        rec.record(
+            position_name="P",
+            candidate=_candidate(
+                name="",
+                profile_url=url,
+                evidence={**EVIDENCE, "profile_url": url, "position_id": "P"},
+            ),
+            channel="linkedin_rps",
+        )
 
     names = [p["name"] for p in am.registered]
     assert len(names) == 2
@@ -221,9 +221,14 @@ def test_f12_unknown_name_is_deterministic_for_same_profile():
     cu, dc, am, rec = _live_recorder()
     url = "https://linkedin.com/in/same"
 
-    rec.record(position_name="P", candidate=_candidate(name="", profile_url=url), channel="c")
+    cand = _candidate(
+        name="",
+        profile_url=url,
+        evidence={**EVIDENCE, "profile_url": url, "position_id": "P", "site": "c"},
+    )
+    rec.record(position_name="P", candidate=cand, channel="c")
     rec2_cu, rec2_dc, am2, rec2 = _live_recorder()
-    rec2.record(position_name="P", candidate=_candidate(name="", profile_url=url), channel="c")
+    rec2.record(position_name="P", candidate=cand, channel="c")
 
     assert am.registered[0]["name"] == am2.registered[0]["name"]
 

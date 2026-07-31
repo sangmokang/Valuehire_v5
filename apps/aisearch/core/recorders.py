@@ -50,6 +50,53 @@ REQUIRED_FIELDS = (
 #: 증거 부재 표기 — humansearch_register.py:345 와 동일 문자열 계약.
 EVIDENCE_MISSING = "missing"
 
+#: 스크린샷 해시 형식(sha256 = 64자리 16진수).
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+#: 이 파이프라인이 만든 증거만 인정한다 — humansearch 증거를 빌려 쓸 수 없다.
+EVIDENCE_TASK = "aisearch"
+#: 프로필 상세를 실제로 저장한 캡처만 인정한다(목록 화면 캡처는 증거가 아니다).
+EVIDENCE_MODE = "profile"
+
+
+def has_saved_profile_evidence(
+    evidence: Any, *, profile_url: str, channel: str, position_id: str
+) -> bool:
+    """실제 파일·해시에 결합된 캡처 영수증만 인정한다.
+
+    계약은 tools/multi_position_sourcing/humansearch_register.py:230
+    ``has_saved_profile_evidence`` 와 **동형**이다. V1 독립 적대검증(2026-07-31)
+    이 재현한 결함: 예전 게이트는 빈 값과 정확히 "missing" 만 거부해서,
+    ``saved_profile_evidence="x"`` 같은 아무 문자열이나 통과하고 후보 subtask 가
+    만들어졌다 — 증거를 요구하는 의미가 없었다.
+
+    이제 증거는 **사전(dict)** 이어야 하며 다음을 전부 만족해야 한다:
+    - manifest_path 와 screenshot_sha256(64자리 16진수)이 둘 다 있을 것
+    - 그 증거가 **이 후보**의 것일 것(profile_url 일치)
+    - 그 증거가 **이 포지션**의 것일 것(position_id 일치)
+    - 이 파이프라인의 프로필 캡처일 것(task=aisearch, mode=profile)
+    - 채널이 주어졌으면 그 채널의 캡처일 것(site 일치)
+    """
+    if not isinstance(evidence, Mapping):
+        return False
+    manifest = str(evidence.get("manifest_path") or "").strip()
+    digest = str(evidence.get("screenshot_sha256") or "").strip()
+    if not manifest or not _SHA256_RE.match(digest):
+        return False
+    if str(evidence.get("profile_url") or "").strip() != profile_url.strip():
+        return False
+    if str(evidence.get("position_id") or "").strip() != str(position_id).strip():
+        return False
+    if evidence.get("task") != EVIDENCE_TASK or evidence.get("mode") != EVIDENCE_MODE:
+        return False
+    # 증거가 채널(site)을 밝혔다면 그 채널의 캡처여야 한다. 밝히지 않은
+    # 증거(옛 캡처 형식)는 profile_url·position_id·task·mode 4중 대조로 이미
+    # 이 후보·이 포지션·이 파이프라인의 것임이 확인된 상태다.
+    site = evidence.get("site")
+    if channel and site is not None and str(site).strip() != channel.strip():
+        return False
+    return True
+
 
 def saved_profile_evidence_text(evidence: Any) -> str:
     """프로필 저장 증거를 사람이 읽는 한 줄 영수증으로 만든다.
@@ -166,11 +213,20 @@ class Candidate:
     score: int
     why_fit: str
     profile_summary: str
-    saved_profile_evidence: str = ""  # SOT25 5번째 필수 필드(프로필 저장 증거 영수증)
+    #: SOT25 5번째 필수 필드의 **원천**. 문자열이 아니라 캡처 영수증 사전이다
+    #: (V1 2라운드: 문자열이면 아무 값이나 넣어 게이트를 우회할 수 있었다).
+    #: 모양: {profile_url, site, position_id, task, mode, manifest_path,
+    #:        screenshot_sha256}
+    evidence: Optional[Mapping[str, Any]] = None
     match_basis: str = ""  # 매칭 근거
     education: str = ""  # 학력
     career_brief: str = ""  # 경력 브리핑
-    name: str = ""  # 후보자 이름(AC-6 admin 등록 필수 필드 — 미확보 시 profile_url로 대체)
+    name: str = ""  # 후보자 이름(AC-6 admin 등록 필수 필드 — 미확보 시 정직한 대체 표기)
+
+    @property
+    def saved_profile_evidence(self) -> str:
+        """SOT25 subtask 필드로 들어가는 한 줄 영수증(증거에서 파생)."""
+        return saved_profile_evidence_text(self.evidence)
 
 
 @dataclass
@@ -318,15 +374,20 @@ class DualRecorder:
                 f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
             )
             return result
-        # H1 게이트 — SOT25 profile_save_evidence_required. 저장 증거가 "missing"
-        # 이거나 공백뿐이면 어떤 외부 쓰기(admin/ClickUp/Discord)보다도 먼저 거부한다:
-        # "프로필 저장 증거 확인 후에만 subtask 생성"이 계약이다.
-        evidence = candidate.saved_profile_evidence.strip()
-        if not evidence or evidence == EVIDENCE_MISSING:
+        # H1 게이트 — SOT25 profile_save_evidence_required. "프로필 저장 증거를
+        # 확인한 뒤에만 subtask 를 만든다"가 계약이므로, 어떤 외부 쓰기
+        # (admin/ClickUp/Discord)보다도 먼저 증거의 **실체**를 검사한다.
+        if not has_saved_profile_evidence(
+            candidate.evidence,
+            profile_url=candidate.profile_url,
+            channel=channel,
+            position_id=position_name,
+        ):
             result.status = STATUS_FAILED
             result.error = (
-                "saved_profile_evidence 없음 — 프로필 저장 증거 없이는 등록하지 "
-                f"않는다(SOT25 fail-closed): {candidate.saved_profile_evidence!r}"
+                "saved_profile_evidence 없음/불일치 — 이 후보·이 포지션의 실제 "
+                "프로필 저장 영수증(manifest+screenshot_sha256)이 있어야 등록한다"
+                f"(SOT25 fail-closed): {candidate.evidence!r}"
             )
             self._post_member(
                 result,

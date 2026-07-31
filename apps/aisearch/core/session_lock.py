@@ -30,6 +30,7 @@ import json
 import os
 import shutil
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -54,6 +55,11 @@ class LinkedInSessionLock:
     clock: Callable[[], float] = time.time
     sleep: Callable[[float], None] = time.sleep
     _acquired: bool = field(default=False, init=False, repr=False)
+    #: V1 2라운드 — 이 인스턴스가 획득한 락을 식별하는 1회용 표식.
+    #: owner 이름·pid 만으로는 부족하다(같은 기기·같은 이름이 다시 뜰 수 있다).
+    #: heartbeat/release 는 메타의 token 이 이 값과 같을 때만 동작한다 —
+    #: 죽었다 되살아난 프로세스가 남의 락을 덮어쓰거나 지우는 것을 막는다.
+    _token: str = field(default_factory=lambda: uuid.uuid4().hex, init=False, repr=False)
 
     def _meta_path(self) -> Path:
         return self.lock_dir / "owner.json"
@@ -114,6 +120,7 @@ class LinkedInSessionLock:
                     "acquired_at": now if acquired_at is None else acquired_at,
                     "last_seen_at": now,
                     "pid": os.getpid(),
+                    "token": self._token,
                 },
                 ensure_ascii=False,
             ),
@@ -131,6 +138,10 @@ class LinkedInSessionLock:
         if not self._acquired:
             return
         meta = self._read_meta() or {}
+        if meta.get("token") != self._token:
+            # 내 락이 아니다 — 그 사이 회수되어 다른 기기가 가져갔다.
+            self._acquired = False
+            return
         acquired_at = meta.get("acquired_at")
         try:
             self._write_meta(
@@ -182,8 +193,17 @@ class LinkedInSessionLock:
                 self._acquired = True
                 return
 
+    def _owns_lock(self) -> bool:
+        meta = self._read_meta()
+        return bool(meta and meta.get("token") == self._token)
+
     def release(self) -> None:
         if not self._acquired:
+            return
+        if not self._owns_lock():
+            # V1 2라운드 — 이미 회수되어 다른 기기가 보유 중이다. 남의 락을
+            # 지우면 두 기기가 동시에 링크드인에 붙는다(E4 위반).
+            self._acquired = False
             return
         try:
             try:

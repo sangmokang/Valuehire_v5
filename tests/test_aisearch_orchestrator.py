@@ -121,10 +121,15 @@ def _candidate(payload: dict[str, object], url: str) -> dict[str, Any]:
             "profile_url": url,
             "why_fit": "필수요건 전부 충족",
             "profile_summary": "기구설계 10년, PM 전환 3년",
-            # SOT25 5번째 필수 필드(H1, 2026-07-31 리뷰) — 저장 증거 영수증.
-            "saved_profile_evidence": (
-                "manifest: /tmp/aisearch/manifest.json | screenshot_sha256: " + "b" * 64
-            ),
+            # SOT25 5번째 필수 필드(H1) — 이 후보·이 포지션의 실제 저장 영수증.
+            "evidence": {
+                "profile_url": url,
+                "position_id": "Tech PM",
+                "task": "aisearch",
+                "mode": "profile",
+                "manifest_path": "/tmp/aisearch/manifest.json",
+                "screenshot_sha256": "b" * 64,
+            },
             "match_basis": "D1~D8 근거",
             "education": "서울 소재 4년제",
             "career_brief": "현대로템 파트리더",
@@ -500,8 +505,8 @@ class TestIntervention:
         assert report.status == STATUS_WAITING_RESUME
         # 결함 ⑩ 동시 실행 — 모든 채널이 개입 발생 지점(1페이지)을 넘지 못한다
         assert h.list_calls and all(page == 1 for _c, page in h.list_calls)
-        # 30초 경과 후에는 모니터가 재개 가능 상태로 돌아온다(재실행 전제)
-        h.now[0] += 30.0
+        # 60초(SOT 기준) 경과 후에는 모니터가 재개 가능 상태로 돌아온다(재실행 전제)
+        h.now[0] += 60.0
         assert h.monitor.poll().value == "running"
 
         # V1 독립검증 결함5 — 시계 전진 + poll() 확인만으로는 "실제로 재개해서

@@ -1,4 +1,4 @@
-"""AC-7 — 사람 개입 감지(30초 자동재개) + 캡차 감지·차단(BLOCKED)·알림.
+"""AC-7 — 사람 개입 감지(60초 자동재개, SOT 기준) + 캡차 감지·차단(BLOCKED)·알림.
 
 근거: docs/engineering/aisearch-fleet-goal-2026-07-28.md §4 AC-7, §6 E1/E2/E8.
 
@@ -22,8 +22,11 @@ import enum
 from typing import Callable, Optional, Protocol
 
 #: D1 — 마지막 사람 입력으로부터 자동 재개까지의 무입력 대기시간(초).
-#: SOT29의 60초와 별개인 이 서비스(aisearch) 전용 상수.
-RESUME_DELAY_SECONDS: float = 30.0
+#: V1 2라운드 지적으로 **SOT 기준(60초)에 맞춘다**: CLAUDE.md SOT 불변식 2 와
+#: SOT29 INV9 는 "3사 개입·이상 신호 후 1분(60초) 동안 이상이 없으면 자동 재개"
+#: 라고 못박는다. 이 서비스만 30초를 쓰면 사장님이 아직 화면을 보고 계실 때
+#: 자동 조작이 다시 시작될 수 있다.
+RESUME_DELAY_SECONDS: float = 60.0
 
 #: 알림 총 시도 횟수 — 최초 1회 + 재시도 2회(최소 2회 재시도 계약).
 NOTIFY_MAX_ATTEMPTS: int = 3
@@ -42,7 +45,7 @@ class Notifier(Protocol):
 
 class MonitorState(enum.Enum):
     RUNNING = "running"  # 자동 조작 허용
-    PAUSED_HUMAN = "paused_human"  # 사람 개입 감지 — 30초 무입력 대기(E2)
+    PAUSED_HUMAN = "paused_human"  # 사람 개입 감지 — 60초 무입력 대기(E2)
     BLOCKED = "blocked"  # 차단 신호 — 종단 상태, human_reset 전까지 유지(E1/E8)
 
 
@@ -199,9 +202,9 @@ class InterventionMonitor:
         return list(still_failing)
 
     def poll(self) -> MonitorState:
-        """주기 점검 — 마지막 입력 후 30초(D1) 무입력이면 자동 재개.
+        """주기 점검 — 마지막 입력 후 60초(D1, SOT 기준) 무입력이면 자동 재개.
 
-        29.9초처럼 30초 미만이면 재개하지 않는다.
+        59.9초처럼 기준 미만이면 재개하지 않는다.
         BLOCKED는 종단 상태 — poll이 절대 덮어쓰지 않는다.
         """
         if self._state is MonitorState.PAUSED_HUMAN:

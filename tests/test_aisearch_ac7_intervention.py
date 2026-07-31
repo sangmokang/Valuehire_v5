@@ -1,9 +1,9 @@
-# AC-7 — 사람 개입 감지(30초 자동재개) + 캡차 감지·차단(BLOCKED)·알림
-# 근거: docs/engineering/aisearch-fleet-goal-2026-07-28.md §4 AC-7, §6 E1/E2/E8, D1=30초.
+# AC-7 — 사람 개입 감지(60초 자동재개, SOT 기준) + 캡차 감지·차단(BLOCKED)·알림
+# 근거: docs/engineering/aisearch-fleet-goal-2026-07-28.md §4 AC-7, §6 E1/E2/E8, D1=60초(CLAUDE.md SOT 불변식 2 · SOT29 INV9 와 동일 기준).
 # 시계·알림(notifier)은 주입식 — 실제 sleep/실제 Discord 발신 없이 결정론적으로 검증한다.
 #
 # V1 결함 반증(이번 RED가 증명해야 하는 것):
-#  결함1 — BLOCKED(차단)는 종단 상태: 30초 재개 점검(poll)이 절대 RUNNING으로
+#  결함1 — BLOCKED(차단)는 종단 상태: 60초 재개 점검(poll)이 절대 RUNNING으로
 #          덮어쓰지 못하고, 사람의 명시적 human_reset 전까지 유지된다.
 #  결함2 — 알림기 예외 시 재시도(최소 2회) + 최종 실패 시 pending_notifications
 #          큐 보존(차단 이벤트 알림은 절대 유실 금지).
@@ -90,12 +90,12 @@ def monitor(clock: FakeClock, notifier: FakeNotifier) -> InterventionMonitor:
 # --- D1 상수 ---------------------------------------------------------------
 
 
-def test_d1_resume_delay_is_30_seconds() -> None:
+def test_d1_resume_delay_matches_sot_60_seconds() -> None:
     # SOT29의 60초와 별개인 이 서비스 전용 상수(D1).
-    assert RESUME_DELAY_SECONDS == 30.0
+    assert RESUME_DELAY_SECONDS == 60.0  # SOT 불변식 2 · SOT29 INV9
 
 
-# --- E2: 사람 개입 → 즉시 정지, 30초 무입력 시 자동 재개 --------------------
+# --- E2: 사람 개입 → 즉시 정지, 60초 무입력 시 자동 재개 --------------------
 
 
 def test_initial_state_allows_automation(monitor: InterventionMonitor) -> None:
@@ -113,27 +113,27 @@ def test_no_resume_at_29_9_seconds(
     monitor: InterventionMonitor, clock: FakeClock
 ) -> None:
     monitor.on_human_input()
-    clock.advance(29.9)
+    clock.advance(59.9)
     monitor.poll()
     assert monitor.state is MonitorState.PAUSED_HUMAN
     assert monitor.automation_allowed() is False
 
 
-def test_resumes_at_exactly_30_seconds(
+def test_resumes_at_exactly_60_seconds(
     monitor: InterventionMonitor, clock: FakeClock
 ) -> None:
     monitor.on_human_input()
-    clock.advance(30.0)
+    clock.advance(60.0)
     monitor.poll()
     assert monitor.state is MonitorState.RUNNING
     assert monitor.automation_allowed() is True
 
 
-def test_resumes_after_more_than_30_seconds(
+def test_resumes_after_more_than_60_seconds(
     monitor: InterventionMonitor, clock: FakeClock
 ) -> None:
     monitor.on_human_input()
-    clock.advance(31.5)
+    clock.advance(61.5)
     monitor.poll()
     assert monitor.state is MonitorState.RUNNING
 
@@ -143,11 +143,11 @@ def test_new_input_during_pause_resets_timer(
 ) -> None:
     monitor.on_human_input()
     clock.advance(20.0)
-    monitor.on_human_input()  # 마지막 입력 기준으로 다시 30초
-    clock.advance(29.0)  # 첫 입력으로부터 49초, 마지막 입력으로부터 29초
+    monitor.on_human_input()  # 마지막 입력 기준으로 다시 60초
+    clock.advance(59.0)  # 첫 입력으로부터 79초, 마지막 입력으로부터 59초
     monitor.poll()
     assert monitor.state is MonitorState.PAUSED_HUMAN
-    clock.advance(1.0)  # 마지막 입력으로부터 정확히 30초
+    clock.advance(1.0)  # 마지막 입력으로부터 정확히 60초
     monitor.poll()
     assert monitor.state is MonitorState.RUNNING
 
@@ -190,14 +190,14 @@ def test_no_bypass_attempt_hook_exists(monitor: InterventionMonitor) -> None:
 def test_captcha_during_resume_window_final_state_stays_blocked(
     monitor: InterventionMonitor, clock: FakeClock
 ) -> None:
-    # 사람 개입으로 PAUSED_HUMAN → 30초 재개 점검 카운트다운 도중 캡차 인입.
+    # 사람 개입으로 PAUSED_HUMAN → 60초 재개 점검 카운트다운 도중 캡차 인입.
     monitor.on_human_input()
     clock.advance(15.0)
     monitor.on_signal("captcha")  # 재개 대기 중 차단 신호
     assert monitor.state is MonitorState.BLOCKED
-    # 마지막 사람 입력으로부터 30초가 넘은 시점의 재개 점검(poll)이
+    # 마지막 사람 입력으로부터 60초가 넘은 시점의 재개 점검(poll)이
     # BLOCKED를 RUNNING으로 덮어쓰면 안 된다(결함1 반증 핵심).
-    clock.advance(30.0)
+    clock.advance(60.0)
     assert monitor.poll() is MonitorState.BLOCKED
     assert monitor.state is MonitorState.BLOCKED
     assert monitor.automation_allowed() is False
@@ -217,7 +217,7 @@ def test_human_input_after_block_does_not_revive(
 ) -> None:
     monitor.on_signal("2fa")
     monitor.on_human_input()
-    clock.advance(30.0)
+    clock.advance(60.0)
     monitor.poll()
     assert monitor.state is MonitorState.BLOCKED
 

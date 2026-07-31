@@ -33,6 +33,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
@@ -87,14 +88,38 @@ class JsonlPageStore:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        #: V1 2라운드 — 저장자마다 다른 임시파일 이름. 같은 이름을 쓰면 두
+        #: 저장자가 서로의 임시본을 덮어써 파일이 섞인다.
+        self._writer_id = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
         #: 저장 키 → 행(테이블 포함). 삽입 순서 보존(dict 순서).
         self._rows: dict[tuple, dict] = {}
+        self._reload_from_disk()
+
+    def _tmp_path(self) -> Path:
+        return self._path.with_name(f"{self._path.name}.{self._writer_id}.tmp")
+
+    def _lock_path(self) -> Path:
+        return self._path.with_name(f"{self._path.name}.lock")
+
+    def _reload_from_disk(self) -> None:
+        """파일을 진실의 출처로 삼아 메모리 인덱스를 다시 만든다.
+
+        V1 2라운드 — 예전에는 생성 시점에 한 번만 읽고 이후에는 자기 메모리만
+        내보냈다. 같은 파일을 보는 저장자가 둘이면(두 실행·두 인스턴스) 나중
+        저장이 상대가 쓴 행을 통째로 지웠다(D4 전량 저장 위반).
+        """
+        rows: dict[tuple, dict] = {}
         if self._path.exists():
             for line in self._path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
-                stored = json.loads(line)
-                self._rows[self._key(stored.get("table", ""), stored)] = stored
+                try:
+                    stored = json.loads(line)
+                except ValueError:
+                    continue  # 손상된 줄은 건너뛰되 나머지는 보존한다
+                if isinstance(stored, dict):
+                    rows[self._key(stored.get("table", ""), stored)] = stored
+        self._rows = rows
 
     @staticmethod
     def _key(table: str, row: dict) -> tuple:
@@ -111,8 +136,43 @@ class JsonlPageStore:
         # 키 필드 없는 행 — id(또는 전체 내용)로 구분해 덮어쓰기 방지.
         return (table, "__no_page_key__", row.get("id") or json.dumps(row, sort_keys=True))
 
+    def _acquire_file_lock(self, *, timeout: float = 10.0) -> Optional[int]:
+        """프로세스 간 직렬화 — 읽기-수정-쓰기 사이에 남이 끼어들지 못하게 한다.
+
+        O_EXCL 로 만드는 잠금 파일이며, 오래된(죽은 프로세스가 남긴) 잠금은
+        회수한다. 끝내 못 잡으면 조용히 진행하지 않고 명시적으로 실패한다.
+        """
+        lock_path = self._lock_path()
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                return os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    age = time.time() - lock_path.stat().st_mtime
+                except OSError:
+                    age = 0.0
+                if age > timeout:  # 죽은 프로세스가 남긴 잠금 — 회수
+                    lock_path.unlink(missing_ok=True)
+                    continue
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"페이지 저장 잠금을 얻지 못했다(fail-closed): {lock_path}"
+                    )
+                time.sleep(0.01)
+
     def upsert(self, table: str, row: dict) -> None:
-        with self._lock:
+        with self._lock:  # 스레드 직렬화
+            fd = self._acquire_file_lock()
+            try:
+                self._upsert_locked(table, row)
+            finally:
+                os.close(fd)
+                self._lock_path().unlink(missing_ok=True)
+
+    def _upsert_locked(self, table: str, row: dict) -> None:
+            # 다른 저장자가 그 사이에 쓴 내용을 먼저 흡수한다(행 유실 방지).
+            self._reload_from_disk()
             self._rows[self._key(table, row)] = {"table": table, **row}
             lines = [
                 json.dumps(stored, ensure_ascii=False)
@@ -123,7 +183,7 @@ class JsonlPageStore:
             # 다시 썼기 때문에, 쓰는 도중 죽으면 이미 저장해 둔 페이지가 통째로
             # 깨졌다. 임시 파일에 다 쓰고 fsync 한 뒤 os.replace 로 한 번에
             # 바꾼다 — 교체 전에 죽으면 기존 파일이 그대로 남는다.
-            tmp_path = self._path.with_name(self._path.name + ".tmp")
+            tmp_path = self._tmp_path()
             try:
                 with open(tmp_path, "w", encoding="utf-8") as handle:
                     handle.write(payload)

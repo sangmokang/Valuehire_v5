@@ -389,10 +389,16 @@ class HttpAdminApiClient:
             if internal_key is not None
             else os.environ.get("ADMIN_API_INTERNAL_KEY", "")
         )
-        # F3 — 인자로 준 값에도 동일하게 여백을 제거한다(env 만 strip 하던 결함).
+        # F3 — base_url 의 여백만 제거한다(인자/env 동일).
         resolved_base_url = raw_base.strip() if isinstance(raw_base, str) else raw_base
-        resolved_key = raw_key.strip() if isinstance(raw_key, str) else raw_key
-        if not resolved_base_url or not resolved_key:
+        # V1 2라운드 — 키는 **절대 잘라내지 않는다**. 예전에는 여기서 strip 해서
+        # PR#250 의 "무여백 키만 허용" 보호장치를 스스로 우회했다(여백 붙은 키가
+        # 정상 생성됨). 서버는 정확 일치를 요구하므로 여백은 401 을 부르고,
+        # 조용히 고쳐 주면 설정 실수가 드러나지 않는다 — 그대로 거부한다.
+        resolved_key = raw_key
+        if not resolved_base_url or not (
+            resolved_key.strip() if isinstance(resolved_key, str) else resolved_key
+        ):
             raise AdminApiConfigError(
                 "ADMIN_API_BASE_URL/ADMIN_API_INTERNAL_KEY 미설정 — admin 등록 fail-closed"
             )

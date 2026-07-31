@@ -236,6 +236,16 @@ def _iter_strings(value: Any, path: str):
 #: 표 밖(신규) 최상위 키는 스캔하지 않는다 — 조용한 대량 제외를 막는다.
 EXCLUSION_SCAN_ROOTS: tuple[str, ...] = ("record", "score_payload")
 
+#: draft_inputs 안에서도 **후보 본인** 정보인 칸은 스캔한다(V1 2라운드 지적).
+#: 회사·직함은 후보 고유 정보라서, 여기 "프리랜서"가 있으면 걸러야 한다.
+#: 반대로 jd_summary·briefing_elements·company_name(고객사)·position_title 은
+#: JD 공통 텍스트라 스캔하지 않는다 — 한 번 걸리면 전 후보가 함께 떨어진다.
+EXCLUSION_SCAN_DRAFT_FIELDS: tuple[str, ...] = (
+    "candidate_name",
+    "candidate_company",
+    "candidate_headline",
+)
+
 
 def _find_exclusion_match(
     cand: dict[str, Any], exclusions: list[str]
@@ -248,14 +258,30 @@ def _find_exclusion_match(
     folded_terms = [(term, term.casefold()) for term in exclusions]
     if not folded_terms:
         return None
-    for root in EXCLUSION_SCAN_ROOTS:
-        if root not in cand:
-            continue
-        for path, text in _iter_strings(cand[root], f"candidate.{root}"):
+    def _scan(value: Any, path: str) -> Optional[tuple[str, str]]:
+        for found_path, text in _iter_strings(value, path):
             folded = text.casefold()
             for term, folded_term in folded_terms:
                 if folded_term in folded:
-                    return term, path
+                    return term, found_path
+        return None
+
+    for root in EXCLUSION_SCAN_ROOTS:
+        if root not in cand:
+            continue
+        hit = _scan(cand[root], f"candidate.{root}")
+        if hit is not None:
+            return hit
+    draft_inputs = cand.get("draft_inputs")
+    if isinstance(draft_inputs, Mapping):
+        for field_name in EXCLUSION_SCAN_DRAFT_FIELDS:
+            if field_name not in draft_inputs:
+                continue
+            hit = _scan(
+                draft_inputs[field_name], f"candidate.draft_inputs.{field_name}"
+            )
+            if hit is not None:
+                return hit
     return None
 
 
@@ -271,6 +297,10 @@ def _register_and_draft(
     AC5 기록(재개 지원) → AC9 초안 생성."""
     position_name = jd["position_name"]
     for cand in deps.extract_candidates(channel):
+        # M2(V1 2라운드) — 다른 채널이 죽었으면 등록(외부 쓰기)도 시작하지 않는다.
+        # 예전에는 목록 요청에만 중단 확인이 있어, 실패 이후에도 admin 등록이
+        # 계속 나갔다(되돌리기 어려운 외부 쓰기가 중단 신호를 무시).
+        _raise_if_stopped(deps)
         _check_monitor(deps)  # 2차 결함 1 — 등록 전 차단 확인
         profile_url = cand["record"]["profile_url"]
 
@@ -307,8 +337,14 @@ def _register_and_draft(
                 # 건너뛰되 **리포트 집계와 초안 생성은 그대로 수행**한다 —
                 # build_candidate_draft 는 순수 함수라 발신이 없다.
                 with deps.lock:
+                    # V1 2라운드 — 같은 후보가 여러 변형/중복 추출로 두 번 오면
+                    # 리포트에 두 번 세지 않는다(첫 등장에만 집계).
+                    already_carried = profile_url in report.record_states
                     report.record_states[profile_url] = prev_state
-                    report.registered.append(prev_state)
+                    if not already_carried:
+                        report.registered.append(prev_state)
+                if already_carried:
+                    continue
                 _check_monitor(deps)
                 carried_draft = build_candidate_draft(**cand["draft_inputs"])
                 with deps.lock:
@@ -343,6 +379,10 @@ def _register_and_draft(
                 )
             continue
         with deps.lock:
+            # V1 2라운드 — 같은 후보(profile_url)는 몇 번 등장하든 리포트에
+            # 한 번만 센다. 링크드인은 변형이 여럿이고 추출기가 같은 후보를
+            # 두 번 넘길 수도 있어, 예전에는 등록 수·초안 수가 실제보다 부풀었다.
+            first_time = profile_url not in report.record_states
             report.record_states[profile_url] = record_result
 
             # 2차 결함 8 — recorded/dry_run 이 아니면 초안 금지 + 실패로 집계.
@@ -357,6 +397,8 @@ def _register_and_draft(
                         }
                     )
                 continue
+            if not first_time:
+                continue  # 이미 센 후보 — 중복 집계·중복 초안 금지
             report.registered.append(record_result)
         _check_monitor(deps)  # 2차 결함 1 — 초안 생성 전 차단 확인
         # AC9 — 전달 초안만 생성(발송 경로 없음, is_draft_only=True)
@@ -433,6 +475,7 @@ def _run_variant(
                 ) from exc
 
         def guarded_detail(ref: str) -> dict:
+            _raise_if_stopped(deps)  # M2(V1 2라운드) — 상세 조회에도 중단 확인
             _check_monitor(deps)  # 2차 결함 1 — 매 상세 조회 전 차단 확인
             _beat_session_lock()
             try:
@@ -470,6 +513,7 @@ def _run_variant(
                     {"channel": channel, "task": task, "error": str(release_error)}
                 )
 
+    _raise_if_stopped(deps)  # M2 — 후보 처리 진입 전 협조적 중단 확인
     _check_monitor(deps)  # 2차 결함 1 — 후보 처리(등록 경로) 진입 전 차단 확인
     _register_and_draft(jd, deps, report, channel, previous, exclusions)
     return variant.pagination

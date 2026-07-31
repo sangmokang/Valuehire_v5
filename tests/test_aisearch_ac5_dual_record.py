@@ -73,21 +73,38 @@ class FakeAdminApiClient:
         return {"ok": True, "candidate": {"id": f"admin-{len(self.registered)}"}, "deduped": False}
 
 
+#: 이 파일의 모든 record() 호출이 쓰는 포지션명 — 증거의 position_id 와 일치해야 한다.
+POSITION_NAME = "빅밸류 세일즈 총괄"
+
+
+def make_evidence(profile_url: str, *, position_id: str = POSITION_NAME) -> dict:
+    """SOT25 프로필 저장 증거 영수증(H1 게이트 통과용 실제 모양).
+
+    V1 2라운드 — 게이트는 아무 문자열이 아니라 이 후보·이 포지션의 실제 캡처
+    영수증(manifest + 64자리 sha256)을 요구한다.
+    """
+    return {
+        "profile_url": profile_url,
+        "position_id": position_id,
+        "task": "aisearch",
+        "mode": "profile",
+        "manifest_path": "/tmp/aisearch/manifest.json",
+        "screenshot_sha256": "a" * 64,
+    }
+
+
 def make_candidate(**over):
     base = dict(
         profile_url="https://www.linkedin.com/in/hong-gildong/",
         score=87,
         why_fit="B2B SaaS 세일즈 8년, 좋은학교, 직무 직결",
         profile_summary="현 A사 세일즈 리드, SaaS 신규영업 총괄",
-        # SOT25 5번째 필수 필드 — 프로필 저장 증거 영수증(H1, 2026-07-31 리뷰).
-        saved_profile_evidence=(
-            "manifest: /tmp/aisearch/manifest.json | screenshot_sha256: " + "a" * 64
-        ),
         match_basis="D1 학력 상위권 + D3 직무 직결 + D5 이직 안정성",
         education="한국대 경영학 학사",
         career_brief="A사 5년(세일즈 리드), B사 3년(AE)",
     )
     base.update(over)
+    base.setdefault("evidence", make_evidence(base["profile_url"]))
     return Candidate(**base)
 
 

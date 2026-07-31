@@ -98,9 +98,10 @@ base_url 스킴 != https                -> AdminApiConfigError (평문 전송 �
 ### H1 `record_candidate(candidate)`
 | 축 | 입력 | 처리 |
 |---|---|---|
-| 정상 | 5필드 모두 채워짐 | 등록 |
-| 빈값/null | `saved_profile_evidence` 없음/""/None | **명시적 거부**(fail-closed, subtask 미생성) |
-| 형식위반 | `saved_profile_evidence == "missing"` | **명시적 거부** |
+| 정상 | 5필드 + **이 후보·이 포지션의 실제 영수증**(manifest+sha256) | 등록 |
+| 빈값/null | `evidence` 없음/None | **명시적 거부**(fail-closed, subtask 미생성) |
+| 형식위반 | 문자열 증거·`"missing"`·해시 64자리 아님 | **명시적 거부** (V1 2라운드: `"x"` 가 통과했었다) |
+| 불일치 | 다른 후보(profile_url)·다른 포지션(position_id)·다른 채널(site)·다른 작업(task/mode)의 증거 | **명시적 거부** |
 | 경계 | `score` 0 / 100 | 등록 · 그 밖(음수·101·비정수)은 **명시적 거부** |
 | 중복/재시도 | 같은 `profile_url` 재등록 | 기존 dedup 경로 유지(이번 범위 밖, 회귀만 확인) |
 | 외부장애 | admin 미주입(`admin=None`) | **명시적 거부**(생성자 fail-fast — F5) |
@@ -113,6 +114,7 @@ base_url 스킴 != https                -> AdminApiConfigError (평문 전송 �
 | 중복 | 동일 `(channel,page_type,url,position_ref)` | 덮어쓰기(1건 유지) |
 | 경계 | `page_type`만 다른 동일 URL | **서로 다른 행**(현재는 병합됨 — 결함) |
 | 외부장애 | 쓰기 도중 크래시 | 기존 파일 무손상(임시파일 미교체) |
+| 동시성 | **저장자 2개 이상**(두 인스턴스·두 프로세스)이 같은 파일에 쓴다 | 잠금파일로 직렬화 + 매 저장 전 디스크 재적재(행 유실 0). 저장자별 임시파일 이름 분리 |
 | 그 외 전부 | — | **명시적 실패** |
 
 ### admin 응답
@@ -154,6 +156,10 @@ base_url 스킴 != https                -> AdminApiConfigError (평문 전송 �
 | 라이브(실계정) 호출이 필요해 보임 | **금지** — 중단 보고(이번 PR 비범위) |
 | 사장님 크롬 점유 감지 | 자동 작업 양보, 60초 후 자동 재개(SOT 불변식 2) |
 | V1(codex) 결과가 "Done만/빈 결과" | 무효 — 재실행 |
+| 락 보유자가 오래 응답 없음(장시간 실행 vs 크래시) | heartbeat 로 생존 갱신 → 갱신이 끊긴 락만 stale 회수. 살아 있는 락은 탈취 금지(E4) |
+| 락을 이미 뺏긴 뒤 옛 보유자가 되살아남 | 소유권 토큰 불일치 → heartbeat·release 모두 무시(남의 락 훼손 금지) |
+| 기기 간 시계 차이 | stale 기준은 마지막 heartbeat 기준이며, 공유 저장소의 시계에 의존한다는 한계를 명시(라이브 백로그) |
+| 같은 후보가 여러 변형·중복 추출로 두 번 등장 | 리포트·초안은 **후보 1명당 1회**만 집계 |
 | 그 외 표에 없는 상황 | **명시적 중단**(E-c) |
 
 ## 6. 적대검증 정조준 (V1/V2가 먼저 때릴 곳)
@@ -168,6 +174,10 @@ base_url 스킴 != https                -> AdminApiConfigError (평문 전송 �
 ## 7. 비범위
 
 - 자동 발송 코드 추가(SOT28) · 라이브 실계정 호출 · v4(admin) 서버측 변경
+- **완전한 라이브 기록 경로**(F4 한계): 정본 admin 클라이언트는 프로덕션 조립
+  경로에서 실제로 만들어지지만, ClickUp·Discord 라이브 어댑터가 이 저장소에
+  없어 CLI 단독 `--live` 는 여전히 fail-closed 로 거부된다. 라이브 1건 실증은
+  오너 게이트(라이브 백로그 7번)로 남는다 — "라이브 배선 완료"라고 주장하지 않는다.
 - `aisearch_pages_raw` 실제 마이그레이션 적용(오너 확정 전 draft 유지)
 - LOW/INFO 약 20건 중 위 표에 없는 항목
 
@@ -184,4 +194,29 @@ base_url 스킴 != https                -> AdminApiConfigError (평문 전송 �
 
 ## 적대 검증 로그
 
-(후기록 — V1/V2 판정 본문을 여기에 그대로 append)
+### V1 1차 (2026-07-31, codex fresh·read-only) — **FAIL**
+- 판정: 12개 공격 항목 중 HIGH 7 · MEDIUM 4 · PASS 1.
+- 실제 공격 입력으로 재현된 것: 임의 증거 통과(`"x"`), 후보 직함·소속 제외어 누락,
+  재개 시 중복 집계, 30초 조기 재개(SOT 60초와 불일치), 중단 후에도 상세·등록 진행.
+- 코드 구조상 확정: 락 소유권 미확인(되살아난 프로세스가 남의 락 훼손), 다중 저장자
+  행 유실, 생성자에서 키 여백을 잘라내 무여백 보호장치 우회, 삭제된 admin 테스트 41개.
+- 원격 브랜치에 미병합 커밋 `4e099c8` 1개가 추가돼 있어 "전량 병합" 주장이 불성립.
+
+### V1 지적에 대한 조치 (전량 수정, 2라운드)
+| 지적 | 조치 | 근거 |
+|---|---|---|
+| 임의 증거 통과 | `has_saved_profile_evidence()` 신설 — manifest+64자리 sha256, profile_url·position_id·task·mode(·site) 대조 | `recorders.py` |
+| 후보 직함·소속 누락 | `EXCLUSION_SCAN_DRAFT_FIELDS` 추가(candidate_name/company/headline), JD 공통 텍스트는 계속 제외 | `orchestrator.py` |
+| 30초 재개 | `RESUME_DELAY_SECONDS = 60.0` 으로 SOT 정렬(불변식 2·SOT29 INV9) | `intervention.py` |
+| 재개 중복 집계 | 후보 1명당 1회 집계(정상·재개 경로 공통) | `orchestrator.py` |
+| 락 소유권 | 1회용 토큰 — heartbeat·release 는 자기 락일 때만 동작 | `session_lock.py` |
+| 중단 범위 | 상세 조회·후보 처리·등록 진입에도 협조적 중단 확인 | `orchestrator.py` |
+| 다중 저장자 | 잠금파일 직렬화 + 저장 전 디스크 재적재 + 저장자별 임시파일 | `run.py JsonlPageStore` |
+| 키 여백 우회 | 생성자에서 키를 strip 하지 않는다(그대로 거부) | `admin_api_client.py` |
+| 삭제된 테스트 41개 | `tests/test_aisearch_ac6_admin_contract.py` 로 정본 모듈 기준 복원 | 109 케이스 통과 |
+| 미병합 커밋 | `4e099c8` 병합(충돌 2건은 같은 계약의 중복 서술 → 병합 서술로 통일) | 병합 커밋 |
+
+### 자체 적대검증(G 자기 반증)에서 추가로 찾아 고친 것
+1. 장시간 실행 락이 stale 로 오인돼 탈취되던 E4 위반 → heartbeat 도입·배선.
+2. 목록 페이지 차단이 blocked 가 아니라 aborted 로 새어 캡차 알림이 나가지 않던 문제.
+
