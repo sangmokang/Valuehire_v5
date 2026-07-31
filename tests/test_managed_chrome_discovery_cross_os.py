@@ -7,11 +7,12 @@ goal: docs/engineering/managed-chrome-discovery-cross-os-goal-2026-07-31.md
 """
 from __future__ import annotations
 
+import platform
 import subprocess
 import unittest
 from typing import Any
 
-from tools.multi_position_sourcing import portal_worker, session_guard
+from tools.multi_position_sourcing import session_guard
 from tools.multi_position_sourcing.portal_worker import (
     MANAGED_BROWSER_STATUS_MESSAGES,
     ManagedBrowserDiscoveryError,
@@ -173,6 +174,49 @@ class WindowsDiscoveryTest(unittest.TestCase):
         )
 
         self.assertEqual(endpoints, [])
+
+    def test_valuehire_folder_outside_local_app_data_is_excluded(self) -> None:
+        """행 10 보강 — 이름만 Valuehire인 다른 위치 폴더는 등록 경계가 아니다."""
+        outside = r"D:\temp\Valuehire\linkedin"
+        runner = FakeRunner([win_process(9, chrome_command(port=9425, profile=outside))])
+
+        self.assertEqual(
+            discover_local_chrome_cdp_endpoints(
+                channel="linkedin_rps", runner=runner, system_name="Windows", env={}
+            ),
+            [],
+        )
+
+    def test_registered_root_is_bound_to_local_app_data_when_declared(self) -> None:
+        """행 10 보강 — LOCALAPPDATA가 있으면 그 실제 폴더 아래만 인정한다."""
+        env = {"LOCALAPPDATA": r"C:\Users\owner\AppData\Local"}
+        inside = FakeRunner(
+            [win_process(9, chrome_command(port=9425, profile=REGISTERED_LINKEDIN))]
+        )
+        elsewhere = FakeRunner(
+            [
+                win_process(
+                    9,
+                    chrome_command(
+                        port=9425,
+                        profile=r"C:\Users\other\AppData\Local\Valuehire\portal_profiles\sm002\linkedin",
+                    ),
+                )
+            ]
+        )
+
+        self.assertEqual(
+            discover_local_chrome_cdp_endpoints(
+                channel="linkedin_rps", runner=inside, system_name="Windows", env=env
+            ),
+            ["http://127.0.0.1:9425"],
+        )
+        self.assertEqual(
+            discover_local_chrome_cdp_endpoints(
+                channel="linkedin_rps", runner=elsewhere, system_name="Windows", env=env
+            ),
+            [],
+        )
 
     def test_other_channel_profile_is_excluded(self) -> None:
         """행 11 — ValueHire 경로지만 다른 채널이면 제외한다."""
@@ -498,38 +542,41 @@ class MacOsRegressionTest(unittest.TestCase):
 class RealCallPathTest(unittest.TestCase):
     """실제 호출 경로 — resolve_existing_target과 humansearch 준비 경로."""
 
-    def _install_windows_world(self, monkey: list) -> FakeRunner:
+    def _install_windows_world(self, monkey: list, *, tab_url: str) -> FakeRunner:
+        """OS 경계(프로세스 조회·플랫폼 이름·탭 목록)만 가짜로 바꾼다."""
+        from tools.multi_position_sourcing import raw_cdp
+
         runner = FakeRunner(
             [win_process(4242, chrome_command(port=9425, profile=REGISTERED_LINKEDIN))]
         )
-        original_run = subprocess.run
-        original_system = portal_worker.platform.system
+        page = {
+            "id": "recruiter-search",
+            "type": "page",
+            "url": tab_url,
+            "webSocketDebuggerUrl": "ws://127.0.0.1:9425/devtools/page/recruiter-search",
+        }
+        originals = {
+            "run": subprocess.run,
+            "system": platform.system,
+            "list_pages": raw_cdp.list_pages,
+        }
         subprocess.run = runner  # type: ignore[assignment]
-        portal_worker.platform.system = lambda: "Windows"  # type: ignore[assignment]
-        monkey.append(lambda: setattr(subprocess, "run", original_run))
-        monkey.append(
-            lambda: setattr(portal_worker.platform, "system", original_system)
+        platform.system = lambda: "Windows"  # type: ignore[assignment]
+        raw_cdp.list_pages = lambda endpoint: (  # type: ignore[assignment]
+            [dict(page)] if endpoint == "http://127.0.0.1:9425" else []
         )
+        monkey.append(lambda: setattr(subprocess, "run", originals["run"]))
+        monkey.append(lambda: setattr(platform, "system", originals["system"]))
+        monkey.append(lambda: setattr(raw_cdp, "list_pages", originals["list_pages"]))
         return runner
 
     def test_resolve_existing_target_invokes_windows_discovery(self) -> None:
         """필수검사 11 — resolve_existing_target에서 Windows 탐색기가 실제 호출된다."""
         undo: list = []
-        runner = self._install_windows_world(undo)
+        runner = self._install_windows_world(undo, tab_url=TALENT_URL)
         try:
             ref = session_guard.resolve_existing_target(
-                "linkedin_rps",
-                target_id="recruiter-search",
-                list_pages=lambda endpoint: [
-                    {
-                        "id": "recruiter-search",
-                        "type": "page",
-                        "url": TALENT_URL,
-                        "webSocketDebuggerUrl": (
-                            "ws://127.0.0.1:9425/devtools/page/recruiter-search"
-                        ),
-                    }
-                ],
+                "linkedin_rps", target_id="recruiter-search"
             )
         finally:
             for restore in undo:
@@ -546,43 +593,30 @@ class RealCallPathTest(unittest.TestCase):
         from tools.multi_position_sourcing import humansearch_cdp_run as runner_module
 
         undo: list = []
-        query_runner = self._install_windows_world(undo)
-        search_url = runner_module.SEARCH_URL_BASE
-        mutations: list[str] = []
-
-        def list_pages(endpoint: str) -> list[dict]:
-            return [
-                {
-                    "id": "recruiter-search",
-                    "type": "page",
-                    "url": search_url,
-                    "webSocketDebuggerUrl": (
-                        "ws://127.0.0.1:9425/devtools/page/recruiter-search"
-                    ),
-                }
-            ]
-
-        original_list_pages = session_guard.resolve_existing_target.__defaults__
+        query_runner = self._install_windows_world(
+            undo, tab_url=runner_module.SEARCH_URL_BASE
+        )
         try:
-            def resolver(site: str, *, target_id: str | None = None):
-                return session_guard.resolve_existing_target(
-                    site, target_id=target_id, list_pages=list_pages
-                )
-
             target = runner_module.resolve_exact_recruiter_target(
-                target_id="recruiter-search", target_resolver=resolver
+                target_id="recruiter-search"
             )
         finally:
             for restore in undo:
                 restore()
-        self.assertEqual(original_list_pages, session_guard.resolve_existing_target.__defaults__)
 
         self.assertEqual(target["id"], "recruiter-search")
         self.assertEqual(target["_endpoint"], "http://127.0.0.1:9425")
         self.assertEqual(target["_profile_path"], REGISTERED_LINKEDIN)
         self.assertEqual(target["_browser_pid"], 4242)
-        self.assertEqual(mutations, [], "인증 성공 경로에서 조작이 발생했다")
+        self.assertEqual(target["url"], runner_module.SEARCH_URL_BASE)
+        # 필수검사 13 — 실행된 OS 명령은 읽기 전용 조회뿐이다(브라우저 실행·종료 0회).
         self.assertTrue(query_runner.calls)
+        for args, kwargs in query_runner.calls:
+            argv = [str(item) for item in args[0]]
+            self.assertEqual(argv[0], "powershell.exe")
+            self.assertNotIn("Start-Process", " ".join(argv))
+            self.assertNotIn("Stop-Process", " ".join(argv))
+            self.assertNotEqual(kwargs.get("shell"), True)
 
 
 class AuthenticationPriorityTest(unittest.TestCase):

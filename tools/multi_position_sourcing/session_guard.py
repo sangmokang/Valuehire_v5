@@ -21,6 +21,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
 import secrets
 import stat
@@ -32,7 +33,19 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from .windows_chrome import (
+    ManagedBrowserDiscoveryError,
+    list_managed_windows_chrome_processes,
+)
+
 Site = Literal["saramin", "jobkorea", "linkedin_rps"]
+
+# 사이트 → 등록 프로필 폴더 토큰(portal_worker._CHANNEL_BROWSER_NAME 과 동일해야 한다).
+_SITE_PROFILE_TOKEN: dict[str, str] = {
+    "saramin": "saramin",
+    "jobkorea": "jobkorea",
+    "linkedin_rps": "linkedin",
+}
 
 
 @dataclass(frozen=True)
@@ -283,11 +296,31 @@ def _is_managed_chrome_executable(command_prefix: str) -> bool:
     return bool(app_match and app_match.group("name") in _MANAGED_CHROME_EXECUTABLE_NAMES)
 
 
+def _resolve_windows_browser_process(
+    site: Site,
+    port: int,
+    *,
+    runner: Callable[..., Any] | None = None,
+) -> ManagedBrowserProcess:
+    """Windows에서 그 포트를 선언한 등록 루트 chrome.exe 하나로 묶는다."""
+    matches = list_managed_windows_chrome_processes(
+        channel_token=_SITE_PROFILE_TOKEN.get(site, ""),
+        port=port,
+        runner=runner,
+    )
+    if len(matches) != 1:
+        raise LookupError(
+            f"{site} managed browser root process match count was {len(matches)}"
+        )
+    return ManagedBrowserProcess(matches[0].pid, matches[0].profile_path)
+
+
 def resolve_managed_browser_process(
     site: Site,
     endpoint: str,
     *,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] | None = None,
+    system_name: str | None = None,
 ) -> ManagedBrowserProcess:
     """Bind the already verified endpoint to one root Chrome PID/profile.
 
@@ -301,8 +334,16 @@ def resolve_managed_browser_process(
         raise ValueError(f"unsupported login site: {site!r}")
     local = _local_cdp_endpoint(endpoint)
     port = urlsplit(local).port
+    system = (system_name or platform.system()).strip()
+    if system == "Windows":
+        return _resolve_windows_browser_process(site, int(port), runner=runner)
+    if system != "Darwin":
+        raise ManagedBrowserDiscoveryError(
+            "UNSUPPORTED_OS", f"managed browser binding is not defined for {system!r}"
+        )
+    run = runner or subprocess.run
     try:
-        result = runner(
+        result = run(
             ["ps", "ax", "-o", "pid=,command="],
             capture_output=True,
             text=True,
@@ -361,7 +402,7 @@ def resolve_managed_browser_process(
         matches.append(ManagedBrowserProcess(pid, profile))
     if len(matches) > 1:
         try:
-            listener_result = runner(
+            listener_result = run(
                 [
                     "lsof",
                     "-nP",
