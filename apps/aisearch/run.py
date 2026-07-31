@@ -315,17 +315,27 @@ def main(
     parser.add_argument(
         "--live",
         action="store_true",
-        help="ClickUp/Discord 라이브 기록(오너 승인 게이트). 현재 fail-closed 거부.",
+        help=(
+            "ClickUp/Discord/admin 라이브 기록(오너 승인 게이트). CLI 단독 실행은 "
+            "실제 클라이언트를 만들 방법이 없어 여전히 fail-closed 거부한다 — "
+            "recorder= 인자로 live=True·owner_signoff=True 인 실제 DualRecorder를 "
+            "주입했을 때만 통과한다(V1 독립검증 결함2: 이전에는 주입 여부와 "
+            "무관하게 항상 거부해 admin 등록이 라이브에서 도달 불가능했다)."
+        ),
     )
     args = parser.parse_args(argv)
 
-    if args.live:
-        # 오너 승인 게이트 — 라이브 기록 클라이언트(ClickUp/Discord)가 아직
-        # 배선되지 않았다. 조용한 dry-run 격하 금지, fail-closed 로 거부한다.
+    if args.live and (recorder is None or not recorder.live):
+        # 오너 승인 게이트 — CLI 인자만으로는 실제 라이브 클라이언트를 만들
+        # 방법이 없다(ClickUp/Discord/admin 자격증명을 CLI 플래그로 받지
+        # 않음). 실제 배선은 recorder= 프로그램적 주입으로만 가능하다.
         parser.exit(
             2,
-            "--live 거부: ClickUp/Discord 기록 클라이언트 미구성(fail-closed). "
-            "plan-only(기본) 또는 --browser dry-run 으로 실행하십시오.\n",
+            "--live 거부: live=True 로 구성된 실제 recorder 가 주입되지 않았다"
+            "(fail-closed). CLI 인자만으로는 ClickUp/Discord/admin 라이브 "
+            "클라이언트를 만들 수 없다 — recorder= 로 실제 DualRecorder(..., "
+            "live=True, owner_signoff=True) 를 주입하거나, plan-only(기본)/"
+            "--browser dry-run 으로 실행하십시오.\n",
         )
 
     jd = json.loads(Path(args.jd_path).read_text(encoding="utf-8"))
@@ -443,10 +453,14 @@ def main(
         resume_attempts += 1
         report = run_search_pipeline(jd, deps, previous=report)
 
-    payload = _report_payload(report, mode="browser_dry_run", live=False)
+    payload = _report_payload(
+        report,
+        mode="browser_live" if args.live else "browser_dry_run",
+        live=args.live,
+    )
     _write_report(args.report_out, payload)
     print(
-        f"[aisearch] mode=browser_dry_run status={report.status} "
+        f"[aisearch] mode={payload['mode']} status={report.status} "
         f"variants={len(report.variants)} registered={len(report.registered)} "
         f"drafts={len(report.drafts)} excluded={len(report.excluded)} "
         f"error={report.error or '-'}"

@@ -405,14 +405,70 @@ def test_ac6_live_calls_admin_register_with_mapped_fields():
     assert sent["channel"] == "saramin"
 
 
-def test_ac6_missing_candidate_name_falls_back_to_profile_url():
+def test_ac6_missing_candidate_name_uses_honest_placeholder_not_url():
+    # V1 독립검증 결함7 — profile_url을 이름인 척 흘려보내지 않는다(데이터 오염 방지).
     cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
     cand = make_candidate()  # name 미지정 — 기본값 ""
 
     rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
 
-    assert am.registered[0]["name"] == cand.profile_url
+    assert am.registered[0]["name"] == "이름 미확인"
+    assert am.registered[0]["name"] != cand.profile_url
+
+
+def test_ac6_payload_includes_jd_id_for_v4_dedup():
+    # V1 독립검증 결함7 — jd_id 누락으로 v4의 canonicalIdentityKey dedup이 항상
+    # 스킵되던 결함. position_name을 안정적인 jd_id로 사용한다.
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
+    cand = make_candidate(name="홍길동")
+
+    rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
+
+    assert am.registered[0]["jd_id"] == "빅밸류 세일즈 총괄"
+
+
+def test_ac6_runs_before_clickup_writes():
+    # V1 독립검증 결함6 — admin이 ClickUp보다 먼저 시도돼야, admin 실패 시
+    # ClickUp에 고아 레코드가 안 남는다.
+    cu, dc = FakeClickUpClient(), FakeDiscordClient()
+
+    class _FailingAdmin:
+        def register_candidate(self, payload):
+            raise RuntimeError("admin 미구성")
+
+    rec = DualRecorder(clickup=cu, discord=dc, admin=_FailingAdmin(), live=True, owner_signoff=True)
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate(name="홍길동"))
+
+    assert result.status == "failed"
+    assert cu.created_tasks == []  # admin 실패 시 ClickUp에는 아무것도 안 남음
+    assert cu.created_subtasks == []
+
+
+def test_ac8_fake_profile_url_rejected_before_any_external_write():
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
+    cand = make_candidate(profile_url="javascript:void(0)")
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand)
+
+    assert result.status == "failed"
+    assert "profile_url" in (result.error or "")
+    assert cu.created_tasks == []
+    assert am.registered == []
+
+
+def test_ac8_blank_why_fit_rejected_before_any_external_write():
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
+    cand = make_candidate(why_fit="   ")  # 공백뿐
+
+    result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand)
+
+    assert result.status == "failed"
+    assert cu.created_tasks == []
+    assert am.registered == []
 
 
 def test_ac6_missing_channel_falls_back_to_unknown_not_blank():

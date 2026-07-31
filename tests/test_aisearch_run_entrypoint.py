@@ -249,3 +249,76 @@ class TestPerChannelWsUrl:
             "ws://linkedin-tab",
             "ws://saramin-tab",
         ]
+
+
+class TestLiveGateReachesAdminStep:
+    """V1 독립검증 결함2 — 실 recorder 를 주입하면 --live 가 더 이상 항상 거부하지 않는다."""
+
+    def test_live_with_real_recorder_injected_is_not_rejected(self, tmp_path):
+        from apps.aisearch.core.recorders import DualRecorder
+
+        class _FakeClickUp:
+            def find_parent_task(self, list_id, position_name):
+                return "parent-1"
+
+            def subtask_exists_with_profile_url(self, list_id, profile_url):
+                return False
+
+            def create_parent_task(self, list_id, position_name):
+                return "parent-1"
+
+            def create_candidate_subtask(self, list_id, parent_task_id, fields):
+                return "subtask-1"
+
+        class _FakeDiscord:
+            def post_message(self, channel_id, content):
+                return "msg-1"
+
+        class _FakeAdmin:
+            def __init__(self):
+                self.calls = 0
+
+            def register_candidate(self, payload):
+                self.calls += 1
+                return {"ok": True, "candidate": {"id": "x"}, "deduped": False}
+
+        admin = _FakeAdmin()
+        real_recorder = DualRecorder(
+            _FakeClickUp(), _FakeDiscord(), admin, live=True, owner_signoff=True
+        )
+
+        # 후보 0명이어도(추출기 빈 목록) --live 자체가 exit(2) 로 거부되지 않아야
+        # 한다 — 이전에는 recorder 주입 여부와 무관하게 항상 거부했다(결함2).
+        code = run_mod.main(
+            [
+                _write_jd(tmp_path),
+                "--browser",
+                "--ws-url",
+                "ws://injected-not-used",
+                "--pages-out",
+                str(tmp_path / "pages.jsonl"),
+                "--live",
+            ],
+            transport_factory=lambda ws_url: FakeTransport(),
+            extractors=_empty_extractors(),
+            recorder=real_recorder,
+        )
+        assert code == 0  # exit(2) 로 거부되지 않았다 — 게이트 통과 증명
+
+    def test_live_with_recorder_not_configured_for_live_still_rejected(self, tmp_path):
+        from apps.aisearch.core.recorders import DualRecorder
+
+        class _Noop:
+            def __getattr__(self, item):
+                raise AssertionError(f"미구성 클라이언트 호출됨: {item}")
+
+        dry_run_recorder = DualRecorder(_Noop(), _Noop())  # live=False(기본)
+
+        with pytest.raises(SystemExit) as exc:
+            run_mod.main(
+                [_write_jd(tmp_path), "--browser", "--ws-url", "ws://x", "--live"],
+                transport_factory=lambda ws_url: FakeTransport(),
+                extractors=_empty_extractors(),
+                recorder=dry_run_recorder,  # 주입은 했지만 live=False — 플래그 불일치
+            )
+        assert exc.value.code not in (0, None)

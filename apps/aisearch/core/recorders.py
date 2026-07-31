@@ -24,6 +24,7 @@ L3 외부 쓰기 규율:
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
 
@@ -48,10 +49,14 @@ STEP_CLICKUP_SUBTASK = "clickup_subtask"
 STEP_ADMIN_REGISTER = "admin_register"  # AC-6 — admin.valuehire.cc(v4) 등록
 STEP_DISCORD_RESULT = "discord_result"
 STEP_DISCORD_MEMBER = "discord_member"
+# V1 독립검증 결함6 — admin 등록을 ClickUp보다 먼저 시도한다. 이전 순서(ClickUp
+# 먼저)에서는 admin 클라이언트 미구성/실패를 ClickUp에 이미 쓴 뒤에야 발견해,
+# ClickUp에는 있는데 admin엔 없는 반쪽 상태가 롤백 없이 남았다. admin을 먼저
+# 두면 그 misconfiguration/실패가 다른 어떤 외부 쓰기보다도 먼저 표면화된다.
 ALL_STEPS = (
+    STEP_ADMIN_REGISTER,
     STEP_CLICKUP_PARENT,
     STEP_CLICKUP_SUBTASK,
-    STEP_ADMIN_REGISTER,
     STEP_DISCORD_RESULT,
     STEP_DISCORD_MEMBER,
 )
@@ -243,6 +248,30 @@ class DualRecorder:
             )
             return result
 
+        # V1 독립검증 결함8 — truthy 체크만으로는 "javascript:void(0)" 같은 가짜
+        # URL이나 공백뿐인 텍스트를 걸러내지 못해, ClickUp까지 쓴 뒤에야 admin
+        # 원격 API(400)에서 뒤늦게 걸러졌다. 여기서 형식까지 먼저 검증한다 —
+        # ClickUp을 포함한 모든 외부 쓰기보다 먼저(위 순서 변경과 함께 결함6도 보강).
+        if not re.match(r"^https?://", candidate.profile_url.strip(), re.IGNORECASE):
+            result.status = STATUS_FAILED
+            result.error = f"profile_url 형식 위반(http/https 아님): {candidate.profile_url!r}"
+            self._post_member(
+                result,
+                f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
+            )
+            return result
+        blank_text_fields = [
+            f for f in ("why_fit", "profile_summary") if not getattr(candidate, f).strip()
+        ]
+        if blank_text_fields:
+            result.status = STATUS_FAILED
+            result.error = f"공백뿐인 필드: {', '.join(blank_text_fields)}"
+            self._post_member(
+                result,
+                f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
+            )
+            return result
+
         if resume_from is not None and resume_from.pending_steps:
             # 결함2: 재개 경로 — 이전 실행에서 이미 쓴 단계는 건너뛰고 미완 단계만
             # 수행한다. 중복확인은 재수행하지 않는다: 1차 실행이 만든 subtask 가
@@ -347,14 +376,23 @@ class DualRecorder:
         elif step == STEP_ADMIN_REGISTER:
             # AC-6 — admin.valuehire.cc(v4) POST /api/aisearch/register 등록.
             # 그 API 계약(docs/engineering/aisearch-register-api-goal-2026-07-31.md):
-            # name 필수(없으면 profile_url 로 대체 — v4는 빈 name 을 400 거부).
+            # name 필수(v4는 빈 name 을 400 거부) — V1 독립검증 결함7: 예전에는
+            # 이름 없으면 profile_url 문자열을 그대로 이름란에 흘려보냈다(프로덕션
+            # 데이터 오염). URL을 이름인 척 보내지 않고 정직한 플레이스홀더를 쓴다.
+            # jd_id — v4 쪽 dedup(같은 jd_id 안에서 canonicalIdentityKey 비교)이
+            # 이 값을 기준으로 삼는다. aisearch의 JD 계약에는 v4 UUID가 없으므로,
+            # 같은 포지션이면 항상 같은 값이 나오는 position_name 을 그대로
+            # jd_id 로 쓴다(ClickUp 부모 Task 조회도 이미 position_name 을
+            # 자연키로 쓰고 있어 일관됨). 예전에는 jd_id 자체가 누락돼 v4 dedup이
+            # 항상 스킵되고 URL 변형만 달라도 중복 등록됐다.
             payload = {
-                "name": candidate.name or candidate.profile_url,
+                "name": candidate.name or "이름 미확인",
                 "profile_url": candidate.profile_url,
                 "match_score": candidate.score,
                 "why_fit": candidate.why_fit,
                 "profile_summary": candidate.profile_summary,
                 "channel": channel or "unknown",
+                "jd_id": position_name,
                 "jd_title": position_name,
             }
             self._do(
