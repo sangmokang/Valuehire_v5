@@ -101,7 +101,7 @@ class FakeTransport:
     def __init__(self, status=200, body=None, raw=None):
         self.calls = []
         self.status = status
-        self.body = {"ok": True, "candidate": {"id": "c1"}, "deduped": False} if body is None else body
+        self.body = {"ok": True, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"}, "deduped": False} if body is None else body
         self.raw = raw
 
     def __call__(self, request):
@@ -123,7 +123,7 @@ class TestAdminApiRecorder:
 
     def test_live_success_201_new_insert(self):
         # 서버 route.ts:151 — 신규 등록은 201 {ok:true, deduped:false}
-        t = FakeTransport(status=201, body={"ok": True, "candidate": {"id": "c1"}, "deduped": False})
+        t = FakeTransport(status=201, body={"ok": True, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"}, "deduped": False})
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         outcome = rec.register(candidate())
         assert outcome.sent is True
@@ -135,7 +135,7 @@ class TestAdminApiRecorder:
 
     def test_live_success_200_deduped_update(self):
         # 서버 route.ts:123 — 같은 jd_id 내 동일인은 200 {ok:true, deduped:true}
-        t = FakeTransport(status=200, body={"ok": True, "candidate": {"id": "c1"}, "deduped": True})
+        t = FakeTransport(status=200, body={"ok": True, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"}, "deduped": True})
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         outcome = rec.register(candidate())
         assert outcome.recorded is True
@@ -205,7 +205,7 @@ class TestAdminApiRecorder:
                                transport=FakeTransport()).register(candidate())
         live = AdminApiRecorder(
             base_url=BASE, internal_key=KEY, live=True,
-            transport=FakeTransport(status=201, body={"ok": True, "candidate": {"id": "c1"}, "deduped": False}),
+            transport=FakeTransport(status=201, body={"ok": True, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"}, "deduped": False}),
         ).register(candidate())
         assert isinstance(dry, RegisterOutcome) and isinstance(live, RegisterOutcome)
         assert vars(dry).keys() == vars(live).keys()
@@ -214,14 +214,14 @@ class TestAdminApiRecorder:
         # dry-run 만 가리고 live 는 안 가리면 로그·원장에 키가 샌다.
         rec = AdminApiRecorder(
             base_url=BASE, internal_key=KEY, live=True,
-            transport=FakeTransport(status=201, body={"ok": True, "candidate": {"id": "c1"}, "deduped": False}),
+            transport=FakeTransport(status=201, body={"ok": True, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"}, "deduped": False}),
         )
         assert KEY not in repr(rec.register(candidate()))
 
 
 # 서버 응답을 전송 없이 단독 검사 — build_register_request 와 대칭인 순수 함수.
 def _envelope(status=201,
-              text='{"ok": true, "candidate": {"id": "c1"}, "deduped": false}'):
+              text='{"ok": true, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"}, "deduped": false}'):
     return {"status": status, "text": text}
 
 
@@ -272,7 +272,7 @@ class TestParseRegisterResponse:
             with pytest.raises(AdminApiResponseError, match="status/deduped disagree"):
                 parse_register_response(_envelope(
                     status=status,
-                    text=_json.dumps({"ok": True, "candidate": {"id": "c1"},
+                    text=_json.dumps({"ok": True, "candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71"},
                                       "deduped": deduped})))
 
     def test_unknown_response_fields_are_tolerated(self):
@@ -281,7 +281,7 @@ class TestParseRegisterResponse:
         outcome = parse_register_response(_envelope(
             status=201,
             text='{"ok": true, "deduped": false, '
-                 '"candidate": {"id": "c1", "new_column": 1}, "v2_field": 1}'))
+                 '"candidate": {"id": "8f14e45f-ceea-467a-9f6b-2c3d4e5a6b71", "new_column": 1}, "v2_field": 1}'))
         assert outcome.recorded is True
         assert outcome.deduped is False
 
@@ -365,9 +365,30 @@ class TestParseRegisterResponse:
         assert isinstance(_describe(BadRepr()), str)
 
     @pytest.mark.parametrize("status", [-1, 0, 99, 600, 1000])
-    def test_out_of_range_status_codes_are_contract_errors(self, status):
-        with pytest.raises(AdminApiResponseError):
+    def test_out_of_range_status_is_rejected_as_a_broken_envelope(self, status):
+        # 3차 적대검증 지적: 범위를 0~999 로 느슨하게 해도 이 값들은 뒤쪽 '서버가 거부함'
+        # 처리에 걸려 똑같이 통과했다 — 경계를 증명하지 못하는 헛테스트였다.
+        # 걸린 '이유'까지 고정해 범위가 넓어지는 회귀를 잡는다.
+        with pytest.raises(AdminApiResponseError, match="HTTP status int"):
             parse_register_response({"status": status, "text": "{}"})
+
+    def test_internal_defect_is_not_disguised_as_a_response_error(self, monkeypatch):
+        # 3차 적대검증 지적: json 파싱의 예외 범위를 다시 넓혀도(회귀) 검사가 못 잡았다.
+        # 우리 쪽 내부 결함은 '서버 응답 오류'로 둔갑하지 않고 그대로 드러나야 한다.
+        # 주의: AdminApiResponseError 는 RuntimeError 하위형이라, RuntimeError 를 던지고
+        # pytest.raises(RuntimeError) 로 받으면 둔갑해도 통과하는 헛테스트가 된다
+        # (돌연변이 검사로 발견). 계약 오류와 겹치지 않는 종류를 써야 한다.
+        import apps.aisearch.core.admin_api as module
+
+        class InternalDefect(Exception):
+            pass
+
+        def exploding_loads(*args, **kwargs):
+            raise InternalDefect("internal defect")
+
+        monkeypatch.setattr(module.json, "loads", exploding_loads)
+        with pytest.raises(InternalDefect):
+            parse_register_response(_envelope())
 
     def test_absurdly_large_status_int_is_contract_error_not_crash(self):
         # 2차 적대검증 지적: 자릿수가 극단적인 정수를 오류 문장에 넣다 ValueError 로 죽었다.
