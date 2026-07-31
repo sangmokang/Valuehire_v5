@@ -417,3 +417,63 @@ def test_u2_send_gate_rejects_legacy_or_unversioned_total() -> None:
     )
 
     assert eligible_matches_for_send((legacy,)) == ()
+
+
+# --- Stage 1~3 LLM 호출 시간제한 (2026-08-01 라이브 사고) ---
+#
+# humansearch 링크드인 순회에서 후보 5명 중 2명이
+# MatchingContractError("claude matching stage timed out after 60s") 로 유실됐다.
+# 이력서 전문(최대 8,000자)+JD 를 넣은 프롬프트는 장비 부하에 따라 60초를 넘긴다.
+# 시간제한이 상수로 박혀 있어 현장에서 늘릴 방법이 없었다.
+
+import subprocess as _subprocess
+
+from tools.multi_position_sourcing import matching_score_contract as _msc
+from tools.multi_position_sourcing.matching_score_contract import MatchingContractError
+
+
+def test_matching_stage_timeout_defaults_to_180_seconds(monkeypatch) -> None:
+    monkeypatch.delenv("VH_MATCHING_TIMEOUT_SECONDS", raising=False)
+    assert _msc.matching_stage_timeout_seconds() == 180.0
+
+
+def test_matching_stage_timeout_is_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("VH_MATCHING_TIMEOUT_SECONDS", "300")
+    assert _msc.matching_stage_timeout_seconds() == 300.0
+
+
+@pytest.mark.parametrize("bad", ["", "abc", "0", "-5", "nan", "inf"])
+def test_matching_stage_timeout_rejects_bad_values(monkeypatch, bad: str) -> None:
+    monkeypatch.setenv("VH_MATCHING_TIMEOUT_SECONDS", bad)
+    with pytest.raises(MatchingContractError):
+        _msc.matching_stage_timeout_seconds()
+
+
+def test_claude_client_passes_the_configured_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("VH_MATCHING_TIMEOUT_SECONDS", "240")
+    seen: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = '{"ok": true}'
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return _Completed()
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    _msc.claude_json_client("prompt")
+    assert seen["timeout"] == 240.0
+
+
+def test_timeout_error_message_reports_the_actual_limit(monkeypatch) -> None:
+    monkeypatch.setenv("VH_MATCHING_TIMEOUT_SECONDS", "240")
+
+    def fake_run(argv, **kwargs):
+        raise _subprocess.TimeoutExpired(cmd=argv, timeout=240.0)
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    with pytest.raises(MatchingContractError) as err:
+        _msc.claude_json_client("prompt")
+    assert "240" in str(err.value)
