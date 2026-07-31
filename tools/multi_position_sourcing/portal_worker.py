@@ -113,6 +113,46 @@ _CHANNEL_BROWSER_NAME = {
 }
 
 
+def _macos_profile_is_managed(
+    profile_parts: tuple[str, ...],
+    channel_token: str,
+    home_parts: tuple[str, ...] = (),
+) -> bool:
+    """macOS 관리 프로필 경계.
+
+    macOS는 Windows처럼 등록부 값과 정확일치를 걸 수 없다 — 라이브 브라우저가
+    등록 이름과 다른 프로필(예: ``...-standby``)로 떠 있는 것이 정상 운영 상태이고
+    (PR#249), 정확일치는 지금 동작하는 경로를 깨뜨린다. 대신 이름 스침만으로
+    통과하던 구멍 세 개를 막는다:
+
+    1. ``.valuehire``는 사용자 홈 바로 아래여야 한다 — ``/tmp``·외장디스크 차단.
+    2. **마지막 조각**이 채널 토큰이어야 한다 — 경로 중간에 스치는 것은 불충분.
+    3. 다른 채널 토큰이 경로에 있으면 거부 — ``.../saramin/linkedin-decoy`` 차단.
+    """
+    # 홈을 알면 **내 홈** 아래만, 모르면 최소한 /Users/<사용자>/.valuehire/ 아래만.
+    # 남의 계정 홈(`/Users/intruder/.valuehire/...`)은 이 기기의 관리 브라우저가 아니다(V2-1).
+    if home_parts:
+        if profile_parts[: len(home_parts)] != home_parts:
+            return False
+        if profile_parts[len(home_parts) : len(home_parts) + 1] != (".valuehire",):
+            return False
+    elif profile_parts[:1] != ("users",) or profile_parts[2:3] != (".valuehire",):
+        return False
+    if not channel_token:
+        return True
+    tail = profile_parts[-1]
+    if not (tail == channel_token or tail.startswith(channel_token + "-")):
+        return False
+    others = {
+        token for token in _CHANNEL_BROWSER_NAME.values() if token != channel_token
+    }
+    return not any(
+        part == other or part.startswith(other + "-")
+        for part in profile_parts
+        for other in others
+    )
+
+
 def discover_local_chrome_cdp_endpoints(
     *,
     channel: str | None = None,
@@ -159,6 +199,11 @@ def discover_local_chrome_cdp_endpoints(
             "BROWSER_QUERY_FAILED", "process inspection returned non-zero"
         )
 
+    home = str((os.environ if env is None else env).get("HOME") or "").strip()
+    home_parts = tuple(
+        part.casefold() for part in home.replace("\\", "/").split("/") if part
+    ) if home.startswith("/") else ()
+
     endpoints: list[str] = []
     for raw_command in str(getattr(result, "stdout", "") or "").splitlines():
         command = raw_command.strip()
@@ -192,13 +237,8 @@ def discover_local_chrome_cdp_endpoints(
         if (
             not profile.startswith("/")
             or any(part in {".", ".."} for part in profile_parts)
-            or ".valuehire" not in profile_parts
-            or (
-                channel_token
-                and not any(
-                    part == channel_token or part.startswith(channel_token + "-")
-                    for part in profile_parts
-                )
+            or not _macos_profile_is_managed(
+                profile_parts, channel_token, home_parts
             )
         ):
             continue
@@ -265,11 +305,13 @@ def _find_unique_live_channel_endpoint(
             verified.append(endpoint)
     unique = list(dict.fromkeys(verified))
     if len(unique) != 1:
-        # 실패 사유를 하나의 일반 오류로 뭉개지 않는다 — 사장님께 나가는 문구가
-        # 사유마다 달라야 하기 때문이다(V1-F4 반례).
-        code = "NO_OFFICIAL_TARGET" if not unique else "AMBIGUOUS_OFFICIAL_TARGET"
+        # 호출자가 관리 브라우저 유일성을 먼저 확정하므로 여기서 2개 이상은 나올 수
+        # 없다. 실패는 곧 "그 하나에 공식 화면이 없다"이며, 한 브라우저 안에 공식
+        # 화면이 여럿인 경우는 session_guard.resolve_existing_target 이 판정한다.
+        # (V2-3: 도달 불가능한 분기를 남겨 계약을 거짓으로 만들지 않는다.)
         raise ManagedBrowserDiscoveryError(
-            code, f"{channel} live browser endpoint match count was {len(unique)}"
+            "NO_OFFICIAL_TARGET",
+            f"{channel} live browser endpoint match count was {len(unique)}",
         )
     return unique[0]
 

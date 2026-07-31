@@ -261,3 +261,46 @@ Codex 실행 증거(읽기 전용 샌드박스):
 수정 후 재검증:
 - `pytest tests/test_managed_chrome_discovery_cross_os.py -q` → **41 passed, 22 subtests passed**
 - `./verify.sh` (macOS) → **3302 passed, 4 xfailed, 127 subtests passed**, `verify: pytest exit=0`
+
+### G2 (생성자 2차 자체 반증, V1 수정 직후) — macOS 비대칭
+
+V1-F1을 Windows에서만 고치고 나서 **같은 계열 결함이 macOS에 남아 있는지** 직접 넣어봤다.
+
+| 입력 프로필 (`system_name="Darwin"`) | 수정 전 | 수정 후 |
+|---|---|---|
+| `/Users/x/.valuehire/cdp_profiles/linkedin` | 채택 | 채택(보존) |
+| `/Users/x/.valuehire/cdp_profiles/linkedin-standby` (라이브 정상) | 채택 | 채택(보존) |
+| `/Users/x/.valuehire/portal_profiles/saramin/linkedin-decoy` | **채택** | 거부 |
+| `/tmp/.valuehire/linkedin` | **채택** | 거부 |
+| `/Volumes/USB/.valuehire/linkedin` | **채택** | 거부 |
+| `/Users/x/.valuehire/linkedin/cache` (중간에만 토큰) | **채택** | 거부 |
+| `/Users/x/Library/Application Support/Google/Chrome` | 거부 | 거부 |
+
+Windows처럼 등록부 정확일치를 걸지 **않은** 이유: 원장 `humansearch-authenticated-target / PR#249`가
+"관리 프로필 이름 불일치에도 발견"을 정상 동작으로 기록한다 — 라이브 macOS 브라우저는 등록 이름과 다른
+프로필(`-standby`)로 떠 있는 것이 정상이므로, 정확일치는 개선이 아니라 회귀다. 대신 홈 경계 + 마지막
+조각 + 타 채널 토큰 배제 3중으로 좁혔다.
+
+### V2 (리셋 컨텍스트 Claude 재검증) — 2026-07-31, **VERDICT: FAIL** → 3건 수정
+
+V2는 goal + verdict.json만 받고 구현 추론은 받지 않았다. 판정 본문 출처: 서브에이전트 transcript
+`~/.claude/projects/-Volumes-SSD-valuehire-v5/.../subagents/agent-a8a321482528bd790.jsonl`
+(이 래퍼도 최종 메시지를 한 줄로만 반환 — V1과 동일한 래퍼 결함, 별도 과제)
+
+| # | V2 지적 | 판정 | 조치 |
+|---|---|---|---|
+| V2-1 | macOS에서 등록부 밖 프로필 통과(`/tmp`, 외장볼륨, 남의 계정 홈, `linkedin-decoy`) — goal §3 counter-AC 위반. "고쳐진 Windows는 실기기 확인 전이고, 안 고쳐진 macOS가 지금 실제로 도는 기기다" | **부분 타당** — `/tmp`·외장볼륨·decoy는 V2 조사 시작 후 G2에서 이미 수정됨(V2는 수정 전 코드를 읽음). **남의 계정 홈**은 남아 있었다 | `HOME` 기반 경계 추가 — 내 홈 아래만 인정. 홈을 모르면 `/Users/<사용자>/.valuehire/`로 축소 |
+| V2-2 | 새 상태 문구 8개가 사용자에게 도달하지 않음 — `humansearch_cdp_run.py:243-246`이 모든 사유를 한 문장으로 뭉갬. 문구표를 읽는 제품 코드가 없음 | **타당(진짜 결함)** | `resolve_exact_recruiter_target`이 `ManagedBrowserDiscoveryError.code` → 고정 문구를 그대로 `PreflightError`에 실어 올린다(`owner_status_code` 포함) |
+| V2-3 | 도달 불가능한 상태 코드 3건 — `AUTHENTICATED`·`HUMAN_AUTH`는 발생 지점 없음, `AMBIGUOUS_OFFICIAL_TARGET` 한 분기는 앞 검사에 가려 실행 안 됨 → 계약이 거짓 | **타당(진짜 결함)** | 죽은 분기 제거(`portal_worker._find_unique_live_channel_endpoint`는 `NO_OFFICIAL_TARGET`만). `perform_autologin`이 같은 표에서 `owner_message`를 실어 반환 → 8개 코드 모두 발생 지점 보유 |
+
+V2가 구현자 편을 든 항목(= V1 과장 확인):
+- **V1-F3 기각이 옳다** — 인증 경로 attach는 모두 `badge=False`
+- **flake 주장 타당** — `test_portal_cdp_discovery.py`는 본 변경 함수를 호출하지 않음
+- **검사 약화 없음** — 삭제·skip·단언 제거 0
+- Windows 결함 7건은 반례를 직접 넣어 전부 막히는 것 확인
+
+V2가 확인 못 한 것(정직 표기): `./verify.sh` 전체, Linux 강제 실행, `make strict-exit-gate`, Windows 실기기, V1 세션 원문.
+
+수정 후 재검증:
+- `pytest tests/test_managed_chrome_discovery_cross_os.py -q` → **50 passed, 33 subtests passed**
+- mutation 4종(자식 제외 / 등록부 정확일치 / 홈 경계 / 문구 전달) 모두 해당 검사가 즉시 실패 → 복원 후 50 passed

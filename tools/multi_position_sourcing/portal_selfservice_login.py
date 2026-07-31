@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 from .models import Channel
 from .portal_autologin import AUTO_LOGIN_SELECTORS, login_url_for_channel
+from .windows_chrome import owner_message_for
 from .portal_login import (
     _CHALLENGE_TOKENS,
     _is_pure_security_challenge,
@@ -167,6 +168,36 @@ def _login_fields_present(tab: Any, selectors: Any) -> bool:
 
 
 def perform_autologin(
+    tab: Any,
+    site: Channel,
+    creds: PortalCreds,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    settle_seconds: float = 2.5,
+    post_submit_polls: int = 4,
+    owner_takeover: bool = False,
+) -> dict[str, Any]:
+    """세션 보존 자동 로그인 1회 + 상태 코드에 대응하는 **고정 문구** 부착.
+
+    문구는 `windows_chrome.MANAGED_BROWSER_STATUS_MESSAGES` 한 곳에서만 나온다 —
+    모델이 사용자 보고 문구를 새로 쓰지 못하게 하기 위해서다(V2-3).
+    """
+    result = _perform_autologin(
+        tab,
+        site,
+        creds,
+        sleep=sleep,
+        settle_seconds=settle_seconds,
+        post_submit_polls=post_submit_polls,
+        owner_takeover=owner_takeover,
+    )
+    message = owner_message_for(str(result.get("state") or ""))
+    if message:
+        result["owner_message"] = message
+    return result
+
+
+def _perform_autologin(
     tab: Any,
     site: Channel,
     creds: PortalCreds,

@@ -31,6 +31,11 @@ MANAGED_BROWSER_STATUS_MESSAGES: dict[str, str] = {
 }
 
 
+def owner_message_for(code: str) -> str:
+    """상태 코드 → 사장님께 나갈 고정 문구. 표에 없으면 빈 문자열(추측 금지)."""
+    return MANAGED_BROWSER_STATUS_MESSAGES.get(str(code or ""), "")
+
+
 class ManagedBrowserDiscoveryError(LookupError):
     """발견 단계의 명시적 중단. ``code``는 위 표의 키 하나다."""
 

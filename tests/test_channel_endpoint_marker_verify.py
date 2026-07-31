@@ -246,7 +246,9 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
             stderr = ""
 
         endpoints = discover_local_chrome_cdp_endpoints(
-            runner=lambda *_args, **_kwargs: PsResult(), system_name="Darwin"
+            runner=lambda *_args, **_kwargs: PsResult(),
+            system_name="Darwin",
+            env={"HOME": "/Users/test"},
         )
 
         self.assertEqual(endpoints, ["http://127.0.0.1:9338"])

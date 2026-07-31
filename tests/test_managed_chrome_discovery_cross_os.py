@@ -688,7 +688,9 @@ class MacOsRegressionTest(unittest.TestCase):
             )
 
         endpoints = discover_local_chrome_cdp_endpoints(
-            runner=lambda *_a, **_k: PsResult(), system_name="Darwin"
+            runner=lambda *_a, **_k: PsResult(),
+            system_name="Darwin",
+            env={"HOME": "/Users/test"},
         )
 
         self.assertEqual(endpoints, ["http://127.0.0.1:9338"])
@@ -707,9 +709,175 @@ class MacOsRegressionTest(unittest.TestCase):
             channel="linkedin_rps",
             runner=lambda *_a, **_k: PsResult(),
             system_name="Darwin",
+            env={"HOME": "/Users/test"},
         )
 
         self.assertEqual(endpoints, [])
+
+
+class MacOsManagedBoundaryTest(unittest.TestCase):
+    """행 10·11 의 macOS 대칭 — 이름 스침만으로 통과하던 구멍을 막는다.
+
+    macOS는 등록부 정확일치를 걸 수 없다(라이브 브라우저가 ``-standby`` 처럼 등록
+    이름과 다르게 떠 있는 것이 정상 — PR#249). 그래서 홈 경계·마지막 조각·다른 채널
+    토큰 세 가지로 좁힌다.
+    """
+
+    CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+    def _accepted(self, profile: str) -> bool:
+        class PsResult:
+            returncode = 0
+            stderr = ""
+            stdout = (
+                f"{MacOsManagedBoundaryTest.CHROME} "
+                f"--remote-debugging-port=9225 --user-data-dir={profile}\n"
+            )
+
+        return bool(
+            discover_local_chrome_cdp_endpoints(
+                channel="linkedin_rps",
+                runner=lambda *_a, **_k: PsResult(),
+                system_name="Darwin",
+                env={"HOME": "/Users/x"},
+            )
+        )
+
+    def test_live_standby_profile_stays_accepted(self) -> None:
+        self.assertTrue(self._accepted("/Users/x/.valuehire/cdp_profiles/linkedin"))
+        self.assertTrue(
+            self._accepted("/Users/x/.valuehire/cdp_profiles/linkedin-standby")
+        )
+
+    def test_profile_outside_a_user_home_is_refused(self) -> None:
+        for profile in (
+            "/tmp/.valuehire/linkedin",
+            "/Volumes/USB/.valuehire/linkedin",
+            "/opt/.valuehire/linkedin",
+        ):
+            with self.subTest(profile=profile):
+                self.assertFalse(self._accepted(profile))
+
+    def test_decoy_under_another_channel_is_refused(self) -> None:
+        self.assertFalse(
+            self._accepted("/Users/x/.valuehire/portal_profiles/saramin/linkedin-decoy")
+        )
+
+    def test_channel_token_must_be_the_last_component(self) -> None:
+        self.assertFalse(self._accepted("/Users/x/.valuehire/linkedin/cache"))
+
+
+class V2CounterExampleTest(unittest.TestCase):
+    """Claude V2(리셋 컨텍스트, 2026-07-31) 재검증이 잡은 3건."""
+
+    def test_another_users_home_profile_is_refused(self) -> None:
+        """V2-1 — 남의 계정 홈 아래 프로필은 이 기기의 관리 브라우저가 아니다."""
+
+        class PsResult:
+            returncode = 0
+            stderr = ""
+            stdout = (
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
+                "--remote-debugging-port=9225 "
+                "--user-data-dir=/Users/intruder/.valuehire/cdp_profiles/linkedin\n"
+            )
+
+        self.assertEqual(
+            discover_local_chrome_cdp_endpoints(
+                channel="linkedin_rps",
+                runner=lambda *_a, **_k: PsResult(),
+                system_name="Darwin",
+                env={"HOME": "/Users/owner"},
+            ),
+            [],
+        )
+
+    def test_own_home_profile_is_still_accepted(self) -> None:
+        """V2-1 회귀 방지 — 내 홈 아래 라이브 프로필은 그대로 채택된다."""
+
+        class PsResult:
+            returncode = 0
+            stderr = ""
+            stdout = (
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome "
+                "--remote-debugging-port=9225 "
+                "--user-data-dir=/Users/owner/.valuehire/cdp_profiles/linkedin-standby\n"
+            )
+
+        self.assertEqual(
+            discover_local_chrome_cdp_endpoints(
+                channel="linkedin_rps",
+                runner=lambda *_a, **_k: PsResult(),
+                system_name="Darwin",
+                env={"HOME": "/Users/owner"},
+            ),
+            ["http://127.0.0.1:9225"],
+        )
+
+    def test_owner_message_reaches_the_humansearch_failure(self) -> None:
+        """V2-2 — 고정 문구가 실제 사용자 경로까지 전달된다(뭉개지지 않는다)."""
+        from tools.multi_position_sourcing import humansearch_cdp_run as runner_module
+
+        def failing_resolver(_site: str, *, target_id: str | None = None):
+            raise ManagedBrowserDiscoveryError("NO_MANAGED_BROWSER", "count was 0")
+
+        with self.assertRaises(Exception) as caught:
+            runner_module.resolve_exact_recruiter_target(
+                target_id="x", target_resolver=failing_resolver
+            )
+        message = str(caught.exception)
+        self.assertIn(MANAGED_BROWSER_STATUS_MESSAGES["NO_MANAGED_BROWSER"], message)
+        self.assertEqual(
+            getattr(caught.exception, "owner_status_code", None), "NO_MANAGED_BROWSER"
+        )
+
+    def test_no_status_code_is_unreachable(self) -> None:
+        """V2-3 — 표의 8개 코드가 모두 실제 발생 지점을 가진다(고아 금지)."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1] / "tools" / "multi_position_sourcing"
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in root.glob("*.py")
+            if path.name != "windows_chrome.py"
+        )
+        table = (root / "windows_chrome.py").read_text(encoding="utf-8")
+        producers = sources + table.split("MANAGED_BROWSER_STATUS_MESSAGES", 2)[-1]
+        for code in MANAGED_BROWSER_STATUS_MESSAGES:
+            with self.subTest(code=code):
+                self.assertIn(
+                    f'"{code}"',
+                    producers,
+                    f"{code} 는 표에만 있고 발생 지점이 없다(고아 코드)",
+                )
+
+    def test_authenticated_and_human_auth_carry_the_fixed_message(self) -> None:
+        """V2-3 — AUTHENTICATED·HUMAN_AUTH 도 같은 표에서 문구를 가져온다."""
+        from tools.multi_position_sourcing.portal_selfservice_login import (
+            PortalCreds,
+            perform_autologin,
+        )
+
+        class AlreadyLoggedIn:
+            def eval(self, _script: str):
+                return "Expand the user menu 강상모"
+
+            def current_url(self) -> str:
+                return TALENT_URL
+
+            def navigate(self, _url: str):  # pragma: no cover - 호출되면 계약 위반
+                raise AssertionError("이미 로그인된 화면에서 이동이 발생했다")
+
+        result = perform_autologin(
+            AlreadyLoggedIn(), "linkedin_rps", PortalCreds("id", "pw")
+        )
+
+        self.assertEqual(result["state"], "AUTHENTICATED")
+        self.assertEqual(result["mutations"], 0)
+        self.assertEqual(
+            result.get("owner_message"),
+            MANAGED_BROWSER_STATUS_MESSAGES["AUTHENTICATED"],
+        )
 
 
 class RealCallPathTest(RegisteredWindowsMachine):
