@@ -504,6 +504,15 @@ class TestIntervention:
         h.now[0] += 30.0
         assert h.monitor.poll().value == "running"
 
+        # V1 독립검증 결함5 — 시계 전진 + poll() 확인만으로는 "실제로 재개해서
+        # 끝까지 완료되는지"를 증명하지 못한다(파이프라인을 다시 부르지 않았다).
+        # 여기서 실제로 previous=report 로 다시 호출해 완결까지 검증한다.
+        h.list_side_effect = None  # 더 이상 개입 없음 — 정상 진행
+        resumed = run_search_pipeline(_jd(), h.deps(), previous=report)
+        assert resumed.status == STATUS_COMPLETED
+        # 재개 후 1페이지에서 막혔던 채널들이 실제로 다음 페이지까지 진행했다.
+        assert any(page > 1 for _c, page in h.list_calls)
+
 
 # ── E8: 표에 없는 예외 — 명시적 중단 + 상태 보고 ──
 

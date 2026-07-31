@@ -491,7 +491,9 @@ def test_ac6_admin_not_configured_is_rejected_at_construction_in_live_mode():
 
     예전에는 실행 시점에 첫 단계(admin_register)가 AttributeError 로 죽었고,
     그 결과 ClickUp 등록도 Discord 보고도 한 건도 나가지 않았다(조용한 전면
-    실패). 실패는 가장 이른 시점에 드러나야 한다.
+    실패). 실패는 가장 이른 시점에 드러나야 한다. 브랜치(4e099c8)의 "실행 시점
+    partial/failed + ClickUp 쓰기 0건" 검증은 조립 시점 거부로 대체된다 —
+    아예 만들 수 없으므로 ClickUp 에 쓸 기회 자체가 없다.
     """
     cu, dc = FakeClickUpClient(), FakeDiscordClient()
 
@@ -504,3 +506,25 @@ def test_ac6_admin_not_configured_is_rejected_at_construction_in_live_mode():
     assert result.status == "dry_run"
     assert dc.messages == [] or all(m["channel_id"] for m in dc.messages)
     assert result.error is None  # dry-run 은 admin 미주입이어도 정상 완료
+    assert cu.created_tasks == []  # dry-run — 외부 쓰기 0건
+    assert cu.created_subtasks == []
+
+
+def test_ac9_dry_run_contract_is_zero_writes_not_zero_calls():
+    """V1 독립검증 결함9 — dry-run은 "쓰기 0건"이지 "호출 0건"이 아님을 명시 고정.
+
+    실제 ClickUp 클라이언트를 주입하면 중복확인/부모조회(읽기)는 dry-run에서도
+    실행된다(SOT25 요구) — 오직 admin.register_candidate 같은 쓰기만 막힌다.
+    이 계약이 조용히 바뀌면(둘 다 막히거나 둘 다 안 막히면) 이 테스트가 잡는다.
+    """
+    cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
+    rec = DualRecorder(clickup=cu, discord=dc, admin=am)  # 기본 dry-run
+
+    rec.record(position_name="빅밸류 세일즈 총괄", candidate=make_candidate(name="홍길동"))
+
+    # 읽기(중복확인)는 dry-run에서도 실제로 나간다.
+    assert cu.duplicate_checks == [(CLICKUP_LIST_ID, make_candidate().profile_url)]
+    # 쓰기는 dry-run에서 0건이어야 한다.
+    assert cu.created_tasks == []
+    assert cu.created_subtasks == []
+    assert am.registered == []  # admin 쓰기도 dry-run에서는 0건

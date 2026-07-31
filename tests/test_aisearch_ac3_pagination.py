@@ -374,6 +374,35 @@ class TestSchemaDraftLocation(unittest.TestCase):
         for col in ("channel", "url", "page_type"):
             self.assertIn(col, text)
 
+    def test_unique_constraint_columns_match_python_identity_key_exactly(self):
+        """V1 독립검증 결함10 — 문자열 'unique' 존재만으론 실제 컬럼 구성을 못 잡는다.
+
+        make_row_id()가 (channel, page_type, url, position_ref) 로 id 를 만드는데
+        SQL unique 제약에서 position_ref 가 빠지면, 같은 프로필을 서로 다른
+        포지션에서 만났을 때(앱은 별개 행 의도) DB가 (channel,page_type,url) 만
+        보고 중복으로 오판해 두 번째 삽입을 거부한다 — 실제 제약 컬럼 목록을
+        파싱해 파이썬 식별키와 정확히 같은 집합인지 비교한다.
+        """
+        import re
+
+        text = self.DRAFT.read_text(encoding="utf-8")
+        match = re.search(r"unique\s*\(([^)]+)\)", text, re.IGNORECASE)
+        self.assertIsNotNone(match, "unique 제약 정의를 찾지 못함")
+        sql_columns = {c.strip() for c in match.group(1).split(",")}
+
+        import inspect
+
+        from apps.aisearch.core.pagination_store import make_row_id
+
+        # make_row_id 시그니처의 인자 이름을 실제 식별키로 삼는다(키워드 전용
+        # 포함 — 하드코딩 두 벌을 유지하지 않고 함수 자체에서 회수).
+        python_identity_fields = set(inspect.signature(make_row_id).parameters)
+        self.assertEqual(
+            sql_columns,
+            python_identity_fields,
+            f"SQL unique 컬럼({sql_columns})과 파이썬 식별키({python_identity_fields})가 다르다",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
