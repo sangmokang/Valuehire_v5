@@ -182,6 +182,10 @@ class PipelineReport:
     channel_errors: list[dict[str, Any]] = field(default_factory=list)
     #: M3(2026-07-31 리뷰) — 재발신에도 끝내 못 보낸 차단 알림(조용한 유실 금지).
     notification_failures: list[str] = field(default_factory=list)
+    #: 후보 1명당 1회만 집계하기 위한 내부 표식(profile_url). "이미 record_states 에
+    #: 있다"로 판정하면, 지난 라운드에 **미완결(partial)** 이던 후보가 이번 라운드에
+    #: 완결돼도 집계에서 빠진다 — 그래서 "실제로 등록·초안으로 센 후보"만 담는다.
+    counted_profile_urls: set[str] = field(default_factory=set)
     #: 3차 결함 ⑦ — 제외어(not_keywords) 매칭으로 등록·초안 전에 걸러낸 후보
     #: (제외 사유 기록). 항목: channel, profile_url, matched_keyword,
     #: matched_field, reason.
@@ -338,12 +342,13 @@ def _register_and_draft(
                 # build_candidate_draft 는 순수 함수라 발신이 없다.
                 with deps.lock:
                     # V1 2라운드 — 같은 후보가 여러 변형/중복 추출로 두 번 오면
-                    # 리포트에 두 번 세지 않는다(첫 등장에만 집계).
-                    already_carried = profile_url in report.record_states
+                    # 리포트에 두 번 세지 않는다(실제로 센 적 있는지로 판정).
+                    already_counted = profile_url in report.counted_profile_urls
                     report.record_states[profile_url] = prev_state
-                    if not already_carried:
+                    if not already_counted:
+                        report.counted_profile_urls.add(profile_url)
                         report.registered.append(prev_state)
-                if already_carried:
+                if already_counted:
                     continue
                 _check_monitor(deps)
                 carried_draft = build_candidate_draft(**cand["draft_inputs"])
@@ -382,7 +387,7 @@ def _register_and_draft(
             # V1 2라운드 — 같은 후보(profile_url)는 몇 번 등장하든 리포트에
             # 한 번만 센다. 링크드인은 변형이 여럿이고 추출기가 같은 후보를
             # 두 번 넘길 수도 있어, 예전에는 등록 수·초안 수가 실제보다 부풀었다.
-            first_time = profile_url not in report.record_states
+            first_time = profile_url not in report.counted_profile_urls
             report.record_states[profile_url] = record_result
 
             # 2차 결함 8 — recorded/dry_run 이 아니면 초안 금지 + 실패로 집계.
@@ -399,6 +404,7 @@ def _register_and_draft(
                 continue
             if not first_time:
                 continue  # 이미 센 후보 — 중복 집계·중복 초안 금지
+            report.counted_profile_urls.add(profile_url)
             report.registered.append(record_result)
         _check_monitor(deps)  # 2차 결함 1 — 초안 생성 전 차단 확인
         # AC9 — 전달 초안만 생성(발송 경로 없음, is_draft_only=True)
@@ -601,6 +607,22 @@ def run_search_pipeline(
     # M2 — 협조적 중단 신호는 **이번 실행** 한정이다. 재개 실행(previous=...)이
     # 지난 실행의 신호를 물려받아 즉시 멈추면 자동 재개가 성립하지 않는다.
     deps.stop_event.clear()
+    if previous is not None:
+        # V1 2차 독립검증 결함 — previous 를 record_states 조회(개별 후보
+        # 재개)에만 쓰고, report 자체는 매 호출마다 빈 채로 새로 만들어서
+        # 이전 실행에서 이미 등록/제외/초안된 후보가 재시도 결과에서
+        # 통째로 사라졌다(재개 루프가 report 를 매번 덮어씀). 여기서 이어받되,
+        # 대상은 되돌릴 수 없는(한번 확정되면 안 변하는) 결과만 한정한다.
+        # record_failures/banner_errors/below_threshold 는 "이번 라운드에
+        # 아직 안 풀린 문제"를 뜻하는 append-only 로그라 그대로 이어받으면,
+        # 이번 라운드에 실제로 해결된 뒤에도 지난 라운드의 stale 항목이 남아
+        # 영원히 completed 로 못 올라간다(V1 재검증에서 잡은 회귀) — 그래서
+        # 이번 라운드에 남아있는 문제만 반영하도록 새로 채운다(reset).
+        report.registered = list(previous.registered)
+        report.drafts = list(previous.drafts)
+        report.excluded = list(previous.excluded)
+        report.record_states = dict(previous.record_states)
+        report.counted_profile_urls = set(previous.counted_profile_urls)
     try:
         position_name = jd.get("position_name")
         if not isinstance(position_name, str) or not position_name.strip():

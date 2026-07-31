@@ -665,6 +665,38 @@ class TestPartialResume:
         assert h.clickup.writes == ["subtask"]
         assert len(report2.drafts) == 1  # 완결됐으므로 초안 생성
 
+    def test_resume_does_not_lose_previously_registered_candidates(self):
+        """V1 2차 독립검증 결함(재시도 시 데이터 유실) — 재현+회귀 방지.
+
+        run_search_pipeline이 매 호출마다 새 PipelineReport를 만들면서
+        record_states(개별 후보 재개 판정)만 previous에서 참조하고, report
+        자체(registered/drafts 등 누적 리스트)는 이어받지 않았다. 그 결과
+        이미 완료된 후보 A는 두 번째 호출에서 '재기록 금지'로 다시 처리되지
+        않는 게 맞는데(중복 발신 방지 자체는 정상), report2.registered 에는
+        A가 아예 없어져(누적 리스트가 매번 새로 시작) 이번 라운드에 새로
+        완료된 B만 남았다 — A가 등록됐다는 사실 자체가 보고서에서 사라졌다.
+        """
+        url_a = "https://saramin.example/p/a"
+        url_b = "https://saramin.example/p/b"
+        h = Harness(pages=1)  # 기본 dry-run — status는 "dry_run"(완료 취급)
+        h.candidates["saramin"] = [_candidate(PAYLOAD_60, url_a)]
+
+        report1 = run_search_pipeline(_jd(), h.deps())
+        assert report1.status == STATUS_COMPLETED
+        assert [r.dry_run for r in report1.registered] == [True]
+        assert report1.record_states[url_a].status == "dry_run"
+
+        # 재시도(예: 30초 자동재개) — 이번 라운드엔 A(이미 완료)와 B(신규)가
+        # 함께 발견된다(페이지네이션 재순회로 A를 다시 만나는 상황 재현).
+        h.candidates["saramin"] = [_candidate(PAYLOAD_60, url_a), _candidate(PAYLOAD_60, url_b)]
+        report2 = run_search_pipeline(_jd(), h.deps(), previous=report1)
+
+        assert report2.status == STATUS_COMPLETED
+        # A는 재기록되지 않았지만(중복 발신 금지는 유지) 보고서에서 사라지면 안 된다.
+        assert report2.record_states[url_a].status == "dry_run"
+        assert report2.record_states[url_b].status == "dry_run"
+        assert len(report2.registered) == 2  # A(이월) + B(신규) — A가 누락되면 이 assert가 실패한다
+
 
 # ── V1 2차 결함 8: 기록 실패 후보 초안 금지 + 전체 completed 금지 ──
 

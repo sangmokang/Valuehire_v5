@@ -323,11 +323,16 @@ def _plain(value: Any) -> Any:
         return {k: _plain(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_plain(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        # 집합은 JSON 에 그대로 못 담는다 — 순서를 고정해 결정론적으로 만든다.
+        return sorted(_plain(v) for v in value)
     return value
 
 
 def _report_payload(report: PipelineReport, *, mode: str, live: bool) -> dict:
     payload = _plain(report)
+    # 내부 집계용 표식은 원장에 남기지 않는다(리포트 계약 밖 — 구현 세부).
+    payload.pop("counted_profile_urls", None)
     payload["mode"] = mode
     payload["live"] = live
     return payload
@@ -478,6 +483,17 @@ def main(
                 2,
                 "채널별 --ws-url-<channel> 값이 서로 달라야 합니다(같은 탭 공유 금지, "
                 f"fail-closed): 중복 URL {sorted(duplicates)!r}\n",
+            )
+        # V1 2차 독립검증 결함4 — 실 CDP 경로에서 AISEARCH_LINKEDIN_LOCK_DIR
+        # 미설정은 "보호 없이도 조용히 진행"이 아니라 fail-closed 거부다.
+        # 링크드인 단일세션(E4)은 실제 브라우저 자동화가 도는 이 경로에서만
+        # 의미가 있고, 여기서 안 막으면 운영자가 깜빡한 채 그대로 라이브
+        # 실행돼 두 기기 동시 접속 사고로 이어진다.
+        if not os.environ.get("AISEARCH_LINKEDIN_LOCK_DIR", "").strip():
+            parser.exit(
+                2,
+                "AISEARCH_LINKEDIN_LOCK_DIR 이 필요합니다(링크드인 기기 간 세션 락, "
+                "fail-closed) — 여러 기기가 공유하는 저장소 경로를 설정하십시오.\n",
             )
         transport_factory = connect_websocket_transport
 

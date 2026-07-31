@@ -27,6 +27,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Protocol
+from urllib.parse import urlsplit
 
 # SOT25 clickup_registration_contract / goal 문서 D10·D11 고정값
 CLICKUP_LIST_ID = "901818680208"  # FY26AI_Search
@@ -158,6 +159,21 @@ STATUS_SKIPPED = "skipped"
 
 class LiveGateError(RuntimeError):
     """live=True 인데 오너 사인오프가 없을 때 — fail-closed."""
+
+
+def _is_valid_http_url(value: str) -> bool:
+    """V1 2차 독립검증 결함8 — 스킴 접두어뿐 아니라 호스트까지 실제로 파싱한다.
+
+    거부 대상: 스킴이 http/https 가 아님, 호스트가 비어있음(예: "https://"
+    자체), 원문에 공백 문자가 하나라도 섞여있음(예: "https://a b.com").
+    """
+    if any(ch.isspace() for ch in value):
+        return False
+    try:
+        parts = urlsplit(value.strip())
+    except ValueError:
+        return False
+    return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
 
 
 def subtask_idempotency_key(profile_url: str) -> str:
@@ -362,13 +378,15 @@ class DualRecorder:
             )
             return result
 
-        # V1 독립검증 결함8 — truthy 체크만으로는 "javascript:void(0)" 같은 가짜
-        # URL이나 공백뿐인 텍스트를 걸러내지 못해, ClickUp까지 쓴 뒤에야 admin
-        # 원격 API(400)에서 뒤늦게 걸러졌다. 여기서 형식까지 먼저 검증한다 —
-        # ClickUp을 포함한 모든 외부 쓰기보다 먼저(위 순서 변경과 함께 결함6도 보강).
-        if not re.match(r"^https?://", candidate.profile_url.strip(), re.IGNORECASE):
+        # V1 독립검증 결함8(1차+2차 재검증) — truthy 체크만으로는 "javascript:void(0)"
+        # 같은 가짜 URL이나 공백뿐인 텍스트를 걸러내지 못해, ClickUp까지 쓴 뒤에야
+        # admin 원격 API(400)에서 뒤늦게 걸러졌다. 1차 수정은 스킴 접두어(정규식
+        # ^https?://)만 봐서 "https://"만 있고 호스트가 없는 값도 통과시켰다(2차
+        # 독립검증 지적) — urlparse로 스킴+호스트를 실제로 파싱하고, 내부에
+        # 공백이 섞인 값(예: "https://a b.com")도 명시 거부한다.
+        if not _is_valid_http_url(candidate.profile_url):
             result.status = STATUS_FAILED
-            result.error = f"profile_url 형식 위반(http/https 아님): {candidate.profile_url!r}"
+            result.error = f"profile_url 형식 위반(http/https 호스트 URL 아님): {candidate.profile_url!r}"
             self._post_member(
                 result,
                 f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
