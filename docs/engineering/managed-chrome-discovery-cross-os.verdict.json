@@ -81,6 +81,15 @@
     "v2_claude": "3건 지적 전부 유효 또는 부분유효, V1 과장 1건을 독립 확인",
     "converged": "12건 수정, 잔여 미해결 결함 없음. 세 관점이 서로의 오판을 1건씩 교정했다(V1-F3 과장 -> V2 확인, macOS 비대칭 -> V2 확인)."
   },
+  "final_evidence": [
+    {"command": ".venv/bin/python -m pytest tests/test_managed_chrome_discovery_cross_os.py -q", "exit_code": 0, "result": "50 passed, 33 subtests passed"},
+    {"command": "./verify.sh (macOS)", "exit_code": 0, "result": "3311 passed, 4 xfailed, 138 subtests passed in 100.01s"},
+    {"command": "platform.system()->'Linux' 강제 전체 실행 (ubuntu-latest CI 재현)", "exit_code": 0, "result": "3311 passed, 4 xfailed, 138 subtests passed in 97.87s"},
+    {"command": "make strict-exit-gate", "exit_code": 0, "result": "PASS — 미커밋 잔존 0 · 마커 상태 일치"},
+    {"command": "배선 추적: humansearch resolve_exact_recruiter_target(기본 인자) 에서 실제 호출된 OS 명령", "exit_code": 0, "result": "powershell.exe 읽기전용 조회 4회 + list_pages 3회. 브라우저 실행·종료 명령 0건. endpoint=http://127.0.0.1:9425 pid=4242 profile=등록값 일치"},
+    {"command": "상태 코드 고아 검사 (grep 발생 지점)", "exit_code": 0, "result": "8/8 코드 모두 발생 지점 보유"}
+  ],
+  "impl_size": {"files": 4, "note": "windows_chrome.py 340줄(신설, 문구표+토크나이저 포함) + portal_worker/session_guard/humansearch_cdp_run/portal_selfservice_login 수정. 300줄 가이드 초과 — 범위는 지시대로 '기존 로그인 창 발견 + 실제 경로 연결'로 유지했고 초과분은 V1/V2 반례 대응이다. 정직 표기."},
   "status": "in_progress",
   "live_verification": {
     "windows_pc": "LIVE_PENDING",
