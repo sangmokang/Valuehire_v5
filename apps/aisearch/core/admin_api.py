@@ -141,6 +141,22 @@ def _describe(value: Any, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _describe_shape(value: Any) -> str:
+    """서버가 준 원문의 '모양'만 알린다 — 내용은 절대 넣지 않는다.
+
+    응답 본문에는 후보 개인정보(이름·연락처)가 들어 있을 수 있고 오류 메시지는
+    로그·원장으로 흘러간다. 진단에 필요한 건 내용이 아니라 타입과 크기다.
+    """
+    try:
+        name = type(value).__name__
+    except Exception:
+        return "<unknown>"
+    try:
+        return f"{name}(len={len(value)})"
+    except Exception:
+        return name
+
+
 @dataclass(frozen=True)
 class RegisterOutcome:
     """dry-run 과 live 가 공유하는 단일 결과 타입 — 호출자가 한 코드로 다룬다."""
@@ -181,11 +197,12 @@ def parse_register_response(response: Any) -> RegisterOutcome:
         payload = json.loads(text)
     except ValueError as exc:
         raise AdminApiResponseError(
-            f"non-JSON response (status={status}): {_describe(text)}"
+            f"non-JSON response (status={status}): {_describe_shape(text)}"
         ) from exc
     if not isinstance(payload, dict):
         raise AdminApiResponseError(
-            f"response must be a JSON object (status={status}): {_describe(payload)}"
+            f"response must be a JSON object (status={status}): "
+            f"{_describe_shape(payload)}"
         )
     # 여기서부터만 payload.get() 이 안전하다 — 모양이 확정된 뒤다.
     if status not in (200, 201) or payload.get("ok") is not True:

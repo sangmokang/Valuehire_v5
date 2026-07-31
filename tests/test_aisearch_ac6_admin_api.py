@@ -293,6 +293,21 @@ class TestParseRegisterResponse:
         with pytest.raises(AdminApiResponseError):
             parse_register_response({"status": 201, "text": Boom()})
 
+    @pytest.mark.parametrize("text", [
+        '[{"name": "홍길동", "phone": "010-1234-5678"}]',      # 비객체 JSON
+        "<html>홍길동 010-1234-5678 gateway error</html>",      # 비 JSON 본문
+        '"홍길동 010-1234-5678"',
+    ])
+    def test_error_message_never_echoes_server_body_content(self, text):
+        # 자체 적대검증에서 발견: 진단을 위해 원문을 오류에 넣었더니 후보 개인정보가
+        # 로그·원장으로 샜다. 오류는 '내용'이 아니라 '모양'만 알려야 한다.
+        with pytest.raises(AdminApiResponseError) as e:
+            parse_register_response(_envelope(status=502, text=text))
+        message = str(e.value)
+        assert "홍길동" not in message
+        assert "010-1234-5678" not in message
+        assert "502" in message  # 진단에 필요한 정보는 남아 있어야 한다
+
     def test_error_message_carries_server_reason(self):
         with pytest.raises(AdminApiResponseError) as e:
             parse_register_response(_envelope(
