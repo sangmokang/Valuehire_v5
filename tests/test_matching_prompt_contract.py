@@ -477,3 +477,109 @@ def test_timeout_error_message_reports_the_actual_limit(monkeypatch) -> None:
     with pytest.raises(MatchingContractError) as err:
         _msc.claude_json_client("prompt")
     assert "240" in str(err.value)
+
+
+# --- Stage 3 게이트 정렬: LLM 표기 흔들림에 후보를 버리지 않는다 (2026-08-01 라이브 사고) ---
+#
+# 사고: 공간의가치·번개장터 라이브 순회에서 후보 절반이
+# "Stage 3 gates must match Stage 1 must-have requirements in order" 로 통째로 버려졌다.
+# 원인은 채점이 아니라 계약이었다. stage_3 프롬프트가 "필수요건 문자열을 그대로,
+# 같은 순서로 돌려달라"고 지시하지 않는데 코드는 정확일치·동일순서를 요구했다.
+# LLM 이 공백/대소문자를 다듬거나 순서를 바꾸면 근거가 멀쩡한 후보도 유실된다.
+
+
+def _stage_responses(gates: list[dict]) -> list[dict]:
+    return [
+        {
+            "position_title": "Backend Engineer",
+            "must_have": [
+                {"type": "skill", "requirement": "Python 3년", "min_years": 3},
+                {"type": "skill", "requirement": "PostgreSQL", "min_years": None},
+            ],
+            "nice_to_have": [],
+        },
+        {"total_years": 4, "careers": [], "skills": [], "achievements": []},
+        {
+            "gates": gates,
+            "dimensions": _payload(score=4)["dimensions"],
+            "one_line_verdict": "직무 직결",
+        },
+    ]
+
+
+def _run_stages(gates: list[dict]) -> dict:
+    profile = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/contract",
+        source_channel="linkedin_rps",
+        visible_text="A사 Python API 4년, PostgreSQL 운영",
+        summary="backend engineer",
+        captured_at="2026-07-24T00:00:00+09:00",
+        years_experience=4,
+        education="부산대학교 학사",
+    )
+    position = Position(
+        position_id="P1",
+        company_name="B",
+        role_title="Backend Engineer",
+        jd_text="Python 3년 이상, PostgreSQL",
+        must_haves=("Python 3년", "PostgreSQL"),
+    )
+    responses = _stage_responses(gates)
+    return evaluate_candidate_contract(
+        profile,
+        position,
+        llm_json_client=lambda prompt: responses.pop(0),
+        company_tier_map={},
+        school_tier_map={},
+    )
+
+
+def test_stage3_gates_survive_cosmetic_whitespace_and_case_drift() -> None:
+    """공백·대소문자만 다른 표기는 같은 요건이다 — 후보를 버리지 않는다."""
+    evaluation = _run_stages(
+        [
+            {"requirement": " Python  3년 ", "verdict": "pass", "evidence": "Python API 4년"},
+            {"requirement": "postgresql", "verdict": "pass", "evidence": "PostgreSQL 운영"},
+        ]
+    )
+
+    # 저장되는 값은 Stage 1 의 정본 표기로 정규화된다(하류 비교가 흔들리지 않게).
+    assert [gate["requirement"] for gate in evaluation["gates"]] == [
+        "Python 3년",
+        "PostgreSQL",
+    ]
+
+
+def test_stage3_gates_are_reordered_to_stage1_order() -> None:
+    """순서만 뒤바뀐 응답은 Stage 1 순서로 되돌린다 — 유실 사유가 아니다."""
+    evaluation = _run_stages(
+        [
+            {"requirement": "PostgreSQL", "verdict": "uncertain", "evidence": "간접"},
+            {"requirement": "Python 3년", "verdict": "pass", "evidence": "Python API 4년"},
+        ]
+    )
+
+    assert [gate["requirement"] for gate in evaluation["gates"]] == [
+        "Python 3년",
+        "PostgreSQL",
+    ]
+    assert [gate["verdict"] for gate in evaluation["gates"]] == ["pass", "uncertain"]
+
+
+def test_stage3_missing_or_extra_gate_still_fails_closed() -> None:
+    """진짜로 요건이 빠지거나 남으면 여전히 fail-closed — 검증을 약화하지 않는다."""
+    with pytest.raises(MatchingContractError):
+        _run_stages(
+            [
+                {"requirement": "Python 3년", "verdict": "pass", "evidence": "Python API 4년"},
+            ]
+        )
+
+
+def test_stage3_prompt_orders_llm_to_copy_must_have_verbatim() -> None:
+    """근본 예방: 프롬프트가 '그대로 복사, 같은 순서'를 명시해야 한다."""
+    stage3_prompt = _contract()["prompt_templates"]["stage_3"]
+
+    assert "must_have" in stage3_prompt
+    assert "그대로" in stage3_prompt
+    assert "같은 순서" in stage3_prompt
