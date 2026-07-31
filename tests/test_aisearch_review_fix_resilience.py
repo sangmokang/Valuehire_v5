@@ -267,3 +267,57 @@ def test_f8_lock_failure_does_not_abort_other_channels():
     portal_variants = [v for v in report.variants if v.channel in ("saramin", "jobkorea")]
     assert portal_variants, "락 실패 때문에 다른 채널 결과까지 버려졌다"
     assert report.status in ("partial", "aborted")
+
+
+# ── 자체 적대검증에서 발견 — 살아 있는 장시간 락이 stale 로 오인되면 안 된다 ──
+
+
+def test_long_running_live_lock_is_not_treated_as_stale(tmp_path):
+    """1시간 넘게 도는 검색 중에도 다른 기기가 락을 훔치면 안 된다(E4).
+
+    stale 판정은 "획득 시각"이 아니라 "마지막 심장박동"을 기준으로 해야 한다.
+    획득 시각만 보면 정상 실행이 stale_seconds 를 넘기는 순간 탈취 대상이 된다.
+    """
+    lock_dir = tmp_path / "linkedin_rps"
+    now = [1000.0]
+    holder = LinkedInSessionLock(
+        lock_dir=lock_dir, owner="맥미니", stale_seconds=60.0, clock=lambda: now[0]
+    )
+    holder.acquire()
+
+    now[0] += 50.0
+    holder.heartbeat()  # 아직 살아 있다고 알린다
+    now[0] += 50.0  # 획득 시각 기준으로는 100초 경과(=stale) 지만 심장박동은 50초 전
+
+    thief = LinkedInSessionLock(
+        lock_dir=lock_dir, owner="맥북", stale_seconds=60.0, clock=lambda: now[0]
+    )
+    with pytest.raises(LinkedInSessionLockError):
+        thief.acquire()
+
+    holder.release()
+
+
+def test_heartbeat_is_wired_into_linkedin_channel_runs():
+    """배선 증명 — 파이프라인이 링크드인 채널을 도는 동안 심장박동이 실제로 뛴다."""
+    from apps.aisearch.core.orchestrator import run_search_pipeline
+    from tests.test_aisearch_orchestrator import Harness, _jd
+
+    class _CountingLock:
+        def __init__(self):
+            self.beats = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def heartbeat(self):
+            self.beats += 1
+
+    lock = _CountingLock()
+    h = Harness(pages=3, linkedin_session_lock=lock)
+    run_search_pipeline(_jd(), h.deps())
+
+    assert lock.beats > 0, "링크드인 채널이 도는 동안 심장박동이 한 번도 뛰지 않았다"

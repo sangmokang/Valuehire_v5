@@ -67,10 +67,17 @@ class LinkedInSessionLock:
         return data if isinstance(data, dict) else None
 
     def _age_of(self, meta: dict) -> Optional[float]:
-        acquired_at = meta.get("acquired_at")
-        if not isinstance(acquired_at, (int, float)) or isinstance(acquired_at, bool):
-            return None
-        return self.clock() - float(acquired_at)
+        """마지막 **생존 신호** 이후 경과 시간.
+
+        자체 적대검증 발견: 획득 시각(acquired_at)만 보면, 한 시간 넘게 정상
+        실행 중인 락이 stale 로 오인돼 다른 기기에 탈취된다(E4 위반 — 계정당
+        동시 1기기). 그래서 heartbeat 가 갱신하는 last_seen_at 을 우선 본다.
+        """
+        for key in ("last_seen_at", "acquired_at"):
+            value = meta.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return self.clock() - float(value)
+        return None
 
     def _wait_for_meta(self) -> Optional[dict]:
         """F9 — 메타가 아직 안 써진 '경합 순간'을 유예 동안 기다려 본다."""
@@ -96,17 +103,43 @@ class LinkedInSessionLock:
         """죽은 락 회수 — 디렉터리를 통째로 지운다(내용은 메타 하나뿐)."""
         shutil.rmtree(self.lock_dir, ignore_errors=True)
 
-    def _write_meta(self) -> None:
+    def _write_meta(self, *, acquired_at: Optional[float] = None) -> None:
         # 원자적 교체 — 반쯤 쓰인 메타가 다른 기기에 읽히지 않게 한다.
+        now = self.clock()
         tmp = self._meta_path().with_name("owner.json.tmp")
         tmp.write_text(
             json.dumps(
-                {"owner": self.owner, "acquired_at": self.clock(), "pid": os.getpid()},
+                {
+                    "owner": self.owner,
+                    "acquired_at": now if acquired_at is None else acquired_at,
+                    "last_seen_at": now,
+                    "pid": os.getpid(),
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
         os.replace(tmp, self._meta_path())
+
+    def heartbeat(self) -> None:
+        """살아 있음을 알린다 — 장시간 실행이 stale 로 오인되지 않게 한다.
+
+        보유 중이 아니면 아무 것도 하지 않는다. 기록 실패는 삼킨다(심장박동
+        실패가 검색 자체를 멈추면 안 된다 — 실패가 이어지면 stale 회수로 자연
+        수렴한다). 호출자는 stale_seconds 보다 촘촘히 불러야 한다.
+        """
+        if not self._acquired:
+            return
+        meta = self._read_meta() or {}
+        acquired_at = meta.get("acquired_at")
+        try:
+            self._write_meta(
+                acquired_at=acquired_at
+                if isinstance(acquired_at, (int, float)) and not isinstance(acquired_at, bool)
+                else None
+            )
+        except OSError:
+            pass
 
     def acquire(self) -> None:
         for attempt in (1, 2):  # 회수 후 딱 한 번만 재시도(무한 탈취 경쟁 금지)

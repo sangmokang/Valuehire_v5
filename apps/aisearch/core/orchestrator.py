@@ -396,13 +396,27 @@ def _run_variant(
     driver.run_js(build_dispatch_snippet(True, task))
     try:
 
+        def _beat_session_lock() -> None:
+            """장시간 실행이 stale 로 오인돼 락을 뺏기지 않게 살아있음을 알린다.
+
+            자체 적대검증 발견 — 검색 한 판이 stale_seconds(기본 1시간)를 넘으면
+            다른 기기가 락을 회수해 같은 계정으로 동시 접속할 수 있었다(E4 위반).
+            """
+            if channel != LINKEDIN_CHANNEL:
+                return
+            beat = getattr(deps.linkedin_session_lock, "heartbeat", None)
+            if callable(beat):
+                beat()
+
         def guarded_list(page: int) -> dict:
             _raise_if_stopped(deps)  # M2 — 협조적 중단 확인
             _check_monitor(deps)  # AC7 — 매 리스트 페이지 요청 전 상태 확인
+            _beat_session_lock()
             return deps.fetch_list_page(channel, page, search_payload)
 
         def guarded_detail(ref: str) -> dict:
             _check_monitor(deps)  # 2차 결함 1 — 매 상세 조회 전 차단 확인
+            _beat_session_lock()
             try:
                 return deps.fetch_detail_page(channel, ref)
             except DetailPageBlocked as exc:
