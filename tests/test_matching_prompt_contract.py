@@ -797,3 +797,60 @@ def test_claude_client_still_fails_closed_after_retries(monkeypatch) -> None:
     with pytest.raises(MatchingContractError):
         _msc.claude_json_client("prompt")
     assert len(calls) == 2
+
+
+def test_d7_needs_verification_accepts_the_live_boolean_shape() -> None:
+    """D7.needs_verification 은 라이브에서 true/false 로 온다 — 목록으로 정규화해 받는다.
+
+    2026-08-01 실측 응답: {"score": 4, "evidence": "...", "needs_verification": true}
+    이름이 boolean 처럼 읽히고 프롬프트가 타입을 못 박지 않아 자연스러운 결과다.
+    이걸로 후보를 버리지 않되, 확인할 항목을 지어내지는 않는다(코드 소유 고정 문구).
+    """
+    payload = _payload(score=4)
+    payload["dimensions"]["D7"] = {
+        "score": 4,
+        "evidence": "필수 조건 충족, 이직의향 미확인",
+        "needs_verification": True,
+    }
+
+    result = calculate_final_score(payload)
+
+    assert isinstance(result["score"], int)
+
+    payload_false = _payload(score=4)
+    payload_false["dimensions"]["D7"] = {
+        "score": 4,
+        "evidence": "확인할 것 없음",
+        "needs_verification": False,
+    }
+    assert isinstance(calculate_final_score(payload_false)["score"], int)
+
+
+def test_d7_needs_verification_still_rejects_junk() -> None:
+    """목록도 boolean 도 아닌 값은 계속 거부한다(검증 약화 금지)."""
+    payload = _payload(score=4)
+    payload["dimensions"]["D7"] = {
+        "score": 4,
+        "evidence": "e",
+        "needs_verification": {"확인": "필요"},
+    }
+    with pytest.raises(MatchingContractError):
+        calculate_final_score(payload)
+
+    payload2 = _payload(score=4)
+    payload2["dimensions"]["D7"] = {
+        "score": 4,
+        "evidence": "e",
+        "needs_verification": ["", "  "],
+    }
+    with pytest.raises(MatchingContractError):
+        calculate_final_score(payload2)
+
+
+def test_stage3_prompt_states_needs_verification_is_a_string_list() -> None:
+    """근본 예방: needs_verification 의 타입을 프롬프트가 못 박아야 한다."""
+    stage3_prompt = _contract()["prompt_templates"]["stage_3"]
+
+    # 느슨하게 "배열" 만 보면 다른 문장(gates 설명)에 걸려 통과해버린다 — 타입을 못 박은
+    # 문장이 실제로 있는지 needs_verification 바로 뒤 문맥에서 확인한다.
+    assert "needs_verification 은 문자열 배열" in stage3_prompt
