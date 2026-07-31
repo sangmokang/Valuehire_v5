@@ -179,7 +179,10 @@ class TestAdminApiRecorder:
         rec = AdminApiRecorder(base_url=BASE, internal_key=KEY, transport=t, live=True)
         with pytest.raises(AdminApiResponseError) as e:
             rec.register(candidate())
-        assert body["error"] in str(e.value)
+        message = str(e.value)
+        # 원문 대신 모양만 — 서버 error 문구에는 후보 개인정보가 실려 올 수 있다.
+        assert str(status) in message
+        assert body["error"] not in message
 
     def test_live_non_json_response_is_explicit_failure(self):
         t = FakeTransport(status=200, raw="<html>gateway error</html>")
@@ -393,19 +396,33 @@ class TestParseRegisterResponse:
         with pytest.raises(AdminApiResponseError):
             parse_register_response(HostileMapping())
 
-    def test_describe_is_total_even_when_len_explodes(self):
-        # Codex 2차 적대검증 발견(low): repr() 은 보호했지만 길이 확인·자르기는 보호 밖.
-        from apps.aisearch.core.admin_api import _describe
+    def test_describe_shape_is_total_even_when_len_and_type_name_are_hostile(self):
+        # Codex 2차 적대검증 발견(low): 설명 함수가 길이 확인·문자열화에서 터지면 '메시지
+        # 만들다 죽는' 결함이 되살아난다. repr 기반 _describe 는 유출 경로라 제거했고,
+        # 남은 _describe_shape 가 어떤 입력에도 예외를 던지지 않아야 한다.
+        from apps.aisearch.core.admin_api import _describe_shape
 
-        class BadLen(str):
+        class BadLen:
             def __len__(self):
                 raise RuntimeError("len exploded")
 
-        class BadRepr:
-            def __repr__(self):
-                return BadLen("hostile")
+        class HostileName(str):
+            def __len__(self):
+                raise RuntimeError("len exploded")
 
-        assert isinstance(_describe(BadRepr()), str)
+            def __format__(self, spec):
+                raise RuntimeError("format exploded")
+
+        class BadMeta(type):
+            @property
+            def __name__(cls):
+                return HostileName("hostile")
+
+        class BadTypeName(metaclass=BadMeta):
+            pass
+
+        for value in (BadLen(), BadTypeName(), object()):
+            assert isinstance(_describe_shape(value), str)
 
     @pytest.mark.parametrize("status", [-1, 0, 99, 600, 1000])
     def test_out_of_range_status_is_rejected_as_a_broken_envelope(self, status):
@@ -444,11 +461,16 @@ class TestParseRegisterResponse:
         with pytest.raises(AdminApiResponseError):
             parse_register_response(_envelope(status=201, text="[" * 200_000))
 
-    def test_error_message_carries_server_reason(self):
+    def test_error_message_carries_shape_not_server_reason(self):
+        # 개정(개인정보 차단): 서버 error 원문에는 후보 이름·연락처가 실려 올 수 있으므로
+        # 문장에 넣지 않는다. 진단에 필요한 상태번호와 값의 모양만 남는다.
         with pytest.raises(AdminApiResponseError) as e:
             parse_register_response(_envelope(
                 status=401, text='{"ok": false, "error": "Unauthorized"}'))
-        assert "Unauthorized" in str(e.value)
+        message = str(e.value)
+        assert "Unauthorized" not in message
+        assert "401" in message
+        assert "str(len=12)" in message  # len("Unauthorized") == 12
 
 
 # ── 후속 결함(PR#254 이후): 응답에서 온 값이 오류 문장·결과에 그대로 실려

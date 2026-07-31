@@ -123,39 +123,28 @@ def build_register_request(
     }
 
 
-def _describe(value: Any, limit: int = 200) -> str:
-    """모양을 가정하지 않고 안전하게 글자로 만든다.
-
-    오류 메시지를 만들다가 다시 터지는 사고(예: 방금 '사전이 아니다'라고 판정한 값을
-    payload.get() 으로 꺼내 AttributeError)를 구조적으로 불가능하게 하는 함수다.
-    repr() 자체가 예외를 던지는 값도 있으므로(자체 적대검증에서 발견) 그것까지 삼킨다 —
-    이 함수는 어떤 입력에도 절대 예외를 던지지 않는다.
-    """
-    try:
-        text = repr(value)
-        # 자르기·길이 확인도 보호 안에 둔다 — repr() 이 적대적 str 하위형을 돌려줄 수
-        # 있다(Codex 2차 적대검증 발견).
-        return text if len(text) <= limit else text[:limit] + "…"
-    except Exception:
-        pass
-    try:
-        return f"<unrepresentable {type(value).__name__}>"
-    except Exception:
-        return "<unrepresentable>"
-
-
 def _describe_shape(value: Any) -> str:
-    """서버가 준 원문의 '모양'만 알린다 — 내용은 절대 넣지 않는다.
+    """서버가 준 값의 '모양'만 알린다 — 내용은 절대 넣지 않는다.
 
-    응답 본문에는 후보 개인정보(이름·연락처)가 들어 있을 수 있고 오류 메시지는
-    로그·원장으로 흘러간다. 진단에 필요한 건 내용이 아니라 타입과 크기다.
+    응답 본문에는 후보 개인정보(이름·연락처)와 내부키가 들어 있을 수 있고, 오류 메시지는
+    로그·원장으로 흘러간다. 진단에 필요한 건 내용이 아니라 타입과 크기다. repr() 로 값을
+    통째로 문장에 싣던 이전 방식(_describe)은 그 자체가 유출 경로였으므로 제거했다.
+
+    오류 메시지를 만들다가 다시 터지는 사고를 구조적으로 불가능하게 해야 하므로, 이
+    함수는 어떤 입력에도 절대 예외를 던지지 않는다. 적대적 str 하위형이 __len__·__str__
+    을 덮어써도 안전하도록 타입 이름은 언바운드 str.encode 로 평범한 str 로 씻어낸다.
     """
     try:
-        name = type(value).__name__
+        raw = type(value).__name__
+        name = str.encode(raw, "utf-8", "replace").decode("utf-8", "replace")[:60]
     except Exception:
         return "<unknown>"
     try:
-        return f"{name}(len={len(value)})"
+        size = len(value)
+    except Exception:
+        return name
+    try:
+        return f"{name}(len={size})"
     except Exception:
         return name
 
@@ -169,14 +158,17 @@ class RegisterOutcome:
     deduped: bool | None
     status: int | None
     request: Mapping[str, Any]
-    payload: Mapping[str, Any] | None
+    # 서버 응답 전체를 들고 있으면 후보 개인정보(이름·연락처)와 서버가 덧붙인 임의 필드가
+    # 결과에 눌러앉아 로그·원장으로 샌다. 호출자가 실제로 필요한 건 '저장됐다는 영수증'
+    # 뿐이므로 저장된 행을 가리키는 id 만 남긴다.
+    candidate_id: str | None
 
 
 def _read_envelope(response: Any) -> tuple[int, str]:
     """전송 계층이 준 봉투를 먼저 검사한다 — 꺼내 쓰기 전에 모양을 확정한다."""
     if not isinstance(response, Mapping):
         raise AdminApiResponseError(
-            f"transport must return a mapping: {_describe(response)}"
+            f"transport must return a mapping: {_describe_shape(response)}"
         )
     # Mapping 을 자처해도 .get() 이 터질 수 있다(Codex 2차 적대검증 발견) — 읽기 자체를
     # 보호해 약속한 계약 오류만 나가게 한다.
@@ -199,7 +191,9 @@ def _read_envelope(response: Any) -> tuple[int, str]:
             f"{_describe_shape(status)}"
         )
     if not isinstance(text, str):
-        raise AdminApiResponseError(f"transport text must be a str: {_describe(text)}")
+        raise AdminApiResponseError(
+            f"transport text must be a str: {_describe_shape(text)}"
+        )
     return status, text
 
 
@@ -225,14 +219,15 @@ def parse_register_response(response: Any) -> RegisterOutcome:
         )
     # 여기서부터만 payload.get() 이 안전하다 — 모양이 확정된 뒤다.
     if status not in (200, 201) or payload.get("ok") is not True:
+        # 서버 error 문구에는 후보 이름·연락처가 실려 올 수 있다 — 모양만 남긴다.
         raise AdminApiResponseError(
             f"register rejected (status={status}): "
-            f"{_describe(payload.get('error', 'unknown'))}"
+            f"error={_describe_shape(payload.get('error'))}"
         )
     deduped = payload.get("deduped")
     if not isinstance(deduped, bool):
         raise AdminApiResponseError(
-            f"deduped must be a bool (status={status}): {_describe(deduped)}"
+            f"deduped must be a bool (status={status}): {_describe_shape(deduped)}"
         )
     # 서버는 성공 시 반드시 저장된 레코드를 돌려준다(route.ts:123 갱신, :151 신규).
     # 없으면 실제로 저장된 증거가 없는 것이므로 등록 성공으로 인정하지 않는다 —
@@ -253,13 +248,15 @@ def parse_register_response(response: Any) -> RegisterOutcome:
             f"status/deduped disagree with server contract (status={status}, "
             f"deduped={deduped})"
         )
+    # 서버가 칸을 늘려도 우리 쪽은 멈추지 않되(관용), 늘어난 칸을 결과에 보관하지도
+    # 않는다 — 관용과 보관은 별개다.
     return RegisterOutcome(
         sent=True,
         recorded=True,
         deduped=deduped,
         status=status,
         request={},
-        payload=payload,
+        candidate_id=_js_trim(record_id),
     )
 
 
@@ -297,7 +294,7 @@ class AdminApiRecorder:
                 deduped=None,
                 status=None,
                 request=redacted,
-                payload=None,
+                candidate_id=None,
             )
 
         outcome = parse_register_response(self._transport(request))
