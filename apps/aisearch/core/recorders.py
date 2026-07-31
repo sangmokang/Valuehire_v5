@@ -173,6 +173,14 @@ class DualRecorder:
     기본은 dry-run(라이브 발신 OFF). 라이브는 live=True + owner_signoff=True 둘 다 필요.
     부분 실패 시 status="partial" + pending_steps 로 반환하며, 같은 인자에
     resume_from=이전결과 를 넘기면 미완 단계만 이어서 수행한다.
+
+    V1 독립검증 결함9(공식 확인) — dry-run의 계약은 **"외부 쓰기 0건"**이지
+    "외부 호출 0건"이 아니다. ClickUp 중복확인(subtask_exists_with_profile_url)과
+    부모 Task 조회(find_parent_task)는 SOT25가 등록 전 필수 회수 단계로 못박아
+    dry-run에서도 실행된다(실제 ClickUp 클라이언트를 주입하면 진짜 읽기 호출이
+    나간다) — 오직 admin.register_candidate 처럼 **쓰기**만 self.live 로 게이트된다.
+    "dry-run = 아무 네트워크도 안 나간다"고 가정하고 실제 클라이언트를 주입하면
+    안 된다 — 진짜 네트워크 0건이 필요하면 항상 페이크/None 클라이언트를 넣는다.
     """
 
     def __init__(
