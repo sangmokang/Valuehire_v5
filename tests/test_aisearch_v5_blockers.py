@@ -185,6 +185,12 @@ class TestDetailPageBlockDetection:
                 value: object = True
                 if "/*vh:ready*/" in expr:
                     value = "complete"
+                elif "/*vh:count*/" in expr:
+                    value = "12명"  # 링크드인은 정상 — 이 테스트의 관심사는 상세 캡차다
+                elif "/*vh:rect*/" in expr:
+                    value = {"x": 10.0, "y": 10.0}
+                elif "/*vh:checked*/" in expr:
+                    value = True
                 elif "/*vh:html*/" in expr:
                     value = f"<html>{self.current}</html>"
                 elif "/*vh:url*/" in expr:

@@ -112,6 +112,10 @@ class _PipelineWaiting(Exception):
     """AC7 사람 개입 일시정지 — 재개까지 대기 시그널(내부 제어 신호)."""
 
 
+class _PipelineStopped(Exception):
+    """M2 — 다른 채널 실패로 인한 협조적 중단(내부 제어 신호)."""
+
+
 @dataclass
 class PipelineDeps:
     """전부 주입식 의존성 — 이 모듈은 실제 네트워크/브라우저를 만들지 않는다."""
@@ -146,6 +150,9 @@ class PipelineDeps:
     #: 다른 기기의 동시 실행을 막을 수 없다 — 알려진 한계, 주입 안 하면
     #: 명시적으로 그 한계를 그대로 가져간다).
     linkedin_session_lock: Optional[Any] = None
+    #: M2 — 채널 간 협조적 중단 신호. 한 채널이 죽으면 여기에 세팅되고, 남은
+    #: 채널은 새 작업 단위·새 페이지 요청을 시작하지 않는다(헛일 방지).
+    stop_event: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass
@@ -170,10 +177,21 @@ class PipelineReport:
     record_states: dict[str, RecordResult] = field(default_factory=dict)
     #: 2차 결함 8 — recorded/dry_run 이 아닌 기록 결과(초안 금지 + completed 금지).
     record_failures: list[dict[str, Any]] = field(default_factory=list)
+    #: M2(2026-07-31 리뷰) — 채널별 예외 **전량** 보고. 예전에는 첫 예외만
+    #: 재발생하고 나머지 채널의 실패는 흔적 없이 사라졌다.
+    channel_errors: list[dict[str, Any]] = field(default_factory=list)
+    #: M3(2026-07-31 리뷰) — 재발신에도 끝내 못 보낸 차단 알림(조용한 유실 금지).
+    notification_failures: list[str] = field(default_factory=list)
     #: 3차 결함 ⑦ — 제외어(not_keywords) 매칭으로 등록·초안 전에 걸러낸 후보
     #: (제외 사유 기록). 항목: channel, profile_url, matched_keyword,
     #: matched_field, reason.
     excluded: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _raise_if_stopped(deps: PipelineDeps) -> None:
+    """M2 — 다른 채널이 이미 죽었으면 새 작업을 시작하지 않는다."""
+    if deps.stop_event.is_set():
+        raise _PipelineStopped("다른 채널 실패로 협조적 중단")
 
 
 def _check_monitor(deps: PipelineDeps) -> None:
@@ -379,6 +397,7 @@ def _run_variant(
     try:
 
         def guarded_list(page: int) -> dict:
+            _raise_if_stopped(deps)  # M2 — 협조적 중단 확인
             _check_monitor(deps)  # AC7 — 매 리스트 페이지 요청 전 상태 확인
             return deps.fetch_list_page(channel, page, search_payload)
 
@@ -505,6 +524,9 @@ def run_search_pipeline(
     - "aborted": E8 — 표에 없는 예외, 명시적 중단 + error 에 상태 보고
     """
     report = PipelineReport(status=STATUS_ABORTED)
+    # M2 — 협조적 중단 신호는 **이번 실행** 한정이다. 재개 실행(previous=...)이
+    # 지난 실행의 신호를 물려받아 즉시 멈추면 자동 재개가 성립하지 않는다.
+    deps.stop_event.clear()
     try:
         position_name = jd.get("position_name")
         if not isinstance(position_name, str) or not position_name.strip():
@@ -539,6 +561,7 @@ def run_search_pipeline(
 
         def _run_units(runner: Any) -> None:
             while True:
+                _raise_if_stopped(deps)  # M2 — 새 변형 착수 전 협조적 중단 확인
                 unit = runner.next_unit()
                 if unit is None:
                     return
@@ -553,28 +576,52 @@ def run_search_pipeline(
             # V1 독립검증 결함4 — 링크드인 채널 실행 전체를 기기 간 세션 락으로
             # 감싼다. 다른 기기(또는 이 기기의 다른 프로세스)가 이미 보유 중이면
             # LinkedInSessionLockError 로 즉시 실패(E4: 계정당 동시 1기기).
-            if runner.channel != LINKEDIN_CHANNEL or deps.linkedin_session_lock is None:
-                _run_units(runner)
-                return
-            with deps.linkedin_session_lock:
-                _run_units(runner)
+            try:
+                if (
+                    runner.channel != LINKEDIN_CHANNEL
+                    or deps.linkedin_session_lock is None
+                ):
+                    _run_units(runner)
+                    return
+                with deps.linkedin_session_lock:
+                    _run_units(runner)
+            except BaseException:
+                # M2 — 한 채널이 죽으면 남은 채널에 협조적 중단을 알린다.
+                # (사람 개입/차단도 같은 신호를 쓴다 — 어차피 전 채널이 멈춰야 한다.)
+                deps.stop_event.set()
+                raise
 
         with ThreadPoolExecutor(
             max_workers=len(runners), thread_name_prefix="aisearch-channel"
         ) as pool:
-            futures = [pool.submit(_run_channel, runner) for runner in runners]
+            futures = {
+                pool.submit(_run_channel, runner): runner.channel for runner in runners
+            }
         channel_errors: list[BaseException] = []
-        for future in futures:
+        for future, channel in futures.items():
             exc = future.exception()
-            if exc is not None:
-                channel_errors.append(exc)
+            if exc is None:
+                continue
+            channel_errors.append(exc)
+            # M2 — "전체 보고": 원인 오류든 그로 인한 협조적 중단이든 채널마다
+            # 무슨 일이 있었는지 전부 남긴다(예전에는 첫 예외만 남고 사라졌다).
+            report.channel_errors.append(
+                {
+                    "channel": channel,
+                    "type": type(exc).__name__,
+                    "error": str(exc) or type(exc).__name__,
+                    "cooperative_stop": isinstance(exc, _PipelineStopped),
+                }
+            )
         if channel_errors:
-            # 상태 우선순위: BLOCKED(차단) > WAITING(개입) > 그 외(E8 abort).
+            # 상태 우선순위: BLOCKED(차단) > WAITING(개입) > 그 외(E8 abort)
+            # > _PipelineStopped(파생 신호는 마지막).
             for kind in (_PipelineBlocked, _PipelineWaiting):
                 for exc in channel_errors:
                     if isinstance(exc, kind):
                         raise exc
-            raise channel_errors[0]
+            real = [e for e in channel_errors if not isinstance(e, _PipelineStopped)]
+            raise (real or channel_errors)[0]
 
         # 2차 결함 3·8 — 배너 해제 실패나 기록 미완결이 있으면 completed 금지.
         has_pending_records = any(
@@ -593,4 +640,13 @@ def run_search_pipeline(
     except Exception as e:  # noqa: BLE001 — E8 catch-all: 명시적 중단 + 상태 보고
         report.status = STATUS_ABORTED
         report.error = f"{type(e).__name__}: {e}"
+    finally:
+        # M3(2026-07-31 리뷰) — 종료 전에 밀린 차단 알림을 다시 보낸다.
+        # 끝내 실패한 것은 리포트에 남겨 사람이 알 수 있게 한다(조용한 유실 금지).
+        flush = getattr(deps.monitor, "flush_pending_notifications", None)
+        if callable(flush):
+            try:
+                report.notification_failures = list(flush())
+            except Exception as flush_error:  # noqa: BLE001 — 알림 실패가 결과를 덮지 않는다
+                report.notification_failures = [f"flush 실패: {flush_error}"]
     return report

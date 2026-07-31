@@ -51,16 +51,34 @@ def test_context_manager_releases_on_exception():
         LinkedInSessionLock(lock_dir=lock_dir, owner="macbook").acquire()
 
 
-def test_stale_lock_past_threshold_is_not_silently_stolen(tmp_path):
-    """오래된 락도 자동 탈취하지 않는다 — 사람 확인 후 수동 해제가 정책."""
+def test_stale_lock_past_threshold_is_reclaimed_but_live_lock_is_not(tmp_path):
+    """정책 개정(2026-07-31 전수 리뷰 F8).
+
+    이전 정책은 "stale 이어도 자동 회수 금지 — 사람이 수동 해제"였다. 그런데
+    프로세스가 한 번 강제 종료되면 락이 그대로 남아, 이후 **모든 실행**에서
+    링크드인 채널이 실패하고 그 예외가 파이프라인 전체를 aborted 로 만들었다
+    (사람인·잡코리아 결과까지 폐기). 사람 손 없이는 복구 불가능한 상태를 코드가
+    스스로 만드는 것은 SOT 불변식 2("멈추고 방치하지 않는다")에 어긋난다.
+
+    새 정책: **오래된(stale) 락만** 회수한다. 살아 있는 보유자의 락은 여전히
+    절대 탈취하지 않는다(E4: 계정당 동시 1기기).
+    """
     lock_dir = tmp_path / "linkedin_rps"
     old = LinkedInSessionLock(lock_dir=lock_dir, owner="macmini", stale_seconds=0.01)
     old.acquire()
-    time.sleep(0.05)  # stale_seconds 를 넘김
+    time.sleep(0.05)  # stale_seconds 를 넘김 — 보유자가 죽은 것으로 간주된다
 
     fresh = LinkedInSessionLock(lock_dir=lock_dir, owner="macbook", stale_seconds=0.01)
-    with pytest.raises(LinkedInSessionLockError):
-        fresh.acquire()  # stale 이어도 자동 탈취 금지 — 여전히 실패
+    fresh.acquire()  # 회수 성공 — 영구 정지 없음
+    try:
+        # 살아 있는 락은 여전히 탈취 금지.
+        other = LinkedInSessionLock(
+            lock_dir=lock_dir, owner="windows", stale_seconds=3600.0
+        )
+        with pytest.raises(LinkedInSessionLockError):
+            other.acquire()
+    finally:
+        fresh.release()
 
 
 def test_corrupted_meta_fails_closed_not_silent_success(tmp_path):

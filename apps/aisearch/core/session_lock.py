@@ -11,18 +11,32 @@
 폴더) 위에 있어야 한다. 로컬 전용 경로(`~/.valuehire/...`)를 쓰면 그 기기
 안에서만 유효하고, 다른 기기의 동시 실행은 여전히 못 막는다 — 호출자가
 실제 공유 경로를 넘겨야 한다(이 모듈은 경로의 공유 여부를 검증하지 않는다).
+
+2026-07-31 전수 리뷰 수정:
+- F8: 크래시로 남은 **오래된(stale)** 락은 자동 회수한다. 예전에는 어떤 경우에도
+  자동 회수를 하지 않아, 한 번 죽으면 링크드인 채널이 매 실행 실패하고 그
+  예외가 파이프라인 전체를 aborted 로 만들었다(사람인·잡코리아 결과까지 폐기).
+  사람 손 없이는 복구 불가능한 상태를 코드가 스스로 만들면 안 된다.
+- F9: `mkdir` 성공과 메타 기록 사이의 창에서 진 쪽이 "손상된 락 — 수동 해제"로
+  오진단됐다. 짧은 유예 동안 메타가 나타나길 기다려 **정상 경합**으로 보고한다.
+- F10: `owner.json` 이 dict 가 아니면 `AttributeError` 로 터졌다 — 타입까지 검증한다.
+
+살아 있는 보유자의 락은 어떤 경우에도 탈취하지 않는다(E4 불변).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 DEFAULT_STALE_SECONDS = 3600.0  # 이 시간 넘게 갱신 없는 락은 죽은 락으로 간주
+#: F9 — mkdir 직후 메타 기록 전 창을 정상 경합으로 판정하기 위한 유예(초).
+DEFAULT_META_GRACE_SECONDS = 1.0
 
 
 class LinkedInSessionLockError(RuntimeError):
@@ -36,42 +50,104 @@ class LinkedInSessionLock:
     lock_dir: Path
     owner: str
     stale_seconds: float = DEFAULT_STALE_SECONDS
+    meta_grace_seconds: float = DEFAULT_META_GRACE_SECONDS
+    clock: Callable[[], float] = time.time
+    sleep: Callable[[float], None] = time.sleep
     _acquired: bool = field(default=False, init=False, repr=False)
 
     def _meta_path(self) -> Path:
         return self.lock_dir / "owner.json"
 
     def _read_meta(self) -> Optional[dict]:
+        """메타를 읽는다. 부재·파싱 실패·**dict 아님**은 전부 판독 실패(F10)."""
         try:
-            return json.loads(self._meta_path().read_text(encoding="utf-8"))
+            data = json.loads(self._meta_path().read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001 — 손상/부재는 판독 실패로 처리
             return None
+        return data if isinstance(data, dict) else None
 
-    def acquire(self) -> None:
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=False)
-        except FileExistsError as exc:
+    def _age_of(self, meta: dict) -> Optional[float]:
+        acquired_at = meta.get("acquired_at")
+        if not isinstance(acquired_at, (int, float)) or isinstance(acquired_at, bool):
+            return None
+        return self.clock() - float(acquired_at)
+
+    def _wait_for_meta(self) -> Optional[dict]:
+        """F9 — 메타가 아직 안 써진 '경합 순간'을 유예 동안 기다려 본다."""
+        meta = self._read_meta()
+        if meta is not None or self.meta_grace_seconds <= 0:
+            return meta
+        deadline = self.clock() + self.meta_grace_seconds
+        step = min(0.05, self.meta_grace_seconds)
+        while self.clock() < deadline:
+            self.sleep(step)
             meta = self._read_meta()
-            age = time.time() - meta.get("acquired_at", 0.0) if meta else None
-            if meta is not None and age is not None and age < self.stale_seconds:
-                raise LinkedInSessionLockError(
-                    f"링크드인 세션 락 보유 중: owner={meta.get('owner')!r} "
-                    f"pid={meta.get('pid')} ({age:.0f}초 전 획득) — fail-closed"
-                ) from exc
-            # 오래됐거나(stale) 메타를 못 읽은 락 — 자동 탈취하지 않는다(경합
-            # 위험). 사람이 상태를 확인한 뒤 수동으로 지워야 한다.
-            raise LinkedInSessionLockError(
-                f"오래됐거나 손상된 락 발견({self.lock_dir}) — 자동 탈취 금지, "
-                "사람 확인 후 수동 해제 필요"
-            ) from exc
-        self._meta_path().write_text(
+            if meta is not None:
+                return meta
+        return None
+
+    def _dir_age(self) -> Optional[float]:
+        try:
+            return self.clock() - self.lock_dir.stat().st_mtime
+        except OSError:
+            return None
+
+    def _reclaim(self) -> None:
+        """죽은 락 회수 — 디렉터리를 통째로 지운다(내용은 메타 하나뿐)."""
+        shutil.rmtree(self.lock_dir, ignore_errors=True)
+
+    def _write_meta(self) -> None:
+        # 원자적 교체 — 반쯤 쓰인 메타가 다른 기기에 읽히지 않게 한다.
+        tmp = self._meta_path().with_name("owner.json.tmp")
+        tmp.write_text(
             json.dumps(
-                {"owner": self.owner, "acquired_at": time.time(), "pid": os.getpid()},
+                {"owner": self.owner, "acquired_at": self.clock(), "pid": os.getpid()},
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        self._acquired = True
+        os.replace(tmp, self._meta_path())
+
+    def acquire(self) -> None:
+        for attempt in (1, 2):  # 회수 후 딱 한 번만 재시도(무한 탈취 경쟁 금지)
+            try:
+                self.lock_dir.mkdir(parents=True, exist_ok=False)
+            except FileExistsError as exc:
+                if attempt == 2:
+                    raise LinkedInSessionLockError(
+                        f"링크드인 세션 락 재획득 실패({self.lock_dir}) — 회수 직후 "
+                        "다른 기기가 먼저 가져갔다(경합), fail-closed"
+                    ) from exc
+                meta = self._wait_for_meta()
+                if meta is not None:
+                    age = self._age_of(meta)
+                    if age is None or age < self.stale_seconds:
+                        # 살아 있는 보유자 — 절대 탈취하지 않는다(E4: 계정당 1기기).
+                        raise LinkedInSessionLockError(
+                            f"링크드인 세션 락 보유 중: owner={meta.get('owner')!r} "
+                            f"pid={meta.get('pid')}"
+                            + (f" ({age:.0f}초 전 획득)" if age is not None else "")
+                            + " — fail-closed"
+                        ) from exc
+                    # F8 — stale: 보유자가 죽은 것으로 보고 회수 후 재시도.
+                    self._reclaim()
+                    continue
+                # 메타를 끝내 못 읽었다. 두 가지 경우가 있다:
+                #  (a) 방금 mkdir 한 다른 기기가 아직 메타를 안 썼다(정상 경합)
+                #  (b) 크래시로 메타 없이 디렉터리만 남았다(죽은 락)
+                # 디렉터리 나이로 가른다 — 오래됐으면 (b) 로 보고 회수한다.
+                dir_age = self._dir_age()
+                if dir_age is not None and dir_age >= self.stale_seconds:
+                    self._reclaim()
+                    continue
+                raise LinkedInSessionLockError(
+                    f"링크드인 세션 락 보유 중({self.lock_dir}) — 다른 기기가 방금 "
+                    "획득해 메타 기록 전이다(정상 경합), fail-closed"
+                ) from exc
+            else:
+                self._write_meta()
+                self._acquired = True
+                return
 
     def release(self) -> None:
         if not self._acquired:
@@ -82,6 +158,10 @@ class LinkedInSessionLock:
             except FileNotFoundError:
                 pass
             self.lock_dir.rmdir()
+        except OSError:
+            # 해제 실패가 파이프라인 결과를 덮지 않도록 한다 — 남은 락은 다음
+            # 실행에서 stale 회수 대상이 된다(F8).
+            pass
         finally:
             self._acquired = False
 

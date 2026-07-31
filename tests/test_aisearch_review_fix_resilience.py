@@ -15,6 +15,7 @@ goal: docs/engineering/aisearch-review-fix-goal-2026-07-31.md
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -31,24 +32,46 @@ from apps.aisearch.core.session_lock import (
 
 
 def test_m2_reports_every_channel_error_not_just_the_first():
+    """모든 채널이 각자 죽으면(동시 실패) 전부 보고된다 — 첫 하나만이 아니다."""
     from apps.aisearch.core.orchestrator import run_search_pipeline
     from tests.test_aisearch_orchestrator import Harness, _jd
 
     h = Harness(pages=1)
+    started = threading.Barrier(4, timeout=5)  # 3채널 + 본 스레드
 
     def boom(channel: str, page: int) -> None:
+        # 세 채널이 같은 시점에 도달한 뒤 동시에 실패한다(경합 없는 결정론).
+        if page == 1:
+            try:
+                started.wait()
+            except threading.BrokenBarrierError:  # pragma: no cover — 방어
+                pass
         raise RuntimeError(f"{channel} 드라이버 폭발")
 
     h.list_side_effect = boom
 
-    report = run_search_pipeline(_jd(), h.deps())
+    import threading as _t
+
+    result: dict = {}
+
+    def run():
+        result["report"] = run_search_pipeline(_jd(), h.deps())
+
+    worker = _t.Thread(target=run)
+    worker.start()
+    try:
+        started.wait()
+    except threading.BrokenBarrierError:  # pragma: no cover — 방어
+        pass
+    worker.join(timeout=10)
+    report = result["report"]
 
     assert report.status == "aborted"
-    assert len(report.channel_errors) >= 2, (
+    assert len(report.channel_errors) >= 3, (
         f"채널 오류가 전부 보고되지 않았다: {report.channel_errors}"
     )
     channels = {e["channel"] for e in report.channel_errors}
-    assert channels & {"linkedin_rps", "saramin", "jobkorea"}
+    assert {"linkedin_rps", "saramin", "jobkorea"} <= channels
     for entry in report.channel_errors:
         assert entry["error"]
 
@@ -60,11 +83,17 @@ def test_m2_one_channel_failure_signals_others_to_stop():
 
     h = Harness(pages=20)  # 채널당 20페이지 — 중단 신호가 없으면 계속 돈다
     calls: list[tuple[str, int]] = []
+    lock = threading.Lock()
+    failed = threading.Event()
 
     def side_effect(channel: str, page: int) -> None:
-        calls.append((channel, page))
+        with lock:
+            calls.append((channel, page))
         if channel == "saramin" and page == 1:
+            failed.set()
             raise RuntimeError("saramin 폭발")
+        # 다른 채널은 실패가 날 때까지 기다렸다가 진행한다(경합 없는 결정론).
+        failed.wait(timeout=5)
 
     h.list_side_effect = side_effect
 
@@ -72,9 +101,11 @@ def test_m2_one_channel_failure_signals_others_to_stop():
 
     assert report.status == "aborted"
     total_pages = len(calls)
-    assert total_pages < 3 * 20, (
-        f"다른 채널이 중단 신호를 받지 못하고 끝까지 돌았다(요청 {total_pages}건)"
+    assert total_pages <= 10, (
+        f"다른 채널이 중단 신호를 받지 못하고 계속 돌았다(요청 {total_pages}건)"
     )
+    stopped = [e for e in report.channel_errors if e.get("cooperative_stop")]
+    assert stopped, "협조적 중단이 리포트에 남지 않았다"
 
 
 # ── M3 — 알림 재발신(flush) ───────────────────────────────────────────────
@@ -212,10 +243,26 @@ def test_f8_lock_failure_does_not_abort_other_channels():
         def __exit__(self, *exc):
             return False
 
-    h = Harness(pages=1, linkedin_session_lock=_AlwaysHeld())
+    portals_done = threading.Event()
+
+    class _HeldUntilPortalsRan(_AlwaysHeld):
+        def __enter__(self):
+            portals_done.wait(timeout=5)  # 포털이 1페이지를 마친 뒤 실패한다
+            raise LinkedInSessionLockError("다른 기기 보유 중")
+
+    h = Harness(pages=1, linkedin_session_lock=_HeldUntilPortalsRan())
+    seen: set[str] = set()
+
+    def side_effect(channel: str, page: int) -> None:
+        seen.add(channel)
+        if {"saramin", "jobkorea"} <= seen:
+            portals_done.set()
+
+    h.list_side_effect = side_effect
+
     report = run_search_pipeline(_jd(), h.deps())
 
-    # 링크드인은 실패로 보고되지만, 포털 두 채널의 변형은 실제로 돌아야 한다.
+    # 링크드인은 실패로 보고되지만, 이미 끝난 포털 두 채널의 결과는 남아야 한다.
     assert any("linkedin" in e["channel"] for e in report.channel_errors)
     portal_variants = [v for v in report.variants if v.channel in ("saramin", "jobkorea")]
     assert portal_variants, "락 실패 때문에 다른 채널 결과까지 버려졌다"

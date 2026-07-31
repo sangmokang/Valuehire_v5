@@ -174,6 +174,30 @@ class InterventionMonitor:
                 continue
         self._pending_notifications.append(message)
 
+    def flush_pending_notifications(self) -> list[str]:
+        """M3(2026-07-31 리뷰) — 보존된 알림을 다시 보낸다.
+
+        예전에는 pending_notifications 에 쌓아 두기만 하고 다시 보내는 경로가
+        없어서, 차단 알림이 조용히 사라졌다(사장님이 캡차를 모른 채 지나감).
+        파이프라인 종료 전에 이 함수를 불러 재발신하고, **끝내 실패한 것만**
+        돌려준다 — 호출자가 리포트에 표면화한다. 실패한 알림은 계속 보존한다.
+        """
+        if not self._pending_notifications:
+            return []
+        queued, self._pending_notifications = self._pending_notifications, []
+        still_failing: list[str] = []
+        for message in queued:
+            for _ in range(NOTIFY_MAX_ATTEMPTS):
+                try:
+                    self._notifier.notify(message)
+                    break
+                except Exception:
+                    continue
+            else:
+                still_failing.append(message)
+        self._pending_notifications.extend(still_failing)
+        return list(still_failing)
+
     def poll(self) -> MonitorState:
         """주기 점검 — 마지막 입력 후 30초(D1) 무입력이면 자동 재개.
 
