@@ -261,6 +261,19 @@ def _select_js(selector: str, value: str) -> str:
     )
 
 
+def _checked_js(selector: str) -> str:
+    """2026-07-31 리뷰 H4 — 체크박스의 **현재 상태**를 읽는다(조작 아님).
+
+    셀렉터가 없으면 null 을 돌려주고, 호출자가 fail-closed 로 처리한다.
+    """
+    return (
+        "/*vh:checked*/(function(){"
+        f"var e=document.querySelector({json.dumps(selector)});"
+        "if(!e)return null;"
+        "return !!e.checked;})()"
+    )
+
+
 #: Enter 키 이벤트 3종(rawKeyDown/char/keyUp) — Input.dispatchKeyEvent 파라미터.
 _ENTER_KEY_EVENTS: tuple[dict, ...] = (
     {
@@ -423,6 +436,31 @@ class CdpDriver:
         finally:
             self._set_auto_flag(False)
 
+    def set_checkbox(self, selector: str, desired_state: bool) -> bool:
+        """2026-07-31 리뷰 H4 — 체크박스를 **목표 상태로 만든다**(멱등).
+
+        현재 상태를 먼저 읽고, 목표와 같으면 아무것도 하지 않는다(클릭 0회).
+        예전에는 무조건 클릭해서, 이미 켜져 있던 필터(예: 잡코리아 학력
+        "대학교(4년) 졸업")를 다시 눌러 조용히 꺼버렸다.
+
+        반환: 실제로 클릭했는지 여부.
+        """
+        current = self._evaluate(_checked_js(selector))
+        if not isinstance(current, bool):
+            raise CdpDriverError(
+                f"체크박스 상태를 읽지 못했다(fail-closed): {selector} -> {current!r}"
+            )
+        if current is desired_state:
+            return False
+        self._click(selector)
+        after = self._evaluate(_checked_js(selector))
+        if after is not desired_state:
+            raise CdpDriverError(
+                f"체크박스가 목표 상태가 되지 않았다(fail-closed): {selector} "
+                f"목표={desired_state} 결과={after!r}"
+            )
+        return True
+
     def _select_option(self, selector: str, value: str) -> None:
         """``<select>`` 옵션 선택 — 텍스트 입력에는 사용 금지(결함 ① 참조)."""
         if self._evaluate(_select_js(selector, value)) is not True:
@@ -494,7 +532,11 @@ class CdpDriver:
             kind = step.get("kind", "text")
             values = step.get("values") or []
             if kind == "checkbox":
-                self._click(step["selector"])  # 결함 ② — 클릭 이벤트 시퀀스
+                # H4 — "누른다"가 아니라 "이 상태로 만든다". 목표 상태가 없으면
+                # 켜는 것이 기본(모든 체크박스 스텝은 필터를 켜려고 존재한다).
+                self.set_checkbox(
+                    step["selector"], bool(step.get("desired_state", True))
+                )
                 continue
             if kind == "select":
                 for value in values:

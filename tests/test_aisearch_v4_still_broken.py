@@ -61,6 +61,9 @@ class FakeTransport:
 
     def __init__(self, responder=None):
         self.calls: list[tuple[str, dict]] = []
+        #: H4(2026-07-31 리뷰) — 체크박스는 이제 "상태"다. 실제 화면처럼
+        #: 클릭할 때마다 토글되는 상태를 페이크도 그대로 흉내낸다.
+        self.checked = False
         self._responder = responder or self.default_responder
 
     @staticmethod
@@ -91,6 +94,13 @@ class FakeTransport:
 
     def __call__(self, method: str, params: dict) -> dict:
         self.calls.append((method, dict(params)))
+        # H4(2026-07-31 리뷰) — 체크박스는 이제 "상태"다. 실제 화면처럼
+        # 클릭할 때마다 토글되는 상태를 페이크도 그대로 흉내낸다(어떤
+        # responder 를 쓰든 체크 상태는 이 클래스가 일관되게 관리한다).
+        if method == "Input.dispatchMouseEvent" and params.get("type") == "mousePressed":
+            self.checked = not self.checked
+        if "/*vh:checked*/" in params.get("expression", ""):
+            return {"result": {"value": self.checked}}
         return self._responder(method, params)
 
     def exprs(self) -> list[str]:

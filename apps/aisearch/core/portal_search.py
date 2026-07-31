@@ -115,17 +115,27 @@ STEP_KIND_CHECKBOX = "checkbox"
 STEP_KIND_SELECT = "select"
 
 
+#: 2026-07-31 전수 리뷰 H4 — 체크박스 스텝의 **목표 상태**.
+#: 예전에는 "클릭하라"만 있어서, 이미 켜져 있는 필터를 다시 눌러 조용히 껐다
+#: (학력 필터가 풀린 채로 검색이 나감). 이제 스텝은 "이 상태가 되어야 한다"를
+#: 선언하고, 드라이버가 현재 상태를 확인해 다를 때만 클릭한다.
+CHECKBOX_DESIRED_STATE = True
+
+
 def _steps(*specs: tuple[str, str, list[str], str]) -> list[dict[str, Any]]:
-    return [
-        {
+    steps: list[dict[str, Any]] = []
+    for i, (field, selector, values, kind) in enumerate(specs, start=1):
+        step: dict[str, Any] = {
             "order": i,
             "field": field,
             "selector": selector,
             "values": list(values),
             "kind": kind,
         }
-        for i, (field, selector, values, kind) in enumerate(specs, start=1)
-    ]
+        if kind == STEP_KIND_CHECKBOX:
+            step["desired_state"] = CHECKBOX_DESIRED_STATE
+        steps.append(step)
+    return steps
 
 
 def build_portal_search_descriptors(

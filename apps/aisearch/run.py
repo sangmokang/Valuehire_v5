@@ -101,8 +101,13 @@ class JsonlPageStore:
         channel = row.get("channel")
         position_ref = row.get("position_ref")
         url = row.get("url")
-        if channel and position_ref and url:
-            return (table, channel, position_ref, url)
+        page_type = row.get("page_type")
+        # 2026-07-31 리뷰 H5 — page_type 을 키에 포함한다. pagination_store 의
+        # make_row_id 는 (channel, page_type, url, position_ref) 로 id 를 만드는데
+        # 저장 키에는 page_type 이 빠져 있어서, 같은 URL 의 목록 페이지와 상세
+        # 페이지가 서로를 덮어썼다(전량 저장 D4 위반). 두 계약을 일치시킨다.
+        if channel and page_type and position_ref and url:
+            return (table, channel, page_type, position_ref, url)
         # 키 필드 없는 행 — id(또는 전체 내용)로 구분해 덮어쓰기 방지.
         return (table, "__no_page_key__", row.get("id") or json.dumps(row, sort_keys=True))
 
@@ -113,9 +118,21 @@ class JsonlPageStore:
                 json.dumps(stored, ensure_ascii=False)
                 for stored in self._rows.values()
             ]
-            self._path.write_text(
-                "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
-            )
+            payload = "\n".join(lines) + ("\n" if lines else "")
+            # 2026-07-31 리뷰 H5 — 원자적 쓰기. 예전에는 파일 전체를 제자리에서
+            # 다시 썼기 때문에, 쓰는 도중 죽으면 이미 저장해 둔 페이지가 통째로
+            # 깨졌다. 임시 파일에 다 쓰고 fsync 한 뒤 os.replace 로 한 번에
+            # 바꾼다 — 교체 전에 죽으면 기존 파일이 그대로 남는다.
+            tmp_path = self._path.with_name(self._path.name + ".tmp")
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_path, self._path)
+            except BaseException:
+                tmp_path.unlink(missing_ok=True)  # 실패한 임시본은 남기지 않는다
+                raise
 
     def rows_for(self, channel: str, position_ref: str) -> list[dict]:
         """현재 채널+포지션의 저장 행(원문 포함)만 — 추출기 입력(혼입 0)."""
