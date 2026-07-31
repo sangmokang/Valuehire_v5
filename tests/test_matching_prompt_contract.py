@@ -681,11 +681,12 @@ def test_dimension_bare_not_applicable_string_is_accepted_for_d2_and_d6() -> Non
 
     result = calculate_final_score(payload)
 
-    assert result["dimensions"]["D2"]["score"] == "not_applicable"
-    assert result["dimensions"]["D6"]["score"] == "not_applicable"
-    # 근거 문구는 코드가 소유한다 — LLM 이 안 준 자리를 지어내지 않는다.
-    assert result["dimensions"]["D2"]["evidence"]
-    assert result["dimensions"]["D6"]["evidence"]
+    # 건너뛴 두 차원은 가중치에서 빠지고 나머지로 재분배된다(예외로 후보를 버리지 않는다).
+    assert "D2" not in result["weights_applied"]
+    assert "D6" not in result["weights_applied"]
+    assert sum(result["weights_applied"].values()) == 100
+    assert result["contract_version"] == CONTRACT_VERSION
+    assert isinstance(result["score"], int)
 
 
 def test_bare_not_applicable_is_rejected_for_dimensions_that_cannot_skip() -> None:

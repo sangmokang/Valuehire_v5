@@ -28,6 +28,8 @@ _TOP_LEVEL_KEYS = {
 }
 _VERDICTS = {"pass", "fail", "uncertain"}
 _NOT_APPLICABLE_DIMENSIONS = {"D2", "D6"}
+# 차원을 건너뛸 때 코드가 채우는 고정 근거 문구. 모델이 근거를 지어내지 못하게 코드가 소유한다.
+_NOT_APPLICABLE_EVIDENCE = "해당 없음 — 비교할 근거가 JD/이력서/티어맵에 없어 이 차원은 채점에서 제외"
 
 
 class MatchingContractError(ValueError):
@@ -114,6 +116,14 @@ def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
     dimensions: dict[str, dict[str, Any]] = {}
     for dimension_id in DIMENSION_IDS:
         item = value[dimension_id]
+        # LLM 은 건너뛸 수 있는 차원을 객체가 아니라 문자열 "not_applicable" 로 낸다
+        # (2026-08-01 라이브 응답 실측). 프롬프트가 그렇게 읽히기 때문이며, 그 표기 하나로
+        # 후보를 통째로 버리지 않는다. 근거 문구는 지어내지 않고 코드가 소유한 고정 문구를 쓴다.
+        if item == "not_applicable" and dimension_id in _NOT_APPLICABLE_DIMENSIONS:
+            item = {
+                "score": "not_applicable",
+                "evidence": _NOT_APPLICABLE_EVIDENCE,
+            }
         required = {"score", "evidence"}
         allowed = set(required)
         if dimension_id == "D7":
