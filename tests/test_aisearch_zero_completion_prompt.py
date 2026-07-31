@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PROMPT = REPO / "docs/prompts/aisearch-zero-completion-goal-2026-07-31.md"
-EXPECTED_SHA256 = "pending-independent-review"
+EXPECTED_SHA256 = "e253aa3a22cca40f3f56b634154c17284b7d5d072fe0bae933c59ba6aea541b8"
 SECTIONS = {
     "실행 지시": ("본문 자체가 실행 계약", "make red-ledger", "make task NAME="),
     "먼저 읽고 회수할 것": ("재발 원장", "저장소 밖의 필수 근거가 없으면", "선행 이슈 `#255`(엄격 재발 근거 휴대성)"),
