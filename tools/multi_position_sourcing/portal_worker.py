@@ -5,6 +5,7 @@ import inspect
 import json
 import math
 import os
+import platform
 import re
 import secrets
 import stat
@@ -29,6 +30,11 @@ except ImportError:  # POSIX
 from .models import CandidateResultCard, Channel
 from .portal_safety import safe_artifact_url, safe_exception_label
 from .selectors import DEFAULT_SELECTOR_MAP
+from .windows_chrome import (
+    MANAGED_BROWSER_STATUS_MESSAGES,
+    ManagedBrowserDiscoveryError,
+    list_managed_windows_chrome_processes,
+)
 
 PortalLaunchMode = Literal["headed", "headless"]
 PortalConnectionMode = Literal["persistent_context", "raw_single_tab"]
@@ -107,10 +113,52 @@ _CHANNEL_BROWSER_NAME = {
 }
 
 
+def _macos_profile_is_managed(
+    profile_parts: tuple[str, ...],
+    channel_token: str,
+    home_parts: tuple[str, ...] = (),
+) -> bool:
+    """macOS 관리 프로필 경계.
+
+    macOS는 Windows처럼 등록부 값과 정확일치를 걸 수 없다 — 라이브 브라우저가
+    등록 이름과 다른 프로필(예: ``...-standby``)로 떠 있는 것이 정상 운영 상태이고
+    (PR#249), 정확일치는 지금 동작하는 경로를 깨뜨린다. 대신 이름 스침만으로
+    통과하던 구멍 세 개를 막는다:
+
+    1. ``.valuehire``는 사용자 홈 바로 아래여야 한다 — ``/tmp``·외장디스크 차단.
+    2. **마지막 조각**이 채널 토큰이어야 한다 — 경로 중간에 스치는 것은 불충분.
+    3. 다른 채널 토큰이 경로에 있으면 거부 — ``.../saramin/linkedin-decoy`` 차단.
+    """
+    # 홈을 알면 **내 홈** 아래만, 모르면 최소한 /Users/<사용자>/.valuehire/ 아래만.
+    # 남의 계정 홈(`/Users/intruder/.valuehire/...`)은 이 기기의 관리 브라우저가 아니다(V2-1).
+    if home_parts:
+        if profile_parts[: len(home_parts)] != home_parts:
+            return False
+        if profile_parts[len(home_parts) : len(home_parts) + 1] != (".valuehire",):
+            return False
+    elif profile_parts[:1] != ("users",) or profile_parts[2:3] != (".valuehire",):
+        return False
+    if not channel_token:
+        return True
+    tail = profile_parts[-1]
+    if not (tail == channel_token or tail.startswith(channel_token + "-")):
+        return False
+    others = {
+        token for token in _CHANNEL_BROWSER_NAME.values() if token != channel_token
+    }
+    return not any(
+        part == other or part.startswith(other + "-")
+        for part in profile_parts
+        for other in others
+    )
+
+
 def discover_local_chrome_cdp_endpoints(
     *,
     channel: str | None = None,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] | None = None,
+    system_name: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Return local debugging endpoints declared by live root Chrome processes.
 
@@ -118,19 +166,43 @@ def discover_local_chrome_cdp_endpoints(
     and bind it to the requested official portal surface.  Renderer and utility
     children are ignored.  Only ValueHire-owned profile directories are eligible,
     so a personal Chrome with a Talent tab can never become the automation target.
+
+    The OS decides which read-only inspector runs: macOS reads ``ps``, Windows
+    reads ``Get-CimInstance Win32_Process`` through a fixed argument vector with
+    no shell.  Any other platform, and any inspector failure, stops with a fixed
+    status code instead of pretending that zero browsers are running.
     """
+    system = (system_name or platform.system()).strip()
+    if system == "Windows":
+        return _discover_windows_channel_endpoints(
+            channel=channel, runner=runner, env=env
+        )
+    if system != "Darwin":
+        raise ManagedBrowserDiscoveryError(
+            "UNSUPPORTED_OS", f"managed browser discovery is not defined for {system!r}"
+        )
+    run = runner or subprocess.run
     try:
-        result = runner(
+        result = run(
             ["ps", "ax", "-o", "command="],
             capture_output=True,
             text=True,
             timeout=15,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return []
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ManagedBrowserDiscoveryError(
+            "BROWSER_QUERY_FAILED", "process inspection did not run"
+        ) from exc
     if int(getattr(result, "returncode", 1)) != 0:
-        return []
+        raise ManagedBrowserDiscoveryError(
+            "BROWSER_QUERY_FAILED", "process inspection returned non-zero"
+        )
+
+    home = str((os.environ if env is None else env).get("HOME") or "").strip()
+    home_parts = tuple(
+        part.casefold() for part in home.replace("\\", "/").split("/") if part
+    ) if home.startswith("/") else ()
 
     endpoints: list[str] = []
     for raw_command in str(getattr(result, "stdout", "") or "").splitlines():
@@ -165,13 +237,8 @@ def discover_local_chrome_cdp_endpoints(
         if (
             not profile.startswith("/")
             or any(part in {".", ".."} for part in profile_parts)
-            or ".valuehire" not in profile_parts
-            or (
-                channel_token
-                and not any(
-                    part == channel_token or part.startswith(channel_token + "-")
-                    for part in profile_parts
-                )
+            or not _macos_profile_is_managed(
+                profile_parts, channel_token, home_parts
             )
         ):
             continue
@@ -179,6 +246,26 @@ def discover_local_chrome_cdp_endpoints(
         if not port_text.isascii() or not 1 <= int(port_text) <= 65535:
             continue
         endpoint = f"http://127.0.0.1:{int(port_text)}"
+        if endpoint not in endpoints:
+            endpoints.append(endpoint)
+    return endpoints
+
+
+def _discover_windows_channel_endpoints(
+    *,
+    channel: str | None,
+    runner: Callable[..., Any] | None,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Windows 루트 chrome.exe가 선언한 로컬 endpoint 목록(등록 프로필만)."""
+    processes = list_managed_windows_chrome_processes(
+        channel_token=_CHANNEL_BROWSER_NAME.get(channel or "", ""),
+        runner=runner,
+        env=env,
+    )
+    endpoints: list[str] = []
+    for process in processes:
+        endpoint = f"http://127.0.0.1:{process.port}"
         if endpoint not in endpoints:
             endpoints.append(endpoint)
     return endpoints
@@ -218,8 +305,13 @@ def _find_unique_live_channel_endpoint(
             verified.append(endpoint)
     unique = list(dict.fromkeys(verified))
     if len(unique) != 1:
-        raise LookupError(
-            f"{channel} live browser endpoint match count was {len(unique)}"
+        # 호출자가 관리 브라우저 유일성을 먼저 확정하므로 여기서 2개 이상은 나올 수
+        # 없다. 실패는 곧 "그 하나에 공식 화면이 없다"이며, 한 브라우저 안에 공식
+        # 화면이 여럿인 경우는 session_guard.resolve_existing_target 이 판정한다.
+        # (V2-3: 도달 불가능한 분기를 남겨 계약을 거짓으로 만들지 않는다.)
+        raise ManagedBrowserDiscoveryError(
+            "NO_OFFICIAL_TARGET",
+            f"{channel} live browser endpoint match count was {len(unique)}",
         )
     return unique[0]
 
@@ -227,7 +319,9 @@ def _find_unique_live_channel_endpoint(
 def resolve_managed_channel_cdp_endpoint(
     channel: str,
     *,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] | None = None,
+    system_name: str | None = None,
+    env: Mapping[str, str] | None = None,
     endpoint_discoverer: Callable[[], list[str]] | None = None,
     list_tabs: Callable[[str], list[dict]] | None = None,
 ) -> str:
@@ -236,43 +330,71 @@ def resolve_managed_channel_cdp_endpoint(
     The repository launcher identifies the running process by an exact user-data-dir
     argument, then reads its real debugging port. Ambiguous, remote, or malformed output
     fails closed so a same-site tab in another browser cannot be selected accidentally.
+
+    Windows has no shell launcher, so it goes straight to the OS process reader and
+    the official-surface check: the configured port is never trusted on its own.
     """
     browser_name = _CHANNEL_BROWSER_NAME.get(channel)
     if browser_name is None:
         raise ValueError(f"channel {channel!r} 은 관리 브라우저 대상이 아니다")
+
+    def discovered_endpoint() -> str:
+        discover = endpoint_discoverer or (
+            lambda: discover_local_chrome_cdp_endpoints(
+                channel=channel, runner=runner, system_name=system_name, env=env
+            )
+        )
+        candidates = list(dict.fromkeys(discover()))
+        # 루트 유일성은 공식 화면 검사보다 **먼저** 확정한다. 관리 브라우저가 둘인데
+        # 한쪽에만 Talent 화면이 있다고 그쪽을 고르면, 나머지 하나가 무엇인지
+        # 증명하지 못한 채 검색을 시작하게 된다(V1-F2 반례).
+        if not candidates:
+            raise ManagedBrowserDiscoveryError(
+                "NO_MANAGED_BROWSER", f"{channel} managed browser count was 0"
+            )
+        if len(candidates) > 1:
+            raise ManagedBrowserDiscoveryError(
+                "AMBIGUOUS_MANAGED_BROWSER",
+                f"{channel} managed browser count was {len(candidates)}",
+            )
+        tabs_reader = list_tabs
+        if tabs_reader is None:
+            from .raw_cdp import list_pages
+
+            tabs_reader = list_pages
+        return _find_unique_live_channel_endpoint(
+            channel,
+            candidate_endpoints=candidates,
+            list_tabs=tabs_reader,
+        )
+
+    system = (system_name or platform.system()).strip()
+    if system != "Darwin":
+        # Windows·기타 OS: Unix 셸 실행기를 시도조차 하지 않는다.
+        return discovered_endpoint()
+
+    run = runner or subprocess.run
     script = Path(__file__).resolve().parents[2] / "scripts" / "portal_browsers.sh"
     try:
-        result = runner(
+        result = run(
             [str(script), "cdp", browser_name],
             capture_output=True,
             text=True,
             timeout=15,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise LookupError(f"{channel} 관리 브라우저 endpoint 확인 실패") from exc
-    if int(getattr(result, "returncode", 1)) != 0:
-        discover = endpoint_discoverer or (
-            lambda: discover_local_chrome_cdp_endpoints(channel=channel)
-        )
-        candidates = discover()
-        if list_tabs is None:
-            from .raw_cdp import list_pages
-
-            list_tabs = list_pages
-        lines = [
-            _find_unique_live_channel_endpoint(
-                channel,
-                candidate_endpoints=candidates,
-                list_tabs=list_tabs,
-            )
-        ]
+    except (OSError, subprocess.TimeoutExpired):
+        # 실행기 자체가 없거나 실패해도 발견 경로로 이어진다(후보 0개로 흡수 금지).
+        lines = [discovered_endpoint()]
     else:
-        lines = [
-            line.strip()
-            for line in str(getattr(result, "stdout", "")).splitlines()
-            if line.strip()
-        ]
+        if int(getattr(result, "returncode", 1)) != 0:
+            lines = [discovered_endpoint()]
+        else:
+            lines = [
+                line.strip()
+                for line in str(getattr(result, "stdout", "")).splitlines()
+                if line.strip()
+            ]
     if len(lines) != 1:
         raise LookupError(f"{channel} 관리 브라우저 endpoint 출력이 모호함")
     try:

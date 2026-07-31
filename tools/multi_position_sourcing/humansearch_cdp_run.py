@@ -53,6 +53,7 @@ from tools.multi_position_sourcing.portal_worker import (
 from tools.multi_position_sourcing.session_guard import _default_login_lease
 from tools.multi_position_sourcing.session_guard import read_auth_observation
 from tools.multi_position_sourcing.session_guard import resolve_existing_target
+from tools.multi_position_sourcing.windows_chrome import owner_message_for
 
 SEARCH_URL_BASE = (
     "https://www.linkedin.com/talent/search?"
@@ -243,6 +244,14 @@ def resolve_exact_recruiter_target(
     try:
         ref = resolver("linkedin_rps", target_id=wanted_id)
     except (LookupError, RuntimeError, ValueError) as error:
+        # 발견 단계가 고정 상태 코드로 멈췄으면 그 문구를 그대로 사장님께 올린다.
+        # 여기서 한 문장으로 뭉개면 상태 코드→문구 표가 사용자에게 도달하지 못한다(V2-2).
+        code = getattr(error, "code", "")
+        message = owner_message_for(code)
+        if message:
+            failure = _profile_context_error(message)
+            failure.owner_status_code = code
+            raise failure from error
         raise _profile_context_error("exact managed Recruiter target could not be resolved") from error
     expected_scope = _scope_values(SEARCH_URL_BASE)
     initial_scope = _scope_values(ref.initial_url)

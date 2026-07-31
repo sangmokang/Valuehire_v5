@@ -199,7 +199,9 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
             calls.append(command)
             return Result()
 
-        endpoint = resolve_managed_channel_cdp_endpoint("linkedin_rps", runner=runner)
+        endpoint = resolve_managed_channel_cdp_endpoint(
+            "linkedin_rps", runner=runner, system_name="Darwin"
+        )
         self.assertEqual(endpoint, "http://127.0.0.1:9338")
         self.assertEqual(calls[0][-2:], ["cdp", "linkedin"])
 
@@ -244,7 +246,9 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
             stderr = ""
 
         endpoints = discover_local_chrome_cdp_endpoints(
-            runner=lambda *_args, **_kwargs: PsResult()
+            runner=lambda *_args, **_kwargs: PsResult(),
+            system_name="Darwin",
+            env={"HOME": "/Users/test"},
         )
 
         self.assertEqual(endpoints, ["http://127.0.0.1:9338"])
@@ -262,6 +266,7 @@ class FindVerifiedChannelEndpointTests(unittest.TestCase):
         endpoints = discover_local_chrome_cdp_endpoints(
             channel="linkedin_rps",
             runner=lambda *_args, **_kwargs: PsResult(),
+            system_name="Darwin",
         )
 
         self.assertEqual(endpoints, [])
