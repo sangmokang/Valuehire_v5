@@ -227,6 +227,7 @@ class TestPerChannelWsUrl:
             return FakeTransport()
 
         monkeypatch.setattr(run_mod, "connect_websocket_transport", fake_connect)
+        monkeypatch.setenv("AISEARCH_LINKEDIN_LOCK_DIR", str(tmp_path / "shared-lock-storage"))
         code = run_mod.main(
             [
                 _write_jd(tmp_path),
@@ -322,3 +323,73 @@ class TestLiveGateReachesAdminStep:
                 recorder=dry_run_recorder,  # 주입은 했지만 live=False — 플래그 불일치
             )
         assert exc.value.code not in (0, None)
+
+
+class TestLinkedInLockRequiredOnRealPath:
+    """V1 2차 독립검증 결함4 — 실 경로에서 락 미설정은 조용히 진행이 아니라 거부."""
+
+    def test_real_path_without_lock_dir_env_is_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AISEARCH_LINKEDIN_LOCK_DIR", raising=False)
+        monkeypatch.setattr(run_mod, "connect_websocket_transport", lambda url: FakeTransport())
+
+        with pytest.raises(SystemExit) as exc:
+            run_mod.main(
+                [
+                    _write_jd(tmp_path),
+                    "--browser",
+                    "--ws-url-linkedin_rps",
+                    "ws://linkedin-tab",
+                    "--ws-url-saramin",
+                    "ws://saramin-tab",
+                    "--ws-url-jobkorea",
+                    "ws://jobkorea-tab",
+                    "--pages-out",
+                    str(tmp_path / "pages.jsonl"),
+                ],
+                extractors=_empty_extractors(),
+            )
+        assert exc.value.code not in (0, None)
+
+    def test_test_injected_transport_path_does_not_require_lock_env(self, tmp_path, monkeypatch):
+        # transport_factory 를 직접 주입하는(테스트) 경로는 실 CDP 경로가 아니므로
+        # 락 env 강제 대상이 아니다 — 이 요구가 테스트 전반을 깨면 안 된다.
+        monkeypatch.delenv("AISEARCH_LINKEDIN_LOCK_DIR", raising=False)
+        code = run_mod.main(
+            [
+                _write_jd(tmp_path),
+                "--browser",
+                "--ws-url",
+                "ws://injected-not-used",
+                "--pages-out",
+                str(tmp_path / "pages.jsonl"),
+            ],
+            transport_factory=lambda ws_url: FakeTransport(),
+            extractors=_empty_extractors(),
+        )
+        assert code == 0
+
+
+class TestProfileUrlValidationHardened:
+    """V1 2차 독립검증 결함8 — 스킴만 보는 정규식은 호스트 없는 URL을 통과시켰다."""
+
+    def test_scheme_only_url_without_host_is_rejected(self):
+        from apps.aisearch.core.recorders import _is_valid_http_url
+
+        assert _is_valid_http_url("https://") is False
+        assert _is_valid_http_url("http://") is False
+
+    def test_url_with_internal_whitespace_is_rejected(self):
+        from apps.aisearch.core.recorders import _is_valid_http_url
+
+        assert _is_valid_http_url("https://a b.com/profile") is False
+
+    def test_valid_urls_still_accepted(self):
+        from apps.aisearch.core.recorders import _is_valid_http_url
+
+        assert _is_valid_http_url("https://www.linkedin.com/in/hong-gildong/") is True
+        assert _is_valid_http_url("http://example.com") is True
+
+    def test_javascript_scheme_still_rejected(self):
+        from apps.aisearch.core.recorders import _is_valid_http_url
+
+        assert _is_valid_http_url("javascript:void(0)") is False

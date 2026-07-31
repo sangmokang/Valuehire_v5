@@ -484,6 +484,21 @@ def run_search_pipeline(
     - "aborted": E8 — 표에 없는 예외, 명시적 중단 + error 에 상태 보고
     """
     report = PipelineReport(status=STATUS_ABORTED)
+    if previous is not None:
+        # V1 2차 독립검증 결함 — previous 를 record_states 조회(개별 후보
+        # 재개)에만 쓰고, report 자체는 매 호출마다 빈 채로 새로 만들어서
+        # 이전 실행에서 이미 등록/제외/초안된 후보가 재시도 결과에서
+        # 통째로 사라졌다(재개 루프가 report 를 매번 덮어씀). 여기서 이어받되,
+        # 대상은 되돌릴 수 없는(한번 확정되면 안 변하는) 결과만 한정한다.
+        # record_failures/banner_errors/below_threshold 는 "이번 라운드에
+        # 아직 안 풀린 문제"를 뜻하는 append-only 로그라 그대로 이어받으면,
+        # 이번 라운드에 실제로 해결된 뒤에도 지난 라운드의 stale 항목이 남아
+        # 영원히 completed 로 못 올라간다(V1 재검증에서 잡은 회귀) — 그래서
+        # 이번 라운드에 남아있는 문제만 반영하도록 새로 채운다(reset).
+        report.registered = list(previous.registered)
+        report.drafts = list(previous.drafts)
+        report.excluded = list(previous.excluded)
+        report.record_states = dict(previous.record_states)
     try:
         position_name = jd.get("position_name")
         if not isinstance(position_name, str) or not position_name.strip():
