@@ -136,11 +136,15 @@ def resolve_managed_browser_process(
 | 8 | `--user-data-dir` 누락/상대경로/제어문자 | 그 프로세스 거부(명시적) |
 | 9 | 공백 포함 인용 Windows 경로 `"C:\Users\a b\...\linkedin"` | 정확히 1개 값으로 해석 |
 | 10 | 개인 Chrome 프로필(`%LOCALAPPDATA%\Google\...`) | 제외 |
+| 10a | 등록값과 이름만 비슷한 폴더(`Valuehire2`, `...\saramin\linkedin-decoy`, `Valuehire` 2회 중첩) | 제외 — 등록부 값과 **정확일치**만 인정 (V1-F1) |
+| 10b | 원격/UNC 경로(`\\server\share\...`) | 제외 — 이 컴퓨터의 등록 프로필이 아님 (V1-F1) |
+| 10c | `%LOCALAPPDATA%` 미설정 | 등록 프로필을 확정할 수 없으므로 후보 0개(fail-closed) |
 | 11 | ValueHire 경로지만 다른 채널 프로필(saramin인데 linkedin 요청) | 제외 |
 | 12 | 설정 포트는 죽고 실제 포트가 다름 | 실제 포트를 발견·검증 후 사용 |
 | 13 | 디버깅 주소가 로컬이 아님(`http://10.0.0.5:9425`, 자격 포함, path/query 있음) | 거부 |
 | 14 | 공식 Talent 화면 0개 | `NO_OFFICIAL_TARGET` |
-| 15 | 공식 화면이 서로 다른 브라우저 2개에 존재 | `AMBIGUOUS_OFFICIAL_TARGET` |
+| 15 | 관리 루트가 2개 이상(화면이 한쪽에만 있어도) | `AMBIGUOUS_MANAGED_BROWSER` — 유일성은 화면 검사보다 먼저 확정 (V1-F2) |
+| 15a | 한 브라우저 안에 공식 화면이 여러 개이고 target id 미지정 | `AMBIGUOUS_OFFICIAL_TARGET` |
 | 16 | 룩얼라이크(`linkedin.com.evil.io`) 또는 일반 LinkedIn(`/feed`) | 거부 |
 | 17 | 이미 로그인된 Talent 화면 | `AUTHENTICATED` · 조작 0회 |
 | 18 | 캡차·2FA·checkpoint | `HUMAN_AUTH` · 검색 0회 |
@@ -211,4 +215,49 @@ def resolve_managed_browser_process(
 
 ## 적대 검증 로그
 
-(후기록)
+### G (생성자 자체 반증) — 2026-07-31
+
+| # | 시도 | 결과 | 조치 |
+|---|---|---|---|
+| G1 | 공백 있는 인용 Windows 경로 `--user-data-dir="C:\Users\Kang Sang Mo\..."` | **뚫림** — `shlex.split(posix=False)`가 토큰 중간 따옴표를 무시하고 공백에서 잘라 프로필이 3조각이 됨 → 후보 0개 | `parse_windows_command_line`을 `CommandLineToArgvW` 규칙 토크나이저로 교체(`windows_chrome.py`). 과거 브랜치 `origin/task/winpc-local-ai-search`의 `shlex` 구현을 채택하지 않은 이유 |
+| G2 | 이름만 같은 폴더 `D:\temp\Valuehire\linkedin`, `C:\Valuehire\linkedin` | **뚫림** — `valuehire` 조각만 확인해 `%LOCALAPPDATA%` 밖도 통과 | `is_registered_windows_profile`에 `local_app_data` 결합 + 미설정 시 `appdata\local\valuehire` 조각 순서 강제. `env` 인자를 실제로 사용하도록 배선(그전엔 받기만 하고 무시) |
+| G3 | CI(ubuntu-latest)에서 전체 검사 | **깨짐** — macOS 프로세스 목록을 흉내내는 기존 검사 7건이 `UNSUPPORTED_OS`로 실패 | 그 7건에 시뮬레이션 대상 OS(`system_name="Darwin"`)를 명시. 단언·케이스 삭제 0건 |
+| G4 | 따옴표 앞 역슬래시 `--user-data-dir="...\linkedin\"` | 못 뚫음 — 값에 `"`가 남아 채널 토큰 불일치로 fail-closed | 조치 불요 |
+| G5 | 따옴표 없는 공백 경로 `--user-data-dir=C:\Users\Kang Sang Mo\...` | 못 뚫음 — `C:\Users\Kang`으로 잘려 등록 경계 불일치로 fail-closed(오탐 아님) | 조치 불요 |
+| G6 | 탭 구분·빈 인자·값 분리형 `--user-data-dir C:\...` | 못 뚫음 — 모두 정확히 1개 값으로 해석 | 조치 불요 |
+| G7 | `\\?\C:\...` UNC 접두, 대문자, 후행 공백, `linkedinfake`, `..` 탈출, `Google\Valuehire` | 못 뚫음 — `linkedinfake`·`..`·`Google\Valuehire`·루트 `Valuehire`는 거부, 동일 폴더의 다른 표기만 허용 | 조치 불요 |
+| G8 | 고아 코드 여부 | 배선 확인 — `humansearch_cdp_run.main()` (`humansearch_cdp_run.py:742`, `target_resolver=None` 기본값) → `resolve_exact_recruiter_target:242` → `session_guard.resolve_existing_target:441/455` → `portal_worker.resolve_managed_channel_cdp_endpoint` + `session_guard.resolve_managed_browser_process` → OS 분기 | 조치 불요 |
+| G9 | 변이 검사 — `if "type" in options: continue`(자식 제외) 제거 | 검사가 즉시 잡음(`test_binds_endpoint_to_single_windows_root_process` 실패) → 복원 후 32 passed | 조치 불요 |
+
+실행 증거:
+- `.venv/bin/python -m pytest tests/test_managed_chrome_discovery_cross_os.py -q` → **32 passed, 22 subtests passed**
+- `./verify.sh` (macOS) → **3293 passed, 4 xfailed, 127 subtests passed**, `verify: pytest exit=0`
+- `platform.system` 을 `Linux`로 강제한 전체 실행(CI 환경 재현) → **3293 passed, 4 xfailed, 127 subtests passed**
+- `make strict-exit-gate` → `PASS — 미커밋 잔존 0 · 마커 상태 일치`
+
+### V1 (Codex 독립 적대검증) — 2026-07-31, **VERDICT: FAIL** → 전건 수정 후 재검증
+
+판정 본문 출처: Codex 세션 `~/.codex/sessions/2026/07/31/rollout-2026-07-31T22-15-12-019fb850-83a1-71c3-885a-1a69244f4621.jsonl`
+(codex-rescue 래퍼가 최종 메시지를 `Done.`으로만 반환해 무효 — 세션 롤아웃에서 본문을 회수했다. 래퍼 결함은 별도 과제)
+
+Codex 실행 증거(읽기 전용 샌드박스):
+- `pytest tests/test_managed_chrome_discovery_cross_os.py -q -s -p no:cacheprovider` → `32 passed, 22 subtests passed`, exit 0
+- `pytest tests/test_channel_endpoint_marker_verify.py tests/test_login_session_runner.py tests/test_managed_chrome_discovery_cross_os.py -q -s` → `122 passed, 25 subtests passed`, exit 0
+- 명령행 교차검사 `cases=781 mismatches=0`
+- 검사 변경 감사 `darwin_additions=7, deleted_test_defs=0, deleted_assert_lines=0, deleted_skip_lines=0` (테스트 약화 없음 확인)
+- 전체 실행은 읽기 전용 샌드박스 제약으로 `191 failed / 304 errors` — Codex 스스로 "제품 회귀 숫자로 판정하지 않았다"고 명시. 채택하지 않음
+
+| # | Codex 지적 | 내 재현 | 조치 |
+|---|---|---|---|
+| V1-F1 (심각) | 등록 경계 우회 — `...\sm002\saramin\linkedin-decoy`, 원격 UNC, `Valuehire` 2회 경로가 후보로 채택 | **재현됨**(3건 모두 `True`) | 조각 이름 추정을 폐기하고 **기기 등록부(`search_machine.SEARCH_MACHINES`)의 값과 정규화 후 정확일치**로 교체. `%LOCALAPPDATA%`는 실제 환경변수로만 펼치고, 없으면 등록 프로필을 하나도 확정하지 않아 fail-closed. UNC(`\\`) 명시 거부 |
+| V1-F2 (심각) | 관리 루트 2개인데 한쪽에만 Talent 화면이 있으면 그쪽을 선택 | **재현됨**(`http://127.0.0.1:9425` 선택) | 루트 유일성을 **공식 화면 검사보다 먼저** 확정. 2개 이상이면 `AMBIGUOUS_MANAGED_BROWSER` |
+| V1-F3 (심각) | 인증 전 배지 추가로 조작 0회 위반 | **재현 안 됨** — 인증 경로의 attach는 모두 `badge=False`(`session_guard.py:1511` 기본값 False, `humansearch_cdp_run.py:747` 명시 False). `raw_cdp.attach`의 기본 `badge=True`는 이 경로에서 쓰이지 않음. 이동은 `assert_not_blocked_or_abort` 이후 검색 단계이므로 계약 범위 밖 | 조치 없음(기록 보존). `raw_cdp.attach` 기본값이 잠재 함정인 점은 별도 과제 |
+| V1-F4 (높음) | 후보0·화면0·후보2·조회예외가 전부 `code=None` 일반 오류로 합쳐짐 | **재현됨**(`LookupError code=None`) | `NO_MANAGED_BROWSER`/`AMBIGUOUS_MANAGED_BROWSER`/`NO_OFFICIAL_TARGET`/`AMBIGUOUS_OFFICIAL_TARGET`를 각 발생 지점에 배선. `resolve_existing_target`의 target 수 불일치도 고정 코드로 |
+| V1-F5 (높음) | `[1,2,3]` 같은 구조 파손 JSON이 빈 목록으로 흡수 | **재현됨**(`[]` 반환) | 한 행이라도 프로세스 모양이 아니면 `BROWSER_QUERY_FAILED` |
+| V1-F6 (중간) | `--type` 없는 자식이 루트로 채택 | 이론상 성립 | 조회에 `ParentProcessId` 추가 — 부모가 조회된 chrome.exe면 제외 |
+| V1-F7 (중간) | 작은따옴표를 벗겨 다른 경로를 등록 경로로 판정 | **재현됨**(`True`) | Windows에서 의미 있는 `"` 만 벗긴다 |
+| V1-F8 (중간) | 표 결함 — Chromium은 허용목록에 있으나 조회에서 제외, Beta/Canary 구분 불가, 8.3 단축명 | 성립 | 허용목록을 조회와 동일하게 `chrome.exe` 하나로 축소. Beta/Canary/portable은 **등록 프로필 정확일치**로 걸러지므로 실행 파일 구분에 의존하지 않음 |
+
+수정 후 재검증:
+- `pytest tests/test_managed_chrome_discovery_cross_os.py -q` → **41 passed, 22 subtests passed**
+- `./verify.sh` (macOS) → **3302 passed, 4 xfailed, 127 subtests passed**, `verify: pytest exit=0`

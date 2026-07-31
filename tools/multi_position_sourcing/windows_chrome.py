@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import ntpath
 import os
+import re
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -57,23 +58,25 @@ _WINDOWS_PROCESS_QUERY_ARGV: tuple[str, ...] = (
     "-NonInteractive",
     "-Command",
     "& { Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" "
-    "| Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress }",
+    "| Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress }",
 )
 
-_MANAGED_EXECUTABLE_BASENAMES = frozenset({
-    "chrome.exe",
-    "chromium.exe",
-    "chrome",
-    "chromium",
-})
+# 조회 자체가 Name='chrome.exe' 로 좁혀져 있으므로 허용 목록도 그 하나로 맞춘다.
+# Beta·Canary·portable 은 이름이 같아 여기서 갈리지 않고, 등록 프로필 정확일치로 걸러진다.
+_MANAGED_EXECUTABLE_BASENAMES = frozenset({"chrome.exe"})
 
 # 등록된 기기·채널 프로필의 루트 폴더 이름(%LOCALAPPDATA%\Valuehire\...).
 MANAGED_PROFILE_ROOT_NAME = "valuehire"
 
 
 def _unquote(value: str) -> str:
+    """Windows에서 의미 있는 따옴표는 ``"`` 뿐이다.
+
+    작은따옴표는 인자 문법이 아니므로 벗기지 않는다 — 벗기면 실제로는 다른
+    폴더인 ``'...\\linkedin'``을 등록 경로로 바꿔 읽는다(V1-F7 반례).
+    """
     text = value.strip()
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+    if len(text) >= 2 and text[0] == text[-1] == '"':
         return text[1:-1]
     return text
 
@@ -168,45 +171,72 @@ def _profile_parts(profile: str) -> tuple[str, ...]:
     )
 
 
+def registered_windows_profiles(
+    channel_token: str,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    """이 컴퓨터에 등록된 Windows 채널 프로필의 정규화 경로 목록.
+
+    값은 추정하지 않고 기기 등록부(``search_machine.SEARCH_MACHINES``)에서만
+    가져온다. ``VALUEHIRE_SEARCH_MACHINE_ID``가 있으면 그 기기 하나로 좁힌다.
+    ``%LOCALAPPDATA%``는 실제 환경변수로만 펼치며, 없으면 등록 프로필을 하나도
+    확정할 수 없으므로 빈 튜플을 돌려준다(추측 금지 → 호출자가 fail-closed).
+    """
+    from .search_machine import SEARCH_MACHINES
+
+    source = os.environ if env is None else env
+    local_app_data = str(source.get("LOCALAPPDATA") or "").strip()
+    if not local_app_data or not channel_token:
+        return ()
+    wanted_id = str(source.get("VALUEHIRE_SEARCH_MACHINE_ID") or "").strip()
+    resolved: list[str] = []
+    for machine in SEARCH_MACHINES:
+        if machine.os != "windows" or not machine.active:
+            continue
+        if wanted_id and machine.machine_id != wanted_id:
+            continue
+        try:
+            declared = machine.profile(channel_token)
+        except Exception:
+            continue
+        if "%LOCALAPPDATA%" not in declared.upper():
+            continue
+        expanded = re.sub(
+            r"%LOCALAPPDATA%", lambda _m: local_app_data, declared, flags=re.IGNORECASE
+        )
+        normalized = normalize_windows_profile(expanded)
+        if normalized not in resolved:
+            resolved.append(normalized)
+    return tuple(resolved)
+
+
 def is_registered_windows_profile(
     profile: str,
     channel_token: str = "",
     *,
-    local_app_data: str = "",
+    env: Mapping[str, str] | None = None,
 ) -> bool:
-    """등록된 기기·채널 프로필 경계 안인지 판정한다.
+    """등록부에 적힌 그 채널 프로필과 **정확히 같은 폴더**인지 판정한다.
 
-    ``%LOCALAPPDATA%\\Valuehire`` 아래여야 하고, 채널을 지정하면 그 채널 폴더여야
-    한다. ``Valuehire2`` 같은 접두사만 같은 폴더는 경로 조각이 정확히 일치하지
-    않으므로 탈락한다. ``local_app_data``를 주면 그 실제 폴더 아래인지까지 본다
-    (없으면 ``...\\AppData\\Local\\Valuehire`` 조각 순서로 대체 판정).
+    조각 이름을 추정하지 않는다 — ``...\\saramin\\linkedin-decoy`` 처럼 이름만
+    비슷한 폴더, 원격 UNC 경로, ``Valuehire``가 두 번 나오는 경로는 등록값과
+    문자열이 다르므로 전부 탈락한다(V1-F1 반례). 대소문자·구분자만 Windows
+    규칙으로 정규화한다.
     """
     value = _unquote(profile)
     if not value or not PureWindowsPath(value).is_absolute():
         return False
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         return False
-    parts = _profile_parts(value)
-    if any(part in {".", ".."} for part in parts):
+    if any(part in {".", ".."} for part in _profile_parts(value)):
         return False
-    if MANAGED_PROFILE_ROOT_NAME not in parts:
+    if value.startswith("\\\\"):  # 원격 공유·UNC 는 이 컴퓨터의 등록 프로필이 아니다.
         return False
-    root = _unquote(local_app_data)
-    if root:
-        expected = normalize_windows_profile(
-            ntpath.join(root, MANAGED_PROFILE_ROOT_NAME)
-        )
-        current = normalize_windows_profile(value)
-        if not current.startswith(expected + ntpath.sep):
-            return False
-    else:
-        index = parts.index(MANAGED_PROFILE_ROOT_NAME)
-        if parts[max(0, index - 2):index] != ("appdata", "local"):
-            return False
-    if not channel_token:
-        return True
-    token = channel_token.casefold()
-    return any(part == token or part.startswith(token + "-") for part in parts)
+    registered = registered_windows_profiles(channel_token, env=env)
+    if not registered:
+        return False
+    return normalize_windows_profile(value) in registered
 
 
 def is_valid_debug_port(value: str | None) -> bool:
@@ -246,8 +276,10 @@ def query_windows_chrome_processes(
         ) from exc
     if isinstance(payload, Mapping):
         return [payload]
-    if isinstance(payload, list):
-        return [row for row in payload if isinstance(row, Mapping)]
+    # 구조가 깨진 목록(예: [1,2,3])을 빈 목록으로 흡수하면 "브라우저 없음"과
+    # 구분되지 않는다(V1-F5 반례). 한 행이라도 프로세스 모양이 아니면 조회 실패다.
+    if isinstance(payload, list) and all(isinstance(row, Mapping) for row in payload):
+        return list(payload)
     raise ManagedBrowserDiscoveryError(
         "BROWSER_QUERY_FAILED", "windows process query payload was not a process list"
     )
@@ -261,15 +293,25 @@ def list_managed_windows_chrome_processes(
     env: Mapping[str, str] | None = None,
 ) -> list[WindowsChromeProcess]:
     """등록 프로필로 뜬 루트 Chrome만 돌려준다(자식·개인 프로필·모호 인자 제외)."""
-    source = os.environ if env is None else env
-    local_app_data = str(source.get("LOCALAPPDATA") or "").strip()
-    processes: list[WindowsChromeProcess] = []
-    for row in query_windows_chrome_processes(runner=runner):
+    rows = query_windows_chrome_processes(runner=runner)
+
+    def _pid(value: Any) -> int | None:
         try:
-            pid = int(row.get("ProcessId"))
+            number = int(value)
         except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    # 조회 결과에 이미 들어 있는 chrome.exe PID 집합. 부모가 여기 있으면 자식이다
+    # (--type 이 없어도 루트로 오인하지 않는다 — V1-F6 반례).
+    chrome_pids = {pid for row in rows if (pid := _pid(row.get("ProcessId"))) is not None}
+    processes: list[WindowsChromeProcess] = []
+    for row in rows:
+        pid = _pid(row.get("ProcessId"))
+        if pid is None:
             continue
-        if pid <= 0:
+        parent = _pid(row.get("ParentProcessId"))
+        if parent is not None and parent in chrome_pids and parent != pid:
             continue
         argv = parse_windows_command_line(str(row.get("CommandLine") or ""))
         if not argv or not is_managed_windows_executable(argv[0]):
@@ -284,9 +326,7 @@ def list_managed_windows_chrome_processes(
         if not is_valid_debug_port(ports[0]):
             continue
         profile = str(profiles[0] or "").strip()
-        if not is_registered_windows_profile(
-            profile, channel_token, local_app_data=local_app_data
-        ):
+        if not is_registered_windows_profile(profile, channel_token, env=env):
             continue
         declared_port = int(str(ports[0]).strip())
         if port is not None and declared_port != int(port):

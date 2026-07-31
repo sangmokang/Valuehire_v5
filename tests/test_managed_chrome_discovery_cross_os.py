@@ -7,10 +7,12 @@ goal: docs/engineering/managed-chrome-discovery-cross-os-goal-2026-07-31.md
 """
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 import unittest
 from typing import Any
+from unittest import mock
 
 from tools.multi_position_sourcing import session_guard
 from tools.multi_position_sourcing.portal_worker import (
@@ -69,6 +71,22 @@ class FakeRunner:
         return list(self.calls[0][0][0])
 
 
+# VH-SM-002(Windows PC1) 등록부가 선언한 프로필이 실제로 만들어지는 환경.
+WIN_ENV = {
+    "LOCALAPPDATA": r"C:\Users\owner\AppData\Local",
+    "VALUEHIRE_SEARCH_MACHINE_ID": "VH-SM-002",
+}
+
+
+class RegisteredWindowsMachine(unittest.TestCase):
+    """등록된 Windows 검색기(VH-SM-002)에서 실행되는 상황을 만든다."""
+
+    def setUp(self) -> None:
+        patcher = mock.patch.dict(os.environ, WIN_ENV, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
 def talent_tabs(port_suffix: str):
     def list_tabs(endpoint: str) -> list[dict]:
         if endpoint.endswith(port_suffix):
@@ -85,7 +103,7 @@ def talent_tabs(port_suffix: str):
     return list_tabs
 
 
-class WindowsDiscoveryTest(unittest.TestCase):
+class WindowsDiscoveryTest(RegisteredWindowsMachine):
     """goal §4 행 2·5·7·8·9·10·11·13·20"""
 
     def test_finds_windows_chrome_with_real_port_and_registered_profile(self) -> None:
@@ -123,7 +141,10 @@ class WindowsDiscoveryTest(unittest.TestCase):
         runner = FakeRunner([win_process(11, chrome_command(port=9425, profile=spaced))])
 
         endpoints = discover_local_chrome_cdp_endpoints(
-            channel="linkedin_rps", runner=runner, system_name="Windows"
+            channel="linkedin_rps",
+            runner=runner,
+            system_name="Windows",
+            env={**WIN_ENV, "LOCALAPPDATA": r"C:\Users\Kang Sang Mo\AppData\Local"},
         )
 
         self.assertEqual(endpoints, ["http://127.0.0.1:9425"])
@@ -182,7 +203,7 @@ class WindowsDiscoveryTest(unittest.TestCase):
 
         self.assertEqual(
             discover_local_chrome_cdp_endpoints(
-                channel="linkedin_rps", runner=runner, system_name="Windows", env={}
+                channel="linkedin_rps", runner=runner, system_name="Windows"
             ),
             [],
         )
@@ -335,7 +356,7 @@ class WindowsDiscoveryTest(unittest.TestCase):
         )
 
 
-class WindowsEndpointResolutionTest(unittest.TestCase):
+class WindowsEndpointResolutionTest(RegisteredWindowsMachine):
     """goal §4 행 6·12·13·14·15·16"""
 
     def test_live_port_wins_over_configured_port(self) -> None:
@@ -348,7 +369,7 @@ class WindowsEndpointResolutionTest(unittest.TestCase):
             "linkedin_rps",
             runner=runner,
             system_name="Windows",
-            env={"LINKEDIN_PORT": "9425"},
+            env={**WIN_ENV, "LINKEDIN_PORT": "9425"},
             list_tabs=talent_tabs("9427"),
         )
 
@@ -364,7 +385,6 @@ class WindowsEndpointResolutionTest(unittest.TestCase):
             "linkedin_rps",
             runner=runner,
             system_name="Windows",
-            env={},
             list_tabs=talent_tabs("9425"),
         )
 
@@ -376,11 +396,10 @@ class WindowsEndpointResolutionTest(unittest.TestCase):
 
     def test_two_managed_browsers_select_nothing(self) -> None:
         """행 6·15 — 후보가 두 개면 어느 것도 선택하지 않는다."""
-        standby = r"C:\Users\owner\AppData\Local\Valuehire\portal_profiles\sm002\linkedin-standby"
         runner = FakeRunner(
             [
                 win_process(1, chrome_command(port=9425, profile=REGISTERED_LINKEDIN)),
-                win_process(2, chrome_command(port=9427, profile=standby)),
+                win_process(2, chrome_command(port=9427, profile=REGISTERED_LINKEDIN)),
             ]
         )
 
@@ -392,7 +411,6 @@ class WindowsEndpointResolutionTest(unittest.TestCase):
                 "linkedin_rps",
                 runner=runner,
                 system_name="Windows",
-                env={},
                 list_tabs=both_have_talent,
             )
 
@@ -417,7 +435,6 @@ class WindowsEndpointResolutionTest(unittest.TestCase):
                 "linkedin_rps",
                 runner=runner,
                 system_name="Windows",
-                env={},
                 list_tabs=not_official,
             )
 
@@ -430,7 +447,6 @@ class WindowsEndpointResolutionTest(unittest.TestCase):
                 "linkedin_rps",
                 runner=runner,
                 system_name="Windows",
-                env={},
                 endpoint_discoverer=lambda: ["http://10.0.0.5:9425"],
                 list_tabs=lambda _endpoint: [
                     {"id": "x", "type": "page", "url": TALENT_URL}
@@ -438,7 +454,7 @@ class WindowsEndpointResolutionTest(unittest.TestCase):
             )
 
 
-class WindowsBrowserProcessBindingTest(unittest.TestCase):
+class WindowsBrowserProcessBindingTest(RegisteredWindowsMachine):
     """goal §4 행 2·5·6 — endpoint를 하나의 루트 프로세스에 묶는다."""
 
     def test_binds_endpoint_to_single_windows_root_process(self) -> None:
@@ -465,11 +481,10 @@ class WindowsBrowserProcessBindingTest(unittest.TestCase):
         self.assertEqual(process.profile_path, REGISTERED_LINKEDIN)
 
     def test_two_roots_on_same_port_fail_closed(self) -> None:
-        other = r"C:\Users\owner\AppData\Local\Valuehire\portal_profiles\sm002\linkedin-b"
         runner = FakeRunner(
             [
                 win_process(1, chrome_command(port=9425, profile=REGISTERED_LINKEDIN)),
-                win_process(2, chrome_command(port=9425, profile=other)),
+                win_process(2, chrome_command(port=9425, profile=REGISTERED_LINKEDIN)),
             ]
         )
 
@@ -496,6 +511,164 @@ class WindowsBrowserProcessBindingTest(unittest.TestCase):
         for args, _kwargs in runner.calls:
             argv = list(args[0])
             self.assertNotIn(argv[0], {"ps", "lsof", "bash", "sh"})
+
+
+class V1CounterExampleTest(RegisteredWindowsMachine):
+    """Codex V1(2026-07-31) 적대검증이 재현한 반례. 모두 fail-closed 여야 한다."""
+
+    def _endpoints(self, profile: str, *, env: dict | None = None) -> list[str]:
+        runner = FakeRunner([win_process(9, chrome_command(port=9425, profile=profile))])
+        return discover_local_chrome_cdp_endpoints(
+            channel="linkedin_rps",
+            runner=runner,
+            system_name="Windows",
+            env={"LOCALAPPDATA": r"C:\Users\owner\AppData\Local"} if env is None else env,
+        )
+
+    def test_decoy_folder_under_another_channel_is_refused(self) -> None:
+        """V1-F1 — 다른 채널 폴더 아래 linkedin-decoy 는 등록 프로필이 아니다."""
+        decoy = r"C:\Users\owner\AppData\Local\Valuehire\portal_profiles\sm002\saramin\linkedin-decoy"
+        self.assertEqual(self._endpoints(decoy), [])
+
+    def test_remote_unc_profile_is_refused(self) -> None:
+        """V1-F1 — 원격 UNC 경로는 이 컴퓨터의 등록 프로필이 아니다."""
+        unc = r"\\server\share\AppData\Local\Valuehire\portal_profiles\sm002\linkedin"
+        self.assertEqual(self._endpoints(unc), [])
+
+    def test_nested_duplicate_valuehire_segment_is_refused(self) -> None:
+        """V1-F1 — Valuehire 조각이 두 번 나오는 경로도 등록값과 다르면 거부한다."""
+        nested = r"C:\Users\owner\AppData\Local\Valuehire\x\Valuehire\linkedin"
+        self.assertEqual(self._endpoints(nested), [])
+
+    def test_single_quoted_value_is_not_silently_rewritten(self) -> None:
+        """V1-F7 — Windows에서 의미 없는 작은따옴표를 벗겨 등록 경로로 바꾸지 않는다."""
+        quoted = "'" + REGISTERED_LINKEDIN + "'"
+        self.assertEqual(self._endpoints(quoted), [])
+
+    def test_two_managed_roots_stop_even_when_only_one_shows_talent(self) -> None:
+        """V1-F2 — 루트가 2개면 공식 화면이 한쪽에만 있어도 선택하지 않는다."""
+        runner = FakeRunner(
+            [
+                win_process(1, chrome_command(port=9425, profile=REGISTERED_LINKEDIN)),
+                win_process(2, chrome_command(port=9427, profile=REGISTERED_LINKEDIN)),
+            ]
+        )
+
+        with self.assertRaises(ManagedBrowserDiscoveryError) as caught:
+            resolve_managed_channel_cdp_endpoint(
+                "linkedin_rps",
+                runner=runner,
+                system_name="Windows",
+                list_tabs=talent_tabs("9425"),
+            )
+        self.assertEqual(caught.exception.code, "AMBIGUOUS_MANAGED_BROWSER")
+
+    def test_each_failure_mode_carries_its_own_fixed_status_code(self) -> None:
+        """V1-F4 — 후보 0개·공식화면 0개·공식화면 2개가 서로 다른 고정 코드로 멈춘다."""
+        none_running = FakeRunner([])
+        one_root = FakeRunner(
+            [win_process(1, chrome_command(port=9425, profile=REGISTERED_LINKEDIN))]
+        )
+
+        with self.assertRaises(ManagedBrowserDiscoveryError) as no_browser:
+            resolve_managed_channel_cdp_endpoint(
+                "linkedin_rps",
+                runner=none_running,
+                system_name="Windows",
+                list_tabs=lambda _e: [],
+            )
+        self.assertEqual(no_browser.exception.code, "NO_MANAGED_BROWSER")
+
+        with self.assertRaises(ManagedBrowserDiscoveryError) as no_target:
+            resolve_managed_channel_cdp_endpoint(
+                "linkedin_rps",
+                runner=one_root,
+                system_name="Windows",
+                list_tabs=lambda _e: [
+                    {"id": "a", "type": "page", "url": "https://www.linkedin.com/feed/"}
+                ],
+            )
+        self.assertEqual(no_target.exception.code, "NO_OFFICIAL_TARGET")
+
+        with self.assertRaises(ManagedBrowserDiscoveryError) as two_browsers:
+            resolve_managed_channel_cdp_endpoint(
+                "linkedin_rps",
+                runner=one_root,
+                system_name="Windows",
+                endpoint_discoverer=lambda: [
+                    "http://127.0.0.1:9425",
+                    "http://127.0.0.1:9427",
+                ],
+                list_tabs=lambda _e: [
+                    {"id": "a", "type": "page", "url": TALENT_URL}
+                ],
+            )
+        self.assertEqual(two_browsers.exception.code, "AMBIGUOUS_MANAGED_BROWSER")
+
+        # 한 브라우저 안에 공식 화면이 여럿이면 별도 코드로 멈춘다(target id 미지정).
+        with self.assertRaises(ManagedBrowserDiscoveryError) as ambiguous_target:
+            session_guard.resolve_existing_target(
+                "linkedin_rps",
+                managed_endpoint_resolver=lambda _s: "http://127.0.0.1:9425",
+                list_pages=lambda _e: [
+                    {
+                        "id": f"tab-{index}",
+                        "type": "page",
+                        "url": TALENT_URL,
+                        "webSocketDebuggerUrl": (
+                            f"ws://127.0.0.1:9425/devtools/page/tab-{index}"
+                        ),
+                    }
+                    for index in (1, 2)
+                ],
+            )
+        self.assertEqual(ambiguous_target.exception.code, "AMBIGUOUS_OFFICIAL_TARGET")
+
+    def test_structurally_invalid_json_is_not_absorbed_as_empty(self) -> None:
+        """V1-F5 — [1,2,3] 같은 구조 파손은 빈 목록이 아니라 조회 실패다."""
+        runner = FakeRunner(None, raw="[1,2,3]")
+
+        with self.assertRaises(ManagedBrowserDiscoveryError) as caught:
+            discover_local_chrome_cdp_endpoints(
+                channel="linkedin_rps", runner=runner, system_name="Windows"
+            )
+        self.assertEqual(caught.exception.code, "BROWSER_QUERY_FAILED")
+
+    def test_child_process_without_type_flag_is_excluded_by_parent(self) -> None:
+        """V1-F6 — --type 이 없어도 부모가 chrome 이면 루트로 채택하지 않는다."""
+        rows = [
+            {
+                "ProcessId": 1,
+                "ParentProcessId": 900,
+                "CommandLine": chrome_command(port=9425, profile=REGISTERED_LINKEDIN),
+            },
+            {
+                "ProcessId": 2,
+                "ParentProcessId": 1,
+                "CommandLine": chrome_command(port=9425, profile=REGISTERED_LINKEDIN),
+            },
+        ]
+        runner = FakeRunner(rows)
+
+        process = resolve_managed_browser_process(
+            "linkedin_rps",
+            "http://127.0.0.1:9425",
+            runner=runner,
+            system_name="Windows",
+        )
+
+        self.assertEqual(process.browser_pid, 1)
+
+    def test_registered_profile_must_match_the_machine_registry_exactly(self) -> None:
+        """V1-F1 근본 — 등록부(search_machine)의 값과 정확히 일치해야 한다."""
+        from tools.multi_position_sourcing.search_machine import get_search_machine
+
+        machine = get_search_machine("VH-SM-002")
+        expected = machine.profile("linkedin").replace(
+            "%LOCALAPPDATA%", r"C:\Users\owner\AppData\Local"
+        )
+
+        self.assertEqual(self._endpoints(expected), ["http://127.0.0.1:9425"])
 
 
 class MacOsRegressionTest(unittest.TestCase):
@@ -539,7 +712,7 @@ class MacOsRegressionTest(unittest.TestCase):
         self.assertEqual(endpoints, [])
 
 
-class RealCallPathTest(unittest.TestCase):
+class RealCallPathTest(RegisteredWindowsMachine):
     """실제 호출 경로 — resolve_existing_target과 humansearch 준비 경로."""
 
     def _install_windows_world(self, monkey: list, *, tab_url: str) -> FakeRunner:

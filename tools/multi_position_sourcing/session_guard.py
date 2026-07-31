@@ -309,8 +309,10 @@ def _resolve_windows_browser_process(
         runner=runner,
     )
     if len(matches) != 1:
-        raise LookupError(
-            f"{site} managed browser root process match count was {len(matches)}"
+        code = "NO_MANAGED_BROWSER" if not matches else "AMBIGUOUS_MANAGED_BROWSER"
+        raise ManagedBrowserDiscoveryError(
+            code,
+            f"{site} managed browser root process match count was {len(matches)}",
         )
     return ManagedBrowserProcess(matches[0].pid, matches[0].profile_path)
 
@@ -513,7 +515,11 @@ def resolve_existing_target(
         matches.append(target)
     if len(matches) != 1:
         detail = "exact target id" if wanted_id else "unique site target"
-        raise LookupError(f"{site} {detail} match count was {len(matches)}")
+        # 공식 화면이 없는 것과 여러 개인 것은 사장님께 다른 문구로 나가야 한다(V1-F4).
+        code = "NO_OFFICIAL_TARGET" if not matches else "AMBIGUOUS_OFFICIAL_TARGET"
+        raise ManagedBrowserDiscoveryError(
+            code, f"{site} {detail} match count was {len(matches)}"
+        )
 
     selected = matches[0]
     if browser_process_resolver is not None:

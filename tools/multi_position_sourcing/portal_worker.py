@@ -265,8 +265,11 @@ def _find_unique_live_channel_endpoint(
             verified.append(endpoint)
     unique = list(dict.fromkeys(verified))
     if len(unique) != 1:
-        raise LookupError(
-            f"{channel} live browser endpoint match count was {len(unique)}"
+        # 실패 사유를 하나의 일반 오류로 뭉개지 않는다 — 사장님께 나가는 문구가
+        # 사유마다 달라야 하기 때문이다(V1-F4 반례).
+        code = "NO_OFFICIAL_TARGET" if not unique else "AMBIGUOUS_OFFICIAL_TARGET"
+        raise ManagedBrowserDiscoveryError(
+            code, f"{channel} live browser endpoint match count was {len(unique)}"
         )
     return unique[0]
 
@@ -299,7 +302,19 @@ def resolve_managed_channel_cdp_endpoint(
                 channel=channel, runner=runner, system_name=system_name, env=env
             )
         )
-        candidates = discover()
+        candidates = list(dict.fromkeys(discover()))
+        # 루트 유일성은 공식 화면 검사보다 **먼저** 확정한다. 관리 브라우저가 둘인데
+        # 한쪽에만 Talent 화면이 있다고 그쪽을 고르면, 나머지 하나가 무엇인지
+        # 증명하지 못한 채 검색을 시작하게 된다(V1-F2 반례).
+        if not candidates:
+            raise ManagedBrowserDiscoveryError(
+                "NO_MANAGED_BROWSER", f"{channel} managed browser count was 0"
+            )
+        if len(candidates) > 1:
+            raise ManagedBrowserDiscoveryError(
+                "AMBIGUOUS_MANAGED_BROWSER",
+                f"{channel} managed browser count was {len(candidates)}",
+            )
         tabs_reader = list_tabs
         if tabs_reader is None:
             from .raw_cdp import list_pages
