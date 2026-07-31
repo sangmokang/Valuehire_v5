@@ -714,3 +714,86 @@ def test_stage3_prompt_states_not_applicable_is_the_score_value() -> None:
     assert "score" in stage3_prompt
     assert "not_applicable" in stage3_prompt
     assert '"score":"not_applicable"' in stage3_prompt.replace(" ", "")
+
+
+# --- 채점 LLM 호출 격리: 프로젝트/전역 지침을 읽고 되묻지 않게 한다 (2026-08-01 라이브 사고) ---
+#
+# 사고: 게이트·차원 계약을 고쳤는데도 순회가 "claude matching stage returned no JSON object"
+# 로 계속 죽었다. 원인을 라이브로 확인했다 — 채점 호출이 `claude -p` 를 **저장소 안에서**
+# 실행해 CLAUDE.md·스킬을 그대로 읽고, 추출 요청을 '작업 지시'로 해석해 되물었다:
+#     "요청이 명확하지 않아서 먼저 확인하겠습니다 ... 어느 쪽이 원하시는 작업인지 알려주세요."
+# JSON 이 아예 없으니 그 후보는 통째로 버려진다. cwd 만 비워도 사용자 전역 CLAUDE.md 때문에
+# 동일하게 되물었고, --system-prompt 로 지침을 대체하자 정상 JSON 이 나왔다(실측).
+
+
+def _fake_completed(stdout: str = '{"ok": true}'):
+    class _Completed:
+        returncode = 0
+        stderr = ""
+
+    _Completed.stdout = stdout
+    return _Completed()
+
+
+def test_claude_client_replaces_the_agent_system_prompt(monkeypatch) -> None:
+    """추출 호출은 에이전트 지침 대신 '오직 JSON' 시스템 프롬프트로 실행돼야 한다."""
+    seen: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        return _fake_completed()
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    _msc.claude_json_client("prompt")
+
+    argv = seen["argv"]
+    assert "--system-prompt" in argv, argv
+    system_prompt = argv[argv.index("--system-prompt") + 1]
+    assert "JSON" in system_prompt
+    # 되묻기·설명·도구사용을 명시적으로 금지해야 한다.
+    assert "question" in system_prompt.lower()
+
+
+def test_claude_client_does_not_run_inside_the_repository(monkeypatch) -> None:
+    """저장소 안에서 실행하면 프로젝트 CLAUDE.md·스킬을 읽는다 — 빈 작업디렉터리를 쓴다."""
+    seen: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        seen["cwd"] = str(kwargs.get("cwd") or "")
+        return _fake_completed()
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    _msc.claude_json_client("prompt")
+
+    repo_root = str(Path(_msc.__file__).resolve().parents[2])
+    assert seen["cwd"]
+    assert not str(seen["cwd"]).startswith(repo_root)
+
+
+def test_claude_client_retries_once_when_output_has_no_json(monkeypatch) -> None:
+    """빈/비 JSON 응답은 한 번 재시도한다 — 일시적 흔들림으로 후보를 버리지 않는다."""
+    calls: list[int] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return _fake_completed("무엇을 원하시나요?")
+        return _fake_completed('{"ok": true}')
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    assert _msc.claude_json_client("prompt") == {"ok": True}
+    assert len(calls) == 2
+
+
+def test_claude_client_still_fails_closed_after_retries(monkeypatch) -> None:
+    """계속 JSON 이 아니면 그대로 실패한다 — 무한 재시도·조작 금지."""
+    calls: list[int] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(1)
+        return _fake_completed("설명만 하고 JSON 이 없음")
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    with pytest.raises(MatchingContractError):
+        _msc.claude_json_client("prompt")
+    assert len(calls) == 2
