@@ -193,6 +193,17 @@ class FakeDiscord:
         return "msg-1"
 
 
+class FakeAdmin:
+    """AC-6 — admin.valuehire.cc 등록 페이크(실제 HTTP 없음)."""
+
+    def __init__(self):
+        self.registered: list[dict] = []
+
+    def register_candidate(self, payload: dict) -> dict:
+        self.registered.append(dict(payload))
+        return {"ok": True, "candidate": {"id": f"admin-{len(self.registered)}"}, "deduped": False}
+
+
 class FakeNotifier:
     def __init__(self):
         self.messages: list[str] = []
@@ -222,22 +233,25 @@ class Harness:
         release_fail: bool = False,
         live_recorder: bool = False,
         discord=None,
+        linkedin_session_lock=None,
     ):
+        self.linkedin_session_lock = linkedin_session_lock
         self.events: list = []
         self.pages = pages
         self.driver = FakeDriver(self.events, fail=driver_fail, release_fail=release_fail)
         self.store = FakeStore(self.events, fail=store_fail)
         self.clickup = FakeClickUp()
         self.discord = discord if discord is not None else FakeDiscord()
+        self.admin = FakeAdmin()
         self.notifier = FakeNotifier()
         self.now = [1000.0]
         self.monitor = SpyMonitor(lambda: self.now[0], self.notifier)
         if live_recorder:
             self.recorder = DualRecorder(
-                self.clickup, self.discord, live=True, owner_signoff=True
+                self.clickup, self.discord, self.admin, live=True, owner_signoff=True
             )
         else:
-            self.recorder = DualRecorder(self.clickup, self.discord)  # 기본 dry-run
+            self.recorder = DualRecorder(self.clickup, self.discord, self.admin)  # 기본 dry-run
         self.list_calls: list[tuple[str, int]] = []
         self.search_payloads: list[tuple[str, int, dict]] = []
         self.candidates: dict[str, list[dict]] = {}
@@ -281,6 +295,7 @@ class Harness:
             extract_candidates=self.extract_candidates,
             machine="macmini",
             poll_driver_events=self.poll_driver_events,
+            linkedin_session_lock=self.linkedin_session_lock,
         )
 
 
@@ -753,3 +768,58 @@ class TestDriverEventFeed:
         monitor = InterventionMonitor(lambda: 0.0, notifier)
         feed_driver_events(monitor, [{"type": "weird_event"}])
         assert monitor.state.value == "blocked"  # E8 — 표에 없는 이벤트는 차단
+
+
+class _SpyLock:
+    """V1 독립검증 결함4 — 진입/이탈만 기록하는 페이크 세션 락."""
+
+    def __init__(self) -> None:
+        self.enters = 0
+        self.exits = 0
+        self.active = False
+
+    def __enter__(self):
+        self.enters += 1
+        self.active = True
+        return self
+
+    def __exit__(self, *exc_info):
+        self.exits += 1
+        self.active = False
+
+
+class TestLinkedInSessionLockWiring:
+    """V1 독립검증 결함4 — 링크드인 채널만 세션 락으로 감싸야 한다."""
+
+    def test_linkedin_channel_is_wrapped_by_injected_lock(self):
+        lock = _SpyLock()
+        h = Harness(pages=1, linkedin_session_lock=lock)
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_COMPLETED
+        assert lock.enters == 1
+        assert lock.exits == 1
+        assert lock.active is False  # 종료 후 반드시 해제
+
+    def test_none_lock_does_not_crash_no_cross_device_protection(self):
+        # linkedin_session_lock 미주입 — 기기 간 배제는 없지만 파이프라인은 진행돼야 한다.
+        h = Harness(pages=1, linkedin_session_lock=None)
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_COMPLETED
+
+    def test_lock_held_by_another_owner_aborts_pipeline_not_silent(self):
+        from apps.aisearch.core.session_lock import (
+            LinkedInSessionLock,
+            LinkedInSessionLockError,
+        )
+
+        class _AlreadyHeldLock:
+            def __enter__(self):
+                raise LinkedInSessionLockError("다른 기기가 이미 보유 중")
+
+            def __exit__(self, *exc_info):
+                return False
+
+        h = Harness(pages=1, linkedin_session_lock=_AlreadyHeldLock())
+        report = run_search_pipeline(_jd(), h.deps())
+        assert report.status == STATUS_ABORTED
+        assert "다른 기기" in (report.error or "")
