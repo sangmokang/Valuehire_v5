@@ -204,5 +204,9 @@ def test_h5_no_temp_files_left_behind(tmp_path):
     store.upsert(TABLE_NAME, _row("list"))
     store.upsert(TABLE_NAME, _row("detail"))
 
-    leftovers = [p.name for p in Path(tmp_path).iterdir() if p.name != "pages.jsonl"]
+    leftovers = [
+        p.name
+        for p in Path(tmp_path).iterdir()
+        if p.name != "pages.jsonl" and not p.name.endswith(".lock")
+    ]
     assert leftovers == [], f"임시파일이 남았다: {leftovers}"

@@ -40,8 +40,10 @@ def _cand(*, record_extra=None, evidence="기구설계 10년 근거", draft_text
 
 
 def test_h2_scan_roots_exclude_jd_common_text():
+    # V1 3라운드 이후: 최상위 뿌리는 record 하나이고, score_payload 는 evidence 칸만,
+    # draft_inputs 는 후보 고유 칸(candidate_*)만 훑는다.
     assert "draft_inputs" not in EXCLUSION_SCAN_ROOTS
-    assert set(EXCLUSION_SCAN_ROOTS) == {"record", "score_payload"}
+    assert set(EXCLUSION_SCAN_ROOTS) == {"record"}
 
 
 def test_h2_jd_text_containing_exclusion_does_not_exclude_a_clean_candidate():

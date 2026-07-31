@@ -173,7 +173,24 @@ class LinkedInSessionLock:
                             + (f" ({age:.0f}초 전 획득)" if age is not None else "")
                             + " — fail-closed"
                         ) from exc
-                    # F8 — stale: 보유자가 죽은 것으로 보고 회수 후 재시도.
+                    # F8 — stale 로 보이지만, 회수는 되돌릴 수 없으므로 한 번 더
+                    # 확인한다(V1 3라운드): 유예 시간 뒤 last_seen_at 이 바뀌었다면
+                    # 보유자는 살아 있다(느린 기기·시계 차이). 그때는 절대 뺏지 않는다.
+                    before = meta.get("last_seen_at")
+                    if self.meta_grace_seconds > 0:
+                        self.sleep(self.meta_grace_seconds)
+                    recheck = self._read_meta()
+                    if recheck is not None:
+                        if recheck.get("last_seen_at") != before:
+                            raise LinkedInSessionLockError(
+                                "링크드인 세션 락 보유자가 살아 있다(생존 신호 갱신 확인) "
+                                "— 회수하지 않는다, fail-closed"
+                            ) from exc
+                        age2 = self._age_of(recheck)
+                        if age2 is not None and age2 < self.stale_seconds:
+                            raise LinkedInSessionLockError(
+                                "링크드인 세션 락 보유 중(재확인) — fail-closed"
+                            ) from exc
                     self._reclaim()
                     continue
                 # 메타를 끝내 못 읽었다. 두 가지 경우가 있다:

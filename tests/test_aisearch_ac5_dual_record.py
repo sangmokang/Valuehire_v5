@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.aisearch_evidence import make_evidence as _make_evidence
+
 from apps.aisearch.core.recorders import (
     CLICKUP_LIST_ID,
     DISCORD_MEMBER_CHANNEL_ID,
@@ -78,22 +80,12 @@ POSITION_NAME = "빅밸류 세일즈 총괄"
 
 
 def make_evidence(profile_url: str, *, position_id: str = POSITION_NAME) -> dict:
-    """SOT25 프로필 저장 증거 영수증(H1 게이트 통과용 실제 모양).
-
-    V1 2라운드 — 게이트는 아무 문자열이 아니라 이 후보·이 포지션의 실제 캡처
-    영수증(manifest + 64자리 sha256)을 요구한다.
-    """
-    return {
-        "profile_url": profile_url,
-        "position_id": position_id,
-        "task": "aisearch",
-        "mode": "profile",
-        "manifest_path": "/tmp/aisearch/manifest.json",
-        "screenshot_sha256": "a" * 64,
-    }
+    """SOT25 프로필 저장 증거 영수증 — 실제 파일에 결합된 영수증(V1 3라운드)."""
+    return _make_evidence(profile_url, position_id=position_id, site="linkedin_rps")
 
 
-def make_candidate(**over):
+def make_candidate(*, site: str = "linkedin_rps", **over):
+    """증거의 site 는 record(channel=...) 로 넘길 채널과 같아야 한다(H1 대조)."""
     base = dict(
         profile_url="https://www.linkedin.com/in/hong-gildong/",
         score=87,
@@ -104,7 +96,9 @@ def make_candidate(**over):
         career_brief="A사 5년(세일즈 리드), B사 3년(AE)",
     )
     base.update(over)
-    base.setdefault("evidence", make_evidence(base["profile_url"]))
+    base.setdefault(
+        "evidence", _make_evidence(base["profile_url"], position_id=POSITION_NAME, site=site)
+    )
     return Candidate(**base)
 
 
@@ -395,7 +389,7 @@ def test_ac6_dry_run_plans_admin_register_without_calling_admin_client():
 
     result = rec.record(
         position_name="빅밸류 세일즈 총괄",
-        candidate=make_candidate(name="홍길동"),
+        candidate=make_candidate(name="홍길동", site="linkedin"),
         channel="linkedin",
     )
 
@@ -411,7 +405,7 @@ def test_ac6_dry_run_plans_admin_register_without_calling_admin_client():
 def test_ac6_live_calls_admin_register_with_mapped_fields():
     cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
-    cand = make_candidate(name="홍길동")
+    cand = make_candidate(name="홍길동", site="saramin")
 
     result = rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="saramin")
 
@@ -430,7 +424,7 @@ def test_ac6_missing_candidate_name_uses_honest_placeholder_not_url():
     # V1 독립검증 결함7 — profile_url을 이름인 척 흘려보내지 않는다(데이터 오염 방지).
     cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
-    cand = make_candidate()  # name 미지정 — 기본값 ""
+    cand = make_candidate(site="linkedin")  # name 미지정 — 기본값 ""
 
     rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
 
@@ -445,7 +439,7 @@ def test_ac6_payload_includes_jd_id_for_v4_dedup():
     # 스킵되던 결함. position_name을 안정적인 jd_id로 사용한다.
     cu, dc, am = FakeClickUpClient(), FakeDiscordClient(), FakeAdminApiClient()
     rec = DualRecorder(clickup=cu, discord=dc, admin=am, live=True, owner_signoff=True)
-    cand = make_candidate(name="홍길동")
+    cand = make_candidate(name="홍길동", site="linkedin")
 
     rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
 

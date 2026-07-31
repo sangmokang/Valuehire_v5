@@ -238,7 +238,13 @@ def _iter_strings(value: Any, path: str):
 #: draft_inputs(jd_summary·briefing_elements)는 **JD 공통 텍스트**라 제외한다.
 #: 여기에 제외어가 한 번 들어가면 그 채널의 모든 후보가 함께 떨어졌다.
 #: 표 밖(신규) 최상위 키는 스캔하지 않는다 — 조용한 대량 제외를 막는다.
-EXCLUSION_SCAN_ROOTS: tuple[str, ...] = ("record", "score_payload")
+#: 후보 고유 정보만 담긴 최상위 칸.
+EXCLUSION_SCAN_ROOTS: tuple[str, ...] = ("record",)
+
+#: score_payload 안에서는 **후보를 보고 쓴 근거(evidence)** 만 훑는다.
+#: V1 3라운드 — 점수자료 전체를 훑으면 JD 에서 복사된 평가 기준 문구
+#: ("인턴 경험 제외" 같은 requirement/criteria)에 걸려 정상 후보가 떨어졌다.
+EXCLUSION_SCAN_SCORE_FIELD = "evidence"
 
 #: draft_inputs 안에서도 **후보 본인** 정보인 칸은 스캔한다(V1 2라운드 지적).
 #: 회사·직함은 후보 고유 정보라서, 여기 "프리랜서"가 있으면 걸러야 한다.
@@ -249,6 +255,20 @@ EXCLUSION_SCAN_DRAFT_FIELDS: tuple[str, ...] = (
     "candidate_company",
     "candidate_headline",
 )
+
+
+def _iter_evidence_values(value: Any, path: str):
+    """점수자료 트리에서 ``evidence`` 칸만 골라 낸다(후보를 보고 쓴 근거)."""
+    if isinstance(value, Mapping):
+        for key, inner in value.items():
+            child = f"{path}.{key}"
+            if key == EXCLUSION_SCAN_SCORE_FIELD:
+                yield child, inner
+            else:
+                yield from _iter_evidence_values(inner, child)
+    elif isinstance(value, (list, tuple)):
+        for index, inner in enumerate(value):
+            yield from _iter_evidence_values(inner, f"{path}[{index}]")
 
 
 def _find_exclusion_match(
@@ -276,6 +296,14 @@ def _find_exclusion_match(
         hit = _scan(cand[root], f"candidate.{root}")
         if hit is not None:
             return hit
+    score_payload = cand.get("score_payload")
+    if isinstance(score_payload, Mapping):
+        for path, value in _iter_evidence_values(
+            score_payload, "candidate.score_payload"
+        ):
+            hit = _scan(value, path)
+            if hit is not None:
+                return hit
     draft_inputs = cand.get("draft_inputs")
     if isinstance(draft_inputs, Mapping):
         for field_name in EXCLUSION_SCAN_DRAFT_FIELDS:
@@ -439,6 +467,16 @@ def _run_variant(
     else:
         driver = deps.driver
 
+    def _release_banner() -> None:
+        """배너 해제 — 실패는 삼키지 않고 banner_errors 로 보고한다(2차 결함 3)."""
+        try:
+            driver.run_js(build_dispatch_snippet(False))
+        except Exception as release_error:  # noqa: BLE001 — 본 오류에 종속, 보고만
+            with deps.lock:
+                report.banner_errors.append(
+                    {"channel": channel, "task": task, "error": str(release_error)}
+                )
+
     _check_monitor(deps)  # 변형 시작 전 점검
     # AC8 — "조작 시작" 빨간 띠 표시 신호를 드라이버 포트로 전달
     driver.run_js(build_dispatch_snippet(True, task))
@@ -507,17 +545,25 @@ def _run_variant(
             # 응답 수신 도중 캡차가 들어오면 그 페이지는 저장 0건으로 중단된다.
             before_store=lambda: _check_monitor(deps),
         )
-    finally:
-        # 배너 해제 신호는 중단 경로에서도 반드시 시도한다. 2차 결함 3:
-        # 해제 실패는 본 오류(차단/예외)를 가리지 않되 조용히 삼키지도 않는다 —
-        # banner_errors 로 보고하고, 전체 상태 completed 를 막는다.
-        try:
-            driver.run_js(build_dispatch_snippet(False))
-        except Exception as release_error:  # noqa: BLE001 — 본 오류에 종속, 보고만
-            with deps.lock:
-                report.banner_errors.append(
-                    {"channel": channel, "task": task, "error": str(release_error)}
-                )
+    except (_PipelineBlocked, _PipelineWaiting):
+        # V1 3라운드 — 사장님이 크롬을 만졌거나 캡차가 떴는데도 정리 구문이
+        # 브라우저에 JS 를 하나 더 보냈다(SOT 불변식 2: 개입 중 자동 조작 0).
+        # 배너는 그대로 두고 왜 안 지웠는지만 보고한다 — 화면 정리보다
+        # "개입 중에는 손대지 않는다"가 우선이다(사람이 재개하면 해제된다).
+        with deps.lock:
+            report.banner_errors.append(
+                {
+                    "channel": channel,
+                    "task": task,
+                    "error": "개입/차단 감지로 배너 해제 보류(브라우저 무접촉 유지)",
+                }
+            )
+        raise
+    except BaseException:
+        _release_banner()
+        raise
+    else:
+        _release_banner()
 
     _raise_if_stopped(deps)  # M2 — 후보 처리 진입 전 협조적 중단 확인
     _check_monitor(deps)  # 2차 결함 1 — 후보 처리(등록 경로) 진입 전 차단 확인

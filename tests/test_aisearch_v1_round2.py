@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.aisearch_evidence import make_evidence
+
 from apps.aisearch.core import recorders as rec_mod
 from apps.aisearch.core.admin_api_client import AdminApiConfigError, HttpAdminApiClient
 from apps.aisearch.core.orchestrator import _find_exclusion_match
@@ -36,15 +38,7 @@ POSITION = "빅밸류 세일즈 총괄"
 PROFILE_URL = "https://www.linkedin.com/in/hong-gildong/"
 CHANNEL = "linkedin_rps"
 
-GOOD_EVIDENCE = {
-    "profile_url": PROFILE_URL,
-    "site": CHANNEL,
-    "position_id": POSITION,
-    "task": "aisearch",
-    "mode": "profile",
-    "manifest_path": "/tmp/aisearch/manifest.json",
-    "screenshot_sha256": "a" * 64,
-}
+GOOD_EVIDENCE = make_evidence(PROFILE_URL, position_id=POSITION, site=CHANNEL)
 
 
 class FakeClickUp:

@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from tools.multi_position_sourcing.matching_score_contract import CONTRACT_VERSION
+from tests.aisearch_evidence import make_evidence as _make_evidence
 
 from apps.aisearch.core import (
     banner,
@@ -114,7 +115,18 @@ def _valid_draft_kwargs() -> dict[str, Any]:
 DRAFT_KWARGS = _valid_draft_kwargs()
 
 
-def _candidate(payload: dict[str, object], url: str) -> dict[str, Any]:
+def _evidence(url: str, *, position_id: str) -> dict:
+    """실제 파일에 결합된 저장 증거(채널 무관 — site 는 채널별로 바꿔 쓴다)."""
+    return _make_evidence(url, position_id=position_id, site="linkedin_rps")
+
+
+def _candidate(
+    payload: dict[str, object],
+    url: str,
+    *,
+    site: str = "linkedin_rps",
+    position_id: str = "Tech PM",
+) -> dict[str, Any]:
     return {
         "score_payload": payload,
         "record": {
@@ -122,14 +134,7 @@ def _candidate(payload: dict[str, object], url: str) -> dict[str, Any]:
             "why_fit": "필수요건 전부 충족",
             "profile_summary": "기구설계 10년, PM 전환 3년",
             # SOT25 5번째 필수 필드(H1) — 이 후보·이 포지션의 실제 저장 영수증.
-            "evidence": {
-                "profile_url": url,
-                "position_id": "Tech PM",
-                "task": "aisearch",
-                "mode": "profile",
-                "manifest_path": "/tmp/aisearch/manifest.json",
-                "screenshot_sha256": "b" * 64,
-            },
+            "evidence": _make_evidence(url, position_id=position_id, site=site),
             "match_basis": "D1~D8 근거",
             "education": "서울 소재 4년제",
             "career_brief": "현대로템 파트리더",
@@ -291,7 +296,22 @@ class Harness:
         return {"url": f"https://example.test/{channel}/{ref}", "content": "<html>detail</html>"}
 
     def extract_candidates(self, channel: str) -> list[dict]:
-        return list(self.candidates.get(channel, []))
+        # 증거는 "그 채널에서 캡처한 것"이어야 한다(H1 site 대조) — 실제
+        # 추출기도 자기 채널에서 저장한 영수증을 붙이므로 페이크도 그렇게 만든다.
+        out: list[dict] = []
+        for cand in self.candidates.get(channel, []):
+            cand = dict(cand)
+            record = dict(cand.get("record") or {})
+            evidence = record.get("evidence")
+            if isinstance(evidence, dict):
+                record["evidence"] = _make_evidence(
+                    record["profile_url"],
+                    position_id=evidence.get("position_id", "Tech PM"),
+                    site=channel,
+                )
+                cand["record"] = record
+            out.append(cand)
+        return out
 
     def deps(self) -> PipelineDeps:
         return PipelineDeps(
@@ -490,8 +510,11 @@ class TestIntervention:
         assert all(page == 1 for _c, page in h.list_calls)
         assert h.notifier.messages  # Discord 알림 경로(주입 notifier) 호출됨
         assert report.registered == [] and report.drafts == []
-        # 중단 시에도 배너 해제 신호는 발신됐다
-        assert '"active": false' in h.driver.snippets[-1]
+        # V1 3라운드 계약 변경 — 차단/개입 감지 뒤에는 브라우저에 **아무 것도**
+        # 보내지 않는다(SOT 불변식 2: 개입 중 자동 조작 0). 배너 해제도 예외가
+        # 아니며, 왜 안 지웠는지는 리포트에 남는다(조용한 생략 금지).
+        assert '"active": false' not in h.driver.snippets[-1]
+        assert any("배너 해제 보류" in e["error"] for e in report.banner_errors)
 
     def test_human_input_returns_waiting_resume_signal(self):
         h = Harness(pages=5)

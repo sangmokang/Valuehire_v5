@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Protocol
 from urllib.parse import urlsplit
@@ -82,7 +83,21 @@ def has_saved_profile_evidence(
         return False
     manifest = str(evidence.get("manifest_path") or "").strip()
     digest = str(evidence.get("screenshot_sha256") or "").strip()
-    if not manifest or not _SHA256_RE.match(digest):
+    shot = str(evidence.get("screenshot_path") or "").strip()
+    if not manifest or not shot or not _SHA256_RE.match(digest):
+        return False
+    # V1 3라운드 — "영수증 모양"만으로는 부족하다. 없는 경로와 아무 64자리
+    # 해시를 적어 넣어도 통과했다(등록·admin 전송까지 진행됨). 실제로 저장이
+    # 일어났는지는 **파일이 디스크에 있고 그 파일의 해시가 맞는지**로만 알 수 있다.
+    manifest_file = Path(manifest)
+    shot_file = Path(shot)
+    if not manifest_file.is_file() or not shot_file.is_file():
+        return False
+    try:
+        actual = hashlib.sha256(shot_file.read_bytes()).hexdigest()
+    except OSError:
+        return False
+    if actual.lower() != digest.lower():
         return False
     if str(evidence.get("profile_url") or "").strip() != profile_url.strip():
         return False
@@ -90,11 +105,12 @@ def has_saved_profile_evidence(
         return False
     if evidence.get("task") != EVIDENCE_TASK or evidence.get("mode") != EVIDENCE_MODE:
         return False
-    # 증거가 채널(site)을 밝혔다면 그 채널의 캡처여야 한다. 밝히지 않은
-    # 증거(옛 캡처 형식)는 profile_url·position_id·task·mode 4중 대조로 이미
-    # 이 후보·이 포지션·이 파이프라인의 것임이 확인된 상태다.
-    site = evidence.get("site")
-    if channel and site is not None and str(site).strip() != channel.strip():
+    # V1 3라운드 — site 는 **필수**다. 생략을 허용하면 채널 대조 자체를
+    # 건너뛸 수 있어(다른 채널 캡처 재사용) 대조가 무의미해진다.
+    site = str(evidence.get("site") or "").strip()
+    if not site:
+        return False
+    if channel and site != channel.strip():
         return False
     return True
 

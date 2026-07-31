@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.aisearch_evidence import make_evidence
+
 from apps.aisearch.core import recorders
 from apps.aisearch.core.recorders import (
     REQUIRED_FIELDS,
@@ -26,15 +28,11 @@ from apps.aisearch.core.recorders import (
     saved_profile_evidence_text,
 )
 
-EVIDENCE = {
-    "profile_url": "https://www.linkedin.com/in/hong-gildong/",
-    "site": "linkedin_rps",
-    "position_id": "빅밸류 세일즈 총괄",
-    "task": "aisearch",
-    "mode": "profile",
-    "manifest_path": "/tmp/aisearch/manifest.json",
-    "screenshot_sha256": "a" * 64,
-}
+EVIDENCE = make_evidence(
+    "https://www.linkedin.com/in/hong-gildong/",
+    position_id="빅밸류 세일즈 총괄",
+    site="linkedin_rps",
+)
 
 
 class FakeClickUp:
@@ -202,7 +200,7 @@ def test_f12_unknown_name_is_unique_per_candidate():
             candidate=_candidate(
                 name="",
                 profile_url=url,
-                evidence={**EVIDENCE, "profile_url": url, "position_id": "P"},
+                evidence=make_evidence(url, position_id="P", site="linkedin_rps"),
             ),
             channel="linkedin_rps",
         )
@@ -224,7 +222,7 @@ def test_f12_unknown_name_is_deterministic_for_same_profile():
     cand = _candidate(
         name="",
         profile_url=url,
-        evidence={**EVIDENCE, "profile_url": url, "position_id": "P", "site": "c"},
+        evidence=make_evidence(url, position_id="P", site="c"),
     )
     rec.record(position_name="P", candidate=cand, channel="c")
     rec2_cu, rec2_dc, am2, rec2 = _live_recorder()

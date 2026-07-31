@@ -614,8 +614,10 @@ class TestExtractorWiring:
             excluded_payload = _score_payload()
             excluded_payload["dimensions"]["D2"]["evidence"] = "스타트업 인턴"
             return [
-                _candidate(PAYLOAD_60, "https://saramin.example/p/ok"),
-                _candidate(excluded_payload, "https://saramin.example/p/intern"),
+                _candidate(PAYLOAD_60, "https://saramin.example/p/ok", site="saramin"),
+                _candidate(
+                    excluded_payload, "https://saramin.example/p/intern", site="saramin"
+                ),
             ]
 
         extractors = _empty_extractors()

@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
@@ -136,39 +137,33 @@ class JsonlPageStore:
         # 키 필드 없는 행 — id(또는 전체 내용)로 구분해 덮어쓰기 방지.
         return (table, "__no_page_key__", row.get("id") or json.dumps(row, sort_keys=True))
 
-    def _acquire_file_lock(self, *, timeout: float = 10.0) -> Optional[int]:
-        """프로세스 간 직렬화 — 읽기-수정-쓰기 사이에 남이 끼어들지 못하게 한다.
+    @contextmanager
+    def _file_lock(self):
+        """프로세스 간 직렬화 — 커널 파일락(flock)으로 잡는다.
 
-        O_EXCL 로 만드는 잠금 파일이며, 오래된(죽은 프로세스가 남긴) 잠금은
-        회수한다. 끝내 못 잡으면 조용히 진행하지 않고 명시적으로 실패한다.
+        V1 3라운드 — 예전에는 "10초 넘은 잠금은 죽은 것으로 보고 지운다"는
+        시간 기반 회수를 썼는데, 저장이 10초를 넘기면 **살아 있는** 저장자의
+        잠금까지 빼앗아 두 저장자가 동시에 파일 전체를 교체했다(행 유실).
+        flock 은 프로세스가 죽으면 커널이 알아서 풀어 주므로 죽은 잠금이라는
+        개념 자체가 없다 — 시간 추정이 필요 없다.
         """
+        import fcntl
+
         lock_path = self._lock_path()
-        deadline = time.monotonic() + timeout
-        while True:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)  # 남이 쥐고 있으면 기다린다(뺏지 않는다)
             try:
-                return os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                try:
-                    age = time.time() - lock_path.stat().st_mtime
-                except OSError:
-                    age = 0.0
-                if age > timeout:  # 죽은 프로세스가 남긴 잠금 — 회수
-                    lock_path.unlink(missing_ok=True)
-                    continue
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"페이지 저장 잠금을 얻지 못했다(fail-closed): {lock_path}"
-                    )
-                time.sleep(0.01)
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     def upsert(self, table: str, row: dict) -> None:
-        with self._lock:  # 스레드 직렬화
-            fd = self._acquire_file_lock()
-            try:
+        with self._lock:  # 같은 인스턴스를 쓰는 채널 스레드 직렬화
+            with self._file_lock():  # 다른 인스턴스·다른 프로세스와의 직렬화
                 self._upsert_locked(table, row)
-            finally:
-                os.close(fd)
-                self._lock_path().unlink(missing_ok=True)
 
     def _upsert_locked(self, table: str, row: dict) -> None:
             # 다른 저장자가 그 사이에 쓴 내용을 먼저 흡수한다(행 유실 방지).

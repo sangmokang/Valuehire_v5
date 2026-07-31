@@ -220,3 +220,22 @@ base_url 스킴 != https                -> AdminApiConfigError (평문 전송 �
 1. 장시간 실행 락이 stale 로 오인돼 탈취되던 E4 위반 → heartbeat 도입·배선.
 2. 목록 페이지 차단이 blocked 가 아니라 aborted 로 새어 캡차 알림이 나가지 않던 문제.
 
+### V1 2차 재검증 (2026-07-31, codex fresh·read-only) — **FAIL**
+- 판정: HIGH 5 · MEDIUM 4 · PASS 3(키 여백 거부·복원 테스트 41개·테스트 약화 없음).
+- 재현된 것: ① 없는 manifest 경로 + 아무 64자리 해시로 등록 성공 ② 채용공고 요구문구
+  "인턴 경험 제외"가 정상 후보를 제외 ⑥ 개입 후에도 배너 해제 JS 1회 발신
+  ⑦ 저장 잠금이 10초 넘긴 **살아 있는** 저장자의 것까지 회수.
+- 구조 지적: 락 미설정 시 보호 없음, 기기 시계 차이, 재개 시 결과판 초기화, 원격 미병합 1건.
+
+### V1 2차 지적에 대한 조치 (3라운드)
+| 지적 | 조치 |
+|---|---|
+| 가짜 증거 통과 | 증거는 **디스크 실물**이어야 한다 — manifest·스크린샷 파일 존재 + 스크린샷 sha256 실제 대조 + `site` 필수 (`recorders.has_saved_profile_evidence`) |
+| 채용공고 문구 오탐 | 스캔 범위를 `record` + `score_payload`의 **evidence 칸만** + `draft_inputs`의 candidate_* 로 한정 |
+| 개입 후 브라우저 조작 | 개입·차단 예외 경로에서는 배너 해제 JS 를 보내지 않고 `banner_errors` 에 "해제 보류"로 기록 |
+| 저장 잠금 탈취 | 시간 기반 회수를 버리고 커널 파일락(flock)로 전환 — 죽은 잠금 개념 자체가 없다 |
+| 락 시계 차이·회수 경합 | 회수 직전 재확인 — 유예 뒤 `last_seen_at` 이 바뀌었으면 살아 있는 것으로 보고 회수 중단 |
+| 재개 결과판 초기화 | 원격 `7743c95` 병합 + 집계 표식(`counted_profile_urls`) seed 로 partial→완결 누락도 해소 |
+| SOT 숫자 충돌(60초 vs 20분) | SOT25 `2_occupancy_captcha_gate.auto_resume_layers` 로 두 층위(실행 중 60초 / 장기 점유 20분)를 명시 |
+| 원격 미병합 | `7743c95` 병합 완료 — `git log HEAD..origin/task/aisearch-orchestrator` 빈 출력 |
+| 동일 URL 서로 다른 후보 | **결정**: profile_url 을 신원 키로 삼는다(SOT25 dedup·멱등키와 동일 기준). 같은 URL = 같은 사람으로 본다 |
