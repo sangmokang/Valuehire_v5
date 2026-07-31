@@ -79,6 +79,10 @@ def make_candidate(**over):
         score=87,
         why_fit="B2B SaaS 세일즈 8년, 좋은학교, 직무 직결",
         profile_summary="현 A사 세일즈 리드, SaaS 신규영업 총괄",
+        # SOT25 5번째 필수 필드 — 프로필 저장 증거 영수증(H1, 2026-07-31 리뷰).
+        saved_profile_evidence=(
+            "manifest: /tmp/aisearch/manifest.json | screenshot_sha256: " + "a" * 64
+        ),
         match_basis="D1 학력 상위권 + D3 직무 직결 + D5 이직 안정성",
         education="한국대 경영학 학사",
         career_brief="A사 5년(세일즈 리드), B사 3년(AE)",
@@ -413,8 +417,10 @@ def test_ac6_missing_candidate_name_uses_honest_placeholder_not_url():
 
     rec.record(position_name="빅밸류 세일즈 총괄", candidate=cand, channel="linkedin")
 
-    assert am.registered[0]["name"] == "이름 미확인"
+    # F12(2026-07-31 리뷰) — 후보별로 갈라지는 접미사가 붙는다(v4 dedup 병합 방지).
+    assert am.registered[0]["name"].startswith("이름 미확인")
     assert am.registered[0]["name"] != cand.profile_url
+    assert am.registered[0]["name"] != "이름 미확인"
 
 
 def test_ac6_payload_includes_jd_id_for_v4_dedup():

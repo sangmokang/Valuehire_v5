@@ -121,6 +121,10 @@ def _candidate(payload: dict[str, object], url: str) -> dict[str, Any]:
             "profile_url": url,
             "why_fit": "필수요건 전부 충족",
             "profile_summary": "기구설계 10년, PM 전환 3년",
+            # SOT25 5번째 필수 필드(H1, 2026-07-31 리뷰) — 저장 증거 영수증.
+            "saved_profile_evidence": (
+                "manifest: /tmp/aisearch/manifest.json | screenshot_sha256: " + "b" * 64
+            ),
             "match_basis": "D1~D8 근거",
             "education": "서울 소재 4년제",
             "career_brief": "현대로템 파트리더",

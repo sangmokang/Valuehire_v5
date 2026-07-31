@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol
+from typing import Any, Mapping, Optional, Protocol
 
 # SOT25 clickup_registration_contract / goal 문서 D10·D11 고정값
 CLICKUP_LIST_ID = "901818680208"  # FY26AI_Search
@@ -35,8 +35,49 @@ DISCORD_MEMBER_CHANNEL_ID = "1512503041448743092"  # 진행상황/에러 (멤버
 
 SCORE_THRESHOLD = 60  # 60점 이상 후보 확정 시에만 기록
 
-# SOT25 candidate_subtask_required_fields 중 이 모듈 책임 4필드
-REQUIRED_FIELDS = ("profile_url", "score", "why_fit", "profile_summary")
+# SOT25 candidate_subtask_required_fields — 원문 그대로 5필드.
+# 2026-07-31 전수 리뷰 H1: 예전에는 saved_profile_evidence 가 빠진 4필드였다.
+# SOT25 는 profile_save_evidence_required=true 이므로, 프로필 저장 증거가 없는
+# 후보는 subtask 를 만들지 않는다(fail-closed).
+REQUIRED_FIELDS = (
+    "profile_url",
+    "score",
+    "why_fit",
+    "profile_summary",
+    "saved_profile_evidence",
+)
+
+#: 증거 부재 표기 — humansearch_register.py:345 와 동일 문자열 계약.
+EVIDENCE_MISSING = "missing"
+
+
+def saved_profile_evidence_text(evidence: Any) -> str:
+    """프로필 저장 증거를 사람이 읽는 한 줄 영수증으로 만든다.
+
+    계약은 tools/multi_position_sourcing/humansearch_register.py:345
+    ``_saved_profile_evidence_text`` 와 **동형**이다(중복 계약 금지 — 같은 뜻,
+    같은 모양). manifest 경로와 스크린샷 해시가 **둘 다** 있어야 영수증으로
+    인정하고, 하나라도 없으면 "missing" 을 돌려준다. 이 값이 그대로 subtask
+    필드로 들어가며, "missing"·빈 문자열은 등록 게이트에서 거부된다.
+    """
+    if isinstance(evidence, Mapping):
+        manifest = str(evidence.get("manifest_path") or "").strip()
+        digest = str(evidence.get("screenshot_sha256") or "").strip()
+        if manifest and digest:
+            return f"manifest: {manifest} | screenshot_sha256: {digest}"
+    return EVIDENCE_MISSING
+
+
+def unknown_name_placeholder(profile_url: str) -> str:
+    """이름 미확보 후보의 **후보별로 다른** 정직한 표기(2026-07-31 리뷰 F12).
+
+    예전에는 전부 "이름 미확인" 한 문자열이었다. v4 dedup 이 jd_id 안에서
+    이름 기반 canonicalIdentityKey 로 동일인을 합치므로, 같은 포지션의 이름
+    미확보 후보가 전부 한 건으로 병합될 수 있었다. profile_url 파생 접미사를
+    붙여 후보별로 갈라 놓되, URL 자체를 이름인 척 흘려보내지는 않는다.
+    """
+    digest = hashlib.sha256(profile_url.strip().encode("utf-8")).hexdigest()
+    return f"이름 미확인-{digest[:8]}"
 
 # 결함5: dry-run 에서 부모 Task 가 아직 없을 때 subtask 계획이 참조하는 placeholder.
 # None 이 아니라 "생성 예정 부모" 라는 의미를 명시한다. live 경로에서는 절대 쓰이지
@@ -125,6 +166,7 @@ class Candidate:
     score: int
     why_fit: str
     profile_summary: str
+    saved_profile_evidence: str = ""  # SOT25 5번째 필수 필드(프로필 저장 증거 영수증)
     match_basis: str = ""  # 매칭 근거
     education: str = ""  # 학력
     career_brief: str = ""  # 경력 브리핑
@@ -245,7 +287,7 @@ class DualRecorder:
             result.status = STATUS_SKIPPED
             return result
 
-        # 필수 4필드 검증 — 미충족이면 등록 없이 멤버 채널 에러 보고 (fail-closed)
+        # SOT25 필수 5필드 검증 — 미충족이면 등록 없이 멤버 채널 에러 보고 (fail-closed)
         missing = [f for f in REQUIRED_FIELDS if not getattr(candidate, f)]
         if missing:
             result.status = STATUS_FAILED
@@ -268,6 +310,22 @@ class DualRecorder:
                 f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
             )
             return result
+        # H1 게이트 — SOT25 profile_save_evidence_required. 저장 증거가 "missing"
+        # 이거나 공백뿐이면 어떤 외부 쓰기(admin/ClickUp/Discord)보다도 먼저 거부한다:
+        # "프로필 저장 증거 확인 후에만 subtask 생성"이 계약이다.
+        evidence = candidate.saved_profile_evidence.strip()
+        if not evidence or evidence == EVIDENCE_MISSING:
+            result.status = STATUS_FAILED
+            result.error = (
+                "saved_profile_evidence 없음 — 프로필 저장 증거 없이는 등록하지 "
+                f"않는다(SOT25 fail-closed): {candidate.saved_profile_evidence!r}"
+            )
+            self._post_member(
+                result,
+                f"[AI Search 에러] {position_name}: {result.error} — 등록하지 않음",
+            )
+            return result
+
         blank_text_fields = [
             f for f in ("why_fit", "profile_summary") if not getattr(candidate, f).strip()
         ]
@@ -346,12 +404,15 @@ class DualRecorder:
             result.parent_task_id = parent_id
 
         elif step == STEP_CLICKUP_SUBTASK:
-            # 후보 Subtask — 필수 4필드 + 멱등키(결함3)
+            # 후보 Subtask — SOT25 필수 5필드 + 멱등키(결함3)
             fields = {
                 "profile_url": candidate.profile_url,
                 "score": candidate.score,
                 "why_fit": candidate.why_fit,
                 "profile_summary": candidate.profile_summary,
+                # H1 — SOT25 5번째 필수 필드. 여기 도달했다는 것은 위 게이트에서
+                # 증거 존재가 이미 확인됐다는 뜻이다(증거 없으면 진입 불가).
+                "saved_profile_evidence": candidate.saved_profile_evidence,
                 "idempotency_key": subtask_idempotency_key(candidate.profile_url),
             }
             if self.live:
@@ -394,7 +455,7 @@ class DualRecorder:
             # 자연키로 쓰고 있어 일관됨). 예전에는 jd_id 자체가 누락돼 v4 dedup이
             # 항상 스킵되고 URL 변형만 달라도 중복 등록됐다.
             payload = {
-                "name": candidate.name or "이름 미확인",
+                "name": candidate.name or unknown_name_placeholder(candidate.profile_url),
                 "profile_url": candidate.profile_url,
                 "match_score": candidate.score,
                 "why_fit": candidate.why_fit,
