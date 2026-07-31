@@ -210,23 +210,34 @@ def _iter_strings(value: Any, path: str):
             yield from _iter_strings(inner, f"{path}[{index}]")
 
 
+#: 2026-07-31 전수 리뷰 H2 — 제외어를 찾을 **후보 고유** 영역.
+#: - "record": 경력·학력·프로필 요약 등 후보 본인의 정보
+#: - "score_payload": D1~D8 점수 근거(evidence) — 후보를 보고 쓴 글
+#: draft_inputs(jd_summary·briefing_elements)는 **JD 공통 텍스트**라 제외한다.
+#: 여기에 제외어가 한 번 들어가면 그 채널의 모든 후보가 함께 떨어졌다.
+#: 표 밖(신규) 최상위 키는 스캔하지 않는다 — 조용한 대량 제외를 막는다.
+EXCLUSION_SCAN_ROOTS: tuple[str, ...] = ("record", "score_payload")
+
+
 def _find_exclusion_match(
     cand: dict[str, Any], exclusions: list[str]
 ) -> Optional[tuple[str, str]]:
-    """3차 결함 ⑦(4차 재수정) — 제외어 매칭을 후보 payload **전체**에서 찾는다.
+    """3차 결함 ⑦(4차 재수정 → 2026-07-31 H2 범위 한정) — 제외어 매칭.
 
-    최상위 문자열만 보던 결함을 고쳐, score_payload(점수 근거 D1~D8 evidence
-    포함)·record·draft_inputs 등 중첩 dict/list 안의 모든 문자열을 재귀
+    후보 고유 영역(EXCLUSION_SCAN_ROOTS) 안의 중첩 dict/list 문자열만 재귀
     스캔한다(casefold 부분일치). 반환: (매칭된 제외어, 매칭 필드 경로).
     """
     folded_terms = [(term, term.casefold()) for term in exclusions]
     if not folded_terms:
         return None
-    for path, text in _iter_strings(cand, "candidate"):
-        folded = text.casefold()
-        for term, folded_term in folded_terms:
-            if folded_term in folded:
-                return term, path
+    for root in EXCLUSION_SCAN_ROOTS:
+        if root not in cand:
+            continue
+        for path, text in _iter_strings(cand[root], f"candidate.{root}"):
+            folded = text.casefold()
+            for term, folded_term in folded_terms:
+                if folded_term in folded:
+                    return term, path
     return None
 
 
