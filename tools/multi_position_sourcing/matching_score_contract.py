@@ -12,6 +12,7 @@ import math
 import os
 import shutil
 import sys
+import tempfile
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -30,6 +31,8 @@ _VERDICTS = {"pass", "fail", "uncertain"}
 _NOT_APPLICABLE_DIMENSIONS = {"D2", "D6"}
 # 차원을 건너뛸 때 코드가 채우는 고정 근거 문구. 모델이 근거를 지어내지 못하게 코드가 소유한다.
 _NOT_APPLICABLE_EVIDENCE = "해당 없음 — 비교할 근거가 JD/이력서/티어맵에 없어 이 차원은 채점에서 제외"
+# D7 이 boolean 으로 올 때 코드가 채우는 고정 문구. 확인 항목을 모델이 지어내지 않게 한다.
+_NEEDS_VERIFICATION_UNSPECIFIED = "확인 필요 항목 미지정 — 사람이 직접 확인"
 
 
 class MatchingContractError(ValueError):
@@ -158,6 +161,11 @@ def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
         }
         if dimension_id == "D7":
             needs = item.get("needs_verification", [])
+            # 라이브 LLM 은 이름 그대로 boolean 을 낸다(2026-08-01 실측: true).
+            # 그 표기 하나로 후보를 버리지 않되, 확인 항목을 지어내지 않고
+            # 코드가 소유한 고정 문구로 바꾼다.
+            if isinstance(needs, bool):
+                needs = [_NEEDS_VERIFICATION_UNSPECIFIED] if needs else []
             if not isinstance(needs, list) or any(
                 not isinstance(entry, str) or not entry.strip() for entry in needs
             ):
@@ -305,6 +313,18 @@ def matching_stage_timeout_seconds() -> float:
     return value
 
 
+# 추출 호출 전용 시스템 프롬프트. 에이전트 지침(CLAUDE.md·스킬)을 대체해 되묻기·설명·
+# 도구사용을 막는다. 영어로 두는 이유는 CLI 기본 지침과 섞였을 때도 우선순위가 분명하기 때문.
+_MATCHING_SYSTEM_PROMPT = (
+    "You are a strict JSON extraction function, not an assistant. "
+    "Read the user message and reply with exactly one JSON object and nothing else. "
+    "Never ask a clarifying question. Never explain. Never use tools. "
+    "Never read or write files. Never emit markdown fences or prose."
+)
+# 설명만 돌아오는 일시적 흔들림에 대비한 시도 횟수(재시도 1회). 무한 재시도는 하지 않는다.
+_MATCHING_LLM_ATTEMPTS = 2
+
+
 def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object]:
     """Run one temperature-zero-equivalent local Claude JSON extraction step."""
 
@@ -323,38 +343,56 @@ def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object
     timeout_seconds = matching_stage_timeout_seconds()
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
-    try:
-        completed = subprocess.run(
-            ["claude", "-p", "--model", model, prompt],
-            cwd=Path(__file__).resolve().parents[2],
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=timeout_seconds,
-        )
-    except FileNotFoundError as exc:
-        raise MatchingContractError("claude CLI is not installed") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise MatchingContractError(
-            f"claude matching stage timed out after {timeout_seconds:g}s"
-        ) from exc
-    if completed.returncode != 0:
-        raise MatchingContractError(
-            f"claude matching stage failed: {(completed.stderr or '')[:240]}"
-        )
-    raw = completed.stdout.strip()
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start < 0 or end < start:
-        raise MatchingContractError("claude matching stage returned no JSON object")
-    try:
-        parsed = json.loads(raw[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise MatchingContractError("claude matching stage returned invalid JSON") from exc
-    if not isinstance(parsed, dict):
-        raise MatchingContractError("claude matching stage JSON must be an object")
-    return parsed
+
+    # 이 호출은 '에이전트에게 일을 시키는' 것이 아니라 순수 추출 함수다. 기본 시스템
+    # 프롬프트를 그대로 두면 프로젝트·전역 CLAUDE.md 와 스킬이 실려서 추출 요청을 작업
+    # 지시로 읽고 되묻는다 — JSON 이 없으니 그 후보가 통째로 버려진다(2026-08-01 라이브).
+    # 그래서 지침을 대체하고, 저장소 밖 빈 디렉터리에서 실행한다.
+    last_error = "claude matching stage returned no JSON object"
+    for attempt in range(_MATCHING_LLM_ATTEMPTS):
+        try:
+            with tempfile.TemporaryDirectory(prefix="vh-matching-") as workdir:
+                completed = subprocess.run(
+                    [
+                        "claude", "-p",
+                        "--model", model,
+                        "--system-prompt", _MATCHING_SYSTEM_PROMPT,
+                        prompt,
+                    ],
+                    cwd=workdir,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=timeout_seconds,
+                )
+        except FileNotFoundError as exc:
+            raise MatchingContractError("claude CLI is not installed") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise MatchingContractError(
+                f"claude matching stage timed out after {timeout_seconds:g}s"
+            ) from exc
+        if completed.returncode != 0:
+            raise MatchingContractError(
+                f"claude matching stage failed: {(completed.stderr or '')[:240]}"
+            )
+        raw = (completed.stdout or "").strip()
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end < start:
+            # 일시적 흔들림(설명만 오는 응답)은 한 번 더 시도한다. 무한 재시도는 하지 않는다.
+            last_error = "claude matching stage returned no JSON object"
+            continue
+        try:
+            parsed = json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            last_error = "claude matching stage returned invalid JSON"
+            continue
+        if not isinstance(parsed, dict):
+            last_error = "claude matching stage JSON must be an object"
+            continue
+        return parsed
+    raise MatchingContractError(last_error)
 
 
 def default_tier_maps() -> tuple[dict[str, str], dict[str, str]]:
