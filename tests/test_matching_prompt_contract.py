@@ -1023,3 +1023,91 @@ def test_gate_alignment_error_reports_both_lists() -> None:
     message = str(err.value)
     assert "Python 3년" in message          # Stage 1 이 요구한 것
     assert "완전히 다른 요건" in message        # Stage 3 이 실제로 준 것
+
+
+# --- 요건을 더 길게 쓴 게이트도 같은 요건으로 본다 (2026-08-01 라이브 증거) ---
+#
+# #273 진단 문구로 실제 원인이 찍혔다:
+#   Stage1 #8 = '백엔드 개발'
+#   Stage3 #8 = '백엔드 개발 3년 이상'      ← JD 문구를 더 길게 옮겨 적었을 뿐
+# 나머지 7개는 완전히 동일했는데 이 한 줄 때문에 후보가 통째로 버려졌다.
+# 한쪽이 다른 쪽으로 시작하는(prefix) 관계면 같은 요건이다. 의미가 다른 문구는 그대로 거부한다.
+
+
+def _gate_case(must_have_texts, gate_texts):
+    profile = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/prefix",
+        source_channel="linkedin_rps",
+        visible_text="A사 Node.js 백엔드 4년",
+        summary="backend engineer",
+        captured_at="2026-07-24T00:00:00+09:00",
+        years_experience=4,
+        education="부산대학교 학사",
+    )
+    position = Position(
+        position_id="P1",
+        company_name="B",
+        role_title="Backend Engineer",
+        jd_text="백엔드",
+        must_haves=tuple(must_have_texts),
+    )
+    responses = [
+        {
+            "position_title": "Backend Engineer",
+            "must_have": [
+                {"type": "skill", "requirement": text, "min_years": None}
+                for text in must_have_texts
+            ],
+            "nice_to_have": [],
+        },
+        {"total_years": 4, "careers": [], "skills": [], "achievements": []},
+        {
+            "gates": [
+                {"requirement": text, "verdict": "pass", "evidence": "근거"}
+                for text in gate_texts
+            ],
+            "dimensions": _payload(score=4)["dimensions"],
+            "one_line_verdict": "v",
+        },
+    ]
+    return evaluate_candidate_contract(
+        profile,
+        position,
+        llm_json_client=lambda prompt: responses.pop(0),
+        company_tier_map={},
+        school_tier_map={},
+    )
+
+
+def test_gate_written_longer_than_requirement_is_accepted() -> None:
+    """라이브 실제 사례: '백엔드 개발' 요건에 '백엔드 개발 3년 이상' 게이트가 왔다."""
+    evaluation = _gate_case(
+        ["Node.js", "백엔드 개발"],
+        ["Node.js", "백엔드 개발 3년 이상"],
+    )
+    # 저장값은 Stage 1 정본 표기로 되돌린다.
+    assert [g["requirement"] for g in evaluation["gates"]] == ["Node.js", "백엔드 개발"]
+
+
+def test_gate_written_shorter_than_requirement_is_accepted() -> None:
+    """반대 방향(요건이 더 길고 게이트가 짧은 경우)도 같은 요건이다."""
+    evaluation = _gate_case(
+        ["Node.js", "백엔드 개발 3년 이상"],
+        ["Node.js", "백엔드 개발"],
+    )
+    assert [g["requirement"] for g in evaluation["gates"]] == ["Node.js", "백엔드 개발 3년 이상"]
+
+
+def test_unrelated_gate_text_is_still_rejected() -> None:
+    """의미가 다른 문구는 그대로 fail-closed — 검증을 느슨하게 만들지 않는다."""
+    with pytest.raises(MatchingContractError):
+        _gate_case(["Node.js", "백엔드 개발"], ["Node.js", "프론트엔드 개발"])
+
+
+def test_ambiguous_prefix_match_is_rejected() -> None:
+    """한 요건에 prefix 후보가 둘이면 어느 쪽인지 정할 수 없으므로 거부한다."""
+    with pytest.raises(MatchingContractError):
+        _gate_case(
+            ["백엔드 개발", "백엔드 개발 리드"],
+            ["백엔드 개발 3년 이상", "백엔드 개발 리드 경험"],
+        )

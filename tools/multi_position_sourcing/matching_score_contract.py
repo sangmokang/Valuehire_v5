@@ -530,12 +530,41 @@ def evaluate_candidate_contract(
         if not isinstance(item, dict):
             raise _misalignment(f"gate 원소가 dict 가 아님: {type(item).__name__}")
         remaining.setdefault(_gate_key(item.get("requirement")), []).append(item)
-    aligned: list[dict] = []
-    for requirement in expected:
+    # 1차: 정규화 키가 정확히 같은 것끼리 먼저 짝짓는다. 먼저 붙여야 나중 요건이 쓸 게이트를
+    # 앞 요건이 넘겨짚어 가져가는 일이 없다.
+    matched: dict[int, dict] = {}
+    for index, requirement in enumerate(expected):
         bucket = remaining.get(_gate_key(requirement))
-        if not bucket:
-            raise _misalignment(f"Stage 3 에 없는 요건: {requirement!r}")
-        item = dict(bucket.pop(0))
+        if bucket:
+            matched[index] = bucket.pop(0)
+
+    # 2차: 남은 요건은 '한쪽이 다른 쪽으로 시작하는' 게이트와 짝짓는다.
+    # 라이브 실측: 요건 '백엔드 개발' 에 게이트 '백엔드 개발 3년 이상' 이 왔다 — JD 문구를
+    # 더 길게 옮겨 적었을 뿐 같은 요건인데 후보가 통째로 버려졌다. 후보가 둘 이상이면
+    # 어느 쪽인지 정할 수 없으므로 거부한다(넘겨짚지 않는다).
+    for index, requirement in enumerate(expected):
+        if index in matched:
+            continue
+        key = _gate_key(requirement)
+        candidates = [
+            (candidate_key, bucket)
+            for candidate_key, bucket in remaining.items()
+            if bucket and candidate_key and key
+            and (candidate_key.startswith(key) or key.startswith(candidate_key))
+        ]
+        if len(candidates) != 1:
+            detail = (
+                f"Stage 3 에 없는 요건: {requirement!r}"
+                if not candidates
+                else f"요건 {requirement!r} 에 붙을 게이트 후보가 여럿: "
+                f"{[candidate_key for candidate_key, _ in candidates]}"
+            )
+            raise _misalignment(detail)
+        matched[index] = candidates[0][1].pop(0)
+
+    aligned: list[dict] = []
+    for index, requirement in enumerate(expected):
+        item = dict(matched[index])
         item["requirement"] = requirement
         aligned.append(item)
     leftover = [item.get("requirement") for bucket in remaining.values() for item in bucket]
