@@ -89,7 +89,7 @@ class DryRunGroupIsolationTest(unittest.TestCase):
         groups = group_positions(SAMPLE_POSITIONS)
         client = _client_failing_for_poison_company()
         payload = build_dry_run_payload(llm_client=client)
-        self.assertEqual(len(payload["groups"]), len(groups))
+        self.assertEqual(len(payload["position_groups"]), len(groups))
 
 
 if __name__ == "__main__":
