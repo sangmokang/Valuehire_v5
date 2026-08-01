@@ -935,3 +935,38 @@ def test_gate_shape_error_reports_the_keys_it_saw() -> None:
     with pytest.raises(MatchingContractError) as err:
         calculate_final_score(payload)
     assert "evidence" in str(err.value)
+
+
+# --- 프로필 본문의 짝 없는 서로게이트로 후보가 유실된다 (2026-08-01 라이브) ---
+#
+# 사고: "#7 ERROR Jaeyong Shim: 'utf-8' codec can't encode character '\ud835'
+#        in position 7639: surrogates not allowed".
+# 링크드인 프로필에 𝐁𝐚𝐜𝐤𝐞𝐧𝐝 같은 수학기호(U+1D400 대역)를 쓰는 사람이 있고, CDP 가 그 문자를
+# 짝 없는 서로게이트로 넘겨줄 때가 있다. 그대로 두면 증거 저장(.encode)과 spec 직렬화가
+# 통째로 터져 그 후보가 버려진다. 글자는 살리되 저장 가능한 형태로 바꾼다.
+
+
+def test_strip_lone_surrogates_makes_text_encodable() -> None:
+    from tools.multi_position_sourcing.browser_evidence import strip_lone_surrogates
+
+    raw = "Backend \ud835 Engineer"
+    cleaned = strip_lone_surrogates(raw)
+
+    cleaned.encode("utf-8")  # 터지지 않아야 한다
+    assert "Backend" in cleaned and "Engineer" in cleaned
+
+
+def test_strip_lone_surrogates_keeps_normal_text_untouched() -> None:
+    from tools.multi_position_sourcing.browser_evidence import strip_lone_surrogates
+
+    for raw in ("백엔드 엔지니어", "Node.js · TypeScript", "🚀 emoji ok", ""):
+        assert strip_lone_surrogates(raw) == raw
+
+
+def test_strip_lone_surrogates_keeps_valid_surrogate_pairs() -> None:
+    """정상적인 서로게이트 쌍(이모지 등)은 글자를 잃지 않아야 한다."""
+    from tools.multi_position_sourcing.browser_evidence import strip_lone_surrogates
+
+    paired = "𝐁𝐚𝐜𝐤𝐞𝐧𝐝"
+    assert strip_lone_surrogates(paired) == paired
+    assert strip_lone_surrogates(paired).encode("utf-8")
