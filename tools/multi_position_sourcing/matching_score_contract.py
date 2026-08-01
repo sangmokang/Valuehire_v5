@@ -502,10 +502,25 @@ def evaluate_candidate_contract(
         if isinstance(item, dict)
     ]
     gates = evaluation["gates"] if isinstance(evaluation["gates"], list) else []
-    if not expected:
-        raise MatchingContractError(
+
+    def _misalignment(detail: str) -> MatchingContractError:
+        """실패할 때 양쪽 목록을 그대로 남긴다.
+
+        이 실패는 간헐적이라(2026-08-01 라이브 3명 유실, 같은 입력으로는 재현 안 됨)
+        무엇이 어긋났는지 로그에 없으면 원인을 짚을 수 없다. 검증을 느슨하게 하는 대신
+        증거를 남긴다.
+        """
+        actual = [
+            str(item.get("requirement", "")) if isinstance(item, dict) else repr(item)
+            for item in gates
+        ]
+        return MatchingContractError(
             "Stage 3 gates must match Stage 1 must-have requirements in order"
+            f" — {detail}; Stage1({len(expected)})={expected}; Stage3({len(actual)})={actual}"
         )
+
+    if not expected:
+        raise _misalignment("Stage 1 must-have 가 비어 있음")
     # 요건 **집합**이 같으면 같은 심사다. 공백·대소문자·순서만 다른 표기 때문에 근거가
     # 멀쩡한 후보를 통째로 버리지 않는다(2026-08-01 라이브: 후보 절반 유실). 대신
     # 저장값은 Stage 1 정본 표기·정본 순서로 되돌려 하류 비교가 흔들리지 않게 한다.
@@ -513,24 +528,19 @@ def evaluate_candidate_contract(
     remaining: dict[str, list[dict]] = {}
     for item in gates:
         if not isinstance(item, dict):
-            raise MatchingContractError(
-                "Stage 3 gates must match Stage 1 must-have requirements in order"
-            )
+            raise _misalignment(f"gate 원소가 dict 가 아님: {type(item).__name__}")
         remaining.setdefault(_gate_key(item.get("requirement")), []).append(item)
     aligned: list[dict] = []
     for requirement in expected:
         bucket = remaining.get(_gate_key(requirement))
         if not bucket:
-            raise MatchingContractError(
-                "Stage 3 gates must match Stage 1 must-have requirements in order"
-            )
+            raise _misalignment(f"Stage 3 에 없는 요건: {requirement!r}")
         item = dict(bucket.pop(0))
         item["requirement"] = requirement
         aligned.append(item)
-    if any(bucket for bucket in remaining.values()):
-        raise MatchingContractError(
-            "Stage 3 gates must match Stage 1 must-have requirements in order"
-        )
+    leftover = [item.get("requirement") for bucket in remaining.values() for item in bucket]
+    if leftover:
+        raise _misalignment(f"Stage 1 에 없는 여분 게이트: {leftover}")
     evaluation["gates"] = aligned
     calculate_final_score(evaluation)
     return evaluation
