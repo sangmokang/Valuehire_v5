@@ -970,3 +970,56 @@ def test_strip_lone_surrogates_keeps_valid_surrogate_pairs() -> None:
     paired = "𝐁𝐚𝐜𝐤𝐞𝐧𝐝"
     assert strip_lone_surrogates(paired) == paired
     assert strip_lone_surrogates(paired).encode("utf-8")
+
+
+def test_gate_alignment_error_reports_both_lists() -> None:
+    """게이트 정렬 실패는 간헐적이다 — 다음 발생이 곧 증거가 되도록 양쪽 목록을 남긴다.
+
+    2026-08-01 라이브에서 3명이 이 오류로 유실됐는데, 같은 JD·프로필로 재현하면 10개가
+    정확히 일치했다. 무엇이 어긋났는지 로그에 없어서 원인을 못 짚는다. 추측으로 검증을
+    느슨하게 만드는 대신, 실패할 때 Stage 1 요건과 Stage 3 게이트를 그대로 찍는다.
+    """
+    profile = CapturedProfile(
+        profile_url="https://www.linkedin.com/in/mismatch",
+        source_channel="linkedin_rps",
+        visible_text="A사 Python API 4년",
+        summary="backend engineer",
+        captured_at="2026-07-24T00:00:00+09:00",
+        years_experience=4,
+        education="부산대학교 학사",
+    )
+    position = Position(
+        position_id="P1",
+        company_name="B",
+        role_title="Backend Engineer",
+        jd_text="Python 3년 이상",
+        must_haves=("Python 3년",),
+    )
+    responses = [
+        {
+            "position_title": "Backend Engineer",
+            "must_have": [{"type": "skill", "requirement": "Python 3년", "min_years": 3}],
+            "nice_to_have": [],
+        },
+        {"total_years": 4, "careers": [], "skills": [], "achievements": []},
+        {
+            "gates": [
+                {"requirement": "완전히 다른 요건", "verdict": "pass", "evidence": "e"},
+            ],
+            "dimensions": _payload(score=4)["dimensions"],
+            "one_line_verdict": "v",
+        },
+    ]
+
+    with pytest.raises(MatchingContractError) as err:
+        evaluate_candidate_contract(
+            profile,
+            position,
+            llm_json_client=lambda prompt: responses.pop(0),
+            company_tier_map={},
+            school_tier_map={},
+        )
+
+    message = str(err.value)
+    assert "Python 3년" in message          # Stage 1 이 요구한 것
+    assert "완전히 다른 요건" in message        # Stage 3 이 실제로 준 것
