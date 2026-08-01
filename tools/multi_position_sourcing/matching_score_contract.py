@@ -112,6 +112,33 @@ def _validate_gates(value: object) -> tuple[dict[str, str], ...]:
     return tuple(gates)
 
 
+def _integral_score(value: object) -> int | None:
+    """0~5 정수와 **정확히 같은 값**이면 그 정수를, 아니면 None 을 돌려준다.
+
+    LLM 은 같은 점수를 4, 4.0, "4" 로 번갈아 낸다. 표기가 달라도 값이 같으면 같은 점수이므로
+    후보를 버릴 이유가 없다. 반대로 4.5 처럼 정수가 아니거나 범위를 벗어나면 반올림해서
+    받아주지 않는다 — 없는 판단을 코드가 만들어내는 셈이 되기 때문이다(fail-closed 유지).
+    bool 은 int 서브클래스라 True 가 1점으로 새지 않게 먼저 막는다.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        number: float = value
+    elif isinstance(value, float):
+        number = value
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    if number != int(number):
+        return None
+    result = int(number)
+    return result if 0 <= result <= 5 else None
+
+
 def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
     if not isinstance(value, dict) or set(value) != set(DIMENSION_IDS):
         raise MatchingContractError("dimensions must contain D1-D8 exactly once")
@@ -144,14 +171,15 @@ def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
                 raise MatchingContractError(
                     f"{dimension_id} cannot be not_applicable"
                 )
-        elif (
-            isinstance(score, bool)
-            or not isinstance(score, int)
-            or not 0 <= score <= 5
-        ):
-            raise MatchingContractError(
-                f"{dimension_id}.score must be an integer from 0 to 5"
-            )
+        else:
+            coerced = _integral_score(score)
+            if coerced is None:
+                # 값과 타입을 남긴다 — 간헐적 표기 흔들림은 다음 발생이 곧 증거여야 한다.
+                raise MatchingContractError(
+                    f"{dimension_id}.score must be an integer from 0 to 5: "
+                    f"{score!r} ({type(score).__name__})"
+                )
+            score = coerced
 
         normalized: dict[str, Any] = {
             "score": score,
