@@ -86,12 +86,16 @@ def _validate_gates(value: object) -> tuple[dict[str, str], ...]:
     gates: list[dict[str, str]] = []
     seen: set[str] = set()
     for index, item in enumerate(value):
-        if not isinstance(item, dict) or set(item) != {
-            "requirement",
-            "verdict",
-            "evidence",
-        }:
-            raise MatchingContractError(f"gates[{index}] has an invalid shape")
+        # 필요한 세 필드가 있으면 받는다. LLM 이 min_years·note 같은 키를 하나 더 붙였다고
+        # 근거가 멀쩡한 후보를 버리지 않는다(2026-08-01 라이브). 세 필드의 의미 검증
+        # (비어있지 않은 요건·정해진 verdict·비어있지 않은 근거)은 아래에서 그대로 한다.
+        required = {"requirement", "verdict", "evidence"}
+        if not isinstance(item, dict) or not required.issubset(item):
+            saw = sorted(item) if isinstance(item, dict) else type(item).__name__
+            missing = sorted(required - set(item)) if isinstance(item, dict) else sorted(required)
+            raise MatchingContractError(
+                f"gates[{index}] has an invalid shape — 빠진 필드: {missing}, 받은 키: {saw}"
+            )
         requirement = _nonblank(
             item["requirement"], field=f"gates[{index}].requirement"
         )
