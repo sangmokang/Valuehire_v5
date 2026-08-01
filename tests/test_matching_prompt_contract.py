@@ -854,3 +854,36 @@ def test_stage3_prompt_states_needs_verification_is_a_string_list() -> None:
     # 느슨하게 "배열" 만 보면 다른 문장(gates 설명)에 걸려 통과해버린다 — 타입을 못 박은
     # 문장이 실제로 있는지 needs_verification 바로 뒤 문맥에서 확인한다.
     assert "needs_verification 은 문자열 배열" in stage3_prompt
+
+
+# --- 차원 점수 표기 흔들림: 값이 정확히 0~5 정수와 같으면 받는다 (2026-08-01 라이브) ---
+#
+# 사고: "#1 ERROR Namwoo Kim: D1.score must be an integer from 0 to 5".
+# 표본 2건을 라이브로 다시 뽑았을 때는 모두 int 였다 — 간헐적이다. 그래서 '어떤 값이었는지'를
+# 추측해 고치지 않는다. 대신 (a) 값이 정수와 정확히 같은 표기(4.0, "4")만 받아들이고
+# (b) 그래도 거부할 때는 실제 값과 타입을 오류에 남겨 다음 발생이 곧 증거가 되게 한다.
+
+
+def test_dimension_score_accepts_integral_float_and_numeric_string() -> None:
+    for raw in (4.0, "4", " 4 "):
+        payload = _payload(score=4)
+        payload["dimensions"]["D1"] = {"score": raw, "evidence": "근거"}
+        assert isinstance(calculate_final_score(payload)["score"], int), raw
+
+
+def test_dimension_score_rejects_fractional_and_out_of_range() -> None:
+    for raw in (4.5, "4.5", 6, -1, "high", None, True):
+        payload = _payload(score=4)
+        payload["dimensions"]["D1"] = {"score": raw, "evidence": "근거"}
+        with pytest.raises(MatchingContractError):
+            calculate_final_score(payload)
+
+
+def test_dimension_score_error_reports_the_actual_value() -> None:
+    payload = _payload(score=4)
+    payload["dimensions"]["D1"] = {"score": "high", "evidence": "근거"}
+    with pytest.raises(MatchingContractError) as err:
+        calculate_final_score(payload)
+    message = str(err.value)
+    assert "high" in message
+    assert "str" in message
