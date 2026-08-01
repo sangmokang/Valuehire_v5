@@ -56,9 +56,18 @@ PY
 cmd_install() {
   mkdir -p "$DEST_DIR" "$HOME/.valuehire/logs"
   render_plist "$DEST_PLIST" || exit 1
-  # 이미 로드돼 있으면 먼저 내린 뒤 다시 올린다(멱등).
-  launchctl unload "$DEST_PLIST" 2>/dev/null || true
-  launchctl load "$DEST_PLIST"
+  local domain="gui/$(id -u)"
+  # 이미 올라와 있으면 먼저 내린다(멱등). 아직 없으면 실패해도 정상.
+  launchctl bootout "$domain/$LABEL" 2>/dev/null || true
+  # ⚠️ disabled 해제가 없으면 적재해도 서비스가 올라오지 않는다.
+  #    실제로 2026-07-27~08-01 닷새간 이 서비스가 disabled 로 죽어 있었고,
+  #    legacy load 는 그 상태를 풀지 못해 재설치해도 되살아나지 않았다.
+  launchctl enable "$domain/$LABEL" 2>/dev/null || true
+  if ! launchctl bootstrap "$domain" "$DEST_PLIST"; then
+    echo "❌ 적재 실패 — 서비스가 올라오지 않았습니다: $domain/$LABEL" >&2
+    echo "   상태 확인: launchctl print-disabled $domain | grep $LABEL" >&2
+    return 1
+  fi
   echo "✅ 설치 완료 → 로그인 시 자동 시작 + 5분마다 죽은 창 되살림."
   echo "   실행 런처: $LAUNCHER"
   echo "   상태 확인: $LAUNCHER health"
