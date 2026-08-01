@@ -1,0 +1,274 @@
+{
+  "metadata": {
+    "position": "B2B SaaS Sales Manager",
+    "jd_original": "Own B2B SaaS enterprise sales, pipeline generation, CRM hygiene, customer discovery, negotiation, and renewal expansion.",
+    "stage": "Stage 1: JD 분석",
+    "analysis_date": "2026-08-01"
+  },
+  "job_title_variants": {
+    "english_primary": [
+      "Sales Manager",
+      "Account Executive",
+      "Enterprise Account Executive",
+      "Enterprise Sales Manager",
+      "B2B Sales Manager"
+    ],
+    "english_secondary": [
+      "Account Manager",
+      "Account Executive (AE)",
+      "Business Development Manager",
+      "Enterprise Account Manager",
+      "Sales Executive",
+      "Regional Sales Manager"
+    ],
+    "korean_primary": [
+      "영업 매니저",
+      "영업팀장",
+      "계정 담당자",
+      "엔터프라이즈 영업"
+    ],
+    "korean_secondary": [
+      "영업담당자",
+      "계정 관리자",
+      "사업개발 담당자",
+      "B2B 영업 매니저",
+      "SaaS 영업 매니저"
+    ]
+  },
+  "skills_korean": {
+    "tier1_mandatory": [
+      "파이프라인 관리",
+      "파이프라인 생성",
+      "고객발굴",
+      "CRM",
+      "CRM 관리",
+      "계약협상",
+      "협상",
+      "갱신",
+      "계정 확대"
+    ],
+    "tier2_supporting": [
+      "계정 관리",
+      "엔터프라이즈 영업",
+      "B2B 영업",
+      "SaaS 영업",
+      "영업 사이클 관리",
+      "고객 유지",
+      "계정 확대",
+      "업셀",
+      "매출 성장",
+      "영업 관리"
+    ]
+  },
+  "skills_english": {
+    "tier1_mandatory": [
+      "pipeline management",
+      "pipeline generation",
+      "customer discovery",
+      "CRM",
+      "CRM management",
+      "contract negotiation",
+      "negotiation",
+      "renewal",
+      "renewal expansion"
+    ],
+    "tier2_supporting": [
+      "account management",
+      "enterprise sales",
+      "B2B sales",
+      "SaaS sales",
+      "sales cycle management",
+      "customer retention",
+      "account expansion",
+      "upsell",
+      "revenue growth"
+    ],
+    "platform_specific": [
+      "Salesforce",
+      "HubSpot",
+      "Microsoft Dynamics",
+      "Pipedrive",
+      "Close.com"
+    ]
+  },
+  "domain_keywords": {
+    "primary_english": [
+      "SaaS",
+      "B2B SaaS",
+      "Enterprise SaaS",
+      "Software as a Service"
+    ],
+    "secondary_english": [
+      "Enterprise Software",
+      "B2B Software",
+      "Cloud Software",
+      "Enterprise-grade Software",
+      "B2B Enterprise"
+    ],
+    "primary_korean": [
+      "SaaS",
+      "B2B SaaS",
+      "엔터프라이즈 SaaS",
+      "기업용 소프트웨어"
+    ],
+    "secondary_korean": [
+      "엔터프라이즈 소프트웨어",
+      "B2B 소프트웨어",
+      "클라우드 소프트웨어",
+      "기업 소프트웨어"
+    ]
+  },
+  "abbreviations": {
+    "B2B": {
+      "formal": "Business to Business",
+      "korean": "기업간 거래",
+      "variants": ["B2B", "비즈니스 투 비즈니스", "기업간 거래"]
+    },
+    "SaaS": {
+      "formal": "Software as a Service",
+      "korean": "클라우드 소프트웨어 / 구독형 소프트웨어",
+      "variants": ["SaaS", "Software as a Service", "클라우드 소프트웨어", "구독형 소프트웨어"]
+    },
+    "CRM": {
+      "formal": "Customer Relationship Management",
+      "korean": "고객관계관리",
+      "variants": ["CRM", "고객관계관리", "Customer Relationship Management", "Salesforce", "Hubspot"],
+      "note": "플랫폼 약자도 포함 (Salesforce, HubSpot)"
+    },
+    "AE": {
+      "formal": "Account Executive",
+      "korean": "계정 담당자",
+      "variants": ["AE", "Account Executive"]
+    },
+    "SDR": {
+      "formal": "Sales Development Representative",
+      "korean": "영업개발 담당자",
+      "variants": ["SDR", "Sales Development Representative"]
+    },
+    "ADR": {
+      "formal": "Account Development Representative",
+      "korean": "계정개발 담당자",
+      "variants": ["ADR", "Account Development Representative"]
+    }
+  },
+  "discipline_keywords": [
+    "enterprise sales",
+    "B2B sales",
+    "SaaS sales",
+    "pipeline generation",
+    "customer discovery",
+    "negotiation",
+    "renewal management",
+    "account expansion",
+    "sales operations",
+    "CRM hygiene",
+    "sales cycle management"
+  ],
+  "expression_variants": {
+    "sales_titles_spacing": [
+      "Sales Manager",
+      "SalesManager",
+      "sales manager",
+      "세일즈 매니저",
+      "세일즈매니저"
+    ],
+    "pipeline_variations": [
+      "pipeline management",
+      "pipeline generation",
+      "sales pipeline",
+      "파이프라인",
+      "파이프라인 관리",
+      "파이프라인 생성"
+    ],
+    "crm_variations": [
+      "CRM",
+      "CRM management",
+      "CRM hygiene",
+      "CRM 관리",
+      "Salesforce",
+      "HubSpot",
+      "Pipedrive"
+    ],
+    "customer_discovery_variations": [
+      "customer discovery",
+      "고객발굴",
+      "고객탐색",
+      "lead generation",
+      "prospect research",
+      "리드발굴"
+    ]
+  },
+  "required_conditions": [
+    {
+      "en": "B2B sales experience",
+      "ko": "B2B 영업 경험",
+      "level": "필수",
+      "reason": "JD 첫 구절인 'B2B SaaS enterprise sales'에서 명시"
+    },
+    {
+      "en": "SaaS industry knowledge",
+      "ko": "SaaS 산업 경험",
+      "level": "필수",
+      "reason": "도메인 필수 조건 - 'B2B SaaS' 명시"
+    },
+    {
+      "en": "pipeline management",
+      "ko": "파이프라인 관리 경험",
+      "level": "필수",
+      "reason": "'pipeline generation'이 명확한 책임"
+    },
+    {
+      "en": "CRM proficiency",
+      "ko": "CRM 도구 활용 능력",
+      "level": "필수",
+      "reason": "'CRM hygiene' 명시 - 운영 역량 필수"
+    }
+  ],
+  "preferred_conditions": [
+    {
+      "en": "enterprise sales",
+      "ko": "엔터프라이즈 영업 경험",
+      "level": "우대",
+      "reason": "'enterprise sales' 명시"
+    },
+    {
+      "en": "renewal/expansion management",
+      "ko": "갱신 및 확대 영업 경험",
+      "level": "우대",
+      "reason": "'renewal expansion' 명시"
+    },
+    {
+      "en": "customer discovery methodology",
+      "ko": "고객 발굴 방법론 경험",
+      "level": "우대",
+      "reason": "'customer discovery' 명시"
+    }
+  ],
+  "core_competency_cluster": {
+    "cluster_name": "Pipeline + CRM + Customer Discovery",
+    "interpretation": "전체 sales cycle 오너십 기대 (new business + account management)",
+    "interpretation_ko": "영업 사이클 전체 관리 역량 (신규개발 + 계정 관리)",
+    "must_have_combination": "Must-have 2개 이상 만족 = 기본 점수. Nice-to-have 추가 = 보너스 점수"
+  },
+  "seniority_indicators": {
+    "level": "Mid-to-Senior",
+    "years_experience": "3-7년 이상",
+    "signals": [
+      "JD의 'Own' 키워드 (독립적 책임)",
+      "'enterprise' 수식어 (규모)",
+      "'renewal expansion' (계정 확대 = 경험)",
+      "Manager/Lead급 신호"
+    ]
+  },
+  "search_strategy": {
+    "boolean_structure": "(Title) AND (Skill1 OR Skill2) AND (Domain)",
+    "rationale": "LinkedIn Boolean 검색은 정확한 문구 매칭 요구. 3축 구조로 정확도-회수 균형",
+    "constraints": [
+      "경력년수 미지원 (RPS 한계)",
+      "지역/근무지 미지원 (Boolean 오염)",
+      "연봉 미지원",
+      "학력 미지원"
+    ],
+    "recommended_version": "v2_balanced: 3-4개 Title OR + 2-3개 Skill OR + 1-2개 Domain = 200-500명 타겟"
+  }
+}
