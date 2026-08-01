@@ -887,3 +887,51 @@ def test_dimension_score_error_reports_the_actual_value() -> None:
     message = str(err.value)
     assert "high" in message
     assert "str" in message
+
+
+# --- gates 원소에 여분 키가 붙어도 후보를 버리지 않는다 (2026-08-01 라이브) ---
+#
+# 사고: "#14 ERROR Jurabek Samiev: gates[0] has an invalid shape".
+# _validate_gates 는 원소 키 집합이 정확히 {requirement, verdict, evidence} 여야 통과시켰다.
+# LLM 이 min_years 나 note 같은 키를 하나 더 붙이면 근거가 멀쩡한 후보가 통째로 버려진다.
+# 세 필드의 의미 검증(비어있지 않은 요건·정해진 verdict·비어있지 않은 근거)은 그대로 두고,
+# 모르는 키만 떨어뜨린다.
+
+
+def test_gates_ignore_unknown_extra_keys() -> None:
+    payload = _payload(score=4)
+    payload["gates"] = [
+        {
+            "requirement": "Python 3년",
+            "verdict": "pass",
+            "evidence": "A사 Python API 4년",
+            "min_years": 3,
+            "note": "스킬 목록 확인",
+        }
+    ]
+
+    result = calculate_final_score(payload)
+
+    assert isinstance(result["score"], int)
+
+
+def test_gates_still_require_the_three_fields() -> None:
+    for gate in (
+        {"requirement": "Python", "verdict": "pass"},          # evidence 없음
+        {"requirement": "Python", "evidence": "e"},             # verdict 없음
+        {"verdict": "pass", "evidence": "e"},                   # requirement 없음
+        {"requirement": "", "verdict": "pass", "evidence": "e"},
+        {"requirement": "Python", "verdict": "maybe", "evidence": "e"},
+    ):
+        payload = _payload(score=4)
+        payload["gates"] = [gate]
+        with pytest.raises(MatchingContractError):
+            calculate_final_score(payload)
+
+
+def test_gate_shape_error_reports_the_keys_it_saw() -> None:
+    payload = _payload(score=4)
+    payload["gates"] = [{"requirement": "Python", "verdict": "pass"}]
+    with pytest.raises(MatchingContractError) as err:
+        calculate_final_score(payload)
+    assert "evidence" in str(err.value)
