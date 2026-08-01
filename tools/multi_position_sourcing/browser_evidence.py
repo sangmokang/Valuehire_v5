@@ -87,6 +87,23 @@ class BrowserEvidenceReceipt:
         }
 
 
+def strip_lone_surrogates(text: str) -> str:
+    """UTF-8 로 저장할 수 없는 짝 없는 서로게이트만 걷어낸다.
+
+    링크드인 프로필에 𝐁𝐚𝐜𝐤𝐞𝐧𝐝 같은 수학기호를 쓰는 사람이 있고, CDP 가 그 문자를 짝 없는
+    서로게이트로 넘겨줄 때가 있다. 그대로 encode 하면 UnicodeEncodeError 로 증거 저장이
+    터져 그 후보가 통째로 버려진다(2026-08-01 라이브). 정상 문자는 한 글자도 바꾸지 않고,
+    저장 불가능한 조각만 U+FFFD 로 바꿔 사람이 나중에 원문 훼손을 알아볼 수 있게 한다.
+    """
+    if not isinstance(text, str):
+        return text
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "surrogatepass").decode("utf-8", "replace")
+    return text
+
+
 def complete_evidence_payload(value: Any) -> bool:
     """Validate receipt fields against the actual private files and manifest."""
 
@@ -487,6 +504,8 @@ def _persist(
     text_path = final / "visible-text.txt"
     manifest_path = final / "manifest.json"
     screenshot_hash = hashlib.sha256(screenshot).hexdigest()
+    # 저장 불가능한 조각을 여기서 한 번 걷어낸다 — 파일·해시·아카이브가 모두 같은 텍스트를 쓴다.
+    visible_text = strip_lone_surrogates(visible_text)
     text_payload = visible_text.encode("utf-8")
     text_hash = hashlib.sha256(text_payload).hexdigest()
     archive_row_id: int | None = None

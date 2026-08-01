@@ -24,6 +24,7 @@ from tools.multi_position_sourcing.browser_evidence import (
     BrowserEvidenceError,
     capture_owned_browser_evidence,
     complete_evidence_payload,
+    strip_lone_surrogates,
 )
 from tools.multi_position_sourcing.harvest_policy import deterministic_delay_ms, worker_should_yield
 from tools.multi_position_sourcing.humansearch import (
@@ -752,7 +753,8 @@ def process_profile(
     prof = CapturedProfile(
         profile_url=profile_url,
         source_channel="linkedin_rps",
-        visible_text=info.get("full", ""),
+        # 채점·spec 직렬화도 같은 정리를 거친 텍스트를 쓴다(저장본과 어긋나지 않게).
+        visible_text=strip_lone_surrogates(info.get("full", "")),
         summary=info.get("summary", "") or info.get("headline", ""),
         captured_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
         screenshot_path=str(shot),
