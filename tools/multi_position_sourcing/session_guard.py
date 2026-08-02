@@ -650,6 +650,7 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     hasValueConnect: accountText.includes('valueconnect') || accountText.includes('value connect') || accountText.includes('밸류커넥트'),
     saraminSearch: !!document.querySelector('input.search_input') && !!document.querySelector('#career_min') && !!document.querySelector('#career_max'),
     jobkoreaSearch: !!document.querySelector("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"),
+    jobkoreaResumeControls: [...document.querySelectorAll('a,button')].some((e) => /포지션 제안|스크랩/.test(e.innerText || '')),
     linkedinSearch: visible('a[href*="/talent/search"]'),
     linkedinAccount: visible('__LINKEDIN_ACCOUNT_SELECTORS__')
   };
@@ -698,8 +699,16 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
             proofs.append("talent_search_controls")
         if profile_detail:
             proofs.append("profile_detail")
+        # 이력서 상세에는 기업 GNB 헤더가 없어 로그아웃·계정명이 안 잡힌다(2026-08-02 라이브).
+        # 대신 로그인한 기업회원에게만 보이는 조작 버튼('포지션 제안'·'스크랩')이 증거다 —
+        # 비로그인 사용자는 이 URL 에서 로그인 화면으로 튕겨 이 컨트롤을 볼 수 없다.
+        # 본문 글자만으로는 여전히 인정하지 않는다(컨트롤의 '존재'를 본다).
+        member_controls = raw.get("jobkoreaResumeControls") is True and profile_detail
+        if member_controls:
+            proofs.append("resume_member_controls")
         authenticated = bool(
-            logout and account and (search or profile_detail) and _official_site_url(site, url)
+            (logout and account and (search or profile_detail) or member_controls)
+            and _official_site_url(site, url)
         )
     elif site == "linkedin_rps":
         surface = _official_site_url(site, url) and urlsplit(url).path.casefold().startswith("/talent/")
