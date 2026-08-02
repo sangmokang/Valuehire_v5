@@ -307,3 +307,68 @@ def test_linkedin_account_probe_script_uses_the_shared_selector_constant() -> No
         assert selector not in source, (
             f"probe script 에 {selector!r} 가 하드코딩됨 — 상수만 써야 드리프트가 한 곳에서 고쳐진다"
         )
+
+
+# --- 잡코리아 이력서 상세: 기업회원 전용 조작 버튼을 로그인 증거로 인정 (2026-08-02 라이브) ---
+#
+# 사고: 잡코리아 순회가 첫 후보부터 "authenticated browser evidence required" 로 저장에
+# 실패해 한 명도 못 남겼다. 이력서 상세 화면에는 기업 GNB 헤더가 없어 '로그아웃'·계정명이
+# 안 잡히기 때문이다(라이브 실측). 그런데 그 화면에는 로그인한 기업회원에게만 보이는
+# '포지션 제안'·'스크랩' 조작 버튼이 있고, 비로그인 사용자는 이 URL 에서 로그인으로 튕긴다.
+#
+# 본문 글자만으로 인정하지 않는다는 기존 규칙(test_resume_body_words_...)은 그대로 둔다 —
+# 여기서 인정하는 것은 **본문 글자가 아니라 기업회원 전용 컨트롤의 존재**다.
+
+
+def _jobkorea_resume_raw(**overrides):
+    raw = {
+        "url": "https://www.jobkorea.co.kr/corp/person/find/resume/view?rNo=29576513",
+        "hasChallenge": False,
+        "hasSessionConflict": False,
+        "hasLogout": False,
+        "hasValueConnect": False,
+        "saraminSearch": False,
+        "jobkoreaSearch": False,
+        "jobkoreaResumeControls": False,
+        "linkedinSearch": False,
+        "linkedinAccount": False,
+    }
+    raw.update(overrides)
+
+    class Tab:
+        def eval(self, _script: str):
+            return raw
+
+    return Tab()
+
+
+def test_jobkorea_resume_controls_prove_authenticated_session() -> None:
+    observation = read_auth_observation(
+        _jobkorea_resume_raw(jobkoreaResumeControls=True), "jobkorea"
+    )
+
+    assert observation.authenticated is True
+    assert "resume_member_controls" in observation.proof_names
+
+
+def test_jobkorea_resume_controls_alone_do_not_authenticate_off_site() -> None:
+    """공식 도메인이 아니면 같은 컨트롤이 보여도 인정하지 않는다."""
+    observation = read_auth_observation(
+        _jobkorea_resume_raw(
+            url="https://evil.example.com/corp/person/find/resume/view?rNo=1",
+            jobkoreaResumeControls=True,
+        ),
+        "jobkorea",
+    )
+
+    assert observation.authenticated is False
+
+
+def test_jobkorea_resume_controls_do_not_override_challenge() -> None:
+    """캡차·본인확인 화면이면 컨트롤이 보여도 인정하지 않는다."""
+    observation = read_auth_observation(
+        _jobkorea_resume_raw(jobkoreaResumeControls=True, hasChallenge=True), "jobkorea"
+    )
+
+    assert observation.authenticated is False
+    assert observation.challenge is True
