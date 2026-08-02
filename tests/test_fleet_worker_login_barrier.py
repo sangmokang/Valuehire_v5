@@ -44,7 +44,7 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
         manifest = tmp_path / f"{ch}.manifest.json"
         for p in (shot, text, manifest):
             p.write_bytes(b"x")
-        (rdir / f"{ch}.json").write_text(json.dumps({
+        receipt = lb.seal_channel_receipt({
             "schema_version": 1,
             "channel": ch,
             "state": "AUTHENTICATED",
@@ -63,7 +63,9 @@ def _write_valid_receipts(tmp_path: Path, channels) -> Path:
             "manifest_path": str(manifest),
             "screenshot_sha256": SHA,
             "text_sha256": SHA,
-        }), encoding="utf-8")
+            "manifest_sha256": SHA,
+        })
+        (rdir / f"{ch}.json").write_text(json.dumps(receipt), encoding="utf-8")
     return rdir
 
 
@@ -157,3 +159,17 @@ def test_blocked_notice_names_exact_human_action(tmp_path):
     joined = "\n".join(notes)
     assert "session_guard" in joined and "linkedin_rps" in joined, (
         "필요한 사람 조치(session_guard human-auth)와 채널을 정확히 안내해야 함")
+
+
+def test_receipt_swap_between_initial_validation_and_execution_blocks_executor(tmp_path):
+    with patch.object(
+        lb,
+        "job_block_reason",
+        side_effect=[None, "saramin: HASH_MISMATCH"],
+    ) as validate:
+        status, q, calls, notes = _run_worker(_job(), tmp_path)
+
+    assert validate.call_count == 2
+    assert status == "paused_for_human"
+    assert calls == []
+    assert q.released[-1][1] == "paused_for_human"

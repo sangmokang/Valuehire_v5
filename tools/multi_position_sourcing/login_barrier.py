@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,7 +22,6 @@ from typing import Any, Mapping
 
 RECEIPT_SCHEMA_VERSION = 1
 RECEIPT_MAX_AGE_SECONDS = 1800  # 사람인·잡코리아 서버세션 20~30분(SOT-26 §4) — 보수값
-CLOCK_SKEW_SECONDS = 60
 CHANNELS = ("saramin", "jobkorea", "linkedin_rps")
 COMMANDS = ("login", "aisearch", "humansearch", "url")
 AISEARCH_DEFAULT_CHANNELS = ("saramin", "jobkorea")  # 기존 G4 기본값 유지
@@ -41,6 +41,59 @@ _SECRET_KEY_MARKERS = (
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _EVIDENCE_PATH_FIELDS = ("screenshot_path", "text_path", "manifest_path")
+_REASON_CODES = {
+    "RECEIPT_MISSING", "STALE_RECEIPT", "CLOCK_SKEW", "HOST_MISMATCH",
+    "EVIDENCE_MISSING", "HASH_MISMATCH", "CHANNEL_BLOCKED",
+}
+
+
+def _canonical_hash(value: Mapping[str, Any]) -> str:
+    payload = {key: item for key, item in value.items() if key != "integrity_sha256"}
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":"), allow_nan=False,
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def seal_channel_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    sealed = dict(receipt)
+    sealed["integrity_sha256"] = _canonical_hash(sealed)
+    return sealed
+
+
+def _evidence_sha256(path: str) -> str | None:
+    candidate = Path(path)
+    try:
+        if candidate.is_symlink() or not candidate.is_file():
+            return None
+        if candidate.stat().st_size > 25 * 1024 * 1024:
+            return None
+        return hashlib.sha256(candidate.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def receipt_reason_code(reason: str | None) -> str | None:
+    if reason is None:
+        return None
+    prefix = reason.split(":", 1)[0]
+    if prefix in _REASON_CODES:
+        return prefix
+    if "증거 파일" in reason:
+        return "EVIDENCE_MISSING"
+    if "영수증 없음" in reason:
+        return "RECEIPT_MISSING"
+    return "CHANNEL_BLOCKED"
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate receipt key: {key}")
+        result[key] = value
+    return result
 
 
 def default_receipt_dir() -> Path:
@@ -114,25 +167,29 @@ def validate_channel_receipt(
     channel: str,
     machine: str,
     now_epoch: float,
+    expected_target_id: str | None = None,
 ) -> str | None:
     """영수증 1건 fail-closed 검증 — 차단 사유 문자열 or None(유효)."""
     if not isinstance(receipt, Mapping):
         return "영수증 형식 오류(JSON object 아님)"
     if receipt.get("schema_version") != RECEIPT_SCHEMA_VERSION:
-        return "schema_version 불일치"
+        return "CHANNEL_BLOCKED: schema_version 불일치"
     if _contains_secret_key(receipt):
-        return "영수증에 비밀값 성격 키 포함(secret_material) — 저장 금지 계약 위반"
+        return "CHANNEL_BLOCKED: 영수증에 비밀값 성격 키 포함"
+    integrity = str(receipt.get("integrity_sha256") or "")
+    if not _SHA256_RE.fullmatch(integrity) or integrity != _canonical_hash(receipt):
+        return "HASH_MISMATCH: receipt integrity"
     state = receipt.get("state")
-    if state in ("HUMAN_AUTH", "AUTH_CONFLICT"):
-        return f"{state} 화면은 성공 증거가 아님"
+    if state in ("HUMAN_AUTH", "HUMAN_AUTH_REQUIRED", "AUTH_CONFLICT"):
+        return f"CHANNEL_BLOCKED: {state} 화면"
     if state != "AUTHENTICATED":
-        return f"state 미인증({state!r})"
+        return f"CHANNEL_BLOCKED: state 미인증({state!r})"
     if receipt.get("ready") is not True:
         return "ready != true"
     if str(receipt.get("channel") or "") != channel:
         return f"채널 불일치(요청={channel}, 영수증={receipt.get('channel')!r})"
     if str(receipt.get("host") or "") != str(machine):
-        return f"host 불일치(현재={machine}, 영수증={receipt.get('host')!r})"
+        return f"HOST_MISMATCH: current={machine}"
     raw_ts = receipt.get("last_verified_at")
     if not isinstance(raw_ts, str) or not raw_ts.strip():
         return "last_verified_at 없음"
@@ -143,14 +200,19 @@ def validate_channel_receipt(
     if dt.tzinfo is None:
         return "last_verified_at 에 시간대 없음(신뢰 불가)"
     age = float(now_epoch) - dt.timestamp()
-    if age < -CLOCK_SKEW_SECONDS:
-        return f"미래 시각 영수증(age={age:.0f}s)"
+    if age < 0:
+        return f"CLOCK_SKEW: future receipt(age={age:.0f}s)"
     if age > RECEIPT_MAX_AGE_SECONDS:
-        return f"영수증 만료(age={age:.0f}s > {RECEIPT_MAX_AGE_SECONDS}s)"
+        return f"STALE_RECEIPT: age={age:.0f}s"
     if receipt.get("owner_activity_detected") is not False:
         return "owner_activity_detected != false"
     if not str(receipt.get("target_id") or "").strip():
         return "target_id 없음"
+    if (
+        expected_target_id is not None
+        and str(receipt.get("target_id")) != str(expected_target_id)
+    ):
+        return "HOST_MISMATCH: exact target mismatch"
     proofs = receipt.get("proof_names")
     if (not isinstance(proofs, list) or not proofs
             or not all(isinstance(p, str) and p.strip() for p in proofs)):
@@ -162,10 +224,20 @@ def validate_channel_receipt(
     for field in _EVIDENCE_PATH_FIELDS:
         path = str(receipt.get(field) or "")
         if not path or not os.path.isfile(path):
-            return f"증거 파일 없음({field})"
-    for field in ("screenshot_sha256", "text_sha256"):
+            return f"EVIDENCE_MISSING: {field}"
+    for field in ("screenshot_sha256", "text_sha256", "manifest_sha256"):
         if not _SHA256_RE.fullmatch(str(receipt.get(field) or "")):
-            return f"{field} 형식 오류"
+            return f"HASH_MISMATCH: {field} format"
+    for path_field, hash_field in (
+        ("screenshot_path", "screenshot_sha256"),
+        ("text_path", "text_sha256"),
+        ("manifest_path", "manifest_sha256"),
+    ):
+        actual = _evidence_sha256(str(receipt[path_field]))
+        if actual is None:
+            return f"EVIDENCE_MISSING: {path_field}"
+        if actual != receipt[hash_field]:
+            return f"HASH_MISMATCH: {path_field}"
     return None
 
 
@@ -181,7 +253,10 @@ def load_receipts(receipt_dir: Path | str) -> tuple[dict[str, Any], str | None]:
         return {}, None
     for path in sorted(rdir.glob("*.json")):
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(
+                path.read_text(encoding="utf-8"),
+                object_pairs_hook=_reject_duplicate_keys,
+            )
         except (OSError, ValueError):
             payload = None
         channel = ""
@@ -209,27 +284,45 @@ def evaluate_barrier(
 
     PASS 는 필수 채널 전부의 영수증이 코드 검증을 통과할 때만. 그 외 전부 BLOCKED.
     """
+    def decision(required: tuple[str, ...], details: dict[str, str | None]) -> dict[str, Any]:
+        passed = bool(required) and all(value is None for value in details.values())
+        codes = [
+            code for code in dict.fromkeys(
+                receipt_reason_code(details.get(channel)) for channel in required
+            ) if code is not None
+        ]
+        state = "PASS" if passed or not required else "BLOCKED"
+        return {
+            "barrier": state,
+            "state": state,
+            "required": list(required),
+            "reasons": details,
+            "required_channels": list(required),
+            "reason_codes": codes,
+        }
+
     try:
         required = required_channels(command, channels=channels, params=params)
     except ValueError as exc:
-        return {"barrier": "BLOCKED", "required": [], "reasons": {"_input": str(exc)}}
+        return {
+            "barrier": "BLOCKED", "required": [], "reasons": {"_input": str(exc)},
+            "state": "BLOCKED", "required_channels": [],
+            "reason_codes": ["CHANNEL_BLOCKED"],
+        }
     rdir = Path(receipt_dir) if receipt_dir is not None else default_receipt_dir()
     receipts, fatal = load_receipts(rdir)
     reasons: dict[str, str | None] = {}
     if fatal:
         for ch in required:
             reasons[ch] = fatal
-        return {"barrier": "BLOCKED", "required": list(required), "reasons": reasons}
+        return decision(required, reasons)
     for ch in required:
         if ch not in receipts:
             reasons[ch] = "로그인 영수증 없음"
             continue
         reasons[ch] = validate_channel_receipt(
             receipts[ch], channel=ch, machine=machine, now_epoch=now_epoch)
-    barrier = "PASS" if required and all(v is None for v in reasons.values()) else "BLOCKED"
-    if not required:
-        barrier = "PASS"  # 포털 채널 무관 명령은 장벽 미적용(호출부가 스킬로 선별)
-    return {"barrier": barrier, "required": list(required), "reasons": reasons}
+    return decision(required, reasons)
 
 
 def job_required_channels(job: Mapping[str, Any]) -> tuple[str, ...]:
@@ -265,12 +358,28 @@ def job_block_reason(
     if fatal:
         return fatal
     failures = []
+    params = job.get("params") if isinstance(job.get("params"), Mapping) else {}
+    expected_targets = dict(
+        params.get("expected_target_ids")
+        if isinstance(params.get("expected_target_ids"), Mapping) else {}
+    )
+    route = params.get("route_decision")
+    if isinstance(route, Mapping):
+        for ref in route.get("evidence_refs") or []:
+            if not isinstance(ref, str):
+                continue
+            prefix = f"receipt:{machine}:"
+            target_prefix = f"target:{machine}:"
+            if ref.startswith(prefix) or ref.startswith(target_prefix):
+                expected_targets.setdefault("linkedin_rps", ref.rsplit(":", 1)[-1])
     for ch in required:
         if ch not in receipts:
             failures.append(f"{ch}: 로그인 영수증 없음")
             continue
         reason = validate_channel_receipt(
-            receipts[ch], channel=ch, machine=machine, now_epoch=now_epoch)
+            receipts[ch], channel=ch, machine=machine, now_epoch=now_epoch,
+            expected_target_id=expected_targets.get(ch),
+        )
         if reason is not None:
             failures.append(f"{ch}: {reason}")
     if failures:
@@ -322,7 +431,13 @@ def write_channel_receipt_from_episode(
         "screenshot_sha256": str(evidence.get("screenshot_sha256") or ""),
         "text_sha256": str(
             evidence.get("text_sha256") or evidence.get("visible_text_sha256") or ""),
+        "manifest_sha256": str(
+            evidence.get("manifest_sha256")
+            or _evidence_sha256(str(evidence.get("manifest_path") or ""))
+            or ""
+        ),
     }
+    receipt = seal_channel_receipt(receipt)
     # 자기 검증: 쓰기 전에 같은 validator 를 통과 못 하면 쓰지 않는다(fail-closed).
     if validate_channel_receipt(
             receipt, channel=site, machine=str(machine),
