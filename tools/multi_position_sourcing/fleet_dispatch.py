@@ -79,16 +79,51 @@ def build_fleet_job_payload(
     )
 
 
-def _route_linkedin_machine(queue: Any) -> str:
-    """이슈 D — LinkedIn 로그인 머신 라우팅(조회 실패 = macmini 폴백, fail-safe)."""
-    import time
+def _route_linkedin_machine(
+    queue: Any, *, request_id: str = "", requested_machine: str = "",
+    delegate_winpc: bool = False,
+) -> str:
+    """등록·heartbeat·위임을 통과한 LinkedIn 후보만 기존 선택기에 전달한다."""
+    from datetime import datetime, timezone
 
-    from .fleet_heartbeat import pick_linkedin_machine
+    from .fleet_heartbeat import (
+        normalize_machine_hostname,
+        pick_linkedin_machine,
+        readiness_candidates,
+    )
     try:
-        rows = queue.linkedin_ready_machines()
-        return pick_linkedin_machine(rows, now_epoch=int(time.time()))
-    except Exception:  # noqa: BLE001 — 라우팅 조회 실패가 enqueue 를 막으면 안 됨
-        return "macmini"
+        fetch = getattr(queue, "linkedin_ready_machines", None)
+        rows = list(
+            fetch() if callable(fetch)
+            else queue._rpc("linkedin_ready_machines", {})  # noqa: SLF001
+        )
+        if delegate_winpc and request_id:
+            rows = [
+                {
+                    **row,
+                    "delegated_for_request_id": request_id,
+                } if normalize_machine_hostname(row.get("machine_id")) == "winpc" else row
+                for row in rows
+            ]
+        now = datetime.now(timezone.utc)
+        ready, _ = readiness_candidates(
+            rows, required_capability="linkedin_rps",
+            request_id=request_id, now=now,
+        )
+        selectable = [
+            row for row in ready if row.get("linkedin_rps_logged_in") is True
+        ]
+        requested_canonical = normalize_machine_hostname(requested_machine)
+        if requested_machine:
+            selectable = [
+                row for row in selectable
+                if row.get("machine_id") == requested_canonical
+            ]
+        if not selectable:
+            return ""
+        return pick_linkedin_machine(selectable, now_epoch=int(now.timestamp()))
+    except Exception:  # noqa: BLE001 — 준비를 증명 못 하면 enqueue 하지 않는다
+        return ""
 
 
 def _group_session_for_url(url: str) -> Optional[dict[str, Any]]:
@@ -169,12 +204,23 @@ def dispatch_fleet_command(
 
     if invocation.command_name == "fleet-run":
         options = dict(invocation.options or {})
-        # 이슈 D(2026-07-15 사장님 승인, SOT29 §2 개정): LinkedIn 잡(skill=url)이
-        # 머신 미지정이면 heartbeat 의 로그인 상태로 라우팅. 조회 실패/미검출 =
-        # macmini 폴백(fail-safe) — 명시 machine 은 절대 덮어쓰지 않는다.
-        if (options.get("skill") or "").strip() == "url" \
-                and not (options.get("machine") or "").strip():
-            options["machine"] = _route_linkedin_machine(q)
+        # 머신 미지정 LinkedIn 잡은 등록·heartbeat·위임을 모두 통과한 후보만 사용한다.
+        if (options.get("skill") or "").strip() == "url":
+            import uuid
+
+            requested_machine = str(options.get("machine") or "").strip()
+            request_id = str(options.pop("_request_id", "") or uuid.uuid4().hex)
+            routed = _route_linkedin_machine(
+                q, request_id=request_id,
+                requested_machine=requested_machine,
+                delegate_winpc=owner and requested_machine == "winpc",
+            )
+            if not routed:
+                return {
+                    "action": "error",
+                    "reason": "준비 상태를 증명한 LinkedIn 머신이 없습니다",
+                }
+            options["machine"] = routed
         # 이슈 #104: humansearch 잡에 진행 중 포지션(SOT24) 그룹 세션을 동봉 —
         # 같은 로그인 세션에서 유사 포지션 연속 검색 + idle 변형 자동 enqueue 의 원천.
         if (options.get("skill") or "").strip() == "humansearch":
