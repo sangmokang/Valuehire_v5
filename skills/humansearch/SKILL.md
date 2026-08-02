@@ -213,6 +213,28 @@ description: 사장님이 채용 사이트(LinkedIn Recruiter/RPS·사람인·�
   **포커스가 빠져 뒷 문단이 안 들어간다**(글자수로 확인). 본문은 **한 문단으로 단일 `type` 1회**가
   안전(줄바꿈 최소화). 입력 뒤 **글자수·한글 깨짐을 스크린샷으로 검증**. 줄바꿈에 Enter 금지
   (soft newline 만) — 오발송 방지.
+- **포털 디버그 크롬 포트(2026-07-04).** raw CDP 기본 9222(사장님 메인 크롬)는 대개 디버그 포트
+  없이 떠 있다 → `scripts/portal_browsers.sh start` 의 별도 프로필 크롬(사람인 9223 · 잡코리아 9224 ·
+  링크드인 9225)에 `raw_cdp.CDP_HTTP` 런타임 오버라이드로 붙는다. 사장님 크롬은 절대 kill/재기동 금지.
+  `health` 의 "로그인된 것으로 보임"은 URL 휴리스틱이라 못 믿는다 — 링크드인은 실제 네비게이션이
+  `login-cap` 으로 튕기는지, 잡코리아는 `POST /Login/C_Frame_LoginCheck` 가 true/false 인지로 판정.
+  로그인 자체는 사람 게이트(DM 요청 → 탭 상태 감시 → 자동 재개).
+- **잡코리아 이력서 파싱 3함정(2026-07-04 실측).** ① **학교명은 base64 PNG 이미지**(안티스크래핑,
+  `.education .name img`) — innerText 로 못 얻는다 → 이미지 파일로 저장 후 **LLM 이 눈으로 읽어
+  학력 보정**(영문 학교명 게이트와 동일 단계). ② 경력 리스트(`.list-career`)와 경력기술서에 같은
+  재직 기간이 중복 등장 → `(start,end)` dedupe 없으면 단기이직이 이중 카운트돼 hard-exclude 오탐.
+  ③ **로그아웃 상태여도 검색·카드 100장은 정상으로 보인다**(상세만 '확인하기' 마스킹) — 검색 성공을
+  로그인 증거로 착각 금지. 본문 추출은 `.dev-resume-content` 로 스코프(전체 body 는 광고·'연관 추천'
+  타인 정보로 오염).
+- **RPS 키워드 검색의 CDP 실행법(2026-07-04 — 기존 통념 정정).** JS `.click()`·jQuery trigger 는
+  안 먹지만, **실좌표 `Input.dispatchMouseEvent`(mousePressed/Released) + `Input.insertText` +
+  드롭다운 "Start a keyword search" 실좌표 클릭** 조합이면 검색이 실제 실행된다(새 searchContextId
+  발급 — 기존 라이브 검색을 덮지 않음). 즉 "raw CDP 합성입력 안 됨"은 *JS 합성 이벤트* 한정.
+  단 새 키워드 검색은 기존 필터(지역·경력)를 계승하지 않아 결과가 넓게 나온다 — 지역 등 필터 패널
+  자동화는 아직 미확립(셀렉터 추측 클릭 금지, 안 되면 Boolean 레시피를 남기고 사람에게).
+- **raw_cdp `tab.close()` 는 websocket 만 닫는다 — 탭은 남는다(2026-07-04).** 순회마다 `new_tab`
+  하면 디버그 크롬에 탭이 계속 쌓인다 → 긴 런은 탭 재사용, 끝나면 남은 탭을 감안(방치 시 attach
+  타임아웃·렌더 부하의 원인).
 
 ## 등록 레인 B — ClickUp FY26AI_Search (부모 Task + 후보 Subtask)
 사장님이 "ClickUp 에 등록"·"포지션 Task 만들고 Subtask 에 후보 리스팅"이라 하면 Discord 대신(또는 병행) 이 레인.
