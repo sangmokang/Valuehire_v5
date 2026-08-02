@@ -1,0 +1,68 @@
+{
+  "claim_id": "pc-g3-saramin-offer-composer",
+  "mode": "code-change",
+  "risk": "L3",
+  "spec": "docs/engineering/pc-g3-multichannel-outreach-prompt-2026-07-05.md",
+  "generator": {
+    "author": "Claude Fable 5 (this session)",
+    "claim": "build_saramin_offer_body 가 사장님 SSOT(4채널 공통 순서)의 사람인 2칸 매핑(offer_comment/charge_work)을 PC-G2 방어 헬퍼 재사용으로 조립하고, saramin 2,000자 캡·8요소 브리핑·공격벡터 방어를 전부 상속한다. 부수효과 0.",
+    "changed_files": [
+      "tools/multi_position_sourcing/jd_outreach.py",
+      "tests/test_saramin_offer_body.py"
+    ],
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "test_numbers": "1000 passed, 4 xfailed, 14 subtests passed in 12.69s",
+    "red_commit": "f401f74 (ImportError 실패 테스트 선커밋)",
+    "green_commit": "7cfc1fe",
+    "self_adversarial": [
+      "jd_preferences=str → ValueError(리스트여야 함, repr 유출 없음)",
+      "hiring_process=tuple → 정상 허용",
+      "브리핑 값 '[전형 절차]' 위장 → ValueError(예약헤더)",
+      "opener U+2028 주입 → ValueError(제어·줄분리)",
+      "candidate_name 공백 → ValueError(필수 입력)",
+      "브리핑 1900자 → OutreachJdCapError(2347>2000 STOP)",
+      "골든 offer_comment 469자/charge_work 51자, precheck_inmail ok=True"
+    ]
+  },
+  "v1": {
+    "author": "codex-rescue subagent (agentId ad60eaa0afff267e5)",
+    "verdict": "FAIL",
+    "claim": "_clean_text 가 strip() 후 제어문자 검사 — 문장 맨 앞/뒤 개행류가 조용히 통과 (jd_outreach.py:147,:193)",
+    "tool_uses": 0,
+    "note": "⚠️ 정적 리뷰만 — 재현 실행 0회. G 가 T 역할로 직접 재현함(아래).",
+    "generator_repro": {
+      "command": ".venv/bin/python 직접 공격 5종",
+      "result": [
+        "opener 앞/뒤 개행 → strip 정상화, 출력에 해로운 잔재 없음",
+        "개행+가짜헤더 → ValueError(예약헤더 방어)",
+        "회사명 앞 U+2028 → strip 정상화(무해)",
+        "회사명 앞 NUL → ValueError(제어문자)"
+      ],
+      "generator_position": "PC-G2 의도된 설계(test_reserved_section_header_masquerade_rejected 주석에 명시: 앞머리 개행은 strip 으로 사라지고 남는 위장은 예약헤더 검사가 잡음). 해로운 출력 생성 경로 없음 → 결함 아님 주장. 최종 판정은 V2 에 위임."
+    }
+  },
+  "v2": {
+    "author": "Claude Fable 5 재검증 서브에이전트 (리셋 컨텍스트, agentId a389039602ef96c08)",
+    "verdict": "PASS",
+    "v1_issue_ruling": "비결함(의도 설계) — 앞/뒤 개행류는 strip 정상화로 출력에 잔재 0. 실행 재현: 앞뒤 \\n·\\r\\n·U+2028/29 폭탄 입력 → 골든 출력과 바이트 동일(identical=True, opener·브리핑값·불릿항목 3경로 전부). ZWSP+개행+예약헤더, Cf/NBSP 분절 헤더, 전각브래킷 ［회사소개］, 중간개행 가짜섹션 전부 ValueError. 통과된 어떤 출력에서도 Cc(\\n 제외)/Zl/Zp/Cf 잔재 스캔 0건 — 오염 출력 생성 경로 없음.",
+    "new_attacks": [
+      "캡 경계 ==2000 통과 / 2001 STOP — 정상",
+      "NFD 분해형 4500cp → char_count 1500(NFC 기준) — 캡 우회 없음",
+      "language='en' → 영어 VERIFIED-PULL 삽입 + precheck ok=True",
+      "반환 dict 변조 후 재호출 독립 + 입력 kwargs 비변조(순수함수)",
+      "빈 브리핑 dict → 불릿 0개 [회사소개] + precheck ok=True — inmail_precheck 설계상 briefing<6 은 STOP 아닌 warning('보고 후 진행', §1.5) — 기존 PC-G2 상속 동작, 신규 결함 아님(관찰)",
+      "브리핑 비문자열(list/int/dict/bytes) 전부 거부, jd_preferences str/dict/generator 거부·tuple 허용",
+      "offer_comment 단독 캡초과 → OutreachJdCapError STOP",
+      "금지워딩 입력은 컴포저 통과(조립만) → 독립 precheck 가 STOP — 계약대로",
+      "테스트 약화 검사: NBSP 위장 케이스에 실제 U+00A0 포함 확인, oracle=독립 precheck 유지",
+      "PC-G2 build_linkedin_inmail_jd 회귀 정상(695자<=1899)"
+    ],
+    "cosmetic_notes": "position_title/브리핑값에 '· ' 접두 입력 시 '· · x' 이중불릿 등 외관 잡음 가능(한 줄 유지·구조 위장 아님) — 결함 아님, 후속 미화 후보",
+    "command": ".venv/bin/python 공격 스크립트 24종 + 전체 스위트",
+    "test_numbers": "1000 passed, 4 xfailed, 14 subtests passed in 12.76s"
+  },
+  "failed_attempts": [],
+  "three_way_agree": true,
+  "status": "V2 PASS — V1 쟁점은 비결함(의도 설계) 판정, 배송 가능"
+}

@@ -25,6 +25,7 @@ __all__ = [
     "OutreachJdCapError",
     "assert_outreach_jd_within_cap",
     "build_linkedin_inmail_jd",
+    "build_saramin_offer_body",
 ]
 
 
@@ -109,6 +110,8 @@ def _reject_control(field: str, text: str) -> None:
 # 본문 구조를 만드는 예약 섹션 헤더 — 입력이 이걸로 시작하면 구조 위장(codex V1 round6)
 _RESERVED_HEADERS: tuple[str, ...] = (
     "[제목]", "[주요 업무]", "[자격 요건]", "[왜 검토할 만한가]", "[근무지]",
+    # PC-G3 사람인 섹션 헤더 — 같은 위장 공격 벡터이므로 동일하게 예약
+    "[회사소개]", "[우대 사항]", "[근무 조건]", "[전형 절차]",
 )
 
 
@@ -167,6 +170,34 @@ def _bullets(field: str, items) -> str:
     return "\n".join(f"· {item}" for item in cleaned)
 
 
+def _briefing_lines(company: str, company_briefing) -> list[str]:
+    """②[회사소개] 불릿 조립 — 8요소 밖 키 거부(SOT5), 출처 있는 값만, 미확인·빈값 생략.
+    PC-G2 인라인 로직을 그대로 추출(공용) — 동작 변화 없음."""
+    if company_briefing is not None and not isinstance(company_briefing, dict):
+        raise ValueError(
+            f"company_briefing 은 dict 여야 함(현재 {type(company_briefing).__name__}) — fail-closed"
+        )
+    unknown = set(company_briefing or {}) - set(BRIEFING_ELEMENT_KEYS)
+    if unknown:
+        raise ValueError(
+            f"company_briefing 에 §1.5 8요소 밖 키 금지(SOT5): {sorted(unknown)}"
+        )
+    lines = [company]
+    for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, 미확인·빈값은 생략
+        raw = (company_briefing or {}).get(key)
+        if raw is not None and not isinstance(raw, str):
+            raise ValueError(
+                f"company_briefing['{key}'] 는 문자열이어야 함(현재 {type(raw).__name__})"
+                " — 리스트/None 혼입 repr 유출 금지(fail-closed)"
+            )
+        value = _strip_invisible(raw or "").strip()
+        _reject_control(f"company_briefing['{key}']", value)
+        _reject_reserved_header(f"company_briefing['{key}']", value)
+        if value and not _contains_unverified(value):
+            lines.append(f"· {value}")
+    return lines
+
+
 def build_linkedin_inmail_jd(
     *,
     candidate_name: str,
@@ -199,29 +230,7 @@ def build_linkedin_inmail_jd(
         raise ValueError(
             f"channel 은 문자열이어야 함(현재 {type(channel).__name__}) — fail-closed"
         )
-    if company_briefing is not None and not isinstance(company_briefing, dict):
-        raise ValueError(
-            f"company_briefing 은 dict 여야 함(현재 {type(company_briefing).__name__}) — fail-closed"
-        )
-    unknown = set(company_briefing or {}) - set(BRIEFING_ELEMENT_KEYS)
-    if unknown:
-        raise ValueError(
-            f"company_briefing 에 §1.5 8요소 밖 키 금지(SOT5): {sorted(unknown)}"
-        )
-
-    briefing_lines = [company]
-    for key in BRIEFING_ELEMENT_KEYS:  # 출처 있는 값만, 미확인·빈값은 생략
-        raw = (company_briefing or {}).get(key)
-        if raw is not None and not isinstance(raw, str):
-            raise ValueError(
-                f"company_briefing['{key}'] 는 문자열이어야 함(현재 {type(raw).__name__})"
-                " — 리스트/None 혼입 repr 유출 금지(fail-closed)"
-            )
-        value = _strip_invisible(raw or "").strip()
-        _reject_control(f"company_briefing['{key}']", value)
-        _reject_reserved_header(f"company_briefing['{key}']", value)
-        if value and not _contains_unverified(value):
-            briefing_lines.append(f"· {value}")
+    briefing_lines = _briefing_lines(company, company_briefing)
 
     sections = [
         f"[제목] {company}, {title}",
@@ -240,3 +249,69 @@ def build_linkedin_inmail_jd(
 
     body = "\n\n".join(sections)
     return assert_outreach_jd_within_cap(body, channel=channel)
+
+
+def build_saramin_offer_body(
+    *,
+    candidate_name: str,
+    personalized_opener: str,
+    company_name: str,
+    position_title: str,
+    company_briefing: dict,
+    jd_responsibilities: list[str],
+    jd_qualifications: list[str],
+    jd_preferences: list[str] | None = None,
+    jd_conditions: list[str] | None = None,
+    hiring_process: list[str] | None = None,
+    language: str = "ko",
+) -> dict[str, str]:
+    """PC-G3(사람인) — 이직제안 2칸 본문 조립. 부수효과 0(Send/insert 없음, SOT3).
+
+    사장님 확정 SSOT(2026-07-05, 4채널 공통 순서)의 사람인 매핑:
+    - offer_comment ← ①개인화 인사 + ②[회사소개] 불릿 + 짧은 포지션 셀링
+      + ④CTA(VERIFIED-PULL·P.S.) + ⑤서명. 사람인은 칸이 2개뿐이라 ④⑤를 여기 붙인다.
+    - charge_work   ← ③JD 원문만([헤더]+불릿). 우대/근무조건/전형절차는 선택 —
+      None 이면 헤더째 생략, 제공됐는데 비면 fail-closed 거부(_bullets 상속).
+    두 칸 모두 saramin 2,000자 캡(PC-G1)을 조립 직후 검문한다.
+    """
+    name = _clean_text("candidate_name", candidate_name)
+    opener = _clean_text("personalized_opener", personalized_opener)
+    company = _clean_text("company_name", company_name)
+    title = _clean_text("position_title", position_title)
+    if not isinstance(language, str) or language not in _VERIFIED_PULL:
+        raise ValueError(f"language 는 {sorted(_VERIFIED_PULL)} 중 하나: {language!r}")
+
+    briefing = "\n".join(_briefing_lines(company, company_briefing))
+
+    offer_comment = "\n\n".join(
+        [
+            f"안녕하세요 {name}님,",
+            f"{_INTRO}\n{opener}",
+            f"[회사소개]\n{briefing}",
+            (
+                f"이번에 {company}의 {title} 포지션을 제안드리며, "
+                "상세 업무·요건은 함께 등록된 공고 내용을 확인해 주시면 됩니다."
+            ),
+            _VERIFIED_PULL[language],
+            _CLOSING,
+            _PS_CTA,
+        ]
+    )
+
+    jd_sections = [
+        f"[주요 업무]\n{_bullets('jd_responsibilities', jd_responsibilities)}",
+        f"[자격 요건]\n{_bullets('jd_qualifications', jd_qualifications)}",
+    ]
+    for header, field, items in (
+        ("[우대 사항]", "jd_preferences", jd_preferences),
+        ("[근무 조건]", "jd_conditions", jd_conditions),
+        ("[전형 절차]", "hiring_process", hiring_process),
+    ):
+        if items is not None:  # 미제공=생략 / 제공됐는데 비면 _bullets 가 fail-closed 거부
+            jd_sections.append(f"{header}\n{_bullets(field, items)}")
+    charge_work = "\n\n".join(jd_sections)
+
+    return {
+        "offer_comment": assert_outreach_jd_within_cap(offer_comment, channel="saramin"),
+        "charge_work": assert_outreach_jd_within_cap(charge_work, channel="saramin"),
+    }
