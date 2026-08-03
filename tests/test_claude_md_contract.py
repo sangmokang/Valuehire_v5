@@ -32,6 +32,10 @@ def _text() -> str:
 
 _BACKTICK = re.compile(r"`([^`\n]+)`")
 
+# 실행 중에만 생겼다 사라지는 산출물 — 저장소에 커밋되지 않으므로 실존 검사 대상이 아니다.
+# (예: strict 작업 마커는 `make task` 가 만들고 작업이 끝나면 정리된다.)
+RUNTIME_ARTIFACTS = frozenset({".claude/strict-active.json"})
+
 
 def _repo_path_candidates(text: str) -> list[str]:
     """규칙서 본문의 백틱 조각 중 '이 저장소 안 경로'로 볼 것만 추린다.
@@ -47,6 +51,8 @@ def _repo_path_candidates(text: str) -> list[str]:
             continue
         # `scripts/harness/task.sh:10` 처럼 줄번호가 붙은 경우 잘라낸다.
         item = re.split(r":\d", item, maxsplit=1)[0].rstrip(":")
+        if item in RUNTIME_ARTIFACTS:
+            continue
         out.append(item)
     return sorted(set(out))
 

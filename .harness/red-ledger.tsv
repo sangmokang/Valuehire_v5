@@ -118,28 +118,28 @@ one-shot-safe-autologin	GREEN	#234	PR#234 stacked on App09 — exact-target sele
 human-auth-episode-coordinator	GREEN	#236	PR#236 stacked on App10 — episode-scoped presentation+Discord notification dedupe, public five-field notice, read-only >=5s polling, auth+owner inactive+quiet>=15s barrier, structured handoff/conflict/evidence states, WebSocket-only interrupt. focused 140 passed; verify 2915 passed, 4 xfailed, 105 subtests. RED 952dea7 / GREEN 1266e04.
 linkedin-single-seat-guardian	GREEN	#238	PR#238 stacked on App11 — pure complete-fleet 0/1/2 RPS host guardian; unknown/drift/pending-human/unready/conflict fail closed; existing session host reuse; zero-host selected login only; wired pre-enqueue and pre-auto-login; no takeover/cookie export. focused 185 passed; verify 2928 passed, 4 xfailed, 105 subtests. RED cb41e23 / GREEN 00c6508.
 integrity-login-receipt-barrier	GREEN	#240	PR#240 stacked on App12 — schema-v1 compatible canonical integrity; actual screenshot/text/manifest SHA verification; future/stale/host/exact-target/challenge/conflict/secret gates; duplicate-key reject; structured BarrierDecision; worker disk reread immediately pre-executor. focused 128 passed; verify 2932 passed, 4 xfailed, 105 subtests. RED 524646b / GREEN 573c7f0.
-one-shot-safe-autologin	RED	-	worktree ../Valuehire_v5-one-shot-safe-autologin (branch task/one-shot-safe-autologin)
-human-auth-episode-coordinator	RED	-	worktree ../Valuehire_v5-human-auth-episode-coordinator (branch task/human-auth-episode-coordinator)
-linkedin-single-seat-guardian	RED	-	worktree ../Valuehire_v5-linkedin-single-seat-guardian (branch task/linkedin-single-seat-guardian)
-integrity-login-receipt-barrier	RED	-	worktree ../Valuehire_v5-integrity-login-receipt-barrier (branch task/integrity-login-receipt-barrier)
-common-command-queue-gateway	RED	-	worktree ../Valuehire_v5-common-command-queue-gateway (branch task/common-command-queue-gateway)
+one-shot-safe-autologin	GREEN	-	worktree ../Valuehire_v5-one-shot-safe-autologin (branch task/one-shot-safe-autologin) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+human-auth-episode-coordinator	GREEN	-	worktree ../Valuehire_v5-human-auth-episode-coordinator (branch task/human-auth-episode-coordinator) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+linkedin-single-seat-guardian	GREEN	-	worktree ../Valuehire_v5-linkedin-single-seat-guardian (branch task/linkedin-single-seat-guardian) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+integrity-login-receipt-barrier	GREEN	-	worktree ../Valuehire_v5-integrity-login-receipt-barrier (branch task/integrity-login-receipt-barrier) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+common-command-queue-gateway	GREEN	-	worktree ../Valuehire_v5-common-command-queue-gateway (branch task/common-command-queue-gateway) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
 common-command-queue-gateway	GREEN	#242	PR#242 stacked on App13 — canonical Discord/Claude/Codex request envelope, semantic idempotency conflict detection, queue-only handler, DISCOVER worker start, secret rejection, Discord production wiring. focused 388 passed; verify 2953 passed, 4 xfailed, 105 subtests. RED 5fd97a1 / GREEN bf5ba2b.
 login-session-lifecycle	GREEN	#244	PR#244 stacked on App14 — one keepalive/resume/handoff coordinator; 900s/1800s gates, protected safe-target default SKIP, stale resume DISCOVER, own-token release, WebSocket-only detach, browser close 0. focused 153 passed; verify 2965 passed, 4 xfailed, 105 subtests. RED 029da7f / GREEN 7e917b3.
 three-machine-live-verification	GREEN	#246	PR#246 stacked on App15 — 16-scenario preflight gate, ordered Macmini/MacBook/explicit-WinPC conductor, forbidden mutation/close and secret scan, integrity bundle. focused 190 passed; verify 2972 passed, 4 xfailed, 105 subtests. Official Macmini readiness expected-block, MacBook DISCOVERY_INCOMPLETE, WinPC NOT_DELEGATED; all mutation/close 0. RED f3b4a47 / GREEN a568c5b.
-login-session-lifecycle	RED	-	worktree ../Valuehire_v5-login-session-lifecycle (branch task/login-session-lifecycle)
-three-machine-live-verification	RED	-	worktree ../Valuehire_v5-three-machine-live-verification (branch task/three-machine-live-verification)
-aisearch-humansearch-operating-guide	RED	-	worktree ../Valuehire_v5-aisearch-humansearch-operating-guide (branch task/aisearch-humansearch-operating-guide)
-aisearch-ac1-rps-boolean	RED	-	worktree ../Valuehire_v5-aisearch-ac1-rps-boolean (branch task/aisearch-ac1-rps-boolean)
-aisearch-ac2-portal-search	RED	-	worktree ../Valuehire_v5-aisearch-ac2-portal-search (branch task/aisearch-ac2-portal-search)
-aisearch-ac3-pagination-store	RED	-	worktree ../Valuehire_v5-aisearch-ac3-pagination-store (branch task/aisearch-ac3-pagination-store)
-aisearch-ac4-score-gate	RED	-	worktree ../Valuehire_v5-aisearch-ac4-score-gate (branch task/aisearch-ac4-score-gate)
-aisearch-ac5-dual-record	RED	-	worktree ../Valuehire_v5-aisearch-ac5-dual-record (branch task/aisearch-ac5-dual-record)
-aisearch-ac7-intervention	RED	-	worktree ../Valuehire_v5-aisearch-ac7-intervention (branch task/aisearch-ac7-intervention)
-aisearch-ac8-red-banner-extension	RED	-	worktree ../Valuehire_v5-aisearch-ac8-red-banner-extension (branch task/aisearch-ac8-red-banner-extension)
-aisearch-ac9-jdbuilder-draft	RED	-	worktree ../Valuehire_v5-aisearch-ac9-jdbuilder-draft (branch task/aisearch-ac9-jdbuilder-draft)
-aisearch-humansearch-operating-guide	RED	-	worktree ../Valuehire_v5-aisearch-humansearch-operating-guide (branch task/aisearch-humansearch-operating-guide)
-aisearch-orchestrator	RED	-	worktree ../Valuehire_v5-aisearch-orchestrator (branch task/aisearch-orchestrator)
+login-session-lifecycle	GREEN	-	worktree ../Valuehire_v5-login-session-lifecycle (branch task/login-session-lifecycle) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+three-machine-live-verification	GREEN	-	worktree ../Valuehire_v5-three-machine-live-verification (branch task/three-machine-live-verification) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-humansearch-operating-guide	GREEN	-	worktree ../Valuehire_v5-aisearch-humansearch-operating-guide (branch task/aisearch-humansearch-operating-guide) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac1-rps-boolean	GREEN	-	worktree ../Valuehire_v5-aisearch-ac1-rps-boolean (branch task/aisearch-ac1-rps-boolean) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac2-portal-search	GREEN	-	worktree ../Valuehire_v5-aisearch-ac2-portal-search (branch task/aisearch-ac2-portal-search) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac3-pagination-store	GREEN	-	worktree ../Valuehire_v5-aisearch-ac3-pagination-store (branch task/aisearch-ac3-pagination-store) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac4-score-gate	GREEN	-	worktree ../Valuehire_v5-aisearch-ac4-score-gate (branch task/aisearch-ac4-score-gate) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac5-dual-record	GREEN	-	worktree ../Valuehire_v5-aisearch-ac5-dual-record (branch task/aisearch-ac5-dual-record) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac7-intervention	GREEN	-	worktree ../Valuehire_v5-aisearch-ac7-intervention (branch task/aisearch-ac7-intervention) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac8-red-banner-extension	GREEN	-	worktree ../Valuehire_v5-aisearch-ac8-red-banner-extension (branch task/aisearch-ac8-red-banner-extension) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-ac9-jdbuilder-draft	GREEN	-	worktree ../Valuehire_v5-aisearch-ac9-jdbuilder-draft (branch task/aisearch-ac9-jdbuilder-draft) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-humansearch-operating-guide	GREEN	-	worktree ../Valuehire_v5-aisearch-humansearch-operating-guide (branch task/aisearch-humansearch-operating-guide) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
+aisearch-orchestrator	GREEN	-	worktree ../Valuehire_v5-aisearch-orchestrator (branch task/aisearch-orchestrator) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
 aisearch-orchestrator	GREEN	#248	PR#248 merged — apps/aisearch 신규(AC-1~5,7~9 + orchestrator + cdp_driver + run.py). aisearch 테스트 321, verify 3141 passed exit 0. Codex 적대검증 5라운드+V2, 자동발송 0, AC-6은 D12 미확정 보류. AC별 워크트리 9개(task/aisearch-ac*, orchestrator) 회수.
-aisearch-ac6-admin-api-client	RED	-	worktree ../Valuehire_v5-aisearch-ac6-admin-api-client (branch task/aisearch-ac6-admin-api-client)
+aisearch-ac6-admin-api-client	GREEN	-	worktree ../Valuehire_v5-aisearch-ac6-admin-api-client (branch task/aisearch-ac6-admin-api-client) / 브랜치 소멸(merge 완료) 확인 + verify 3377 passed exit 0 — 2026-08-03 원장 잔재 정리
 aisearch-ac6-admin-api-client	GREEN	#250	PR#250 merged — admin.valuehire.cc register API v5 클라이언트(D12 확정: 신규 API, v4 서버 db7429c2 기구현). aisearch 348, verify 3168 passed exit 0. Codex V1 결함 5건 수정.
 humansearch-authenticated-target	GREEN	#249	실제 9338 Talent 화면을 관리 프로필 이름 불일치에도 발견하고 로그인 상태로 무조작 판정. 개인 Chrome 제외·lease 안 target resolve. 라이브 read-only 확인 + focused 162 passed + 독립검증 63 passed/3 subtests + 최신 main 병합 후 verify 3178 passed, 4 xfailed, 105 subtests.
