@@ -198,8 +198,14 @@ def test_no_claude_p_call_site_is_left_unprotected() -> None:
     from pathlib import Path
 
     root = Path(fw.__file__).resolve().parents[2]
+    sources = [
+        path
+        for folder in ("tools", "scripts", "apps", "ops")
+        for path in sorted((root / folder).rglob("*.py"))
+        if (root / folder).is_dir()
+    ]
     offenders: list[str] = []
-    for path in sorted((root / "tools").rglob("*.py")):
+    for path in sources:
         text = path.read_text(encoding="utf-8")
         if not re.search(r'"claude"\s*,\s*"-p"', text) and '"-p"' not in text:
             continue
