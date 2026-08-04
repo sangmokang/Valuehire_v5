@@ -73,6 +73,8 @@ class FakeTransport:
             value = True
         elif "/*vh:snapshot*/" in expr:
             value = dict(FakeTransport.SNAPSHOT)
+        elif "/*vh:reset_rect*/" in expr:
+            value = None  # 기본: 화면에 초기화 컨트롤 없음(최초 실행처럼)
         return {"result": {"value": value}}
 
     def __call__(self, method: str, params: dict) -> dict:
@@ -267,6 +269,58 @@ class TestDescriptorExecution:
         driver, _t = _driver(responder)
         with pytest.raises(CdpDriverError):
             driver.run_descriptor(self.DESCRIPTOR)
+
+
+# ── reset_filters — 2026-08-04 라이브 발견 결함 수정 ─────────────────────
+#
+# 잡코리아 라이브 실행에서, 탭에 이전(무관한) 검색의 필터 칩이 남아 있으면
+# 새 검색 입력·제출을 그대로 해도 화면은 계속 옛 칩 기준 결과를 보여줬다
+# (스크린샷으로 "Prompt Engineering"+"FastAPI" 칩이 살아있음을 확인). 이제
+# run_descriptor 는 스텝 입력 전에 reset_filters 를 먼저 호출해 기존 칩을
+# 지운다.
+class TestResetFilters:
+    def test_clicks_visible_reset_control_when_present(self):
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:reset_rect*/" in expr:
+                return {"result": {"value": {"x": 10.0, "y": 20.0}}}
+            return FakeTransport.default_responder(method, params)
+
+        driver, t = _driver(responder)
+        clicked = driver.reset_filters("jobkorea")
+        assert clicked is True
+        mouse_calls = [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+        assert any(c["type"] == "mousePressed" and c["x"] == 10.0 and c["y"] == 20.0 for c in mouse_calls)
+        assert any(c["type"] == "mouseReleased" for c in mouse_calls)
+
+    def test_returns_false_when_no_reset_control_visible(self):
+        driver, t = _driver()  # 기본 responder — reset_rect=None
+        clicked = driver.reset_filters("jobkorea")
+        assert clicked is False
+        assert not [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+
+    def test_unknown_channel_returns_false_without_side_effects(self):
+        driver, t = _driver()
+        clicked = driver.reset_filters("linkedin_rps")
+        assert clicked is False
+        assert not [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+
+    def test_run_descriptor_resets_before_any_step_input(self):
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:reset_rect*/" in expr:
+                return {"result": {"value": {"x": 5.0, "y": 6.0}}}
+            return FakeTransport.default_responder(method, params)
+
+        driver, t = _driver(responder)
+        driver.run_descriptor(TestDescriptorExecution.DESCRIPTOR)
+        reset_click_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.dispatchMouseEvent"
+        )
+        insert_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.insertText"
+        )
+        assert reset_click_i < insert_i, "칩 초기화가 입력보다 먼저여야 한다"
 
 
 # ── (c) 페이지 HTML 캡처 + 리스트 페이지 계약(fetch_list_page) ──
