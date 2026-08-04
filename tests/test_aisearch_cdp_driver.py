@@ -75,6 +75,8 @@ class FakeTransport:
             value = dict(FakeTransport.SNAPSHOT)
         elif "/*vh:reset_rect*/" in expr:
             value = None  # 기본: 화면에 초기화 컨트롤 없음(최초 실행처럼)
+        elif "/*vh:facet_rect*/" in expr:
+            value = None  # 기본: 화면에 해당 facet 컨트롤 없음
         return {"result": {"value": value}}
 
     def __call__(self, method: str, params: dict) -> dict:
@@ -169,6 +171,38 @@ class TestRpsSearch:
         driver, _t = _driver(responder)
         with pytest.raises(CdpDriverError):
             driver.run_rps_search("(PM)")
+
+    def test_clears_stale_keyword_pill_and_opens_editor_before_insert(self):
+        # 2026-08-04 라이브 발견 — LinkedIn Recruiter의 Keywords 입력칸은 상시
+        # 노출이 아니라 "편집" facet 버튼을 눌러야 나타난다. 또 이전(무관한)
+        # 검색의 키워드 칩이 남아있으면 먼저 지워야 한다(라이브 실측: 이 순서
+        # 그대로 실행해 실제 계정에서 회계 키워드로 186건 필터링 성공 확인).
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:facet_rect*/" in expr:
+                return {"result": {"value": {"x": 1.0, "y": 2.0}}}
+            return FakeTransport.default_responder(method, params)
+
+        driver, t = _driver(responder)
+        driver.run_rps_search("(PM)")
+        mouse_calls = [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+        # 클리어 컨트롤 + 편집 컨트롤 = 클릭 2회(각 mousePressed+mouseReleased)
+        assert len(mouse_calls) == 4
+        click_end_i = max(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.dispatchMouseEvent"
+        )
+        insert_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.insertText"
+        )
+        assert click_end_i < insert_i, "칩 지우기·편집 열기가 입력보다 먼저여야 한다"
+
+    def test_no_stale_pill_or_editor_control_still_inserts_normally(self):
+        # 컨트롤이 안 보이면(=원래 입력칸이 상시 노출되는 옛 UI) 클릭 없이
+        # 그냥 기존처럼 진행한다 — fail-open, 회귀 없음.
+        driver, t = _driver()  # 기본 responder — facet_rect=None
+        count = driver.run_rps_search("(PM)")
+        assert count == 1234
+        assert not [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
 
     def test_count_without_digits_fails_closed(self):
         def responder(method, params):
