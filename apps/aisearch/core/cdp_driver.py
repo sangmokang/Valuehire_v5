@@ -73,6 +73,14 @@ LINKEDIN_CHANNEL = "linkedin_rps"
 #: id 는 ember 동적 suffix 라 안정 속성(data-test-...)으로 잡는다.
 RPS_KEYWORDS_SELECTOR = "textarea[data-test-free-text-single-value-facet-textarea]"
 
+#: 2026-08-04 라이브 발견 — 위 textarea 는 상시 노출이 아니라 Keywords facet의
+#: "편집"(aria-label 에 "keywords or boolean" 포함) 버튼을 눌러야 나타난다.
+#: 이전(무관한) 검색의 키워드 칩이 있으면 "Clear Keywords" 컨트롤을 먼저
+#: 눌러 지운다 — 실제 계정에서 이 순서 그대로 실행해 회계 키워드 186건
+#: 필터링 성공을 확인했다.
+RPS_KEYWORDS_CLEAR_LABEL = ("Clear Keywords",)
+RPS_KEYWORDS_EDIT_LABELS = ("Profile keywords", "keywords or boolean")
+
 #: RPS 필터 입력 필드(약한 참조 — 라이브 검증 대상). 결함 ① — 지역·대학·경력
 #: 필터는 payload 전달로 끝나지 않고 이 필드들에 실제 입력 시퀀스로 적용한다.
 RPS_LOCATION_SELECTOR = (
@@ -271,6 +279,32 @@ def _reset_filters_rect_js(texts: tuple[str, ...]) -> str:
         "if(e.children.length>0)continue;"
         "var t=(e.textContent||'').trim();"
         "if(texts.indexOf(t)===-1)continue;"
+        "if(e.scrollIntoView)e.scrollIntoView({block:'center'});"
+        "var r=e.getBoundingClientRect();"
+        "if(r.width>0&&r.height>0){"
+        "return{x:r.left+r.width/2,y:r.top+r.height/2};}}"
+        "return null;})()"
+    )
+
+
+def _facet_rect_js(data_test_attr: str, label_substrings: tuple[str, ...]) -> str:
+    """2026-08-04 라이브 발견 — LinkedIn Recruiter의 facet 클리어/편집 버튼은
+    안정적인 CSS 클래스가 없다(``data-test-pill-facet-clear``/
+    ``data-test-facet-edit`` 는 facet 마다 재사용되는 공용 속성이라 그것만
+    으로는 어떤 facet인지 못 가른다). ``aria-label`` 부분일치 + 화면 노출
+    (rect>0) 스캔으로 정확한 facet의 컨트롤만 고른다.
+    """
+    labels_js = json.dumps(list(label_substrings))
+    return (
+        "/*vh:facet_rect*/(function(){"
+        f"var labels={labels_js};"
+        f"var els=Array.from(document.querySelectorAll('[{data_test_attr}]'));"
+        "for(var i=0;i<els.length;i++){"
+        "var e=els[i];"
+        "var al=(e.getAttribute('aria-label')||'');"
+        "var ok=false;"
+        "for(var j=0;j<labels.length;j++){if(al.indexOf(labels[j])!==-1){ok=true;break;}}"
+        "if(!ok)continue;"
         "if(e.scrollIntoView)e.scrollIntoView({block:'center'});"
         "var r=e.getBoundingClientRect();"
         "if(r.width>0&&r.height>0){"
@@ -485,6 +519,26 @@ class CdpDriver:
         finally:
             self._set_auto_flag(False)
 
+    def _click_facet_control(
+        self, *, data_test_attr: str, label_substrings: tuple[str, ...]
+    ) -> bool:
+        """2026-08-04 라이브 발견 — LinkedIn Recruiter facet 클리어/편집 버튼을
+        aria-label 부분일치로 찾아 클릭한다. 안 보이면(해당 facet에 이미 값이
+        없거나, 이 UI 변형에서 애초에 없는 컨트롤) 조작 없이 ``False``
+        (fail-open) — 다음 단계(직접 입력)가 그대로 진행된다.
+        """
+        self._set_auto_flag(True)
+        try:
+            rect = self._evaluate(_facet_rect_js(data_test_attr, label_substrings))
+            if not isinstance(rect, dict):
+                return False
+            base = {"x": rect["x"], "y": rect["y"], "button": "left", "clickCount": 1}
+            self._cmd("Input.dispatchMouseEvent", {"type": "mousePressed", **base})
+            self._cmd("Input.dispatchMouseEvent", {"type": "mouseReleased", **base})
+            return True
+        finally:
+            self._set_auto_flag(False)
+
     # ── 입력/검색 실행 ─────────────────────────────────────────────────
 
     def run_rps_search(self, boolean_query: str) -> int:
@@ -492,6 +546,18 @@ class CdpDriver:
         실행(Enter) → 로드 대기 → 결과건수 읽기. 숫자를 못 읽으면 fail-closed."""
         if not isinstance(boolean_query, str) or not boolean_query.strip():
             raise CdpDriverError("RPS Boolean 문자열이 비어 있다(fail-closed)")
+        # 2026-08-04 라이브 발견 — 이전(무관한) 검색의 키워드 칩을 먼저 지우고
+        # (fail-open: 없으면 그냥 넘어감), Keywords 입력칸을 열어야(facet 편집
+        # 버튼) textarea 가 나타난다. 실제 계정에서 이 순서로 186건 필터링
+        # 성공을 확인했다.
+        self._click_facet_control(
+            data_test_attr="data-test-pill-facet-clear",
+            label_substrings=RPS_KEYWORDS_CLEAR_LABEL,
+        )
+        self._click_facet_control(
+            data_test_attr="data-test-facet-edit",
+            label_substrings=RPS_KEYWORDS_EDIT_LABELS,
+        )
         self._insert_text(RPS_KEYWORDS_SELECTOR, boolean_query)
         self._press_enter(RPS_KEYWORDS_SELECTOR)
         self.wait_for_load()  # 결함 ② — 검색 실행 후 결과 로드 완료까지 대기
