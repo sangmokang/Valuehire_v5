@@ -109,6 +109,21 @@ DETAIL_LINK_SELECTORS: dict[str, str] = {
     "jobkorea": "a[href*='resume/view']",
 }
 
+#: 채널별 "필터 초기화" 컨트롤 텍스트(약한 참조 — 라이브 검증 대상).
+#: 2026-08-04 잡코리아 라이브 실행에서 발견 — 이전(무관한) 검색의 필터 칩이
+#: 탭에 그대로 남아 있으면, 새 검색을 입력해도 화면은 계속 옛 칩 기준
+#: 결과를 보여준다("Prompt Engineering"+"FastAPI" 칩이 남아있던 탭에
+#: "회계"를 입력·제출해도 같은 71명이 그대로 나옴을 스크린샷으로 확인).
+#: 두 채널 모두 텍스트가 정확히 "초기화"인 컨트롤이 화면에 보이면
+#: reset_filters() 가 그 컨트롤을 클릭해 기존 칩을 지운다. 정확한 CSS
+#: 클래스는 없다(사람인 SOT 는 "button.btn_delete_all" 도 언급하지만
+#: Playwright ``:has-text()`` 확장 구문이라 순수 querySelectorAll 로는 못
+#: 씀 — 텍스트 정확일치 스캔으로 대체).
+RESET_FILTERS_TEXT: dict[str, tuple[str, ...]] = {
+    "saramin": ("전체삭제", "초기화"),
+    "jobkorea": ("초기화",),
+}
+
 #: 채널별 "다음 페이지" 컨트롤 셀렉터(약한 참조 — 라이브 검증 대상).
 NEXT_PAGE_SELECTORS: dict[str, str] = {
     LINKEDIN_CHANNEL: "button[aria-label='Next']",
@@ -237,6 +252,30 @@ def _rect_js(selector: str) -> str:
         "if(e.scrollIntoView)e.scrollIntoView({block:'center'});"
         "var r=e.getBoundingClientRect();"
         "return{x:r.left+r.width/2,y:r.top+r.height/2};})()"
+    )
+
+
+def _reset_filters_rect_js(texts: tuple[str, ...]) -> str:
+    """결함(2026-08-04 라이브 발견) — "초기화" 류 컨트롤은 안정적인 CSS 클래스가
+    없어(약한 참조) 텍스트 정확일치 + 화면 노출(rect>0) 스캔으로 찾는다.
+    자식 요소가 있는 컨테이너는 제외(직접 텍스트 노드를 가진 leaf 만)해
+    같은 문구를 포함하는 상위 래퍼를 잘못 집지 않게 한다.
+    """
+    texts_js = json.dumps(list(texts))
+    return (
+        "/*vh:reset_rect*/(function(){"
+        f"var texts={texts_js};"
+        "var els=Array.from(document.querySelectorAll('a,button,span,div'));"
+        "for(var i=0;i<els.length;i++){"
+        "var e=els[i];"
+        "if(e.children.length>0)continue;"
+        "var t=(e.textContent||'').trim();"
+        "if(texts.indexOf(t)===-1)continue;"
+        "if(e.scrollIntoView)e.scrollIntoView({block:'center'});"
+        "var r=e.getBoundingClientRect();"
+        "if(r.width>0&&r.height>0){"
+        "return{x:r.left+r.width/2,y:r.top+r.height/2};}}"
+        "return null;})()"
     )
 
 
@@ -424,6 +463,28 @@ class CdpDriver:
                 f"셀렉터 미발견 — 선택 실패(fail-closed): {selector}"
             )
 
+    def reset_filters(self, channel: str) -> bool:
+        """2026-08-04 라이브 발견 — 새 검색 전에 이전(무관한) 검색의 필터 칩을
+        지운다. 화면에 정확히 일치하는 텍스트의 "초기화" 류 컨트롤이 보이면
+        클릭하고 ``True`` 를 돌려준다. 채널이 미지원이거나 컨트롤이 안
+        보이면(최초 실행처럼 애초에 칩이 없는 정상 상태) 아무 조작 없이
+        ``False`` 를 돌려준다 — 못 찾는 것 자체는 오류가 아니다(fail-open).
+        """
+        texts = RESET_FILTERS_TEXT.get(channel)
+        if not texts:
+            return False
+        self._set_auto_flag(True)
+        try:
+            rect = self._evaluate(_reset_filters_rect_js(texts))
+            if not isinstance(rect, dict):
+                return False
+            base = {"x": rect["x"], "y": rect["y"], "button": "left", "clickCount": 1}
+            self._cmd("Input.dispatchMouseEvent", {"type": "mousePressed", **base})
+            self._cmd("Input.dispatchMouseEvent", {"type": "mouseReleased", **base})
+            return True
+        finally:
+            self._set_auto_flag(False)
+
     # ── 입력/검색 실행 ─────────────────────────────────────────────────
 
     def run_rps_search(self, boolean_query: str) -> int:
@@ -483,6 +544,11 @@ class CdpDriver:
         if not isinstance(url, str) or not url:
             raise CdpDriverError(f"디스크립터 url 이 비어 있다: {descriptor!r}")
         self.navigate(url)  # 내부에서 로드 완료 대기(결함 ②)
+        # 2026-08-04 라이브 발견 — 스텝 입력 전에 이전(무관한) 검색의 필터
+        # 칩을 먼저 지운다. 안 지우면 새 입력을 해도 옛 칩 기준 결과가
+        # 그대로 남는다(라이브에서 실측: 이전 칩이 살아있는 채로 새 키워드를
+        # 입력·제출해도 검색 결과가 전혀 안 바뀜).
+        self.reset_filters(str(descriptor.get("channel") or ""))
         steps = sorted(descriptor.get("steps") or [], key=lambda s: s["order"])
         for step in steps:
             kind = step.get("kind", "text")
