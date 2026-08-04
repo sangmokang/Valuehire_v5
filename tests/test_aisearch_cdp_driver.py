@@ -11,6 +11,7 @@ CDP 트랜스포트는 주입식 — 이 테스트는 페이크 트랜스포트�
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -21,6 +22,7 @@ from apps.aisearch.core.cdp_driver import (
     CdpDriver,
     CdpDriverError,
     CdpTransportError,
+    DETAIL_LINK_SELECTORS,
     WebSocketCdpTransport,
 )
 from apps.aisearch.core.intervention import (
@@ -478,3 +480,55 @@ class TestWebSocketTransportFraming:
     def test_module_has_lazy_websocket_connect_entry(self):
         # 라이브 접속 함수는 존재하되(프로덕션 조립용), 여기서는 호출하지 않는다.
         assert callable(cd.connect_websocket_transport)
+
+
+# ── DETAIL_LINK_SELECTORS 라이브 검증 회귀 방지 ──────────────────────────
+#
+# CSS 속성 셀렉터 [href*=value] 는 대소문자를 구분한다. 2026-08-04 잡코리아
+# 인재검색 라이브 실행(실제 검색 결과 HTML)에서 옛 셀렉터
+# "a[href*='/Corp/Person/'][href*='View']" 가 실제 소문자 href 와 전혀
+# 매치되지 않아 상세 링크가 항상 0건이던 결함을 발견했다. 실제 관측 href
+# 문자열을 고정해 같은 대소문자 회귀를 다시 못 잡는 일을 막는다.
+JOBKOREA_LIVE_DETAIL_HREF = "/corp/person/find/resume/view?rNo=29465392"
+
+
+class TestDetailLinkSelectorsMatchRealHrefs:
+    def test_jobkorea_selector_substring_occurs_in_real_href(self):
+        match = re.search(r"href\*='([^']+)'", DETAIL_LINK_SELECTORS["jobkorea"])
+        assert match, "jobkorea 셀렉터에 href*='...' 패턴이 없다"
+        needle = match.group(1)
+        # 대소문자 그대로 비교 — querySelectorAll 의 실제 매치 동작 재현.
+        assert needle in JOBKOREA_LIVE_DETAIL_HREF
+
+
+# ── list_detail_refs 중복 제거 회귀 방지 ──────────────────────────────────
+#
+# 2026-08-04 잡코리아 라이브 실행에서 후보 1명당 앵커(<a>)가 2개씩 걸려
+# detail_refs 가 실제 후보 수(71명)의 정확히 2배(142)로 나왔다 — 셀렉터 수정
+# 직후 곧바로 라이브에서 발견. 중복 상세 진입은 같은 URL을 연달아 두 번
+# 여는 기계적 패턴이라 SOT 의 "봇처럼 굴지 않는다" 원칙 위반이자 시간 낭비다.
+class TestListDetailRefsDeduplicates:
+    def test_duplicate_hrefs_collapse_to_unique_order_preserved(self):
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:detail_refs*/" in expr:
+                return {
+                    "result": {
+                        "value": [
+                            "https://fake.test/p/1",
+                            "https://fake.test/p/1",
+                            "https://fake.test/p/2",
+                            "https://fake.test/p/2",
+                            "https://fake.test/p/3",
+                        ]
+                    }
+                }
+            return FakeTransport.default_responder(method, params)
+
+        driver, _t = _driver(responder)
+        refs = driver.list_detail_refs("jobkorea")
+        assert refs == [
+            "https://fake.test/p/1",
+            "https://fake.test/p/2",
+            "https://fake.test/p/3",
+        ]

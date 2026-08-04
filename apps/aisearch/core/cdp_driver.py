@@ -97,10 +97,16 @@ RPS_RESULT_COUNT_SELECTORS = (
 )
 
 #: 채널별 리스트 → 상세 프로필 링크 셀렉터(약한 참조 — 라이브 검증 대상).
+#: jobkorea 는 2026-08-04 라이브 검증(잡코리아 인재검색, 실제 검색 실행 결과
+#: HTML)으로 실제 href 가 전부 소문자 ``/corp/person/find/resume/view?rNo=``
+#: 임을 확인했다. CSS 속성 셀렉터 ``[attr*=value]`` 는 대소문자를 구분하므로
+#: 기존 ``'/Corp/Person/'``+``'View'`` (대문자 포함) 는 실제 링크와 전혀
+#: 매치되지 않아 상세 링크가 항상 0건이었다(라이브 실행에서 발견 — 페이크
+#: 트랜스포트 테스트는 합성 href 라 이 불일치를 못 잡았다).
 DETAIL_LINK_SELECTORS: dict[str, str] = {
     LINKEDIN_CHANNEL: "a[data-test-link-to-profile-link]",
     "saramin": "a[href*='talent-pool'][href*='view']",
-    "jobkorea": "a[href*='/Corp/Person/'][href*='View']",
+    "jobkorea": "a[href*='resume/view']",
 }
 
 #: 채널별 "다음 페이지" 컨트롤 셀렉터(약한 참조 — 라이브 검증 대상).
@@ -533,7 +539,18 @@ class CdpDriver:
             isinstance(r, str) for r in refs
         ):
             raise CdpDriverError(f"상세 링크 목록 형식 위반(fail-closed): {refs!r}")
-        return refs
+        # 2026-08-04 라이브 발견 — 후보 1명이 앵커 2개(이름 링크 + 요약 링크
+        # 등)로 같은 href 를 중복 노출할 수 있다. 중복 그대로 fetch_detail_page
+        # 를 반복 호출하면 같은 URL 을 연달아 두 번 여는 기계적 패턴이 되므로
+        # (SOT "봇처럼 굴지 않는다"), 순서를 보존하며 중복을 제거한다.
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for ref in refs:
+            if ref in seen:
+                continue
+            seen.add(ref)
+            deduped.append(ref)
+        return deduped
 
     def has_next_page(self, channel: str) -> bool:
         selector = NEXT_PAGE_SELECTORS.get(channel)
