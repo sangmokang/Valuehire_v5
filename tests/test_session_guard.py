@@ -198,6 +198,43 @@ def test_linkedin_authwall_is_an_allowed_existing_challenge_surface() -> None:
     assert ref.target_id == "authwall-target"
 
 
+def test_help_text_alone_is_not_a_live_challenge() -> None:
+    """안내 문구만 있는 화면을 사람에게 넘기지 않는다.
+
+    잡코리아 로그인 완료 홈에는 '2단계 인증' FAQ 링크가 늘 떠 있다. 문구만
+    보고 challenge 로 판정하면 이미 로그인된 실행이 HUMAN_AUTH 로 넘어가
+    자동로그인 불변식(SOT 1)이 막힌다 — 2026-08-05 라이브에서 재현됐다.
+    문구는 실제 인증 입력 컨트롤이 함께 보일 때만 challenge 다.
+    """
+
+    class Tab:
+        script = ""
+
+        def eval(self, script: str):
+            self.script = script
+            return {
+                "url": "https://www.jobkorea.co.kr/searchfirm/home/",
+                "hasChallenge": False,
+                "hasSessionConflict": False,
+                "hasLogout": True,
+                "hasValueConnect": True,
+                "saraminSearch": False,
+                "jobkoreaSearch": True,
+                "linkedinSearch": False,
+                "linkedinAccount": False,
+            }
+
+    tab = Tab()
+    read_auth_observation(tab, "jobkorea")
+
+    assert "authFormControl" in tab.script, (
+        "인증 입력 컨트롤이 실제로 보이는지 확인하는 신호가 없다"
+    )
+    assert "challengePhrase && authFormControl" in tab.script, (
+        "'2단계 인증' 문구만으로 challenge 로 판정한다 — 안내 링크에도 걸린다"
+    )
+
+
 def _safe_payload() -> dict[str, object]:
     return {
         "target_id": "target-exact",
