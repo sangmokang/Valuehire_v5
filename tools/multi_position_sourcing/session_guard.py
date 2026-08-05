@@ -642,9 +642,12 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     folded.includes('only one session');
   const challengePhrase = folded.includes('보안문자') ||
     folded.includes('인증번호') || folded.includes('2단계 인증');
+  const authFormControl = visible(
+    'input[type="password"], input[name*="auth"], input[name*="verify"], input[autocomplete="one-time-code"]'
+  );
   return {
     url: location.href,
-    hasChallenge: challengePath || challengeControl || challengePhrase,
+    hasChallenge: challengePath || challengeControl || (challengePhrase && authFormControl),
     hasSessionConflict: sessionConflictPath || sessionConflictPhrase,
     hasLogout: accountText.includes('로그아웃') || accountText.includes('log out'),
     hasValueConnect: accountText.includes('valueconnect') || accountText.includes('value connect') || accountText.includes('밸류커넥트'),
