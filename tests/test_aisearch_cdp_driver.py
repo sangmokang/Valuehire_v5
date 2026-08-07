@@ -11,6 +11,7 @@ CDP 트랜스포트는 주입식 — 이 테스트는 페이크 트랜스포트�
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -21,6 +22,7 @@ from apps.aisearch.core.cdp_driver import (
     CdpDriver,
     CdpDriverError,
     CdpTransportError,
+    DETAIL_LINK_SELECTORS,
     WebSocketCdpTransport,
 )
 from apps.aisearch.core.intervention import (
@@ -71,6 +73,10 @@ class FakeTransport:
             value = True
         elif "/*vh:snapshot*/" in expr:
             value = dict(FakeTransport.SNAPSHOT)
+        elif "/*vh:reset_rect*/" in expr:
+            value = None  # 기본: 화면에 초기화 컨트롤 없음(최초 실행처럼)
+        elif "/*vh:facet_rect*/" in expr:
+            value = None  # 기본: 화면에 해당 facet 컨트롤 없음
         return {"result": {"value": value}}
 
     def __call__(self, method: str, params: dict) -> dict:
@@ -165,6 +171,38 @@ class TestRpsSearch:
         driver, _t = _driver(responder)
         with pytest.raises(CdpDriverError):
             driver.run_rps_search("(PM)")
+
+    def test_clears_stale_keyword_pill_and_opens_editor_before_insert(self):
+        # 2026-08-04 라이브 발견 — LinkedIn Recruiter의 Keywords 입력칸은 상시
+        # 노출이 아니라 "편집" facet 버튼을 눌러야 나타난다. 또 이전(무관한)
+        # 검색의 키워드 칩이 남아있으면 먼저 지워야 한다(라이브 실측: 이 순서
+        # 그대로 실행해 실제 계정에서 회계 키워드로 186건 필터링 성공 확인).
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:facet_rect*/" in expr:
+                return {"result": {"value": {"x": 1.0, "y": 2.0}}}
+            return FakeTransport.default_responder(method, params)
+
+        driver, t = _driver(responder)
+        driver.run_rps_search("(PM)")
+        mouse_calls = [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+        # 클리어 컨트롤 + 편집 컨트롤 = 클릭 2회(각 mousePressed+mouseReleased)
+        assert len(mouse_calls) == 4
+        click_end_i = max(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.dispatchMouseEvent"
+        )
+        insert_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.insertText"
+        )
+        assert click_end_i < insert_i, "칩 지우기·편집 열기가 입력보다 먼저여야 한다"
+
+    def test_no_stale_pill_or_editor_control_still_inserts_normally(self):
+        # 컨트롤이 안 보이면(=원래 입력칸이 상시 노출되는 옛 UI) 클릭 없이
+        # 그냥 기존처럼 진행한다 — fail-open, 회귀 없음.
+        driver, t = _driver()  # 기본 responder — facet_rect=None
+        count = driver.run_rps_search("(PM)")
+        assert count == 1234
+        assert not [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
 
     def test_count_without_digits_fails_closed(self):
         def responder(method, params):
@@ -265,6 +303,58 @@ class TestDescriptorExecution:
         driver, _t = _driver(responder)
         with pytest.raises(CdpDriverError):
             driver.run_descriptor(self.DESCRIPTOR)
+
+
+# ── reset_filters — 2026-08-04 라이브 발견 결함 수정 ─────────────────────
+#
+# 잡코리아 라이브 실행에서, 탭에 이전(무관한) 검색의 필터 칩이 남아 있으면
+# 새 검색 입력·제출을 그대로 해도 화면은 계속 옛 칩 기준 결과를 보여줬다
+# (스크린샷으로 "Prompt Engineering"+"FastAPI" 칩이 살아있음을 확인). 이제
+# run_descriptor 는 스텝 입력 전에 reset_filters 를 먼저 호출해 기존 칩을
+# 지운다.
+class TestResetFilters:
+    def test_clicks_visible_reset_control_when_present(self):
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:reset_rect*/" in expr:
+                return {"result": {"value": {"x": 10.0, "y": 20.0}}}
+            return FakeTransport.default_responder(method, params)
+
+        driver, t = _driver(responder)
+        clicked = driver.reset_filters("jobkorea")
+        assert clicked is True
+        mouse_calls = [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+        assert any(c["type"] == "mousePressed" and c["x"] == 10.0 and c["y"] == 20.0 for c in mouse_calls)
+        assert any(c["type"] == "mouseReleased" for c in mouse_calls)
+
+    def test_returns_false_when_no_reset_control_visible(self):
+        driver, t = _driver()  # 기본 responder — reset_rect=None
+        clicked = driver.reset_filters("jobkorea")
+        assert clicked is False
+        assert not [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+
+    def test_unknown_channel_returns_false_without_side_effects(self):
+        driver, t = _driver()
+        clicked = driver.reset_filters("linkedin_rps")
+        assert clicked is False
+        assert not [p for m, p in t.calls if m == "Input.dispatchMouseEvent"]
+
+    def test_run_descriptor_resets_before_any_step_input(self):
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:reset_rect*/" in expr:
+                return {"result": {"value": {"x": 5.0, "y": 6.0}}}
+            return FakeTransport.default_responder(method, params)
+
+        driver, t = _driver(responder)
+        driver.run_descriptor(TestDescriptorExecution.DESCRIPTOR)
+        reset_click_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.dispatchMouseEvent"
+        )
+        insert_i = next(
+            i for i, (m, _p) in enumerate(t.calls) if m == "Input.insertText"
+        )
+        assert reset_click_i < insert_i, "칩 초기화가 입력보다 먼저여야 한다"
 
 
 # ── (c) 페이지 HTML 캡처 + 리스트 페이지 계약(fetch_list_page) ──
@@ -478,3 +568,55 @@ class TestWebSocketTransportFraming:
     def test_module_has_lazy_websocket_connect_entry(self):
         # 라이브 접속 함수는 존재하되(프로덕션 조립용), 여기서는 호출하지 않는다.
         assert callable(cd.connect_websocket_transport)
+
+
+# ── DETAIL_LINK_SELECTORS 라이브 검증 회귀 방지 ──────────────────────────
+#
+# CSS 속성 셀렉터 [href*=value] 는 대소문자를 구분한다. 2026-08-04 잡코리아
+# 인재검색 라이브 실행(실제 검색 결과 HTML)에서 옛 셀렉터
+# "a[href*='/Corp/Person/'][href*='View']" 가 실제 소문자 href 와 전혀
+# 매치되지 않아 상세 링크가 항상 0건이던 결함을 발견했다. 실제 관측 href
+# 문자열을 고정해 같은 대소문자 회귀를 다시 못 잡는 일을 막는다.
+JOBKOREA_LIVE_DETAIL_HREF = "/corp/person/find/resume/view?rNo=29465392"
+
+
+class TestDetailLinkSelectorsMatchRealHrefs:
+    def test_jobkorea_selector_substring_occurs_in_real_href(self):
+        match = re.search(r"href\*='([^']+)'", DETAIL_LINK_SELECTORS["jobkorea"])
+        assert match, "jobkorea 셀렉터에 href*='...' 패턴이 없다"
+        needle = match.group(1)
+        # 대소문자 그대로 비교 — querySelectorAll 의 실제 매치 동작 재현.
+        assert needle in JOBKOREA_LIVE_DETAIL_HREF
+
+
+# ── list_detail_refs 중복 제거 회귀 방지 ──────────────────────────────────
+#
+# 2026-08-04 잡코리아 라이브 실행에서 후보 1명당 앵커(<a>)가 2개씩 걸려
+# detail_refs 가 실제 후보 수(71명)의 정확히 2배(142)로 나왔다 — 셀렉터 수정
+# 직후 곧바로 라이브에서 발견. 중복 상세 진입은 같은 URL을 연달아 두 번
+# 여는 기계적 패턴이라 SOT 의 "봇처럼 굴지 않는다" 원칙 위반이자 시간 낭비다.
+class TestListDetailRefsDeduplicates:
+    def test_duplicate_hrefs_collapse_to_unique_order_preserved(self):
+        def responder(method, params):
+            expr = params.get("expression", "")
+            if "/*vh:detail_refs*/" in expr:
+                return {
+                    "result": {
+                        "value": [
+                            "https://fake.test/p/1",
+                            "https://fake.test/p/1",
+                            "https://fake.test/p/2",
+                            "https://fake.test/p/2",
+                            "https://fake.test/p/3",
+                        ]
+                    }
+                }
+            return FakeTransport.default_responder(method, params)
+
+        driver, _t = _driver(responder)
+        refs = driver.list_detail_refs("jobkorea")
+        assert refs == [
+            "https://fake.test/p/1",
+            "https://fake.test/p/2",
+            "https://fake.test/p/3",
+        ]
