@@ -1032,6 +1032,21 @@ def _run_via_shell(cmd: list[str], prompt: str, timeout: int, cwd: str,
     return (stdout or ""), (stderr or ""), proc.returncode
 
 
+def _claude_subprocess_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    """``claude -p`` 에 넘길 환경 — ``ANTHROPIC_API_KEY`` 만 뺀 사본.
+
+    비용 헌법: ``claude -p`` 는 Max 구독으로 도는 무료($0) 경로다. 그런데 부모 환경에
+    API 키가 있으면 CLI 가 그 키를 집어 **유료 API 과금 경로**로 조용히 넘어간다 —
+    실패도 경고도 없어서 청구서가 올 때까지 모른다. env 미지정이면 부모 환경 사본에서,
+    지정이면 그 사본에서 키 하나만 뺀다(배지 등 나머지 변수는 그대로 보존).
+
+    플래그 판독용 ``env`` 는 건드리지 않는다 — env=None 일 때 부모 환경의
+    ``VALUEHIRE_*`` 를 새로 읽어들이면 기존 실행 의미가 바뀐다.
+    """
+    source = os.environ if env is None else env
+    return {key: value for key, value in source.items() if key != "ANTHROPIC_API_KEY"}
+
+
 def _run_claude(prompt: str, timeout: int,
                 env: Mapping[str, str] | None = None,
                 cancel_check: Callable[[], bool] | None = None) -> tuple[str, str, int]:
@@ -1065,29 +1080,28 @@ def _run_claude(prompt: str, timeout: int,
         base_args.extend(["--model", _model])
     base_args.append("-p")
     cmd, use_shell = _agent_argv(_configured_agent_name("claude", env), base_args)
+    run_env = _claude_subprocess_env(env)
     if use_shell:
         if cancel_check is None:
-            return _run_via_shell(cmd, prompt, timeout, str(REPO), env)
+            return _run_via_shell(cmd, prompt, timeout, str(REPO), run_env)
         return _run_via_shell(
-            cmd, prompt, timeout, str(REPO), env, cancel_check=cancel_check)
+            cmd, prompt, timeout, str(REPO), run_env, cancel_check=cancel_check)
     if cancel_check is not None:
         # #196: owner_agent 는 stdin(-p), 일반은 argv 말미 prompt — 둘 다 stdin 으로
         # 통일해 취소 감지 경로를 태운다(claude 는 -p 와 stdin 모두 프롬프트를 받는다).
         run_cmd = cmd if owner_agent else [*cmd]
         return _native_agent_run(
-            run_cmd, cwd=str(REPO), env=env, input_text=prompt, timeout=timeout,
+            run_cmd, cwd=str(REPO), env=run_env, input_text=prompt, timeout=timeout,
             cancel_check=cancel_check)
     if owner_agent:
         proc = subprocess.run(
             cmd, cwd=str(REPO), input=prompt, capture_output=True, text=True,
-            encoding="utf-8", timeout=timeout,
-            env=dict(env) if env is not None else None,
+            encoding="utf-8", timeout=timeout, env=run_env,
         )
         return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
     proc = subprocess.run(
         [*cmd, prompt], cwd=str(REPO), capture_output=True, text=True,
-        encoding="utf-8", timeout=timeout,
-        env=dict(env) if env is not None else None,
+        encoding="utf-8", timeout=timeout, env=run_env,
     )
     return (proc.stdout or ""), (proc.stderr or ""), proc.returncode
 
