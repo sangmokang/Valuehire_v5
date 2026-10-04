@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -95,6 +95,17 @@ def test_sot25_uses_current_codex_skill_and_embedded_output_contract() -> None:
     human_entry = (REPO / "docs/sot/25-ai-search-execution-process.md").read_text(encoding="utf-8")
     assert "skills/ai-search-position-pipeline" not in human_entry
     assert "profile_url" in human_entry and "profile_summary" in human_entry
+
+
+def test_sot25_dependencies_are_repo_local_and_present() -> None:
+    sot25 = json.loads((REPO / "docs/sot/25-ai-search-execution-process.json").read_text(encoding="utf-8"))
+    dependencies = sot25["depends_on"]
+    assert isinstance(dependencies, list) and dependencies
+    for dependency in dependencies:
+        assert isinstance(dependency, str) and dependency
+        assert not PurePosixPath(dependency).is_absolute(), dependency
+        assert not PureWindowsPath(dependency).is_absolute(), dependency
+        assert (REPO / dependency).is_file(), dependency
 
 
 def test_sot22_historical_skill_sources_are_explicit_paths() -> None:

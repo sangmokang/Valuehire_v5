@@ -18,8 +18,8 @@
     "docs/sot/22-talent-search-filters.json",
     "docs/sot/24-position-jd-sot.json",
     "docs/sot/26-portal-login-spec.json",
-    "/Users/kangsangmo/.codex/skills/ai-search/references/spec-procedure.md",
-    "/Users/kangsangmo/.codex/skills/ai-search/references/code-map.md",
+    "skills/ai-search/references/spec-procedure.md",
+    "skills/ai-search/references/code-map.md",
     "tools/multi_position_sourcing/models.py",
     "tools/multi_position_sourcing/humansearch_register.py",
     "skills/humansearch/humansearch.config.json"
