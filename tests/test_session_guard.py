@@ -198,6 +198,43 @@ def test_linkedin_authwall_is_an_allowed_existing_challenge_surface() -> None:
     assert ref.target_id == "authwall-target"
 
 
+def test_help_text_alone_is_not_a_live_challenge() -> None:
+    """안내 문구만 있는 화면을 사람에게 넘기지 않는다.
+
+    잡코리아 로그인 완료 홈에는 '2단계 인증' FAQ 링크가 늘 떠 있다. 문구만
+    보고 challenge 로 판정하면 이미 로그인된 실행이 HUMAN_AUTH 로 넘어가
+    자동로그인 불변식(SOT 1)이 막힌다 — 2026-08-05 라이브에서 재현됐다.
+    문구는 실제 인증 입력 컨트롤이 함께 보일 때만 challenge 다.
+    """
+
+    class Tab:
+        script = ""
+
+        def eval(self, script: str):
+            self.script = script
+            return {
+                "url": "https://www.jobkorea.co.kr/searchfirm/home/",
+                "hasChallenge": False,
+                "hasSessionConflict": False,
+                "hasLogout": True,
+                "hasValueConnect": True,
+                "saraminSearch": False,
+                "jobkoreaSearch": True,
+                "linkedinSearch": False,
+                "linkedinAccount": False,
+            }
+
+    tab = Tab()
+    read_auth_observation(tab, "jobkorea")
+
+    assert "authFormControl" in tab.script, (
+        "인증 입력 컨트롤이 실제로 보이는지 확인하는 신호가 없다"
+    )
+    assert "challengePhrase && authFormControl" in tab.script, (
+        "'2단계 인증' 문구만으로 challenge 로 판정한다 — 안내 링크에도 걸린다"
+    )
+
+
 def _safe_payload() -> dict[str, object]:
     return {
         "target_id": "target-exact",
@@ -258,3 +295,117 @@ def test_safe_target_file_rejects_symlink_and_group_writable_record() -> None:
         link.symlink_to(real)
         with pytest.raises(ValueError, match="protected regular file"):
             load_safe_keepalive_target(link)
+
+
+# --- LinkedIn Recruiter 계정 마커 드리프트 회귀 (2026-07-31 라이브 사고) ---
+#
+# humansearch 가 후보 20명을 수집하고도 첫 프로필 증거 저장에서
+# BrowserEvidenceError("authenticated browser evidence required") 로 전부 멈췄다.
+# 로그인은 정상인데 read_auth_observation 의 Recruiter 계정 마커 selector 가
+# LinkedIn DOM 변경으로 더 이상 존재하지 않아 authenticated=False 가 됐다.
+# 기존 테스트는 linkedinAccount 를 mock 으로 주입해서 selector 드리프트를 못 잡았다.
+
+_LIVE_NAV_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "linkedin_recruiter_nav_attrs_2026-07-31.json"
+)
+
+
+def _live_recruiter_nav_attributes() -> frozenset[str]:
+    data = json.loads(_LIVE_NAV_FIXTURE.read_text(encoding="utf-8"))
+    return frozenset(data["visible_data_attributes"])
+
+
+def _attribute_names_in_selectors(selectors: tuple[str, ...]) -> frozenset[str]:
+    names: set[str] = set()
+    for selector in selectors:
+        for part in selector.split(","):
+            part = part.strip()
+            if part.startswith("[") and part.endswith("]"):
+                names.add(part[1:-1].split("=")[0].strip())
+    return frozenset(names)
+
+
+def test_linkedin_recruiter_account_selectors_match_live_recruiter_nav() -> None:
+    """계정 증명 selector 중 최소 하나는 라이브 Recruiter nav 에 실제로 존재해야 한다."""
+    matched = _attribute_names_in_selectors(
+        session_guard.LINKEDIN_RECRUITER_ACCOUNT_SELECTORS
+    ) & _live_recruiter_nav_attributes()
+    assert matched, (
+        "Recruiter 계정 마커가 라이브 DOM 과 어긋남 — "
+        f"selectors={session_guard.LINKEDIN_RECRUITER_ACCOUNT_SELECTORS}"
+    )
+
+
+def test_linkedin_account_probe_script_uses_the_shared_selector_constant() -> None:
+    """주입 스크립트는 상수를 참조해야 한다 — selector 이중 정의 금지."""
+    source = inspect.getsource(read_auth_observation)
+    assert "LINKEDIN_RECRUITER_ACCOUNT_SELECTORS" in source
+    for selector in session_guard.LINKEDIN_RECRUITER_ACCOUNT_SELECTORS:
+        assert selector not in source, (
+            f"probe script 에 {selector!r} 가 하드코딩됨 — 상수만 써야 드리프트가 한 곳에서 고쳐진다"
+        )
+
+
+# --- 잡코리아 이력서 상세: 기업회원 전용 조작 버튼을 로그인 증거로 인정 (2026-08-02 라이브) ---
+#
+# 사고: 잡코리아 순회가 첫 후보부터 "authenticated browser evidence required" 로 저장에
+# 실패해 한 명도 못 남겼다. 이력서 상세 화면에는 기업 GNB 헤더가 없어 '로그아웃'·계정명이
+# 안 잡히기 때문이다(라이브 실측). 그런데 그 화면에는 로그인한 기업회원에게만 보이는
+# '포지션 제안'·'스크랩' 조작 버튼이 있고, 비로그인 사용자는 이 URL 에서 로그인으로 튕긴다.
+#
+# 본문 글자만으로 인정하지 않는다는 기존 규칙(test_resume_body_words_...)은 그대로 둔다 —
+# 여기서 인정하는 것은 **본문 글자가 아니라 기업회원 전용 컨트롤의 존재**다.
+
+
+def _jobkorea_resume_raw(**overrides):
+    raw = {
+        "url": "https://www.jobkorea.co.kr/corp/person/find/resume/view?rNo=29576513",
+        "hasChallenge": False,
+        "hasSessionConflict": False,
+        "hasLogout": False,
+        "hasValueConnect": False,
+        "saraminSearch": False,
+        "jobkoreaSearch": False,
+        "jobkoreaResumeControls": False,
+        "linkedinSearch": False,
+        "linkedinAccount": False,
+    }
+    raw.update(overrides)
+
+    class Tab:
+        def eval(self, _script: str):
+            return raw
+
+    return Tab()
+
+
+def test_jobkorea_resume_controls_prove_authenticated_session() -> None:
+    observation = read_auth_observation(
+        _jobkorea_resume_raw(jobkoreaResumeControls=True), "jobkorea"
+    )
+
+    assert observation.authenticated is True
+    assert "resume_member_controls" in observation.proof_names
+
+
+def test_jobkorea_resume_controls_alone_do_not_authenticate_off_site() -> None:
+    """공식 도메인이 아니면 같은 컨트롤이 보여도 인정하지 않는다."""
+    observation = read_auth_observation(
+        _jobkorea_resume_raw(
+            url="https://evil.example.com/corp/person/find/resume/view?rNo=1",
+            jobkoreaResumeControls=True,
+        ),
+        "jobkorea",
+    )
+
+    assert observation.authenticated is False
+
+
+def test_jobkorea_resume_controls_do_not_override_challenge() -> None:
+    """캡차·본인확인 화면이면 컨트롤이 보여도 인정하지 않는다."""
+    observation = read_auth_observation(
+        _jobkorea_resume_raw(jobkoreaResumeControls=True, hasChallenge=True), "jobkorea"
+    )
+
+    assert observation.authenticated is False
+    assert observation.challenge is True

@@ -70,7 +70,8 @@ Claude, Codex, Hermes는 검색·프로필 열람·포지션 등록보다 먼저
 - 자동 작업 전 `tools.multi_position_sourcing.owner_activity.detect_owner_activity_snapshot()`의 OS idle 신호를 확인한다.
 - (2026-07-20 사장님 지시) 사장님 개입은 **크롬 활성 탭이 3사(사람인·잡코리아·링크드인) 도메인일 때만** 인정한다 — 유튜브 등 다른 화면 사용은 개입이 아니므로 양보하지 않는다. 3사 화면에서 최근 입력으로 idle이 60초 미만이면 `HUMAN_ACTIVE`다. 판정에는 앞창 앱 이름·OS idle·활성 탭 **호스트(도메인)** 만 읽는다 — 페이지 내용·전체 URL·키입력은 보지도 기록하지도 않는다.
 - 감지 실패·권한 부족·값 없음은 fail-closed 한다(단 탭 호스트 판독 실패는 idle 60초 유계 대기 — 무기한 아님).
-- 일반 작업은 60초 idle 후 자동 재개할 수 있다(로그인 우선순위 최상 — 3사 화면을 만지던 중이라도 60초 뒤 자동 로그인). 그러나 AI가 보안 챌린지를 사람에게 넘긴 `HUMAN_AUTH` 상태는 임의 시간초과로 닫거나 재개하지 않는다.
+- 일반 작업은 60초 idle 후 자동 재개할 수 있다. 그러나 AI가 보안 챌린지를 사람에게 넘긴 `HUMAN_AUTH` 상태는 임의 시간초과로 닫거나 재개하지 않는다.
+- **로그인 최우선(SOT26 INV9, 2026-07-31 오너 지시 개정)**: 로그인(`session_guard auto-login`)만은 위 60초 대기 규칙을 따르지 않는다. 사장님이 **그 사이트의 로그인 화면 자체**를 조작 중일 때만 양보하고, 3사 도메인의 다른 화면(검색·채용공고 등)을 보고 있는 것은 idle과 무관하게 로그인 자동화를 즉시 진행한다. 로그인 화면 여부는 `tools.multi_position_sourcing.owner_activity.detect_login_screen_snapshot()`로 판정하며, 판독 불가 시 fail-closed로 로그인 화면으로 간주해 양보한다. 다른 태스크(검색·저장 등)의 양보 게이트는 이 예외와 무관하게 그대로다.
 - `HUMAN_AUTH`에서 로그인 마커가 나타나도 즉시 클릭하지 않는다. 마지막 사람 활동 뒤 최소 15초 조용함을 확인한 후 `AUTHENTICATED`로 전이한다.
 - 대기 중에는 같은 창을 앞으로 가져오지 않는다. 챌린지를 처음 사람에게 넘기기 직전 `AI_ATTACHED`에서만 정확히 해석된 창을 한 번 보여주고, `HUMAN_AUTH` 진입 후 focus/focus_again은 0회다.
 
@@ -190,7 +191,24 @@ PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard auto-login \
   --target-id '<existing-target-id>'
 ```
 
-`auto-login`은 로그인된 target이면 조작 0회, 기존 `login-cap` 폼이면 그 폼에서만 자격증명 1회 제출, captcha/2FA/checkpoint면 제출 0회 `HUMAN_AUTH`, 멀티세션이면 `AUTH_CONFLICT`, 연결 오류·필드 실종이면 `SELECTOR_DRIFT`로 종료한다. 같은 실패를 원인 변경 없이 반복하지 않는다. 같은 포트를 선언한 Chrome이 여러 개면 정확한 `127.0.0.1:<port>` LISTEN PID로 LinkedIn 프로세스를 고르고 0개/여러 개면 중단한다.
+`auto-login`은 로그인된 target이면 조작 0회, 기존 `login-cap` 폼이면 그 폼에서만 자격증명 1회 제출, captcha/2FA/checkpoint면 제출 0회 `HUMAN_AUTH`, 멀티세션이면 기본 `HUMAN_AUTH`(세션충돌, 제출 0회), 연결 오류·필드 실종이면 `SELECTOR_DRIFT`로 종료한다. 같은 실패를 원인 변경 없이 반복하지 않는다. 같은 포트를 선언한 Chrome이 여러 개면 정확한 `127.0.0.1:<port>` LISTEN PID로 LinkedIn 프로세스를 고르고 0개/여러 개면 중단한다.
+
+#### 오너 명시 기기 전환(`--owner-takeover`, SOT26 INV8, 2026-07-31)
+
+사장님이 **이 기기에서 로그인하라고 명시적으로 지시한 경우에만** `--owner-takeover`를 붙인다.
+
+```bash
+PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard auto-login \
+  --site linkedin_rps \
+  --agent Codex \
+  --owner-takeover
+```
+
+- 이 플래그가 있으면 멀티세션(세션충돌) 신호를 이유로 멈추지 않고 자격증명 제출까지 진행한다.
+  다른 기기의 세션은 LinkedIn 자체 단일좌석 정책으로 자동 무효화되며, 별도 로그아웃 API를
+  호출하지 않는다(제출을 막지 않는 것만으로 충분).
+- **진짜 캡차·2FA·checkpoint는 이 플래그와 무관하게 항상 멈춘다** — 오너 지시의 대상이 아니다.
+- 플래그 없이 실행하면 지금까지처럼 세션충돌 시 그대로 멈춘다(회귀 없음, 기본값 안전).
 
 ```bash
 PYTHONPATH=. python3 -m tools.multi_position_sourcing.session_guard human-auth \

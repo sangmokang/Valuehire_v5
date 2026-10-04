@@ -24,7 +24,12 @@ from .discord_routing import (
 )
 from .fixtures import SAMPLE_POSITIONS, SAMPLE_PROFILE
 from .grouping import group_positions
-from .llm_keywords import LLMClient, claude_keyword_client, inject_channel_search_filters
+from .llm_keywords import (
+    KeywordGenerationError,
+    LLMClient,
+    claude_keyword_client,
+    inject_channel_search_filters,
+)
 from .models import QueueItem, utc_now_iso
 from .portal_session import PORTAL_SESSION_REQUIRED_CHANNELS, PortalSessionStatus, portal_session_flags
 from .portal_worker import DEFAULT_PROFILE_ROOT
@@ -144,12 +149,29 @@ def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, o
     # 없으면 기존 고정표 그대로(회귀 없음).
     positions_by_id = {position.position_id: position for position in SAMPLE_POSITIONS}
 
+    # 그룹별 실패 격리: LLM 주입이 실패한 그룹은 고정표 계획으로 살아남고,
+    # 실패 사실은 payload 에 남긴다. 격리가 없으면 그룹 1개의 JSON 파싱 실패가
+    # 사이클 전체를 죽인다(2026-07-31 코드리뷰 #4, 2026-08-01 로그 재현).
+    keyword_plan_failures: list[dict[str, str]] = []
+
     def _plan_for(group) -> tuple:
         plan = group.keyword_plan
         if llm_client is not None and group.position_ids:
             representative = positions_by_id.get(group.position_ids[0])
             if representative is not None:
-                plan = inject_channel_search_filters(plan, representative, llm_client=llm_client)
+                try:
+                    plan = inject_channel_search_filters(
+                        plan, representative, llm_client=llm_client
+                    )
+                except KeywordGenerationError as exc:
+                    # 조용히 넘기지 않는다 — 0건인데 성공으로 보이면 그게 더 나쁘다.
+                    keyword_plan_failures.append(
+                        {
+                            "group_id": group.group_id,
+                            "position_id": representative.position_id,
+                            "reason": str(exc),
+                        }
+                    )
         return plan
 
     plans_by_group = {group.group_id: _plan_for(group) for group in groups}
@@ -214,6 +236,8 @@ def build_dry_run_payload(*, llm_client: LLMClient | None = None) -> dict[str, o
             "outreach_clicked": False,
         },
         "position_groups": [asdict(group) for group in groups],
+        # 키워드 생성이 실패한 그룹(격리되어 사이클은 계속됨). 비어 있으면 전부 정상.
+        "keyword_plan_failures": keyword_plan_failures,
         "backend_keyword_plan": [asdict(session) for session in backend_group.keyword_plan],
         "product_po_keyword_plan": [asdict(session) for session in po_group.keyword_plan],
         "sample_profile_canonical_url": canonical_profile_url(SAMPLE_PROFILE.profile_url),

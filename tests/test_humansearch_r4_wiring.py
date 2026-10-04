@@ -193,6 +193,16 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
     calls: list[object] = []
     sentinel = lambda: Snapshot(False)
 
+    class Lease:
+        def acquire(self) -> None:
+            return None
+
+        def assert_owned(self) -> None:
+            return None
+
+        def release(self) -> None:
+            return None
+
     monkeypatch.setattr(hcr, "OUT_DIR", tmp_path)
     monkeypatch.setattr(hcr, "LOG", tmp_path / "run.log")
     monkeypatch.setattr(
@@ -224,6 +234,8 @@ def test_main_passes_owner_snapshot_into_r4_loop(monkeypatch, tmp_path: Path) ->
     monkeypatch.setattr(hcr, "process_cards_with_r4", fake_process_cards)
 
     hcr.main(
+        lease_factory=lambda _site: Lease(),
+        target_id="t1",
         owner_snapshot=sentinel,
         mutation_sleep=lambda _seconds: None,
         evaluation_ready_check=lambda: None,

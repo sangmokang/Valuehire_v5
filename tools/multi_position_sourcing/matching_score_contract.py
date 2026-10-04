@@ -12,6 +12,8 @@ import math
 import os
 import shutil
 import sys
+import tempfile
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -27,6 +29,10 @@ _TOP_LEVEL_KEYS = {
 }
 _VERDICTS = {"pass", "fail", "uncertain"}
 _NOT_APPLICABLE_DIMENSIONS = {"D2", "D6"}
+# 차원을 건너뛸 때 코드가 채우는 고정 근거 문구. 모델이 근거를 지어내지 못하게 코드가 소유한다.
+_NOT_APPLICABLE_EVIDENCE = "해당 없음 — 비교할 근거가 JD/이력서/티어맵에 없어 이 차원은 채점에서 제외"
+# D7 이 boolean 으로 올 때 코드가 채우는 고정 문구. 확인 항목을 모델이 지어내지 않게 한다.
+_NEEDS_VERIFICATION_UNSPECIFIED = "확인 필요 항목 미지정 — 사람이 직접 확인"
 
 
 class MatchingContractError(ValueError):
@@ -60,6 +66,18 @@ def _nonblank(value: object, *, field: str) -> str:
     return value.strip()
 
 
+def _gate_key(value: object) -> str:
+    """필수요건 문자열의 표기 흔들림을 흡수한 비교용 키.
+
+    Stage 3 는 Stage 1 의 요건을 그대로 돌려주는 것이 계약이지만, LLM 은 공백을
+    다듬거나 대소문자를 바꾸는 정도의 흔들림을 낸다. 그 정도로 후보를 버리면
+    근거가 멀쩡한 사람이 유실된다(2026-08-01 라이브). 의미가 달라지는 차이는
+    그대로 남겨 fail-closed 가 유지되도록, 유니코드 정규화·소문자화·공백 축약만 한다.
+    """
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    return " ".join(text.casefold().split())
+
+
 def _validate_gates(value: object) -> tuple[dict[str, str], ...]:
     if not isinstance(value, list):
         raise MatchingContractError("gates must be a list")
@@ -68,12 +86,16 @@ def _validate_gates(value: object) -> tuple[dict[str, str], ...]:
     gates: list[dict[str, str]] = []
     seen: set[str] = set()
     for index, item in enumerate(value):
-        if not isinstance(item, dict) or set(item) != {
-            "requirement",
-            "verdict",
-            "evidence",
-        }:
-            raise MatchingContractError(f"gates[{index}] has an invalid shape")
+        # 필요한 세 필드가 있으면 받는다. LLM 이 min_years·note 같은 키를 하나 더 붙였다고
+        # 근거가 멀쩡한 후보를 버리지 않는다(2026-08-01 라이브). 세 필드의 의미 검증
+        # (비어있지 않은 요건·정해진 verdict·비어있지 않은 근거)은 아래에서 그대로 한다.
+        required = {"requirement", "verdict", "evidence"}
+        if not isinstance(item, dict) or not required.issubset(item):
+            saw = sorted(item) if isinstance(item, dict) else type(item).__name__
+            missing = sorted(required - set(item)) if isinstance(item, dict) else sorted(required)
+            raise MatchingContractError(
+                f"gates[{index}] has an invalid shape — 빠진 필드: {missing}, 받은 키: {saw}"
+            )
         requirement = _nonblank(
             item["requirement"], field=f"gates[{index}].requirement"
         )
@@ -94,6 +116,33 @@ def _validate_gates(value: object) -> tuple[dict[str, str], ...]:
     return tuple(gates)
 
 
+def _integral_score(value: object) -> int | None:
+    """0~5 정수와 **정확히 같은 값**이면 그 정수를, 아니면 None 을 돌려준다.
+
+    LLM 은 같은 점수를 4, 4.0, "4" 로 번갈아 낸다. 표기가 달라도 값이 같으면 같은 점수이므로
+    후보를 버릴 이유가 없다. 반대로 4.5 처럼 정수가 아니거나 범위를 벗어나면 반올림해서
+    받아주지 않는다 — 없는 판단을 코드가 만들어내는 셈이 되기 때문이다(fail-closed 유지).
+    bool 은 int 서브클래스라 True 가 1점으로 새지 않게 먼저 막는다.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        number: float = value
+    elif isinstance(value, float):
+        number = value
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    if number != int(number):
+        return None
+    result = int(number)
+    return result if 0 <= result <= 5 else None
+
+
 def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
     if not isinstance(value, dict) or set(value) != set(DIMENSION_IDS):
         raise MatchingContractError("dimensions must contain D1-D8 exactly once")
@@ -101,6 +150,14 @@ def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
     dimensions: dict[str, dict[str, Any]] = {}
     for dimension_id in DIMENSION_IDS:
         item = value[dimension_id]
+        # LLM 은 건너뛸 수 있는 차원을 객체가 아니라 문자열 "not_applicable" 로 낸다
+        # (2026-08-01 라이브 응답 실측). 프롬프트가 그렇게 읽히기 때문이며, 그 표기 하나로
+        # 후보를 통째로 버리지 않는다. 근거 문구는 지어내지 않고 코드가 소유한 고정 문구를 쓴다.
+        if item == "not_applicable" and dimension_id in _NOT_APPLICABLE_DIMENSIONS:
+            item = {
+                "score": "not_applicable",
+                "evidence": _NOT_APPLICABLE_EVIDENCE,
+            }
         required = {"score", "evidence"}
         allowed = set(required)
         if dimension_id == "D7":
@@ -118,14 +175,15 @@ def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
                 raise MatchingContractError(
                     f"{dimension_id} cannot be not_applicable"
                 )
-        elif (
-            isinstance(score, bool)
-            or not isinstance(score, int)
-            or not 0 <= score <= 5
-        ):
-            raise MatchingContractError(
-                f"{dimension_id}.score must be an integer from 0 to 5"
-            )
+        else:
+            coerced = _integral_score(score)
+            if coerced is None:
+                # 값과 타입을 남긴다 — 간헐적 표기 흔들림은 다음 발생이 곧 증거여야 한다.
+                raise MatchingContractError(
+                    f"{dimension_id}.score must be an integer from 0 to 5: "
+                    f"{score!r} ({type(score).__name__})"
+                )
+            score = coerced
 
         normalized: dict[str, Any] = {
             "score": score,
@@ -135,6 +193,11 @@ def _validate_dimensions(value: object) -> dict[str, dict[str, Any]]:
         }
         if dimension_id == "D7":
             needs = item.get("needs_verification", [])
+            # 라이브 LLM 은 이름 그대로 boolean 을 낸다(2026-08-01 실측: true).
+            # 그 표기 하나로 후보를 버리지 않되, 확인 항목을 지어내지 않고
+            # 코드가 소유한 고정 문구로 바꾼다.
+            if isinstance(needs, bool):
+                needs = [_NEEDS_VERIFICATION_UNSPECIFIED] if needs else []
             if not isinstance(needs, list) or any(
                 not isinstance(entry, str) or not entry.strip() for entry in needs
             ):
@@ -254,6 +317,46 @@ def calculate_final_score(payload: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+MATCHING_STAGE_TIMEOUT_ENV = "VH_MATCHING_TIMEOUT_SECONDS"
+DEFAULT_MATCHING_STAGE_TIMEOUT_SECONDS = 180.0
+
+
+def matching_stage_timeout_seconds() -> float:
+    """Stage 1~3 LLM 호출 시간제한(초).
+
+    2026-08-01 라이브 사고: 60초 고정이라 이력서 전문(최대 8,000자)+JD 프롬프트가
+    장비 부하에서 초과해 후보가 채점 없이 유실됐다. 운영 중 조정할 수 있어야 한다.
+    값이 없거나 숫자가 아니거나 0 이하·유한하지 않으면 조용히 기본값으로 넘어가지
+    않고 fail-closed 로 거부한다(잘못된 설정이 무한 대기로 둔갑하지 않도록).
+    """
+    raw = os.environ.get(MATCHING_STAGE_TIMEOUT_ENV)
+    if raw is None:
+        return DEFAULT_MATCHING_STAGE_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise MatchingContractError(
+            f"{MATCHING_STAGE_TIMEOUT_ENV} 는 초 단위 숫자여야 함: {raw!r}"
+        ) from exc
+    if not math.isfinite(value) or value <= 0:
+        raise MatchingContractError(
+            f"{MATCHING_STAGE_TIMEOUT_ENV} 는 0보다 큰 유한한 값이어야 함: {raw!r}"
+        )
+    return value
+
+
+# 추출 호출 전용 시스템 프롬프트. 에이전트 지침(CLAUDE.md·스킬)을 대체해 되묻기·설명·
+# 도구사용을 막는다. 영어로 두는 이유는 CLI 기본 지침과 섞였을 때도 우선순위가 분명하기 때문.
+_MATCHING_SYSTEM_PROMPT = (
+    "You are a strict JSON extraction function, not an assistant. "
+    "Read the user message and reply with exactly one JSON object and nothing else. "
+    "Never ask a clarifying question. Never explain. Never use tools. "
+    "Never read or write files. Never emit markdown fences or prose."
+)
+# 설명만 돌아오는 일시적 흔들림에 대비한 시도 횟수(재시도 1회). 무한 재시도는 하지 않는다.
+_MATCHING_LLM_ATTEMPTS = 2
+
+
 def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object]:
     """Run one temperature-zero-equivalent local Claude JSON extraction step."""
 
@@ -269,38 +372,59 @@ def claude_json_client(prompt: str, *, model: str = "haiku") -> dict[str, object
     finally:
         sys.path[:0] = removed
 
+    timeout_seconds = matching_stage_timeout_seconds()
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
-    try:
-        completed = subprocess.run(
-            ["claude", "-p", "--model", model, prompt],
-            cwd=Path(__file__).resolve().parents[2],
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=60,
-        )
-    except FileNotFoundError as exc:
-        raise MatchingContractError("claude CLI is not installed") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise MatchingContractError("claude matching stage timed out after 60s") from exc
-    if completed.returncode != 0:
-        raise MatchingContractError(
-            f"claude matching stage failed: {(completed.stderr or '')[:240]}"
-        )
-    raw = completed.stdout.strip()
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start < 0 or end < start:
-        raise MatchingContractError("claude matching stage returned no JSON object")
-    try:
-        parsed = json.loads(raw[start : end + 1])
-    except json.JSONDecodeError as exc:
-        raise MatchingContractError("claude matching stage returned invalid JSON") from exc
-    if not isinstance(parsed, dict):
-        raise MatchingContractError("claude matching stage JSON must be an object")
-    return parsed
+
+    # 이 호출은 '에이전트에게 일을 시키는' 것이 아니라 순수 추출 함수다. 기본 시스템
+    # 프롬프트를 그대로 두면 프로젝트·전역 CLAUDE.md 와 스킬이 실려서 추출 요청을 작업
+    # 지시로 읽고 되묻는다 — JSON 이 없으니 그 후보가 통째로 버려진다(2026-08-01 라이브).
+    # 그래서 지침을 대체하고, 저장소 밖 빈 디렉터리에서 실행한다.
+    last_error = "claude matching stage returned no JSON object"
+    for attempt in range(_MATCHING_LLM_ATTEMPTS):
+        try:
+            with tempfile.TemporaryDirectory(prefix="vh-matching-") as workdir:
+                completed = subprocess.run(
+                    [
+                        "claude", "-p",
+                        "--model", model,
+                        "--system-prompt", _MATCHING_SYSTEM_PROMPT,
+                        prompt,
+                    ],
+                    cwd=workdir,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=timeout_seconds,
+                )
+        except FileNotFoundError as exc:
+            raise MatchingContractError("claude CLI is not installed") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise MatchingContractError(
+                f"claude matching stage timed out after {timeout_seconds:g}s"
+            ) from exc
+        if completed.returncode != 0:
+            raise MatchingContractError(
+                f"claude matching stage failed: {(completed.stderr or '')[:240]}"
+            )
+        raw = (completed.stdout or "").strip()
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end < start:
+            # 일시적 흔들림(설명만 오는 응답)은 한 번 더 시도한다. 무한 재시도는 하지 않는다.
+            last_error = "claude matching stage returned no JSON object"
+            continue
+        try:
+            parsed = json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            last_error = "claude matching stage returned invalid JSON"
+            continue
+        if not isinstance(parsed, dict):
+            last_error = "claude matching stage JSON must be an object"
+            continue
+        return parsed
+    raise MatchingContractError(last_error)
 
 
 def default_tier_maps() -> tuple[dict[str, str], dict[str, str]]:
@@ -377,20 +501,76 @@ def evaluate_candidate_contract(
         for item in must_have
         if isinstance(item, dict)
     ]
-    gates = evaluation["gates"]
-    actual = (
-        [
-            str(item.get("requirement", "")).strip()
+    gates = evaluation["gates"] if isinstance(evaluation["gates"], list) else []
+
+    def _misalignment(detail: str) -> MatchingContractError:
+        """실패할 때 양쪽 목록을 그대로 남긴다.
+
+        이 실패는 간헐적이라(2026-08-01 라이브 3명 유실, 같은 입력으로는 재현 안 됨)
+        무엇이 어긋났는지 로그에 없으면 원인을 짚을 수 없다. 검증을 느슨하게 하는 대신
+        증거를 남긴다.
+        """
+        actual = [
+            str(item.get("requirement", "")) if isinstance(item, dict) else repr(item)
             for item in gates
-            if isinstance(item, dict)
         ]
-        if isinstance(gates, list)
-        else []
-    )
-    if not expected or actual != expected:
-        raise MatchingContractError(
+        return MatchingContractError(
             "Stage 3 gates must match Stage 1 must-have requirements in order"
+            f" — {detail}; Stage1({len(expected)})={expected}; Stage3({len(actual)})={actual}"
         )
+
+    if not expected:
+        raise _misalignment("Stage 1 must-have 가 비어 있음")
+    # 요건 **집합**이 같으면 같은 심사다. 공백·대소문자·순서만 다른 표기 때문에 근거가
+    # 멀쩡한 후보를 통째로 버리지 않는다(2026-08-01 라이브: 후보 절반 유실). 대신
+    # 저장값은 Stage 1 정본 표기·정본 순서로 되돌려 하류 비교가 흔들리지 않게 한다.
+    # 요건이 빠지거나 남거나 짝이 안 맞으면 지금까지처럼 fail-closed 다.
+    remaining: dict[str, list[dict]] = {}
+    for item in gates:
+        if not isinstance(item, dict):
+            raise _misalignment(f"gate 원소가 dict 가 아님: {type(item).__name__}")
+        remaining.setdefault(_gate_key(item.get("requirement")), []).append(item)
+    # 1차: 정규화 키가 정확히 같은 것끼리 먼저 짝짓는다. 먼저 붙여야 나중 요건이 쓸 게이트를
+    # 앞 요건이 넘겨짚어 가져가는 일이 없다.
+    matched: dict[int, dict] = {}
+    for index, requirement in enumerate(expected):
+        bucket = remaining.get(_gate_key(requirement))
+        if bucket:
+            matched[index] = bucket.pop(0)
+
+    # 2차: 남은 요건은 '한쪽이 다른 쪽으로 시작하는' 게이트와 짝짓는다.
+    # 라이브 실측: 요건 '백엔드 개발' 에 게이트 '백엔드 개발 3년 이상' 이 왔다 — JD 문구를
+    # 더 길게 옮겨 적었을 뿐 같은 요건인데 후보가 통째로 버려졌다. 후보가 둘 이상이면
+    # 어느 쪽인지 정할 수 없으므로 거부한다(넘겨짚지 않는다).
+    for index, requirement in enumerate(expected):
+        if index in matched:
+            continue
+        key = _gate_key(requirement)
+        candidates = [
+            (candidate_key, bucket)
+            for candidate_key, bucket in remaining.items()
+            if bucket and candidate_key and key
+            and (candidate_key.startswith(key) or key.startswith(candidate_key))
+        ]
+        if len(candidates) != 1:
+            detail = (
+                f"Stage 3 에 없는 요건: {requirement!r}"
+                if not candidates
+                else f"요건 {requirement!r} 에 붙을 게이트 후보가 여럿: "
+                f"{[candidate_key for candidate_key, _ in candidates]}"
+            )
+            raise _misalignment(detail)
+        matched[index] = candidates[0][1].pop(0)
+
+    aligned: list[dict] = []
+    for index, requirement in enumerate(expected):
+        item = dict(matched[index])
+        item["requirement"] = requirement
+        aligned.append(item)
+    leftover = [item.get("requirement") for bucket in remaining.values() for item in bucket]
+    if leftover:
+        raise _misalignment(f"Stage 1 에 없는 여분 게이트: {leftover}")
+    evaluation["gates"] = aligned
     calculate_final_score(evaluation)
     return evaluation
 

@@ -21,6 +21,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
 import secrets
 import stat
@@ -32,7 +33,19 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from .windows_chrome import (
+    ManagedBrowserDiscoveryError,
+    list_managed_windows_chrome_processes,
+)
+
 Site = Literal["saramin", "jobkorea", "linkedin_rps"]
+
+# 사이트 → 등록 프로필 폴더 토큰(portal_worker._CHANNEL_BROWSER_NAME 과 동일해야 한다).
+_SITE_PROFILE_TOKEN: dict[str, str] = {
+    "saramin": "saramin",
+    "jobkorea": "jobkorea",
+    "linkedin_rps": "linkedin",
+}
 
 
 @dataclass(frozen=True)
@@ -283,11 +296,33 @@ def _is_managed_chrome_executable(command_prefix: str) -> bool:
     return bool(app_match and app_match.group("name") in _MANAGED_CHROME_EXECUTABLE_NAMES)
 
 
+def _resolve_windows_browser_process(
+    site: Site,
+    port: int,
+    *,
+    runner: Callable[..., Any] | None = None,
+) -> ManagedBrowserProcess:
+    """Windows에서 그 포트를 선언한 등록 루트 chrome.exe 하나로 묶는다."""
+    matches = list_managed_windows_chrome_processes(
+        channel_token=_SITE_PROFILE_TOKEN.get(site, ""),
+        port=port,
+        runner=runner,
+    )
+    if len(matches) != 1:
+        code = "NO_MANAGED_BROWSER" if not matches else "AMBIGUOUS_MANAGED_BROWSER"
+        raise ManagedBrowserDiscoveryError(
+            code,
+            f"{site} managed browser root process match count was {len(matches)}",
+        )
+    return ManagedBrowserProcess(matches[0].pid, matches[0].profile_path)
+
+
 def resolve_managed_browser_process(
     site: Site,
     endpoint: str,
     *,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] | None = None,
+    system_name: str | None = None,
 ) -> ManagedBrowserProcess:
     """Bind the already verified endpoint to one root Chrome PID/profile.
 
@@ -301,8 +336,16 @@ def resolve_managed_browser_process(
         raise ValueError(f"unsupported login site: {site!r}")
     local = _local_cdp_endpoint(endpoint)
     port = urlsplit(local).port
+    system = (system_name or platform.system()).strip()
+    if system == "Windows":
+        return _resolve_windows_browser_process(site, int(port), runner=runner)
+    if system != "Darwin":
+        raise ManagedBrowserDiscoveryError(
+            "UNSUPPORTED_OS", f"managed browser binding is not defined for {system!r}"
+        )
+    run = runner or subprocess.run
     try:
-        result = runner(
+        result = run(
             ["ps", "ax", "-o", "pid=,command="],
             capture_output=True,
             text=True,
@@ -361,7 +404,7 @@ def resolve_managed_browser_process(
         matches.append(ManagedBrowserProcess(pid, profile))
     if len(matches) > 1:
         try:
-            listener_result = runner(
+            listener_result = run(
                 [
                     "lsof",
                     "-nP",
@@ -472,7 +515,11 @@ def resolve_existing_target(
         matches.append(target)
     if len(matches) != 1:
         detail = "exact target id" if wanted_id else "unique site target"
-        raise LookupError(f"{site} {detail} match count was {len(matches)}")
+        # 공식 화면이 없는 것과 여러 개인 것은 사장님께 다른 문구로 나가야 한다(V1-F4).
+        code = "NO_OFFICIAL_TARGET" if not matches else "AMBIGUOUS_OFFICIAL_TARGET"
+        raise ManagedBrowserDiscoveryError(
+            code, f"{site} {detail} match count was {len(matches)}"
+        )
 
     selected = matches[0]
     if browser_process_resolver is not None:
@@ -548,6 +595,19 @@ def wait_for_human_auth(
         sleep(poll)
 
 
+# LinkedIn Recruiter(RPS) 계정 메뉴 마커 — 로그인된 Recruiter 앱에서만 렌더된다.
+# 2026-07-31 라이브 사고: LinkedIn 이 nav DOM 을 바꿔 예전 두 마커가 사라졌고,
+# 로그인이 멀쩡한데도 authenticated=False 가 되어 humansearch 증거 저장이 전부 막혔다.
+# 회귀 방지: tests/fixtures/linkedin_recruiter_nav_attrs_2026-07-31.json 의 라이브
+# 속성 목록과 교집합이 비면 테스트가 실패한다. 예전 마커는 하위호환으로 남긴다.
+LINKEDIN_RECRUITER_ACCOUNT_SELECTORS: tuple[str, ...] = (
+    "[data-test-global-nav-right-user-nav]",
+    "[data-test-user-nav]",
+    "[data-test-recruiter-account-menu]",
+    "[data-test-recruiter-nav-user-menu]",
+)
+
+
 def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     """Read fresh site auth/challenge markers without causing navigation or clicks."""
 
@@ -582,19 +642,27 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
     folded.includes('only one session');
   const challengePhrase = folded.includes('보안문자') ||
     folded.includes('인증번호') || folded.includes('2단계 인증');
+  const authFormControl = visible(
+    'input[type="password"], input[name*="auth"], input[name*="verify"], input[autocomplete="one-time-code"]'
+  );
   return {
     url: location.href,
-    hasChallenge: challengePath || challengeControl || challengePhrase,
+    hasChallenge: challengePath || challengeControl || (challengePhrase && authFormControl),
     hasSessionConflict: sessionConflictPath || sessionConflictPhrase,
     hasLogout: accountText.includes('로그아웃') || accountText.includes('log out'),
     hasValueConnect: accountText.includes('valueconnect') || accountText.includes('value connect') || accountText.includes('밸류커넥트'),
     saraminSearch: !!document.querySelector('input.search_input') && !!document.querySelector('#career_min') && !!document.querySelector('#career_max'),
     jobkoreaSearch: !!document.querySelector("#txtKeyword, input[placeholder*='키워드'], input[placeholder*='검색']"),
+    jobkoreaResumeControls: [...document.querySelectorAll('a,button')].some((e) => /포지션 제안|스크랩/.test(e.innerText || '')),
     linkedinSearch: visible('a[href*="/talent/search"]'),
-    linkedinAccount: visible('[data-test-recruiter-account-menu], [data-test-recruiter-nav-user-menu]')
+    linkedinAccount: visible('__LINKEDIN_ACCOUNT_SELECTORS__')
   };
 })()
 """
+    script = script.replace(
+        "__LINKEDIN_ACCOUNT_SELECTORS__",
+        ", ".join(LINKEDIN_RECRUITER_ACCOUNT_SELECTORS),
+    )
     raw = tab.eval(script)
     if not isinstance(raw, Mapping):
         return AuthObservation(False, False, "", ())
@@ -634,8 +702,16 @@ def read_auth_observation(tab: Any, site: Site) -> AuthObservation:
             proofs.append("talent_search_controls")
         if profile_detail:
             proofs.append("profile_detail")
+        # 이력서 상세에는 기업 GNB 헤더가 없어 로그아웃·계정명이 안 잡힌다(2026-08-02 라이브).
+        # 대신 로그인한 기업회원에게만 보이는 조작 버튼('포지션 제안'·'스크랩')이 증거다 —
+        # 비로그인 사용자는 이 URL 에서 로그인 화면으로 튕겨 이 컨트롤을 볼 수 없다.
+        # 본문 글자만으로는 여전히 인정하지 않는다(컨트롤의 '존재'를 본다).
+        member_controls = raw.get("jobkoreaResumeControls") is True and profile_detail
+        if member_controls:
+            proofs.append("resume_member_controls")
         authenticated = bool(
-            logout and account and (search or profile_detail) and _official_site_url(site, url)
+            (logout and account and (search or profile_detail) or member_controls)
+            and _official_site_url(site, url)
         )
     elif site == "linkedin_rps":
         surface = _official_site_url(site, url) and urlsplit(url).path.casefold().startswith("/talent/")
@@ -2313,6 +2389,7 @@ def run_auto_login_episode(
     *,
     agent: str,
     target_id: str | None = None,
+    owner_takeover: bool = False,
     _credential_provider: Any | None = None,
 ) -> dict[str, Any]:
     """이슈 B(SOT-26 INV1): 기존 target에서 저장 자격증명으로 세션 보존 자동 로그인.
@@ -2320,10 +2397,15 @@ def run_auto_login_episode(
     lease·owner-idle 게이트를 먼저 통과하고, 정확한 기존 target 하나에만 attach한다.
     비밀번호는 공용 macOS Keychain에서 이 프로세스 안으로만 읽어
     perform_autologin 내부로만 흐른다(반환값 무비밀).
-    캡차·2FA·세션충돌이면 제출 0회로 HUMAN_AUTH를 반환한다. 종료 시 CDP WebSocket만 해제.
+    캡차·2FA면 제출 0회로 HUMAN_AUTH를 반환한다. 세션충돌은 ``owner_takeover``가
+    True일 때만 제출을 진행한다(2026-07-31 AC-A). 종료 시 CDP WebSocket만 해제.
+
+    2026-07-31(AC-B): 사장님 활동 감지는 "3사 도메인 아무 화면"이 아니라 "그 사이트의
+    로그인 화면 자체"일 때만 로그인을 양보시킨다 — 로그인은 최우선 과제이기 때문에,
+    검색 등 다른 3사 화면을 보고 있는 것은 로그인 자동화를 막지 않는다.
     """
     from . import portal_selfservice_login as ssl
-    from .owner_activity import detect_owner_activity_snapshot
+    from .owner_activity import detect_login_screen_snapshot, detect_owner_activity_snapshot
 
     if site not in _SITE_DOMAINS:
         return {"status": "unsupported_site", "site": site}
@@ -2332,8 +2414,14 @@ def run_auto_login_episode(
     except Exception:  # noqa: BLE001 — 감지 실패는 fail-closed 양보
         return {"status": "human_active", "site": site, "note": "owner 감지 실패 → 양보"}
     if snapshot.owner_activity_detected:
-        return {"status": "human_active", "site": site,
-                "note": "사장님 활동 감지 — 자동 로그인 보류"}
+        try:
+            on_login_screen = detect_login_screen_snapshot()
+        except Exception:  # noqa: BLE001 — 판독 실패는 fail-closed 양보
+            on_login_screen = True
+        if on_login_screen:
+            return {"status": "human_active", "site": site,
+                    "note": "사장님이 로그인 화면 자체를 조작 중 — 자동 로그인 보류"}
+        # 3사 도메인의 다른 화면(검색 등)일 뿐 로그인 화면은 아님 — 로그인은 최우선 과제이므로 진행.
 
     loaded_credentials = _load_runtime_login_credentials(
         site,
@@ -2357,7 +2445,8 @@ def run_auto_login_episode(
         }, badge=True)
         try:
             outcome = ssl.perform_autologin(
-                tab, site, ssl.PortalCreds(username=username, password=password))
+                tab, site, ssl.PortalCreds(username=username, password=password),
+                owner_takeover=owner_takeover)
         finally:
             try:
                 tab.close()  # raw_cdp.close(): 배지 제거 + WebSocket 해제만(탭/브라우저 보존)
@@ -2412,11 +2501,22 @@ def main(argv: list[str] | None = None) -> int:
     autologin.add_argument("--site", required=True, choices=sorted(KEEPALIVE_INTERVAL_SECONDS))
     autologin.add_argument("--agent", required=True)
     autologin.add_argument("--target-id", default=None)
+    autologin.add_argument(
+        "--owner-takeover",
+        action="store_true",
+        help=(
+            "2026-07-31 AC-A: 사장님이 이 기기에서 명시적으로 로그인을 지시했을 때만 사용. "
+            "세션 충돌(다른 기기 로그인)을 이유로 멈추지 않고 자격증명 제출까지 진행한다. "
+            "진짜 캡차/2FA/checkpoint 는 이 플래그와 무관하게 항상 멈춘다."
+        ),
+    )
     args = parser.parse_args(argv)
     site: Site = args.site
 
     if args.command == "auto-login":
-        result = run_auto_login_episode(site, agent=args.agent, target_id=args.target_id)
+        result = run_auto_login_episode(
+            site, agent=args.agent, target_id=args.target_id,
+            owner_takeover=args.owner_takeover)
         if result.get("state") == "AUTHENTICATED":
             # 로그인 성공 → 정식 증거 캡처로 login_barrier 영수증까지 발급.
             evidence_result = run_capture_evidence_episode(

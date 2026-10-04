@@ -133,6 +133,31 @@ def _has_security_challenge(text: str, url: str = "") -> bool:
     return any(token.lower() in haystack for token in _CHALLENGE_TOKENS)
 
 
+# 2026-07-31 오너 지시(AC-A) — 세션충돌 3토큰은 "진짜 보안챌린지"(captcha/2FA/checkpoint 등)와
+# 구분해야 한다: 오너가 명시적으로 기기 전환을 지시하면(owner_takeover) 세션충돌만 무시하고
+# 진행할 수 있어야 하기 때문. _CHALLENGE_TOKENS 자체와 _has_security_challenge 의 기존 동작은
+# 파리티 테스트(test_challenge_detect_parity.py) 보존을 위해 바꾸지 않는다 — 아래는 추가 분리다.
+_SESSION_CONFLICT_TOKENS: tuple[str, ...] = (
+    "multiple sign-ins",
+    "only one session",
+    "enterprise-authentication",
+)
+_SECURITY_ONLY_TOKENS: tuple[str, ...] = tuple(
+    token for token in _CHALLENGE_TOKENS if token not in _SESSION_CONFLICT_TOKENS
+)
+
+
+def _is_session_conflict(text: str, url: str = "") -> bool:
+    haystack = f"{text} {url}".lower()
+    return any(token.lower() in haystack for token in _SESSION_CONFLICT_TOKENS)
+
+
+def _is_pure_security_challenge(text: str, url: str = "") -> bool:
+    """진짜 캡차/2FA/checkpoint 등 — 세션충돌 토큰은 제외. owner_takeover 로도 우회 불가."""
+    haystack = f"{text} {url}".lower()
+    return any(token.lower() in haystack for token in _SECURITY_ONLY_TOKENS)
+
+
 def _result(channel: Channel, *, ready: bool, login: str, note: str = "", url: str = "") -> dict[str, object]:
     return {
         "channel": channel,

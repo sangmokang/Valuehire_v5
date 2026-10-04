@@ -140,6 +140,7 @@ def test_managed_browser_process_binds_exact_port_profile_and_root_pid() -> None
         "linkedin_rps",
         "http://127.0.0.1:9225",
         runner=run,
+        system_name="Darwin",
     )
 
     assert process == ManagedBrowserProcess(222, "/tmp/LinkedIn Profile")
@@ -178,6 +179,7 @@ def test_managed_browser_process_uses_exact_ipv4_listener_when_port_is_declared_
         "linkedin_rps",
         "http://127.0.0.1:9225",
         runner=run,
+        system_name="Darwin",
     )
 
     assert process == ManagedBrowserProcess(222, "/tmp/LinkedIn Profile")
@@ -216,6 +218,7 @@ def test_managed_browser_process_rejects_ambiguous_exact_ipv4_listeners() -> Non
             "linkedin_rps",
             "http://127.0.0.1:9225",
             runner=run,
+            system_name="Darwin",
         )
 
 
@@ -277,6 +280,7 @@ def test_managed_browser_process_accepts_repo_launcher_trailing_start_url() -> N
         "linkedin_rps",
         "http://127.0.0.1:9225",
         runner=lambda *_args, **_kwargs: Result(),
+        system_name="Darwin",
     )
 
     assert process == ManagedBrowserProcess(222, "/tmp/LinkedIn Profile")

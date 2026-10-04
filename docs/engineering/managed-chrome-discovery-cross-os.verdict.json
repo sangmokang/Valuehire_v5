@@ -1,0 +1,98 @@
+{
+  "slug": "managed-chrome-discovery-cross-os",
+  "risk": "L3",
+  "mode": "code-change",
+  "goal": "docs/engineering/managed-chrome-discovery-cross-os-goal-2026-07-31.md",
+  "branch": "task/managed-chrome-discovery-cross-os",
+  "base_commit": "b254a80",
+  "acceptance_criterion": "macOS 또는 native Windows에서 등록 프로필로 뜬 ValueHire 전용 Chrome이 정확히 하나 살아있고 공식 LinkedIn Talent 화면이 정확히 하나 있고 이미 로그인돼 있으면, 그 브라우저·창·탭을 그대로 재사용해(이동 0·입력 0·제출 0·종료 0) AUTHENTICATED 를 반환하고 humansearch 준비 경로가 이를 받아 다음 단계로 진행한다. 3중 유일성 중 하나라도 증명 안 되면 검색 0회로 고정 상태 코드 중단.",
+  "generator": {
+    "agent": "claude-opus-5[1m]",
+    "self_adversarial_findings": 3,
+    "findings": [
+      {"id": "G1", "severity": "high", "issue": "shlex 가 인용 Windows 경로를 공백에서 잘라 프로필 소실", "fix": "CommandLineToArgvW 규칙 토크나이저 신규 구현"},
+      {"id": "G2", "severity": "high", "issue": "이름만 같은 Valuehire 폴더가 %LOCALAPPDATA% 밖에서도 통과", "fix": "local_app_data 결합 (이후 V1-F1 로 등록부 정확일치까지 강화)"},
+      {"id": "G3", "severity": "medium", "issue": "CI(ubuntu-latest)에서 macOS 픽스처 검사 7건이 UNSUPPORTED_OS 로 실패", "fix": "해당 검사에 시뮬레이션 OS 명시 (단언·케이스 삭제 0)"}
+    ],
+    "evidence": [
+      {"command": ".venv/bin/python -m pytest tests/test_managed_chrome_discovery_cross_os.py -q", "exit_code": 0, "result": "41 passed, 22 subtests passed"},
+      {"command": "./verify.sh", "exit_code": 0, "result": "3302 passed, 4 xfailed, 127 subtests passed"},
+      {"command": "platform.system()->'Linux' 강제 전체 실행 (CI 환경 재현)", "exit_code": 0, "result": "3302 passed, 4 xfailed, 127 subtests passed in 357.31s"},
+      {"command": "make strict-exit-gate", "exit_code": 0, "result": "PASS — 미커밋 잔존 0 · 마커 상태 일치"},
+      {"command": "mutation: windows_chrome.py 자식프로세스 제외 제거", "exit_code": 1, "result": "1 failed — 검사가 잡음, 복원 후 32 passed"},
+      {"command": "mutation: 등록부 정확일치 -> 접두사 부분일치 약화", "exit_code": 1, "result": "5 failed — 개인 Chrome 제외 검사 포함해 잡음, 복원 후 41 passed"}
+    ],
+    "known_flake": {
+      "tests": ["tests/test_portal_cdp_discovery.py::CdpDiscoveryTests (5건)"],
+      "observation": "부하가 걸린 1회 실행(768s)에서만 실패, 무부하 재실행(357s)에서 전건 통과. 해당 파일은 실제 서브프로세스·free port 를 띄우는 통합 검사이며 본 변경의 함수를 전혀 호출하지 않는다(grep 0건).",
+      "treated_as": "환경 flake — 회귀로 판정하지 않음. 근거를 남기고 은폐하지 않는다."
+    }
+  },
+  "v1": {
+    "agent": "codex-cli 0.145.0 (read-only sandbox)",
+    "verdict": "FAIL",
+    "transcript": "~/.codex/sessions/2026/07/31/rollout-2026-07-31T22-15-12-019fb850-83a1-71c3-885a-1a69244f4621.jsonl",
+    "wrapper_defect": "codex:codex-rescue 래퍼가 최종 메시지를 'Done.' 으로만 반환(2회 재현). 판정 본문은 세션 롤아웃에서 회수. 별도 과제로 승격 필요.",
+    "findings": [
+      {"id": "V1-F1", "severity": "critical", "issue": "등록 경계 우회 — 다른 채널 하위 linkedin-decoy, 원격 UNC, Valuehire 2회 중첩 경로가 후보로 채택", "reproduced_by_generator": true, "fix": "search_machine 등록부 값과 ntpath 정규화 후 정확일치. %LOCALAPPDATA% 미설정 시 후보 0개(fail-closed). UNC 명시 거부", "status": "fixed"},
+      {"id": "V1-F2", "severity": "critical", "issue": "관리 루트 2개인데 한쪽에만 Talent 화면이 있으면 그쪽 선택", "reproduced_by_generator": true, "fix": "루트 유일성을 공식 화면 검사보다 먼저 확정 → AMBIGUOUS_MANAGED_BROWSER", "status": "fixed"},
+      {"id": "V1-F3", "severity": "critical", "issue": "인증 전 배지 추가로 조작 0회 위반", "reproduced_by_generator": false, "rebuttal": "인증 경로의 attach 는 모두 badge=False (session_guard.py:1511 기본값, humansearch_cdp_run.py:747 명시). raw_cdp.attach 의 기본 badge=True 는 이 경로에서 사용되지 않는다. 검색 단계의 이동은 assert_not_blocked_or_abort 이후이며 계약 범위 밖.", "status": "not_reproduced"},
+      {"id": "V1-F4", "severity": "high", "issue": "후보0·화면0·후보2·조회예외가 모두 code=None 일반 오류로 합쳐짐", "reproduced_by_generator": true, "fix": "NO_MANAGED_BROWSER / AMBIGUOUS_MANAGED_BROWSER / NO_OFFICIAL_TARGET / AMBIGUOUS_OFFICIAL_TARGET 를 각 발생 지점에 배선(resolve_existing_target 포함)", "status": "fixed"},
+      {"id": "V1-F5", "severity": "high", "issue": "[1,2,3] 같은 구조 파손 JSON 이 빈 목록으로 흡수", "reproduced_by_generator": true, "fix": "행 하나라도 프로세스 모양이 아니면 BROWSER_QUERY_FAILED", "status": "fixed"},
+      {"id": "V1-F6", "severity": "medium", "issue": "--type 없는 자식이 루트로 채택 가능", "reproduced_by_generator": "theoretical", "fix": "조회에 ParentProcessId 추가 — 부모가 조회된 chrome.exe 면 제외", "status": "fixed"},
+      {"id": "V1-F7", "severity": "medium", "issue": "작은따옴표를 벗겨 다른 경로를 등록 경로로 판정", "reproduced_by_generator": true, "fix": "Windows 문법상 의미 있는 큰따옴표만 처리", "status": "fixed"},
+      {"id": "V1-F8", "severity": "medium", "issue": "허용목록에 chromium 이 있으나 조회는 Name='chrome.exe' 로 한정, Beta/Canary 구분 불가", "reproduced_by_generator": "theoretical", "fix": "허용목록을 chrome.exe 하나로 축소. Beta/Canary/portable 은 등록 프로필 정확일치로 차단", "status": "fixed"}
+    ],
+    "test_weakening_audit": {"darwin_additions": 7, "deleted_test_defs": 0, "deleted_assert_lines": 0, "deleted_skip_lines": 0},
+    "evidence": [
+      {"command": "pytest tests/test_managed_chrome_discovery_cross_os.py -q -s -p no:cacheprovider", "exit_code": 0, "result": "32 passed, 22 subtests passed"},
+      {"command": "pytest tests/test_channel_endpoint_marker_verify.py tests/test_login_session_runner.py tests/test_managed_chrome_discovery_cross_os.py -q -s", "exit_code": 0, "result": "122 passed, 25 subtests passed"},
+      {"command": "windows command-line 교차검사", "exit_code": 0, "result": "cases=781 mismatches=0"},
+      {"command": "pytest tests/ -q -s (읽기전용 샌드박스)", "exit_code": 1, "result": "191 failed, 2797 passed, 304 errors — Codex 스스로 샌드박스 제약이라 회귀 판정에서 제외", "accepted": false}
+    ]
+  },
+  "v2": {
+    "agent": "claude-opus-5[1m] (reset context: goal + verdict.json only)",
+    "verdict": "FAIL",
+    "transcript": "~/.claude/projects/-Volumes-SSD-valuehire-v5/27261f4b-24b2-4a5d-b34e-bb3b1760ed93/subagents/agent-a8a321482528bd790.jsonl",
+    "wrapper_defect": "V1 과 동일 — 최종 메시지가 한 줄로만 반환되어 본문을 transcript 에서 회수했다.",
+    "findings": [
+      {"id": "V2-1", "severity": "critical", "issue": "macOS 에서 등록부 밖 프로필 통과(/tmp, 외장볼륨, 남의 계정 홈, linkedin-decoy) — goal §3 counter-AC 위반. 안 고쳐진 macOS 가 현재 실제 가동 기기다.", "assessment": "partially_valid", "note": "/tmp·외장볼륨·decoy·중간토큰은 V2 조사 시작 후 생성자 2차 자체반증(G2)에서 이미 수정됨(V2 는 수정 전 코드를 읽음). 남의 계정 홈은 실제로 남아 있었다.", "fix": "HOME 기반 경계 — 내 홈 아래만 인정, 홈 미상이면 /Users/<사용자>/.valuehire/ 로 축소", "status": "fixed"},
+      {"id": "V2-2", "severity": "high", "issue": "상태 코드 8개의 고정 문구가 사용자 경로에 도달하지 않음 — humansearch_cdp_run.py 가 모든 사유를 한 문장으로 뭉갬", "assessment": "valid", "fix": "resolve_exact_recruiter_target 이 ManagedBrowserDiscoveryError.code -> 고정 문구를 PreflightError 에 그대로 싣고 owner_status_code 를 노출", "status": "fixed"},
+      {"id": "V2-3", "severity": "high", "issue": "도달 불가능한 상태 코드 3건(AUTHENTICATED, HUMAN_AUTH 발생 지점 없음 / AMBIGUOUS_OFFICIAL_TARGET 분기가 앞 검사에 가려짐) — 계약이 거짓", "assessment": "valid", "fix": "죽은 분기 제거 + perform_autologin 이 같은 표에서 owner_message 를 실어 반환. 8개 코드 전부 발생 지점 보유", "status": "fixed"}
+    ],
+    "v1_claims_reviewed": [
+      {"id": "V1-F3", "v2_ruling": "구현자의 기각이 옳다 — 인증 경로 attach 는 모두 badge=False"},
+      {"id": "known_flake", "v2_ruling": "타당 — test_portal_cdp_discovery.py 는 본 변경 함수를 호출하지 않는다"},
+      {"id": "test_weakening", "v2_ruling": "약화 없음 — 삭제·skip·단언 제거 0"},
+      {"id": "windows_fixes", "v2_ruling": "7건 반례를 직접 넣어 전부 차단 확인"}
+    ],
+    "not_verified_by_v2": ["./verify.sh 전체", "Linux 강제 실행", "make strict-exit-gate", "Windows 실기기", "V1 세션 원문"]
+  },
+  "failed_attempts": [
+    {"attempt": "codex:codex-rescue 서브에이전트로 V1 수행", "outcome": "최종 메시지가 'Done.' 만 반환(2회) — 전략상 무효", "recovery": "codex CLI 세션 롤아웃(~/.codex/sessions)에서 판정 본문 회수"},
+    {"attempt": "codex exec 로 직접 재실행(stdout / --output-last-message)", "outcome": "exit 0 이지만 stdout 공백, last-message 파일 미생성", "recovery": "동일 — 세션 롤아웃에서 회수"},
+    {"attempt": "shlex.split(posix=False) 로 Windows 명령행 파싱", "outcome": "토큰 중간 따옴표를 공백에서 잘라 프로필 소실(G1)", "recovery": "CommandLineToArgvW 규칙 토크나이저 직접 구현"},
+    {"attempt": "정규식 일괄치환으로 perform_autologin 의 모든 return 을 감싸기", "outcome": "SyntaxError — 파일 파손", "recovery": "git checkout 복원 후 얇은 공개 래퍼 1개로 최소 변경"}
+  ],
+  "three_way_agree": {
+    "generator": "3건 자체 발견 + 2차 자체반증 4건",
+    "v1_codex": "8건 지적 중 6건 유효(1건 과장, 1건 이론)",
+    "v2_claude": "3건 지적 전부 유효 또는 부분유효, V1 과장 1건을 독립 확인",
+    "converged": "12건 수정, 잔여 미해결 결함 없음. 세 관점이 서로의 오판을 1건씩 교정했다(V1-F3 과장 -> V2 확인, macOS 비대칭 -> V2 확인)."
+  },
+  "final_evidence": [
+    {"command": ".venv/bin/python -m pytest tests/test_managed_chrome_discovery_cross_os.py -q", "exit_code": 0, "result": "50 passed, 33 subtests passed"},
+    {"command": "./verify.sh (macOS)", "exit_code": 0, "result": "3311 passed, 4 xfailed, 138 subtests passed in 100.01s"},
+    {"command": "platform.system()->'Linux' 강제 전체 실행 (ubuntu-latest CI 재현)", "exit_code": 0, "result": "3311 passed, 4 xfailed, 138 subtests passed in 97.87s"},
+    {"command": "make strict-exit-gate", "exit_code": 0, "result": "PASS — 미커밋 잔존 0 · 마커 상태 일치"},
+    {"command": "배선 추적: humansearch resolve_exact_recruiter_target(기본 인자) 에서 실제 호출된 OS 명령", "exit_code": 0, "result": "powershell.exe 읽기전용 조회 4회 + list_pages 3회. 브라우저 실행·종료 명령 0건. endpoint=http://127.0.0.1:9425 pid=4242 profile=등록값 일치"},
+    {"command": "상태 코드 고아 검사 (grep 발생 지점)", "exit_code": 0, "result": "8/8 코드 모두 발생 지점 보유"}
+  ],
+  "impl_size": {"files": 4, "note": "windows_chrome.py 340줄(신설, 문구표+토크나이저 포함) + portal_worker/session_guard/humansearch_cdp_run/portal_selfservice_login 수정. 300줄 가이드 초과 — 범위는 지시대로 '기존 로그인 창 발견 + 실제 경로 연결'로 유지했고 초과분은 V1/V2 반례 대응이다. 정직 표기."},
+  "status": "in_progress",
+  "live_verification": {
+    "windows_pc": "LIVE_PENDING",
+    "reason": "WinPC 실기기 적용·확인 승인이 별도로 주어지지 않았고 이번 범위는 코드·검사·병합까지다. '다른 PC 적용 완료'라고 보고하지 않는다."
+  }
+}

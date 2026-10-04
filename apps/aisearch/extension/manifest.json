@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Valuehire Automation Banner",
+  "version": "0.1.0",
+  "description": "자동화가 이 탭을 조작 중일 때 상단에 빨간 띠 오버레이를 표시합니다 (AC-8/D9).",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.saramin.co.kr/*",
+        "https://*.jobkorea.co.kr/*",
+        "https://*.linkedin.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

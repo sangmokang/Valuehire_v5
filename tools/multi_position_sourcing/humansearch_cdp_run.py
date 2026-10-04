@@ -24,6 +24,7 @@ from tools.multi_position_sourcing.browser_evidence import (
     BrowserEvidenceError,
     capture_owned_browser_evidence,
     complete_evidence_payload,
+    strip_lone_surrogates,
 )
 from tools.multi_position_sourcing.harvest_policy import deterministic_delay_ms, worker_should_yield
 from tools.multi_position_sourcing.humansearch import (
@@ -53,6 +54,7 @@ from tools.multi_position_sourcing.portal_worker import (
 from tools.multi_position_sourcing.session_guard import _default_login_lease
 from tools.multi_position_sourcing.session_guard import read_auth_observation
 from tools.multi_position_sourcing.session_guard import resolve_existing_target
+from tools.multi_position_sourcing.windows_chrome import owner_message_for
 
 SEARCH_URL_BASE = (
     "https://www.linkedin.com/talent/search?"
@@ -135,6 +137,101 @@ def _to_ym(s: str) -> str:
     if not m:
         return ""
     return f"{m.group(2)}-{_MON.get(m.group(1),1):02d}"
+
+
+_DATE_RANGE_RE = re.compile(
+    r"^([A-Z][a-z]{2}\s+\d{4})\s*[–-]\s*(Present|[A-Z][a-z]{2}\s+\d{4})"
+)
+# 회사 헤더 바로 아래에 오는 '총 재직기간' 요약 줄(예: '1 yr 2 mos', '7 yrs', '8 mos').
+_DURATION_SUMMARY_RE = re.compile(r"^(?:\d+\s+yrs?)(?:\s+\d+\s+mos?)?$|^\d+\s+mos?$")
+# Recruiter 가 붙이는 고정 라벨 — 회사명으로 오인하면 안 된다.
+_RPS_FIELD_LABELS = frozenset({
+    "Experience", "Position title", "Position employment status", "Position location",
+    "Position summary", "Dates employed and Duration", "Company name", "Education",
+    "Skills", "Accomplishments", "Interests", "Languages", "Summary",
+    "Related to search terms in your query",
+})
+
+
+def build_company_tenures(visible_text: str) -> tuple[EmploymentTenure, ...]:
+    """RPS 프로필 본문에서 **회사 단위** 재직기간을 뽑는다.
+
+    2026-08-01 라이브 사고: 본문 전체에서 날짜만 긁으면 같은 회사 안의 승진(직책 변경)이
+    각각 별개 재직이 되어 '1개월 재직 후 이직'처럼 보이고, 상위 후보가 frequent_job_change 로
+    자동 제외됐다. 한 회사의 여러 직책은 하나의 재직(가장 이른 시작 ~ 가장 늦은 종료)으로 합친다.
+
+    Experience 구간만 읽는다(Education 날짜는 경력이 아니다). 회사는 두 형태로 나타난다.
+      · 회사 헤더형: '<회사>' 다음 줄이 총 재직기간 요약('1 yr 2 mos')
+      · 라벨형: 'Company name' 라벨 다음 줄이 회사명(직책 1개짜리 항목)
+    """
+    lines = [ln.strip() for ln in str(visible_text or "").splitlines()]
+    try:
+        start_idx = lines.index("Experience") + 1
+    except ValueError:
+        return ()
+    try:
+        end_idx = lines.index("Education", start_idx)
+    except ValueError:
+        end_idx = len(lines)
+
+    order: list[str] = []
+    spans: dict[str, list[tuple[str, str]]] = {}
+    section_company = ""   # 회사 헤더형에서 이어지는 현재 회사
+    position_company = ""  # 'Company name' 라벨로 지정된 이 직책만의 회사
+
+    i = start_idx
+    while i < end_idx:
+        line = lines[i]
+        if not line:
+            i += 1
+            continue
+        if line == "Company name":
+            nxt = next((lines[j] for j in range(i + 1, end_idx) if lines[j]), "")
+            if nxt and nxt not in _RPS_FIELD_LABELS:
+                position_company = nxt
+            i += 1
+            continue
+        if line == "Dates employed and Duration":
+            nxt = next((lines[j] for j in range(i + 1, end_idx) if lines[j]), "")
+            m = _DATE_RANGE_RE.match(nxt)
+            if m:
+                company = position_company or section_company
+                start = _to_ym(m.group(1))
+                end = "" if m.group(2) == "Present" else _to_ym(m.group(2))
+                if company and start:
+                    if company not in spans:
+                        spans[company] = []
+                        order.append(company)
+                    spans[company].append((start, end))
+            position_company = ""
+            i += 1
+            continue
+        if line not in _RPS_FIELD_LABELS:
+            nxt = next((lines[j] for j in range(i + 1, end_idx) if lines[j]), "")
+            if _DURATION_SUMMARY_RE.match(nxt):
+                section_company = line
+        i += 1
+
+    out: list[EmploymentTenure] = []
+    for company in order:
+        periods = spans[company]
+        earliest = min(s for s, _ in periods)
+        # 하나라도 재직중이면 회사 재직은 열려 있다.
+        latest = "" if any(e == "" for _, e in periods) else max(e for _, e in periods)
+        out.append(EmploymentTenure(company=company, start_month=earliest, end_month=latest))
+    return tuple(out)
+
+
+def tenures_for_profile(info: dict) -> tuple[EmploymentTenure, ...]:
+    """추출 결과에서 재직이력을 만든다 — 회사 단위가 정본, 실패 시에만 날짜 나열로 폴백.
+
+    회사 단위 파싱이 성공하면 승진이 이직으로 세어지지 않는다. Experience 구간을 못 찾은
+    화면(레이아웃 변경 등)에서는 기존 날짜 나열로 폴백해 경력연차 산출이 0이 되지 않게 한다.
+    """
+    company_tenures = build_company_tenures(str(info.get("full") or ""))
+    if company_tenures:
+        return company_tenures
+    return build_tenures(info.get("dates", []))
 
 
 def build_tenures(dates: list[dict]) -> tuple[EmploymentTenure, ...]:
@@ -243,6 +340,14 @@ def resolve_exact_recruiter_target(
     try:
         ref = resolver("linkedin_rps", target_id=wanted_id)
     except (LookupError, RuntimeError, ValueError) as error:
+        # 발견 단계가 고정 상태 코드로 멈췄으면 그 문구를 그대로 사장님께 올린다.
+        # 여기서 한 문장으로 뭉개면 상태 코드→문구 표가 사용자에게 도달하지 못한다(V2-2).
+        code = getattr(error, "code", "")
+        message = owner_message_for(code)
+        if message:
+            failure = _profile_context_error(message)
+            failure.owner_status_code = code
+            raise failure from error
         raise _profile_context_error("exact managed Recruiter target could not be resolved") from error
     expected_scope = _scope_values(SEARCH_URL_BASE)
     initial_scope = _scope_values(ref.initial_url)
@@ -644,11 +749,12 @@ def process_profile(
     if not complete_evidence_payload(evidence.public_dict()):
         raise BrowserEvidenceError("profile evidence receipt failed integrity validation")
     shot = Path(evidence.screenshot_path)
-    tenures = build_tenures(info.get("dates", []))
+    tenures = tenures_for_profile(info)
     prof = CapturedProfile(
         profile_url=profile_url,
         source_channel="linkedin_rps",
-        visible_text=info.get("full", ""),
+        # 채점·spec 직렬화도 같은 정리를 거친 텍스트를 쓴다(저장본과 어긋나지 않게).
+        visible_text=strip_lone_surrogates(info.get("full", "")),
         summary=info.get("summary", "") or info.get("headline", ""),
         captured_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
         screenshot_path=str(shot),
@@ -724,6 +830,8 @@ def main(
     evaluation_client=evaluate_candidate_with_claude,
     evaluation_ready_check=assert_live_evaluator_ready,
 ) -> None:
+    if not str(target_id or "").strip():
+        raise _profile_context_error("explicit Recruiter target id is required")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lease = (lease_factory or _default_login_lease)("linkedin_rps")
     lease.acquire()
