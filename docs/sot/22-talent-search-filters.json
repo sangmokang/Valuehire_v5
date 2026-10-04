@@ -2,12 +2,12 @@
   "$schema_version": "2.0.0",
   "title": "인재검색 필터·DOM 세팅 — 사람인·잡코리아·링크드인 이식용 SSOT",
   "purpose": "AI Search(후보 발굴)가 3개 채용 포털에서 후보를 검색할 때 따르는 단일 기준. 타 레포지토리 이식용. 사장님이 화면 캡처·라이브 검증으로 직접 박은 입력 구조·DOM 셀렉터·결과수 판단 트리·입력법·완화 폴백·봇 가드·제안 모달 셀렉터를 빠짐없이 명세한다.",
-  "revision_note": "v2.0.1 — 현재 실행 기준은 v5 SOT + tools/multi_position_sourcing/ + ~/.codex/skills/ai-search 이고, 사장님 화면 캡처 원본 스킬은 ~/.claude/skills/* 역사적 출처로 분리한다. v2.0.0이 코드(러너)+SOT22만 보고 누락했던 직접 지침 5종도 유지한다: (1) talent-search 3사 좌측 필터 전체 구조, (2) SOT23 evidence-first 원칙, (3) 사람인 §6 DOM 표·§10.1·V4 제안모달, (4) 채널별 결과수 판단 트리(§S-2), (5) R10 클립보드 입력법.",
+  "revision_note": "v2.0.1 — 현재 실행 기준은 v5 SOT + tools/multi_position_sourcing/ + skills/ai-search 이고, 사장님 화면 캡처 원본 스킬은 ~/.claude/skills/* 역사적 출처로 분리한다. v2.0.0이 코드(러너)+SOT22만 보고 누락했던 직접 지침 5종도 유지한다: (1) talent-search 3사 좌측 필터 전체 구조, (2) SOT23 evidence-first 원칙, (3) 사람인 §6 DOM 표·§10.1·V4 제안모달, (4) 채널별 결과수 판단 트리(§S-2), (5) R10 클립보드 입력법.",
 
   "source_of_truth": {
     "owner_authored_primary": {
       "file": "~/.claude/skills/talent-search/SKILL.md",
-      "note": "★ 역사적 원본 — 사장님이 화면 캡처로 확인한 3사 인재검색 URL + 좌측 필터 전체 구조 + 입력 순서 7단계 (2026-05-21 명시). 현재 Codex 실행 스킬은 ~/.codex/skills/ai-search/SKILL.md."
+      "note": "★ 역사적 원본 — 사장님이 화면 캡처로 확인한 3사 인재검색 URL + 좌측 필터 전체 구조 + 입력 순서 7단계 (2026-05-21 명시). 현재 레포 내 Codex 실행 스킬은 skills/ai-search/SKILL.md."
     },
     "channel_dom_selector_sot": {
       "file": "docs/sot/23-channel-dom-selectors.md",
@@ -24,7 +24,7 @@
       "~/.claude/skills/jobkorea-talent-sourcing/SKILL.md",
       "~/.claude/skills/linkedin-rps-jd-set-builder/SKILL.md"
     ],
-    "current_execution_skill": "/Users/kangsangmo/.codex/skills/ai-search/SKILL.md",
+    "current_execution_skill": "skills/ai-search/SKILL.md",
     "code_files_status": "⚠️ 2026-06-26 확인: 아래 code_files_MISSING의 5개 경로는 부재(낡은 참조, 셀렉터 근거 인용용). 단 ★실제 실행 엔진은 `tools/multi_position_sourcing/`에 살아있다(40+ 모듈: channel_search_render·harvest_runner·queue_runner·portal_queue_executor·scoring·match·keywords·dedup·selectors·portal_autologin·discord_briefing·clickup_activity, 진입점 `python3 -m tools.multi_position_sourcing.dry_run`, 기본 dry-run/read-only·라이브 쓰기는 게이트). AI Search 자동 실행은 이 엔진으로 한다 — raw CDP 손수 입력으로 때우지 말 것(INV10/INV11). 엔진이 못 미치는 채널 상호작용만 dom_selectors+raw CDP(docs/sot/26)로 보조.",
     "real_engine": "tools/multi_position_sourcing/ (entry: python3 -m tools.multi_position_sourcing.dry_run)",
     "code_files_MISSING": [

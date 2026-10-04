@@ -80,7 +80,8 @@ def test_sot25_uses_current_codex_skill_and_embedded_output_contract() -> None:
     text = json.dumps(sot25, ensure_ascii=False)
     assert "skills/ai-search-position-pipeline" not in text
     assert "~/.claude/skills/ai-search-position-pipeline" not in text
-    assert "/Users/kangsangmo/.codex/skills/ai-search/SKILL.md" in text
+    assert "skills/ai-search/SKILL.md" in text
+    assert "/Users/kangsangmo/.codex/skills/ai-search/SKILL.md" not in text
     assert "tools/multi_position_sourcing/models.py" in text
 
     output_contract = sot25.get("output_contract")
@@ -111,6 +112,8 @@ def test_sot25_dependencies_are_repo_local_and_present() -> None:
 def test_sot22_historical_skill_sources_are_explicit_paths() -> None:
     sot22 = json.loads((REPO / "docs/sot/22-talent-search-filters.json").read_text(encoding="utf-8"))
     source = sot22["source_of_truth"]
+    assert source["current_execution_skill"] == "skills/ai-search/SKILL.md"
+    assert (REPO / source["current_execution_skill"]).is_file()
     assert source["owner_authored_primary"]["file"] == "~/.claude/skills/talent-search/SKILL.md"
     assert source["historical_skill_sources"] == [
         "~/.claude/skills/saramin-talent-sourcing/SKILL.md",

@@ -5,7 +5,7 @@
   "updated_at": "2026-07-07",
   "title": "AI Search 실행 프로세스 표준 (preflight→게이트→양보/재개→검색→평가→출력→FY26AI_Search 등록)",
   "source_of_truth": [
-    "/Users/kangsangmo/.codex/skills/ai-search/SKILL.md (현재 Codex 실행 스킬)",
+    "skills/ai-search/SKILL.md (레포 내 Codex 실행 스킬)",
     "docs/sot/22-talent-search-filters.json (채널 필터 SSOT)",
     "docs/sot/24-position-jd-sot.json (JD 평가기준 SSOT)",
     "docs/sot/26-portal-login-spec.json (로그인·차단·raw CDP SSOT)",
