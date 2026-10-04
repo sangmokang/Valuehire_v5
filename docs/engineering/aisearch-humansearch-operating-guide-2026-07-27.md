@@ -33,9 +33,14 @@
 - `tools/multi_position_sourcing/job_queue.py`의 함대 작업 큐와 `apps/aisearch`의 실행 상태는 서로 자동 공유되지 않는다. 동일 포지션의 중복 실행 차단과 crash 후 cursor 재개는 호출 경로에서 별도 검증해야 한다.
 - Gmail과 ClickUp의 NEW/ACTIVE/UPDATED/PAUSED/CLOSED/UNKNOWN 충돌 판정, Aside 브라우저 연결, SQLite·Supabase 동시 완료 판정은 현재 운영 완료 기능으로 주장하지 않는다. 해당 기능을 추가할 때는 한 포지션의 유한한 검색과 재실행을 먼저 검증한다.
 
+## 과거 점수 설계와 현재 계약
+
+`docs/engineering/scoring-ratio-signals-goal-2026-07-15.md`는 `education`·`company_tier`·`university_tier`의 비율형 점수와 최대점수 10·10·8을 설명한다. 이는 과거 설계의 근거이며 현재 후보 최종 판정을 대체하지 않는다. 운영 경로에서는 버전이 명시된 `candidate-match-v2-2026-07-24`와 각 경로의 등록 관문을 확인한다. 과거 v4 코드에 런타임 의존성을 추가하지 않는다.
+
 ## 근거
 
 - `CLAUDE.md`, `docs/harness.md`, `docs/sot/24-position-jd-sot.json`, `docs/sot/25-ai-search-execution-process.json`, `docs/sot/26-portal-login-spec.json`, `docs/sot/29-fleet-control.json`
 - `.claude/skills/aisearch/SKILL.md`, `skills/humansearch/SKILL.md`
 - `apps/aisearch/run.py`, `apps/aisearch/core/orchestrator.py`, `apps/aisearch/core/pagination_store.py`, `apps/aisearch/core/score_gate.py`
 - `tools/multi_position_sourcing/matching_score_contract.py`, `tools/multi_position_sourcing/profile_archive_store.py`, `tools/multi_position_sourcing/job_queue.py`, `scripts/humansearch_supabase_backfill.py`
+- `docs/engineering/scoring-ratio-signals-goal-2026-07-15.md`
