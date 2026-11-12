@@ -16,7 +16,8 @@
 # - 두 대상을 모두 준비·검증한 뒤에만 교체한다. 교체 중 실패하면 이미 바꾼 대상을 백업에서 되돌린다.
 # - 백업: <home>/.strict-backups/<UTC ts>-<pid>-<rand>/ (skills/ 밖, 이름 충돌 없음). 삭제하지 않는다.
 # - 해시 실패·빈 해시는 비교하지 않고 exit 4로 거부한다.
-# - 테스트 전용 장애 주입 STRICT_SYNC_FAULT(쉼표 목록: activate:<i>, restore:<i>, sigterm:<i>, hash:stage) —
+# - 테스트 전용 장애 주입 STRICT_SYNC_FAULT(쉼표 목록: activate:<i>, restore:<i>, sigterm:<i>,
+#   sigterm-after-backup:<i>, hash:stage) —
 #   실패를 일으키는 방향으로만 동작한다(성공 경로를 열지 않음).
 # exit: 0 성공/드리프트 0 · 1 드리프트 · 2 사용법 · 3 설치 거부(승인 리비전 아님/락) · 4 판독 실패
 #       5 설치 실패(복원 완료) · 6 설치 실패 + 복원 실패(미복원 대상·백업 위치를 stderr에 명시) · 7 신호로 중단(복원 시도)
@@ -152,16 +153,22 @@ done
 #    되돌리지 못한 대상은 백업 위치와 함께 명시한다(V1 2차 #3).
 DONE=()          # "i|backup_or_-"
 UNRECOVERED=()
-restore_one() {  # $1=i $2=backup_or_-  — 실패해도 다른 대상 복원은 계속
-  local i=$1 b=$2
-  if fault "restore:$i"; then UNRECOVERED+=("${ENGINE[$i]}: ${DST[$i]} (백업 $b)"); return 0; fi
-  if [ -e "${DST[$i]}" ] || [ -L "${DST[$i]}" ]; then
-    rm -rf "${DST[$i]}" || { UNRECOVERED+=("${ENGINE[$i]}: ${DST[$i]} 제거 실패 (백업 $b)"); return 0; }
+restore_one() {  # $1=i $2=backup_or_-  — 실제 디스크 상태를 보고 복원. 실패해도 다른 대상 복원은 계속.
+  local i=$1 b=$2 dst=${DST[$1]}
+  if fault "restore:$i"; then UNRECOVERED+=("${ENGINE[$i]}: $dst (백업 $b)"); return 0; fi
+  if [ "$b" != "-" ] && { [ -e "$b" ] || [ -L "$b" ]; }; then
+    # 백업이 존재 = 원본이 옮겨졌다 → 목적지에 무엇이 있든(새 설치본 또는 없음) 백업으로 되돌린다
+    if [ -e "$dst" ] || [ -L "$dst" ]; then
+      rm -rf "$dst" || { UNRECOVERED+=("${ENGINE[$i]}: $dst 제거 실패 (백업 $b)"); return 0; }
+    fi
+    mv "$b" "$dst" || { UNRECOVERED+=("${ENGINE[$i]}: $dst 복원 실패 (백업 $b)"); return 0; }
+    echo "rollback  ${ENGINE[$i]}  백업에서 복원" >&2
+  elif [ "$b" = "-" ] && [ -f "$dst/.strict-install.json" ] && grep -q "\"install_id\":\"$ID\"" "$dst/.strict-install.json"; then
+    # 원본이 없던 대상에 이번 설치본이 들어갔다 → 제거해 원상(부재)으로
+    rm -rf "$dst" || { UNRECOVERED+=("${ENGINE[$i]}: $dst 이번 설치본 제거 실패"); return 0; }
+    echo "rollback  ${ENGINE[$i]}  이번 설치본 제거" >&2
   fi
-  if [ "$b" != "-" ]; then
-    mv "$b" "${DST[$i]}" || { UNRECOVERED+=("${ENGINE[$i]}: ${DST[$i]} 복원 실패 (백업 $b)"); return 0; }
-  fi
-  echo "rollback  ${ENGINE[$i]}  복원" >&2
+  # 그 외: 백업 이동 전에 중단됨 → 원본이 제자리에 그대로 있음(변경 없음)
 }
 rollback_all() {
   local entry
@@ -183,11 +190,12 @@ trap on_signal TERM INT HUP
 set +e
 for i in 0 1; do
   dst=${DST[$i]}; home=$(dirname "$(dirname "$dst")"); b="-"
-  if [ -e "$dst" ] || [ -L "$dst" ]; then
-    b="$home/.strict-backups/$ID/strict"
+  if [ -e "$dst" ] || [ -L "$dst" ]; then b="$home/.strict-backups/$ID/strict"; fi
+  DONE+=("$i|$b")   # 이동 '전에' 등록 — 이후 어느 순간 신호가 와도 restore_one 이 실제 상태로 판단(V1 3차 #1)
+  if [ "$b" != "-" ]; then
     mkdir -p "$(dirname "$b")" && mv "$dst" "$b" || fail_install "${ENGINE[$i]} 백업 이동 실패" 5
+    if fault "sigterm-after-backup:$i"; then kill -TERM $$; sleep 1; fi
   fi
-  DONE+=("$i|$b")   # 백업으로 옮긴 순간부터 복원 대상
   if fault "activate:$i" || ! mv "${STAGE[$i]}" "$dst"; then
     fail_install "${ENGINE[$i]} 활성화 실패" 5
   fi

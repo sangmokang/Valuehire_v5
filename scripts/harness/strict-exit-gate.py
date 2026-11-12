@@ -49,10 +49,11 @@ def repo_root():
 def marker_locations(root):
     """task.sh 는 '자기를 실행한 체크아웃'의 .claude 에 마커를 쓴다(메인일 수도, 연결 워크트리일 수도).
     그래서 이 레포의 모든 체크아웃(git worktree list)에서 마커를 찾는다(V1 2차 #2)."""
-    p = _git(["-C", str(root), "worktree", "list", "--porcelain"], _timeout())
+    # -z: 필드를 NUL로 구분 — 탭·따옴표·줄바꿈이 든 경로도 인용·이스케이프 없이 그대로(V1 3차 #3)
+    p = _git(["-C", str(root), "worktree", "list", "--porcelain", "-z"], _timeout())
     if p.returncode != 0:
         raise GateError(f"worktree 목록 판독 실패 rc={p.returncode}")
-    tops = [pathlib.Path(l[len("worktree "):]) for l in p.stdout.splitlines() if l.startswith("worktree ")]
+    tops = [pathlib.Path(f[len("worktree "):]) for f in p.stdout.split("\0") if f.startswith("worktree ")]
     if not tops:
         raise GateError("worktree 목록이 비어 있음")
     return [t / ".claude" / "strict-active.json" for t in tops]
@@ -103,7 +104,8 @@ def check_marker(root, marker):
         root_repo = pathlib.Path(rc.stdout.strip()).resolve().parent
         if wt_repo != root_repo:
             return [f"strict 작업 '{slug}' 워크트리({wt})가 이 레포({root_repo})가 아님({wt_repo})"]
-        st = _git(["-C", str(wt), "status", "--porcelain"], t)
+        # untracked 표시를 명시 — status.showUntrackedFiles=no 설정으로 새 파일을 숨길 수 없게(V1 3차 #2)
+        st = _git(["-C", str(wt), "status", "--porcelain", "--untracked-files=all"], t)
     except subprocess.TimeoutExpired:
         return [f"strict 작업 '{slug}' 워크트리({wt}) git 타임아웃({t}s)"]
     if st.returncode != 0:

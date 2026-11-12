@@ -202,3 +202,20 @@
   - 둘 다 원복했다.
 - 결과: 관련 66 passed. `./verify.sh` 3425 passed, 4 xfailed, `pytest exit=0`.
 - 실제 환경 영향 점검: v5 체크아웃 16개 중 마커가 있는 곳은 0개다. 모든 체크아웃으로 탐색을 넓혀도 당장 오탐 FAIL은 없다.
+
+### V1 3차 (Codex, fresh read-only, thread 01a1cd3a-dfef-7742-99e0-c9b8160c6e3b, 리뷰 대상 ba946c7) — VERDICT FAIL
+Codex가 앞선 지적 10건을 재검토했다. 마커 탐색, 접근 거부, 심링크, 복원 연쇄, 해시 실패, 락 거부, archive 내용, core 동일성, 승인 통제 보존은 해결된 것으로 확인했다. 새 지적은 3건이다.
+1. [high] 백업 이동 직후·활성화 전에 TERM이 오면 그 엔진이 복원 대상에서 빠진다(sync:188-190).
+2. [high] `status.showUntrackedFiles=no` 설정이 있으면 새 파일을 숨긴 채 게이트가 PASS를 낸다(gate:106).
+3. [medium] `worktree list --porcelain`이 인용·이스케이프한 경로를 그대로 읽어서 해당 체크아웃의 마커를 건너뛴다(gate:52-58).
+
+**조치**
+- RED 284926d: 3 failed. 이후 수정:
+  - DONE 등록을 이동 전에 하고, `restore_one`이 실제 디스크 상태(백업 존재 여부, 이번 install_id)를 보고 복원한다.
+  - `status --untracked-files=all`을 명시한다.
+  - `worktree list --porcelain -z`의 NUL 구분 필드를 해석한다.
+- mutant
+  - 3개 동시 적용(untracked 플래그 제거, -z 제거, splitlines) → 2 failed.
+  - DONE을 이동 후에 등록 → after_backup 테스트 failed.
+  - 모두 원복했다.
+- 결과: 관련 69 passed. `./verify.sh` 3428 passed, 4 xfailed, `pytest exit=0`.
