@@ -355,6 +355,8 @@ def test_sync_install_second_target_failure_changes_nothing(tmp_path):
     assert r.returncode != 0
     assert (old / "SKILL.md").read_text() == "old copy", "첫 대상이 부분 설치됨"
     assert not (tmp_path / "claude/.strict-backups").exists()
+    assert not list((tmp_path / "claude/skills").glob(".strict-staging-*")), "실패한 스테이징이 skills/ 에 남음"
+    assert not (tmp_path / "claude/.strict-sync.lock").exists(), "락 미해제"
 
 
 def test_sync_install_refused_when_locked(tmp_path):

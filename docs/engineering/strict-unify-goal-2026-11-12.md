@@ -69,7 +69,9 @@
 
 | 입력 (마커 `.claude/strict-active.json`) | 처리 |
 |---|---|
-| 마커 없음 | PASS (strict 작업 없음) |
+| 마커 위치: `CLAUDE_PROJECT_DIR`/cwd의 git-common-dir 부모(=메인 체크아웃) `.claude/strict-active.json` — 워크트리에서 실행해도 메인의 마커를 본다 (V1#1) | 처리 |
+| 마커 없음 (lexists 거짓) | PASS (strict 작업 없음) |
+| 마커가 심링크(깨진 링크 포함)·디렉터리 등 일반 파일 아님 (V1#5) | FAIL |
 | 마커 정상 + 워크트리 clean + 같은 레포 | PASS |
 | 마커 정상 + 워크트리에 미커밋 변경 | FAIL (기존 동작) |
 | JSON 깨짐 / 최상위가 객체 아님 | FAIL |
@@ -79,6 +81,7 @@
 | git 타임아웃(`STRICT_EXIT_GATE_TIMEOUT`, 기본 15초) | FAIL |
 | 워크트리의 git-common-dir가 이 레포와 다름 | FAIL |
 | runner-lease 잔존 | 기존대로 WARN (판정에는 영향 없음) |
+| 레포 자체 판독 실패/타임아웃 | FAIL (main 바깥 catch-all) |
 | 그 외 전부 (예상하지 못한 예외) | FAIL |
 
 ### 입력영역표 — sync-strict-skill.sh
@@ -89,9 +92,15 @@
 | `--check`, 설치본 다름 / 없음 | exit 1, DRIFT/MISSING (쓰기 0) |
 | `--check`, legacy(`~/.claude/commands/st.md`, `~/.codex/skills/st`) 잔존 | LEGACY 줄 출력. 그 자체로는 exit 1이다(드리프트로 간주). |
 | `--install`, HEAD ≠ origin/main | exit 3 거부, 쓰기 0 |
-| `--install`, 정본 경로에 미커밋 변경 | exit 3 거부, 쓰기 0 |
+| `--install`, 정본 경로 **추적 파일**에 미커밋 수정 | exit 3 거부, 쓰기 0 |
+| 정본 경로에 untracked·ignored 파일(.env 등) (V1#2) | 거부하지 않음 — 설치 내용은 **HEAD 커밋 객체에서 `git archive`**로만 꺼내므로 혼입 0 |
+| 해시 도구 실패·빈/형식 이상 해시 (V1#4) | exit 4, 비교하지 않음 |
+| 다른 설치 진행 중(락 `$CLAUDE_HOME/.strict-sync.lock` 존재) (V1#3) | exit 3 거부, 쓰기 0 |
+| 두 번째 대상 준비(스테이징) 실패 (V1#3) | exit 5, **두 대상 모두 무변경**(교체는 둘 다 준비된 뒤에만), 스테이징·락 정리 |
+| 교체(mv) 중 실패 | exit 5, 이미 교체한 대상을 백업에서 복원 |
+| 연속 재설치 | 백업 id = UTC초-pid-random — 충돌 없음 |
 | `--install`, origin/main 참조 없음 | exit 3 거부 |
-| `--install`, 조건 충족 | 대상마다 임시 디렉터리를 만든 뒤 원자적으로 rename한다. 기존 디렉터리는 `<home>/.strict-backups/<ts>/`로 옮긴다(skills/ 밖이라 스킬 로더가 백업을 중복 스킬로 읽지 않는다). 전후 해시와 `.strict-install.json`을 남긴다. |
+| `--install`, 조건 충족 | 두 대상을 스테이징·해시 검증한 뒤 순서대로 rename한다(엔진 간 진정한 원자성은 불가 — 실패 시 복원으로 보완). 기존 디렉터리는 `<home>/.strict-backups/<ts>/`로 옮긴다(skills/ 밖이라 스킬 로더가 백업을 중복 스킬로 읽지 않는다). 전후 해시와 `.strict-install.json`을 남긴다. |
 | `--install --remove-legacy` | 위 설치 후 legacy를 백업 디렉터리로 옮긴다(삭제하지 않음). |
 | 인자 없음 / 알 수 없는 인자 | exit 2, usage |
 | 그 외 전부 | 명시적 실패(`set -euo pipefail`) |
@@ -140,3 +149,26 @@
   - codex: MISSING
   - LEGACY 2건(`~/.claude/commands/st.md`, `~/.codex/skills/st`)
 - 크기: 파일 10개, +약 500줄. 파일 5개·300줄 지향을 넘는다. 늘어난 분량의 대부분은 SKILL 문서 2개(core 블록이 두 진입점에 복제된 부분)다. 실행 코드는 exit gate +67줄, sync 러너 +110줄이다. 분할하지 않은 이유: st 제거, strict 생성, core 패리티 테스트가 한 원자 단위다. 나누면 중간 커밋에서 진입점이 0개가 된다.
+
+### V1 1차 (Codex, fresh read-only, thread 01a1cd2b-61e6-7ec2-bc3c-9d0912877503, 리뷰 대상 1557a48) — VERDICT FAIL
+1. [high] 워크트리에서 실행하면 메인 체크아웃의 마커를 못 찾고 PASS를 낸다(strict-exit-gate.py:87-94).
+2. [high] 설치가 커밋 밖의 내용(ignored·숨은 untracked)을 복사한다(sync:76-87).
+3. [high] 교체가 원자적이지 않고 실패 시 복구가 없다. 엔진 간 부분 설치, 락 없음, 백업 이름 충돌(sync:83-95).
+4. [high] 해시 실패 시 빈 해시끼리 같다고 보고 OK와 드리프트 0을 낸다(sync:52-55). Codex가 재현함.
+5. [medium] 깨진 심링크 마커를 "마커 없음"으로 보고 PASS를 낸다(gate:92-96).
+
+**조치** — RED 925ddf3: 7 failed, 26 passed. 이후 수정:
+- 마커 위치를 git-common-dir 기준으로 찾는다.
+- 마커가 lexists인데 일반 파일이 아니면 FAIL로 처리한다.
+- main 바깥에 catch-all을 둔다.
+- 설치 내용을 `git archive HEAD`로 꺼낸다.
+- 락을 건다.
+- 두 대상을 모두 스테이징한 뒤에 교체하고, 실패하면 복원한다.
+- 백업 id를 초-pid-random으로 만든다.
+- 해시 실패와 형식 이상은 exit 4로 처리한다.
+
+**결과**
+- 관련 테스트 57 passed.
+- `./verify.sh` 3416 passed, 4 xfailed, `pytest exit=0`.
+- mutant 2개를 추가로 확인했다. 해시 검증 제거 → hash_tool 테스트 failed. archive 대신 작업트리 복사 → commit_content 테스트 failed. 둘 다 원복 후 33 passed.
+- 남은 한계: 엔진 간 진정한 원자적 교체는 불가하다. 디렉터리 rename 두 번 사이에 프로세스가 강제 종료(kill -9)되면 복원 코드가 돌지 못한다. 이 경우 백업은 남는다.

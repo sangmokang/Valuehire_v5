@@ -19,17 +19,6 @@ import subprocess
 import sys
 
 
-def repo_root():
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env:
-        return pathlib.Path(env)
-    p = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                       capture_output=True, text=True)
-    if p.returncode == 0 and p.stdout.strip():
-        return pathlib.Path(p.stdout.strip()).parent
-    return pathlib.Path.cwd()
-
-
 def _timeout():
     try:
         return float(os.environ.get("STRICT_EXIT_GATE_TIMEOUT", "15"))
@@ -40,6 +29,17 @@ def _timeout():
 def _git(args, timeout):
     """git 실행. rc≠0·타임아웃은 호출자가 FAIL로 처리한다(fail-closed)."""
     return subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout)
+
+
+def repo_root():
+    """마커 소유 위치 = 메인 체크아웃(git-common-dir의 부모). task.sh 가 거기에 마커를 쓴다.
+    CLAUDE_PROJECT_DIR 는 '어느 레포인가'를 찾는 출발점으로만 쓴다 — 워크트리여도 메인으로 정규화(V1#1)."""
+    start = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    p = subprocess.run(["git", "-C", start, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                       capture_output=True, text=True, timeout=_timeout())
+    if p.returncode == 0 and p.stdout.strip():
+        return pathlib.Path(p.stdout.strip()).resolve().parent
+    return pathlib.Path(start)
 
 
 def check_marker(root, marker):
@@ -89,9 +89,12 @@ def main():
     lease = root / ".claude" / "runner-lease.json"
     problems = []
 
-    if marker.exists():
+    if os.path.lexists(marker):  # 깨진 심링크도 '존재'로 본다(V1#5)
         try:
-            problems += check_marker(root, marker)
+            if marker.is_symlink() or not marker.is_file():
+                problems.append(f"마커가 일반 파일이 아님(심링크/디렉터리 등): {marker}")
+            else:
+                problems += check_marker(root, marker)
         except Exception as e:  # 표 밖 예외 — catch-all 행: FAIL(fail-closed)
             problems.append(f"예상하지 못한 판독 오류({type(e).__name__}: {e})")
 
@@ -111,4 +114,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:  # catch-all 행 — 레포 판독 타임아웃 등도 FAIL(fail-closed)
+        print(f"[strict-exit-gate] FAIL — 판독 불가({type(e).__name__}: {e})", file=sys.stderr)
+        sys.exit(1)
