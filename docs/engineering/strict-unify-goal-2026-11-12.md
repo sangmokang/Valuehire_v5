@@ -69,7 +69,10 @@
 
 | 입력 (마커 `.claude/strict-active.json`) | 처리 |
 |---|---|
-| 마커 위치: `CLAUDE_PROJECT_DIR`/cwd의 git-common-dir 부모(=메인 체크아웃) `.claude/strict-active.json` — 워크트리에서 실행해도 메인의 마커를 본다 (V1#1) | 처리 |
+| 레포 판독(`CLAUDE_PROJECT_DIR`/cwd → git-common-dir) 실패 — 레포 밖 실행 등 (V1 2차 #1) | FAIL |
+| 마커 위치: 이 레포의 **모든 체크아웃**(`git worktree list`)의 `.claude/strict-active.json` — task.sh 는 실행된 체크아웃에 마커를 쓰므로 (V1#1, 2차 #2) | 마커마다 검사 |
+| worktree 목록 판독 실패 | FAIL |
+| 마커 lstat 이 FileNotFoundError 외 오류(접근 거부 등) (V1 2차 #1) | FAIL |
 | 마커 없음 (lexists 거짓) | PASS (strict 작업 없음) |
 | 마커가 심링크(깨진 링크 포함)·디렉터리 등 일반 파일 아님 (V1#5) | FAIL |
 | 마커 정상 + 워크트리 clean + 같은 레포 | PASS |
@@ -98,6 +101,9 @@
 | 다른 설치 진행 중(락 `$CLAUDE_HOME/.strict-sync.lock` 존재) (V1#3) | exit 3 거부, 쓰기 0 |
 | 두 번째 대상 준비(스테이징) 실패 (V1#3) | exit 5, **두 대상 모두 무변경**(교체는 둘 다 준비된 뒤에만), 스테이징·락 정리 |
 | 교체(mv) 중 실패 | exit 5, 이미 교체한 대상을 백업에서 복원 |
+| 복원 자체 실패 (V1 2차 #3) | 다른 엔진 복원은 계속, exit 6 + 미복원 대상·백업 위치 stderr 명시 |
+| 교체 중 TERM/INT/HUP 신호 (V1 2차 #3) | trap → 전체 복원, exit 7 (kill -9 는 잡을 수 없음 — 백업은 남음) |
+| 준비 단계 해시 실패 (V1 2차 #4) | 현재 셸에서 검증(`hash_of`) → exit 4, 교체 전 중단 |
 | 연속 재설치 | 백업 id = UTC초-pid-random — 충돌 없음 |
 | `--install`, origin/main 참조 없음 | exit 3 거부 |
 | `--install`, 조건 충족 | 두 대상을 스테이징·해시 검증한 뒤 순서대로 rename한다(엔진 간 진정한 원자성은 불가 — 실패 시 복원으로 보완). 기존 디렉터리는 `<home>/.strict-backups/<ts>/`로 옮긴다(skills/ 밖이라 스킬 로더가 백업을 중복 스킬로 읽지 않는다). 전후 해시와 `.strict-install.json`을 남긴다. |
@@ -172,3 +178,27 @@
 - `./verify.sh` 3416 passed, 4 xfailed, `pytest exit=0`.
 - mutant 2개를 추가로 확인했다. 해시 검증 제거 → hash_tool 테스트 failed. archive 대신 작업트리 복사 → commit_content 테스트 failed. 둘 다 원복 후 33 passed.
 - 남은 한계: 엔진 간 진정한 원자적 교체는 불가하다. 디렉터리 rename 두 번 사이에 프로세스가 강제 종료(kill -9)되면 복원 코드가 돌지 못한다. 이 경우 백업은 남는다.
+
+### V1 2차 (Codex, fresh read-only, thread 01a1cd32-03ff-7460-be4b-f373c8e03970, 리뷰 대상 a1aa9f7) — VERDICT FAIL
+1. [high] 레포 판독 실패(CLAUDE_PROJECT_DIR=/tmp)·마커 접근 거부 → PASS. Codex가 재현함.
+2. [high] 연결 체크아웃에서 task.sh로 만든 마커를 건너뛴다. task.sh는 마커를 자기가 실행된 체크아웃에 쓴다.
+3. [high] 두 번째 엔진 복원이 실패하면 set -e 때문에 첫 엔진 복원이 중단된다. SIGTERM 시 부분 설치 상태가 남는다.
+4. [medium] 준비 단계에서 해시가 실패해도 빈 해시끼리 비교해 통과한다(명령 치환 안의 exit).
+5. [medium] 이전 Codex 사본에 있던 L3 "TTY 직접 확인" 요건이 통합 core에서 빠졌다.
+
+**조치**
+- RED 7ab86b8: 8 failed, 33 passed.
+- 수정 내용
+  - 레포 판독 실패 → GateError FAIL.
+  - lstat에서 FileNotFoundError만 부재로 인정한다.
+  - 모든 체크아웃(`git worktree list`)에서 마커를 찾는다. 실제 task.sh로 통합 테스트했다.
+  - 교체 구간은 errexit를 끄고 단계마다 직접 검사한다. 복원 실패를 모아 두고 다른 엔진 복원은 계속한다(exit 6). 신호 trap이 오면 전체를 복원한다(exit 7).
+  - 해시는 `hash_of`로 현재 셸에서 검증한다.
+  - TTY 직접 확인을 복원했다.
+  - 추가로 직접 대조해 core에서 빠진 이전 통제 5개를 찾아 복원하고 테스트로 고정했다: snapshot 무근거 갱신 금지, 기존 구현 재사용 우선, quick_validate, 분석 작업의 답변 스키마, 호출그래프 끝까지 추적.
+- mutant 2개
+  - 복원 실패 시 즉시 exit → restore_failure 테스트 failed.
+  - lstat OSError를 부재로 처리 → access_denied 테스트 failed.
+  - 둘 다 원복했다.
+- 결과: 관련 66 passed. `./verify.sh` 3425 passed, 4 xfailed, `pytest exit=0`.
+- 실제 환경 영향 점검: v5 체크아웃 16개 중 마커가 있는 곳은 0개다. 모든 체크아웃으로 탐색을 넓혀도 당장 오탐 FAIL은 없다.

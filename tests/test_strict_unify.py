@@ -490,3 +490,12 @@ def test_core_keeps_l3_direct_approval_controls():
     core = CORE_RE.search(CLAUDE_ENTRY.read_text(encoding="utf-8")).group(1)
     for marker in ["TTY 직접 확인", "nonce", "payload hash", "현재 턴", "OWNER_SIGNOFF=true"]:
         assert marker in core, f"L3 승인 통제 누락: {marker}"
+
+
+def test_core_preserves_controls_from_every_prior_copy():
+    """통합 시 이전 사본(origin/main st 2종·전역 strict)의 통제가 빠지지 않았음을 고정(2026-11-12 대조에서 5개 누락 발견·복원)."""
+    core = CORE_RE.search(CODEX_ENTRY.read_text(encoding="utf-8")).group(1)
+    for marker in ["snapshot 무근거 갱신", "재사용", "quick_validate", "최종 답변 스키마", "호출그래프",
+                   "사용자 변경을 되돌리지", "절대 발생하면 안 되는 결과", "counter-AC", "mutation",
+                   "verdict.json", "6~8회", "skill-creator", "R7", "입력 영역 표", "현재 턴"]:
+        assert marker in core, f"이전 사본 통제 누락: {marker}"

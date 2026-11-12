@@ -37,7 +37,8 @@ Treat the rest of the user's message after `$strict` (or a legacy trigger word `
 
 ### 3. goal prompting (L1+)
 
-코드 전에 `docs/engineering/<주제>-goal-<YYYY-MM-DD>.md`: 현재 상태(file:line, 추측 금지) · 근본 원인 · 인수 기준(EARS + 검증 명령 + counter-AC, 1개 단위) · 계약(입출력 모양 먼저) · 게이트 계획 · 적대검증 정조준 · 비범위 · `## 적대 검증 로그`(후기록). L3는 롤백 절차 + 영향 반경 추가.
+코드 전에 `docs/engineering/<주제>-goal-<YYYY-MM-DD>.md`: 현재 상태(file:line, 추측 금지) · 근본 원인 · 인수 기준(EARS + 검증 명령 + counter-AC, 1개 단위) · 계약(입출력 모양 먼저: 필드·타입·시그니처·상태 전이) · 게이트 계획 · 적대검증 정조준 · 비범위 · `## 적대 검증 로그`(후기록). L3는 롤백 절차 + 영향 반경 추가. analysis/research 작업이면 최종 답변 스키마와 주장별 근거·반례·한계를 명시한다.
+착수 전 기존 구현을 먼저 검색(rg)해 새로 만들기보다 재사용·연결·보강을 우선한다.
 
 **결정성 규율(입력 영역 표) — L2 이상 code-change는 구현 전 4단계 의무 (policy):**
 - ① **입력 영역 표**: 명시 인자 + 암묵 입력(DB 상태·설정·flag·시계·동시 실행)을 정의하고 정상/빈값·null/경계/형식위반/중복·재시도/외부장애 행을 열거, 각 행에 "처리" 또는 "명시적 거부", 마지막 행은 **"그 외 전부 → 명시적 거부"**. 표 밖 입력의 의미 추정·조용한 fallback 금지.
@@ -60,9 +61,9 @@ Treat the rest of the user's message after `$strict` (or a legacy trigger word `
 
 - 완료 ≠ 테스트 초록불. 완료 = 프로덕션 배선 + 라이브 1건 실증.
 - "고쳤습니다/should/probably" 금지. fresh 증거(명령 + 출력 숫자 그대로, 화면이면 캡처)만.
-- **배선 증명(L2+)**: 엔트리포인트→새 코드 호출 경로 첨부. 동적 패턴은 런타임 추적. "테스트가 직접 import해서 통과"는 배선 아님.
+- **배선 증명(L2+)**: 엔트리포인트→새 코드 호출 경로 첨부("참조 있음"만으로 판정 금지 — 호출그래프 끝까지). 동적 패턴은 런타임 추적. "테스트가 직접 import해서 통과"는 배선 아님.
 - RED는 올바른 이유로 실패해야 한다(문법 오류가 아니라 기대 동작 결여).
-- 테스트 약화(skip/only/todo 증가·assertion 제거·테스트 삭제)로 GREEN 만들기 = 항상 위반. L3는 mutation 증거(수동 mutant 1개: 적용→실패 확인→복원).
+- 테스트 약화(skip/only/todo 증가·assertion 제거·테스트 삭제·snapshot 무근거 갱신)로 GREEN 만들기 = 항상 위반. L3는 mutation 증거(수동 mutant 1개: 적용→실패 확인→복원).
 
 ### 6. 게이트
 
@@ -80,7 +81,7 @@ Treat the rest of the user's message after `$strict` (or a legacy trigger word `
 
 - owner signoff 없이는 로컬 분석·수정·테스트·dry-run까지만.
 - 사업 오너의 **현재 턴** 명시 명령("보내/발송/등록/게시/실행")은 signoff다 — 대상·채널·횟수·검증 근거를 확인한 뒤 실행한다. 불명확한 구체 항목만 묻는다.
-- L3 승인 산출물: 대상/채널/횟수/payload hash/일회성 nonce. `OWNER_SIGNOFF=true` 같은 상주 env만으로는 승인이 아니다.
+- L3 승인 산출물: 대상/채널/횟수/payload hash/일회성 nonce/**TTY 직접 확인**(오너가 그 실행을 직접 확인한 흔적). `OWNER_SIGNOFF=true` 같은 상주 env만으로는 승인이 아니다.
 - L3 자동화는 "절대 발생하면 안 되는 결과" 1개를 먼저 정의하고 그것을 막는 기계 통제(가드·러너)의 증거를 남긴다.
 
 ### 9. SOT 준수 + 승격
@@ -88,7 +89,7 @@ Treat the rest of the user's message after `$strict` (or a legacy trigger word `
 - 구현 전 레포 SOT(`docs/sot/*`, CLAUDE.md/AGENTS.md, Makefile, package.json)를 실제로 읽고 경로를 보고한다. 검증 명령은 추측하지 말고 파일 존재로 확인한다.
 - 동작 변경이 SOT 서술을 바꾸면 같은 PR에 SOT diff 동봉.
 - 같은 지적 2회 = 통제 승격(문서 H2 → 러너 H3 → 훅 H4) 검토 보고. 훅에 차단되면 방법이 틀린 것 — 안내된 정식 러너로 재라우팅해 완주.
-- 스킬 자체를 다루면 skill-creator 기준을 먼저 적용한다.
+- 스킬 자체(SKILL.md·frontmatter·트리거 문구)를 다루면 skill-creator 기준을 먼저 적용하고, 가능하면 `quick_validate.py <skill-folder>`로 검증한다.
 
 ### 10. 배포 위생 (GitOps — 2026-11-12 채택)
 
@@ -105,7 +106,7 @@ Treat the rest of the user's message after `$strict` (or a legacy trigger word `
 - [ ] (code) 워크트리 경로·브랜치, 메인 직접 수정 0건
 - [ ] (L2+) RED→GREEN 증거 · verify exit 0 출력 그대로 · 배선 증명 · 라이브 1건 · 크기 초과 시 분할
 - [ ] (L2+) V1 판정 본문(fresh·read-only, thread/agent id) · (L3) V2 + verdict.json
-- [ ] (L3 운영 write) target/channel/count/payload hash/nonce
+- [ ] (L3 운영 write) target/channel/count/payload hash/nonce/TTY 직접 확인
 - [ ] (UI) 실제 화면 캡처 · (noncode) 주장-근거 매핑 + 반례 + 출처
 - [ ] (진입점 수정 시) 병합 후 sync `--install` → `--check` 드리프트 0
 - [ ] 보고: 쉬운 한국어 존칭, 무엇을/왜/증거/다음, 약어 첫 사용 시 풀이. 요청 없으면 JSON 보고 강제 안 함.

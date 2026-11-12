@@ -6,8 +6,9 @@ exit 0 + "[strict-exit-gate] PASS" 출력이 없으면 "완료"라고 선언하�
 검사(기계 판정 가능한 것만 — 정직 표기):
   1) .claude/strict-active.json 마커가 있으면 그 워크트리에 미커밋 변경이 없어야 한다.
   2) .claude/runner-lease.json 잔존 시 경고(러너 미반납 흔적).
-  3) fail-closed(2026-11-12): 마커 판독 불가·스키마 위반·워크트리 없음·다른 레포·git rc≠0·타임아웃은
-     전부 FAIL. "검사 못 함"을 "통과"로 세지 않는다(goal strict-unify 입력영역표).
+  3) fail-closed(2026-11-12): 레포 판독 실패·마커 판독 불가(접근 거부·심링크 포함)·스키마 위반·
+     워크트리 없음·다른 레포·git rc≠0·타임아웃은 전부 FAIL. "검사 못 함"을 "통과"로 세지 않는다.
+  4) 마커는 이 레포의 모든 체크아웃(git worktree list)에서 찾는다 — task.sh 가 실행된 체크아웃에 쓰므로.
 "불필요 질문 0건" 같은 의미 검증은 기계가 못 한다 — V1 적대검증 체크리스트 몫.
 v4 tools/harness/strict-exit-gate.mjs 와 같은 계약의 v5(python) 구현.
 """
@@ -31,15 +32,46 @@ def _git(args, timeout):
     return subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout)
 
 
+class GateError(Exception):
+    """판독 불가 — 항상 FAIL로 끝난다."""
+
+
 def repo_root():
-    """마커 소유 위치 = 메인 체크아웃(git-common-dir의 부모). task.sh 가 거기에 마커를 쓴다.
-    CLAUDE_PROJECT_DIR 는 '어느 레포인가'를 찾는 출발점으로만 쓴다 — 워크트리여도 메인으로 정규화(V1#1)."""
+    """레포 정체(메인 체크아웃 = git-common-dir의 부모). 판독 실패는 FAIL(V1 2차 #1).
+    CLAUDE_PROJECT_DIR(없으면 cwd)는 '어느 레포인가'를 찾는 출발점으로만 쓴다."""
     start = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    p = subprocess.run(["git", "-C", start, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                       capture_output=True, text=True, timeout=_timeout())
-    if p.returncode == 0 and p.stdout.strip():
-        return pathlib.Path(p.stdout.strip()).resolve().parent
-    return pathlib.Path(start)
+    p = _git(["-C", start, "rev-parse", "--path-format=absolute", "--git-common-dir"], _timeout())
+    if p.returncode != 0 or not p.stdout.strip():
+        raise GateError(f"레포 판독 실패({start}) rc={p.returncode} — git 레포 안에서 실행하세요")
+    return pathlib.Path(p.stdout.strip()).resolve().parent
+
+
+def marker_locations(root):
+    """task.sh 는 '자기를 실행한 체크아웃'의 .claude 에 마커를 쓴다(메인일 수도, 연결 워크트리일 수도).
+    그래서 이 레포의 모든 체크아웃(git worktree list)에서 마커를 찾는다(V1 2차 #2)."""
+    p = _git(["-C", str(root), "worktree", "list", "--porcelain"], _timeout())
+    if p.returncode != 0:
+        raise GateError(f"worktree 목록 판독 실패 rc={p.returncode}")
+    tops = [pathlib.Path(l[len("worktree "):]) for l in p.stdout.splitlines() if l.startswith("worktree ")]
+    if not tops:
+        raise GateError("worktree 목록이 비어 있음")
+    return [t / ".claude" / "strict-active.json" for t in tops]
+
+
+def marker_state(marker):
+    """'absent' | 'file' | 문제 문자열. lstat 으로 판정 — FileNotFoundError 만 부재(V1 2차 #1, 1차 #5)."""
+    try:
+        st = os.lstat(marker)
+    except FileNotFoundError:
+        return "absent"
+    except NotADirectoryError:
+        return "absent"  # 상위 경로가 디렉터리가 아님 = 그 체크아웃에 .claude 가 없음
+    except OSError as e:
+        return f"마커 상태 판독 불가({type(e).__name__}): {marker}"
+    import stat as _stat
+    if not _stat.S_ISREG(st.st_mode):
+        return f"마커가 일반 파일이 아님(심링크/디렉터리 등): {marker}"
+    return "file"
 
 
 def check_marker(root, marker):
@@ -85,18 +117,22 @@ def check_marker(root, marker):
 
 def main():
     root = repo_root()
-    marker = root / ".claude" / "strict-active.json"
     lease = root / ".claude" / "runner-lease.json"
     problems = []
 
-    if os.path.lexists(marker):  # 깨진 심링크도 '존재'로 본다(V1#5)
+    for marker in marker_locations(root):
+        state = marker_state(marker)
+        if state == "absent":
+            continue
+        if state != "file":
+            problems.append(state)
+            continue
         try:
-            if marker.is_symlink() or not marker.is_file():
-                problems.append(f"마커가 일반 파일이 아님(심링크/디렉터리 등): {marker}")
-            else:
-                problems += check_marker(root, marker)
+            problems += check_marker(root, marker)
+        except subprocess.TimeoutExpired as e:
+            problems.append(f"git 타임아웃({e.timeout}s): {marker}")
         except Exception as e:  # 표 밖 예외 — catch-all 행: FAIL(fail-closed)
-            problems.append(f"예상하지 못한 판독 오류({type(e).__name__}: {e})")
+            problems.append(f"예상하지 못한 판독 오류({type(e).__name__}: {e}): {marker}")
 
     if lease.is_file():
         print("[strict-exit-gate] WARN runner-lease.json 잔존 — 러너가 release를 부르지 않았습니다.", file=sys.stderr)
@@ -116,6 +152,6 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as e:  # catch-all 행 — 레포 판독 타임아웃 등도 FAIL(fail-closed)
+    except Exception as e:  # catch-all 행 — GateError·레포 판독 타임아웃 등도 FAIL(fail-closed)
         print(f"[strict-exit-gate] FAIL — 판독 불가({type(e).__name__}: {e})", file=sys.stderr)
         sys.exit(1)

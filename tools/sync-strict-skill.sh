@@ -16,11 +16,16 @@
 # - 두 대상을 모두 준비·검증한 뒤에만 교체한다. 교체 중 실패하면 이미 바꾼 대상을 백업에서 되돌린다.
 # - 백업: <home>/.strict-backups/<UTC ts>-<pid>-<rand>/ (skills/ 밖, 이름 충돌 없음). 삭제하지 않는다.
 # - 해시 실패·빈 해시는 비교하지 않고 exit 4로 거부한다.
-# exit: 0 성공/드리프트 0 · 1 드리프트 · 2 사용법 · 3 설치 거부(승인 리비전 아님/락) · 4 판독 실패 · 5 설치 실패(복원 시도함)
+# - 테스트 전용 장애 주입 STRICT_SYNC_FAULT(쉼표 목록: activate:<i>, restore:<i>, sigterm:<i>, hash:stage) —
+#   실패를 일으키는 방향으로만 동작한다(성공 경로를 열지 않음).
+# exit: 0 성공/드리프트 0 · 1 드리프트 · 2 사용법 · 3 설치 거부(승인 리비전 아님/락) · 4 판독 실패
+#       5 설치 실패(복원 완료) · 6 설치 실패 + 복원 실패(미복원 대상·백업 위치를 stderr에 명시) · 7 신호로 중단(복원 시도)
 set -euo pipefail
 
 usage() { echo "usage: $0 --check | --install [--remove-legacy]" >&2; exit 2; }
 die() { echo "오류: $2" >&2; exit "$1"; }
+FAULT=",${STRICT_SYNC_FAULT:-},"
+fault() { case "$FAULT" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
 MODE=""; REMOVE_LEGACY=0
 for a in "$@"; do
@@ -66,6 +71,7 @@ export_src() {  # $1=rel → $WORK/src/<i>
 tree_hash() {
   local d=$1 h
   if [ ! -d "$d" ]; then echo "-"; return 0; fi
+  case "$d" in *.strict-staging-*) ! fault hash:stage || return 1 ;; esac
   h=$(set -o pipefail; cd "$d" && find . -type f ! -name '.strict-*' ! -name '.DS_Store' -print0 | LC_ALL=C sort -z |
       while IFS= read -r -d '' f; do printf '%s\0' "$f"; shasum -a 256 < "$f" || exit 1; done | shasum -a 256) \
     || die 4 "해시 계산 실패: $d"
@@ -74,14 +80,22 @@ tree_hash() {
   echo "$h"
 }
 
+# 해시를 현재 셸에서 검증해 전역 HASH 에 담는다 — 명령 치환 안의 exit 가 무시되는 문제(V1 2차 #4) 방지
+hash_of() {
+  local out
+  out=$(tree_hash "$1") || die 4 "해시 계산 실패: $1"
+  [[ "$out" =~ ^([0-9a-f]{16}|-)$ ]] || die 4 "해시 형식 이상('$out'): $1"
+  HASH=$out
+}
+
 SRC=()
 for i in 0 1; do export_src "${REL[$i]}" "$WORK/src$i"; SRC+=("$WORK/src$i/${REL[$i]}"); done
 
 report() {
   local drift=0 i sh dh state l
   for i in 0 1; do
-    sh=$(tree_hash "${SRC[$i]}") || exit 4
-    dh=$(tree_hash "${DST[$i]}") || exit 4
+    hash_of "${SRC[$i]}"; sh=$HASH
+    hash_of "${DST[$i]}"; dh=$HASH
     [ "$sh" != "-" ] || die 4 "정본 해시 없음"
     if [ "$dh" = "-" ]; then state=MISSING; drift=1
     elif [ "$sh" = "$dh" ]; then state=OK
@@ -127,36 +141,61 @@ for i in 0 1; do
   stg=$(mktemp -d "$parent/.strict-staging-XXXXXX" 2>/dev/null) || die 5 "설치 실패(변경 없음): ${ENGINE[$i]} 스테이징 불가"
   STAGE+=("$stg")
   cp -R "${SRC[$i]}/." "$stg/" || die 5 "설치 실패(변경 없음): ${ENGINE[$i]} 복사 실패"
-  [ "$(tree_hash "$stg")" = "$(tree_hash "${SRC[$i]}")" ] || die 5 "설치 실패(변경 없음): ${ENGINE[$i]} 스테이징 해시 불일치"
+  hash_of "${SRC[$i]}"; src_h=$HASH
+  hash_of "$stg"; stg_h=$HASH
+  [ "$src_h" != "-" ] && [ "$src_h" = "$stg_h" ] || die 5 "설치 실패(변경 없음): ${ENGINE[$i]} 스테이징 해시 불일치"
   printf '{"commit":"%s","tree_hash":"%s","install_id":"%s","engine":"%s"}\n' \
-    "$HEAD" "$(tree_hash "${SRC[$i]}")" "$ID" "${ENGINE[$i]}" > "$stg/.strict-install.json"
+    "$HEAD" "$src_h" "$ID" "${ENGINE[$i]}" > "$stg/.strict-install.json" || die 5 "설치 실패(변경 없음): 설치 기록 쓰기 실패"
 done
 
-# 2) 교체: 실패 시 이미 교체한 대상을 되돌린다
-DONE=()  # "i|backup_path_or_-"
-rollback() {
-  local entry i b
-  for entry in "${DONE[@]+"${DONE[@]}"}"; do
-    i=${entry%%|*}; b=${entry#*|}
-    rm -rf "${DST[$i]}"
-    [ "$b" = "-" ] || mv "$b" "${DST[$i]}"
-    echo "rollback  ${ENGINE[$i]}  복원" >&2
-  done
+# 2) 교체: errexit 를 끄고 모든 단계를 직접 검사한다. 실패·신호 시 이미 바꾼 대상을 전부 되돌리고,
+#    되돌리지 못한 대상은 백업 위치와 함께 명시한다(V1 2차 #3).
+DONE=()          # "i|backup_or_-"
+UNRECOVERED=()
+restore_one() {  # $1=i $2=backup_or_-  — 실패해도 다른 대상 복원은 계속
+  local i=$1 b=$2
+  if fault "restore:$i"; then UNRECOVERED+=("${ENGINE[$i]}: ${DST[$i]} (백업 $b)"); return 0; fi
+  if [ -e "${DST[$i]}" ] || [ -L "${DST[$i]}" ]; then
+    rm -rf "${DST[$i]}" || { UNRECOVERED+=("${ENGINE[$i]}: ${DST[$i]} 제거 실패 (백업 $b)"); return 0; }
+  fi
+  if [ "$b" != "-" ]; then
+    mv "$b" "${DST[$i]}" || { UNRECOVERED+=("${ENGINE[$i]}: ${DST[$i]} 복원 실패 (백업 $b)"); return 0; }
+  fi
+  echo "rollback  ${ENGINE[$i]}  복원" >&2
 }
+rollback_all() {
+  local entry
+  for entry in "${DONE[@]+"${DONE[@]}"}"; do restore_one "${entry%%|*}" "${entry#*|}"; done
+  DONE=()
+}
+fail_install() {  # $1=사유  $2=기본 exit
+  rollback_all
+  if [ ${#UNRECOVERED[@]} -gt 0 ]; then
+    echo "오류: $1 — 복원 실패 대상(수동 복구 필요):" >&2
+    printf '  - %s\n' "${UNRECOVERED[@]}" >&2
+    exit 6
+  fi
+  echo "오류: $1 — 이미 교체한 대상은 복원함" >&2
+  exit "$2"
+}
+on_signal() { trap - TERM INT HUP; fail_install "신호로 중단" 7; }
+trap on_signal TERM INT HUP
+set +e
 for i in 0 1; do
   dst=${DST[$i]}; home=$(dirname "$(dirname "$dst")"); b="-"
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     b="$home/.strict-backups/$ID/strict"
-    if ! { mkdir -p "$(dirname "$b")" && mv "$dst" "$b"; }; then rollback; die 5 "설치 실패: ${ENGINE[$i]} 백업 이동 실패 — 복원함"; fi
+    mkdir -p "$(dirname "$b")" && mv "$dst" "$b" || fail_install "${ENGINE[$i]} 백업 이동 실패" 5
   fi
-  if ! mv "${STAGE[$i]}" "$dst"; then
-    [ "$b" = "-" ] || mv "$b" "$dst"
-    rollback
-    die 5 "설치 실패: ${ENGINE[$i]} 활성화 실패 — 복원함"
+  DONE+=("$i|$b")   # 백업으로 옮긴 순간부터 복원 대상
+  if fault "activate:$i" || ! mv "${STAGE[$i]}" "$dst"; then
+    fail_install "${ENGINE[$i]} 활성화 실패" 5
   fi
-  DONE+=("$i|$b")
   [ "$b" = "-" ] || echo "backup  ${ENGINE[$i]}  $b"
+  if fault "sigterm:$i"; then kill -TERM $$; sleep 1; fi
 done
+set -e
+trap - TERM INT HUP
 
 if [ "$REMOVE_LEGACY" = 1 ]; then
   for l in "${LEGACY[@]}"; do
