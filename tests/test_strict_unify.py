@@ -271,3 +271,15 @@ def test_sync_install_then_check_clean_with_record_and_backup(tmp_path):
     c = _run_sync(repo, ["--check"], homes)
     assert c.returncode == 0, c.stdout
     assert "DRIFT" not in c.stdout and "MISSING" not in c.stdout
+
+
+def test_gate_pass_when_project_dir_is_another_worktree_of_same_repo(tmp_path):
+    """CLAUDE_PROJECT_DIR 가 같은 레포의 다른 워크트리여도 동일 레포로 판정(오탐 FAIL 금지)."""
+    root = _init_repo(tmp_path / "repo")
+    proj = _worktree(root, "proj")
+    wt = _worktree(root, "wt")
+    (proj / ".gitignore").write_text(".claude/\n")
+    _git(proj, "add", ".gitignore")
+    _git(proj, "commit", "-qm", "ignore")
+    r = _run_gate(proj, json.dumps({"slug": "s", "worktree": str(wt)}))
+    assert r.returncode == 0, r.stderr

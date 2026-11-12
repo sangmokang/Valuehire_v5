@@ -64,8 +64,13 @@ def check_marker(root, marker):
         if common.returncode != 0 or not common.stdout.strip():
             return [f"strict 작업 '{slug}' 워크트리({wt}) git 판독 실패 rc={common.returncode}"]
         wt_repo = pathlib.Path(common.stdout.strip()).resolve().parent
-        if wt_repo != pathlib.Path(root).resolve():
-            return [f"strict 작업 '{slug}' 워크트리({wt})가 이 레포({root})가 아님({wt_repo})"]
+        # root 가 메인 체크아웃이 아닌 워크트리(CLAUDE_PROJECT_DIR)일 수 있다 — 둘 다 git-common-dir 기준으로 비교
+        rc = _git(["-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"], t)
+        if rc.returncode != 0 or not rc.stdout.strip():
+            return [f"이 레포({root}) git 판독 실패 rc={rc.returncode}"]
+        root_repo = pathlib.Path(rc.stdout.strip()).resolve().parent
+        if wt_repo != root_repo:
+            return [f"strict 작업 '{slug}' 워크트리({wt})가 이 레포({root_repo})가 아님({wt_repo})"]
         st = _git(["-C", str(wt), "status", "--porcelain"], t)
     except subprocess.TimeoutExpired:
         return [f"strict 작업 '{slug}' 워크트리({wt}) git 타임아웃({t}s)"]
