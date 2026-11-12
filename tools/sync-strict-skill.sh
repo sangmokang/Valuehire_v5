@@ -16,11 +16,13 @@
 # - 두 대상을 모두 준비·검증한 뒤에만 교체한다. 교체 중 실패하면 이미 바꾼 대상을 백업에서 되돌린다.
 # - 백업: <home>/.strict-backups/<UTC ts>-<pid>-<rand>/ (skills/ 밖, 이름 충돌 없음). 삭제하지 않는다.
 # - 해시 실패·빈 해시는 비교하지 않고 exit 4로 거부한다.
-# - 테스트 전용 장애 주입 STRICT_SYNC_FAULT(쉼표 목록: activate:<i>, restore:<i>, sigterm:<i>,
+# - 테스트 전용 장애 주입 STRICT_SYNC_FAULT(쉼표 목록: activate:<i>, restore:<i>, sigterm:<i>, legacy:<i>,
 #   sigterm-after-backup:<i>, hash:stage) —
 #   실패를 일으키는 방향으로만 동작한다(성공 경로를 열지 않음).
 # exit: 0 성공/드리프트 0 · 1 드리프트 · 2 사용법 · 3 설치 거부(승인 리비전 아님/락) · 4 판독 실패
 #       5 설치 실패(복원 완료) · 6 설치 실패 + 복원 실패(미복원 대상·백업 위치를 stderr에 명시) · 7 신호로 중단(복원 시도)
+#       8 strict 설치 완료 + legacy 이동 실패(원본 제자리)
+# install 은 원격 origin main 을 매번 fetch 해 HEAD 와 대조한다(로컬 참조만 믿지 않음).
 set -euo pipefail
 
 # 레포 선택을 바꾸는 상속 GIT_* 환경변수 제거 — GIT_DIR 등으로 다른 레포 내용을 설치·검사하는 것 방지(V1 4차)
@@ -121,8 +123,11 @@ if [ "$MODE" = check ]; then
 fi
 
 # ---------- install: 승인(병합)된 리비전에서만 ----------
+# 로컬 origin/main 참조는 낡을 수 있다 — 원격을 지금 받아 와서 대조한다(V2 M1). fetch 실패 = 거부.
+git -C "$ROOT" fetch -q origin "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null \
+  || die 3 "거부: origin main fetch 실패 — 원격 병합 상태를 확인할 수 없어 설치하지 않습니다"
 MAIN=$(git -C "$ROOT" rev-parse -q --verify refs/remotes/origin/main || true)
-[ -n "$MAIN" ] || die 3 "거부: origin/main 참조 없음 — git fetch 후 병합된 main에서 실행하세요"
+[ -n "$MAIN" ] || die 3 "거부: origin/main 참조 없음 — 병합된 main에서 실행하세요"
 [ "$HEAD" = "$MAIN" ] || die 3 "거부: HEAD($HEAD)가 origin/main($MAIN)이 아님 — PR 병합 후 main에서만 설치합니다"
 # 추적 파일 수정은 거부(사람이 '내 수정이 설치된다'고 착각하는 것 방지). untracked·ignored 파일은
 # 설치 내용에 들어갈 수 없으므로(커밋 객체에서 archive) 거부하지 않는다.
@@ -208,14 +213,27 @@ done
 set -e
 trap - TERM INT HUP
 
+LEGACY_FAILED=()
 if [ "$REMOVE_LEGACY" = 1 ]; then
+  li=0
   for l in "${LEGACY[@]}"; do
+    i=$li; li=$((li + 1))
     [ -e "$l" ] || [ -L "$l" ] || continue
     home=$(dirname "$(dirname "$l")")
-    mkdir -p "$home/.strict-backups/$ID"
-    mv "$l" "$home/.strict-backups/$ID/$(basename "$l")"
-    echo "legacy  moved  $l → $home/.strict-backups/$ID/$(basename "$l")"
+    if ! fault "legacy:$i" && mkdir -p "$home/.strict-backups/$ID" \
+       && mv "$l" "$home/.strict-backups/$ID/$(basename "$l")"; then
+      echo "legacy  moved  $l → $home/.strict-backups/$ID/$(basename "$l")"
+    else
+      LEGACY_FAILED+=("$l")
+    fi
   done
+fi
+if [ ${#LEGACY_FAILED[@]} -gt 0 ]; then
+  # strict 교체는 이미 끝났다 — 되돌리지 않고, 드리프트(1)와 구분되는 전용 코드로 알린다(V2 M2).
+  echo "오류: strict 설치는 완료됐지만 legacy 이동 실패(원본은 제자리, 수동 확인 필요):" >&2
+  printf '  - %s\n' "${LEGACY_FAILED[@]}" >&2
+  echo "[after]"; report || true
+  exit 8
 fi
 echo "[after]"
 rc=0; report || rc=$?

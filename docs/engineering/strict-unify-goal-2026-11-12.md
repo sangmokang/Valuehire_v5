@@ -234,3 +234,10 @@ Codex가 앞선 지적 10건을 재검토했다. 마커 탐색, 접근 거부, �
 - 한계(Codex 자체 고지): 파일 생성 제한 때문에 임시 저장소 기반 추가 재현은 하지 않았다.
 - V2(리셋 컨텍스트 재공격)는 **미실시(pending)**다. 3자 합의는 아직 성립하지 않는다. L3이므로 병합 전에 오너 signoff와 V2가 필요하다.
 - verdict: `docs/engineering/strict-unify.verdict.json`
+
+### V2 (리셋 컨텍스트 재공격, 2026-11-12) — PASS
+- 리뷰 대상 HEAD b5b8c08. 병합 차단 결함 0. MEDIUM 2건:
+  - M1 `--install`이 로컬 `origin/main` 참조만 믿음 → 낡은 참조면 미병합 커밋 설치 가능. 조치: 설치 직전 `git fetch origin main`, 실패 시 exit 3.
+  - M2 `--remove-legacy` 이동 실패가 exit 1(드리프트)과 구분 안 됨. 조치: 전용 exit 8, strict 설치 유지, legacy 원본 제자리.
+- RED f389c57: 3 failed / 47 passed → GREEN 50 passed. 수동 mutant(fetch 무력화) → 2 failed 확인 후 복원.
+- `./verify.sh`: 3433 passed, 4 xfailed, exit 0.
