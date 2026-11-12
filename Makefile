@@ -1,7 +1,7 @@
 # Valuehire_v5 — Harness 표준 작업 루프 배관
 # 사용법: docs/harness.md (Gate 0 → 1 스펙 → 2 RED → 3 구현 → 4 verify → 5 ship → Gate 6)
 SHELL := /bin/bash
-.PHONY: help verify red-ledger task ship strict-exit-gate install-hooks codex-sync codex-sync-dry claude-skills-check
+.PHONY: help verify red-ledger task ship strict-exit-gate strict-sync-check install-hooks codex-sync codex-sync-dry claude-skills-check
 
 help:
 	@echo "make verify         — 게이트 4: ./verify.sh (테스트 전체, exit 0 == GREEN)"
@@ -11,6 +11,7 @@ help:
 	@echo "make install-hooks   — pre-push 훅을 .git/hooks 에 설치"
 	@echo "make codex-sync      — Claude 스킬을 Codex(~/.codex/skills)로 동기화"
 	@echo "make codex-sync-dry  — 위 동기화를 모의실행(쓰지 않고 계획만 출력)"
+	@echo "make strict-sync-check — strict 진입점 정본↔전역 설치본 드리프트 감지(쓰기 0)"
 	@echo "make claude-skills-check — repo-local Claude 스킬(.claude/skills) 추적 확인"
 
 codex-sync:
@@ -35,6 +36,9 @@ red-ledger:
 
 strict-exit-gate:
 	@python3 scripts/harness/strict-exit-gate.py
+
+strict-sync-check:
+	@bash tools/sync-strict-skill.sh --check
 
 task:
 	@test -n "$(NAME)" || { echo "usage: make task NAME=<slug>"; exit 2; }

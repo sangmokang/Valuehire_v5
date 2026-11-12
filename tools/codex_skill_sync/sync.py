@@ -4,7 +4,8 @@
 안전 원칙:
 - dest 의 `.`(dot) 자식(`.system` 등)은 절대 건드리지 않는다.
 - 관리하는 스킬 디렉토리 하나(dest/<name>)만 미러하며, 그 밖으로 나가지 않는다.
-- 손이식된 별칭(strict/aisearch/weekly-update)은 기본 skip — Codex 의 st/ai-search/weekly 보존.
+- 손이식된 별칭(strict/aisearch/weekly-update)은 기본 skip — Codex 의 strict/ai-search/weekly 보존.
+  strict 는 2026-11-12부터 tools/sync-strict-skill.sh 가 단독 소유(병합 리비전만 설치) — 이 도구가 덮지 않는다.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from pathlib import Path
 
 # Codex 에 이미 이름을 바꿔 손이식한 스킬 → 기본 skip (덮어쓰기 방지)
 ADAPTED_ALIASES = {
-    "strict": "st",
+    "strict": "strict",  # 소유자: tools/sync-strict-skill.sh (st 별칭 폐지 2026-11-12)
     "aisearch": "ai-search",
     "weekly-update": "weekly",
 }

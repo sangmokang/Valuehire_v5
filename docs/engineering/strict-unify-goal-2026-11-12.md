@@ -127,3 +127,16 @@
 ## 적대 검증 로그
 
 (구현 후 기록)
+
+### G (구현자) 증거 — 2026-11-12
+- RED(f57198d): `pytest tests/test_strict_unify.py` → 20 failed, 4 passed. 실패 사유는 전부 기대 동작 부재(exit 0 반환·파일 없음·러너 없음 rc 127). 문법 오류 0.
+- GREEN: `pytest tests/test_strict_unify.py tests/test_strict_v5_port.py tests/test_codex_skill_sync.py` → 48 passed.
+- `./verify.sh` → 3407 passed, 4 xfailed, 138 subtests passed, `verify: pytest exit=0`(기준선 3383 + 신규 24).
+- mutation
+  - 종료 게이트를 fail-open으로 되돌리는 mutant(JSON 판독 실패·타임아웃 → `[]`) → 2 failed(broken_marker_json, git_timeout). 원복 후 24 passed.
+  - sync 러너 리비전 가드를 제거하는 mutant → `test_sync_install_refused_off_origin_main` failed. 원복 후 24 passed.
+- 라이브 `--check`(쓰기 0, 실제 전역 경로) → exit 1.
+  - claude: DRIFT(src 06f1cc3f… / dest 01620ffd…)
+  - codex: MISSING
+  - LEGACY 2건(`~/.claude/commands/st.md`, `~/.codex/skills/st`)
+- 크기: 파일 10개, +약 500줄. 파일 5개·300줄 지향을 넘는다. 늘어난 분량의 대부분은 SKILL 문서 2개(core 블록이 두 진입점에 복제된 부분)다. 실행 코드는 exit gate +67줄, sync 러너 +110줄이다. 분할하지 않은 이유: st 제거, strict 생성, core 패리티 테스트가 한 원자 단위다. 나누면 중간 커밋에서 진입점이 0개가 된다.
