@@ -209,7 +209,10 @@ def test_sync_check_reports_missing_and_writes_nothing(tmp_path):
 
 def _mini_repo(tmp_path, merged=True):
     """정본 파일만 담은 임시 레포. merged=True 면 origin/main == HEAD (병합 상태 모사)."""
-    repo = tmp_path / "mini"
+    return _mini_repo_at(tmp_path / "mini", merged)
+
+
+def _mini_repo_at(repo, merged=True):
     for rel in ["tools/sync-strict-skill.sh", "skills/strict", ".codex/skills/strict"]:
         src = ROOT / rel
         dst = repo / rel
@@ -534,3 +537,27 @@ def test_sync_sigterm_right_after_backup_move_restores(tmp_path):
         r = _run_sync(repo, ["--install"], dict(_homes(tmp_path), STRICT_SYNC_FAULT=f"sigterm-after-backup:{i}"))
         assert r.returncode == 7, r.stdout + r.stderr
         _assert_old(tmp_path)
+
+
+# ---------------- V1 4차 지적 회귀 ----------------
+
+def test_gate_ignores_inherited_git_env_redirection(tmp_path):
+    """V1 4차: 상속된 GIT_DIR/GIT_WORK_TREE 가 -C 대상을 덮어써 거짓 PASS 를 만들면 안 된다."""
+    root = _init_repo(tmp_path / "repo")
+    wt = _worktree(root)
+    (wt / "dirty.txt").write_text("d")
+    clean = _init_repo(tmp_path / "clean")
+    marker = json.dumps({"slug": "s", "worktree": str(wt)})
+    r = _run_gate(root, marker, {"GIT_DIR": str(clean / ".git"), "GIT_WORK_TREE": str(clean),
+                                 "GIT_INDEX_FILE": str(clean / ".git/index")})
+    assert r.returncode != 0 and "PASS" not in r.stdout
+
+
+def test_sync_ignores_inherited_git_env_redirection(tmp_path):
+    """같은 계열: sync 러너가 GIT_DIR 로 다른 레포 내용을 설치·검사하면 안 된다."""
+    repo = _mini_repo(tmp_path, merged=False)  # 병합 전 → 설치 거부가 정답
+    other = _mini_repo_at(tmp_path / "other", merged=True)  # 병합 상태의 다른 레포
+    r = _run_sync(repo, ["--install"], dict(_homes(tmp_path), GIT_DIR=str(other / ".git"),
+                                             GIT_WORK_TREE=str(other)))
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert not (tmp_path / "claude/skills").exists()
