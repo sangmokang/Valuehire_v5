@@ -22,7 +22,7 @@
   },
   "v2": {"status": "pending", "note": "reset-context re-attack of V1 not run in this session"},
   "failed_attempts": [
-    "V1 1차~4차 FAIL 14건 — 각 RED 커밋(925ddf3, 7ab86b8, 284926d, ef rounds) 후 수정",
+    "V1 1차~4차 FAIL 14건 — 각 RED 커밋(925ddf3, 7ab86b8, 284926d, 36765de) 후 수정",
     "자체 발견: CLAUDE_PROJECT_DIR=worktree 오탐 FAIL(1557a48), core 통제 5개 누락(ba946c7)"
   ],
   "three_way_agree": false,
