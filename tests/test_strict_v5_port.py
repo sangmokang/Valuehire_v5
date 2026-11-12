@@ -26,6 +26,9 @@ def test_sot30_is_strict_pointer_with_v5_overlay():
     body = p.read_text(encoding="utf-8")
     # 정본 포인터 — v4 전문 복제가 아니라 참조
     assert "valuehire_v4" in body and "정본" in body
+    # 정본 이전(2026-11-12): 정본 경로가 v5 진입점 + 배포 러너를 가리킨다
+    for marker in ["skills/strict/SKILL.md", ".codex/skills/strict/SKILL.md", "sync-strict-skill.sh", "동결"]:
+        assert marker in body, f"정본 이전 서술 누락: {marker}"
     # R1~R8 마커(요약 수준)
     for marker in ["예외 케이스 표", "질문 금지", "read-back", "재발 원장", "단위 관문", "평가 케이스", "세션 리셋"]:
         assert marker in body, f"R 마커 누락: {marker}"
@@ -50,6 +53,11 @@ def test_fleet_run_reliability_renumbered_to_31():
 def test_old_strict_copies_removed():
     assert not (ROOT / ".claude/skills/strict").exists(), "옛사본 스킬 잔존(전역 미러가 정본)"
     assert not (ROOT / ".claude/commands/strict.md").exists(), "옛사본 커맨드 잔존"
+    # positive: 옛사본이 없는 대신 단일 정본 진입점이 양 엔진에 실제로 있어야 한다 (2026-11-12 strict-unify)
+    for rel in ("skills/strict/SKILL.md", ".codex/skills/strict/SKILL.md"):
+        body = read(rel)
+        assert re.search(r"^name:\s*strict\s*$", body, re.M), f"{rel} name: strict 아님"
+    assert (ROOT / "tools/sync-strict-skill.sh").is_file(), "배포 러너 없음"
 
 
 def test_hooks_ported_and_wired():
