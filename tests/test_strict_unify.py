@@ -273,6 +273,109 @@ def test_sync_install_then_check_clean_with_record_and_backup(tmp_path):
     assert "DRIFT" not in c.stdout and "MISSING" not in c.stdout
 
 
+def _run_gate_from(project_dir, env_extra=None):
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project_dir))
+    env.update(env_extra or {})
+    return subprocess.run([sys.executable, str(GATE)], capture_output=True, text=True,
+                          env=env, cwd=project_dir, timeout=60)
+
+
+def test_gate_finds_main_checkout_marker_when_project_dir_is_worktree(tmp_path):
+    """V1#1: task.sh 는 마커를 메인 체크아웃에 쓴다 — CLAUDE_PROJECT_DIR 가 워크트리여도 그 마커를 찾아야 한다."""
+    root = _init_repo(tmp_path / "repo")
+    wt = _worktree(root, "wt")
+    (root / ".claude").mkdir()
+    (root / ".claude/strict-active.json").write_text(json.dumps({"slug": "s", "worktree": str(wt)}))
+    (wt / "dirty.txt").write_text("d")
+    r = _run_gate_from(wt)
+    assert r.returncode != 0 and "PASS" not in r.stdout
+    (wt / "dirty.txt").unlink()
+    r = _run_gate_from(wt)
+    assert r.returncode == 0, r.stderr
+
+
+def test_gate_fail_on_dangling_marker_symlink(tmp_path):
+    """V1#5: 깨진 심링크 마커는 '마커 없음'이 아니라 판독 불가(FAIL)."""
+    root = _init_repo(tmp_path / "repo")
+    (root / ".claude").mkdir()
+    (root / ".claude/strict-active.json").symlink_to(tmp_path / "gone.json")
+    r = _run_gate_from(root)
+    assert r.returncode != 0 and "PASS" not in r.stdout
+
+
+def test_gate_fail_when_marker_is_directory(tmp_path):
+    root = _init_repo(tmp_path / "repo")
+    (root / ".claude/strict-active.json").mkdir(parents=True)
+    r = _run_gate_from(root)
+    assert r.returncode != 0 and "PASS" not in r.stdout
+
+
+def test_sync_check_fails_when_hash_tool_fails(tmp_path):
+    """V1#4: 해시 도구 실패를 빈 해시 == 빈 해시 'OK'로 세면 안 된다."""
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    (fakebin / "shasum").write_text("#!/bin/sh\nexit 127\n")
+    (fakebin / "shasum").chmod(0o755)
+    homes = _homes(tmp_path)
+    for h in ("claude", "codex"):
+        (tmp_path / h / "skills/strict").mkdir(parents=True)
+        (tmp_path / h / "skills/strict/SKILL.md").write_text("x")
+    r = _run_sync(ROOT, ["--check"], dict(homes, PATH=f"{fakebin}:{os.environ['PATH']}"))
+    assert r.returncode not in (0,), r.stdout
+    assert "드리프트 0" not in r.stdout and " OK " not in r.stdout
+
+
+def test_sync_install_uses_commit_content_only(tmp_path):
+    """V1#2: ignored·숨은 untracked 파일이 설치본에 섞이면 안 된다(커밋 객체 기준 설치)."""
+    repo = _mini_repo(tmp_path, merged=True)
+    (repo / ".gitignore").write_text("skills/strict/.env\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-qm", "ignore")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (repo / "skills/strict/.env").write_text("SECRET=1")
+    _git(repo, "config", "status.showUntrackedFiles", "no")
+    (repo / "skills/strict/untracked.md").write_text("u")
+    r = _run_sync(repo, ["--install"], _homes(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    dest = tmp_path / "claude/skills/strict"
+    assert not (dest / ".env").exists(), "ignored 파일이 설치됨"
+    assert not (dest / "untracked.md").exists(), "untracked 파일이 설치됨"
+
+
+def test_sync_install_second_target_failure_changes_nothing(tmp_path):
+    """V1#3: 두 번째 대상 준비 실패 시 첫 번째 대상도 바뀌지 않아야 한다(엔진 간 리비전 불일치 금지)."""
+    repo = _mini_repo(tmp_path, merged=True)
+    homes = _homes(tmp_path)
+    old = tmp_path / "claude/skills/strict"
+    old.mkdir(parents=True)
+    (old / "SKILL.md").write_text("old copy")
+    (tmp_path / "codex").mkdir()
+    (tmp_path / "codex/skills").write_text("not a dir")  # codex 대상 준비 실패 유도
+    r = _run_sync(repo, ["--install"], homes)
+    assert r.returncode != 0
+    assert (old / "SKILL.md").read_text() == "old copy", "첫 대상이 부분 설치됨"
+    assert not (tmp_path / "claude/.strict-backups").exists()
+
+
+def test_sync_install_refused_when_locked(tmp_path):
+    repo = _mini_repo(tmp_path, merged=True)
+    homes = _homes(tmp_path)
+    (tmp_path / "claude/.strict-sync.lock").mkdir(parents=True)
+    r = _run_sync(repo, ["--install"], homes)
+    assert r.returncode != 0
+    assert not (tmp_path / "claude/skills").exists()
+
+
+def test_sync_backup_ids_unique_on_rapid_reinstall(tmp_path):
+    repo = _mini_repo(tmp_path, merged=True)
+    homes = _homes(tmp_path)
+    for _ in range(3):
+        r = _run_sync(repo, ["--install"], homes)
+        assert r.returncode == 0, r.stdout + r.stderr
+    backups = list((tmp_path / "claude/.strict-backups").glob("*/strict"))
+    assert len(backups) == 2, backups  # 두 번째·세 번째 설치가 각각 이전본을 백업(이름 충돌 없음)
+
+
 def test_gate_pass_when_project_dir_is_another_worktree_of_same_repo(tmp_path):
     """CLAUDE_PROJECT_DIR 가 같은 레포의 다른 워크트리여도 동일 레포로 판정(오탐 FAIL 금지)."""
     root = _init_repo(tmp_path / "repo")
