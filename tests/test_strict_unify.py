@@ -572,7 +572,7 @@ def test_sync_install_refused_when_local_origin_ref_is_stale(tmp_path):
     """V2 M1: 로컬 origin/main 참조가 HEAD와 같아도 원격 main이 앞서 있으면 거부한다."""
     repo = _mini_repo(tmp_path, merged=True)
     other = tmp_path / "other"
-    subprocess.run(["git", "clone", "-q", str(tmp_path / "mini-origin.git"), str(other)], check=True)
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(tmp_path / "mini-origin.git"), str(other)], check=True)
     _git(other, "config", "user.email", "t@t"); _git(other, "config", "user.name", "t")
     (other / "skills/strict/SKILL.md").write_text("newer on remote")
     _git(other, "commit", "-qam", "newer")
