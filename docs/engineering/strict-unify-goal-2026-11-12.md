@@ -228,3 +228,9 @@ Codex가 앞선 지적 10건을 재검토했다. 마커 탐색, 접근 거부, �
 - RED: 2 failed.
 - 게이트 `_git()`에서 GIT_* 환경변수를 전부 제거한다. sync 러너도 시작할 때 GIT_*를 unset한다.
 - 결과: 관련 71 passed. `./verify.sh` 3430 passed, 4 xfailed, `pytest exit=0`.
+
+### V1 5차 (Codex, fresh read-only, thread 01a1cd45-8754-7db0-a0fd-fa7baba4f44a, 리뷰 대상 fa2dd6e) — VERDICT PASS (approve)
+- 원문: "4차 우회는 수정 전 통과했고 현재 코드에서는 차단됐습니다. 새 고위험 결함은 입증하지 못했습니다."
+- 한계(Codex 자체 고지): 파일 생성 제한 때문에 임시 저장소 기반 추가 재현은 하지 않았다.
+- V2(리셋 컨텍스트 재공격)는 **미실시(pending)**다. 3자 합의는 아직 성립하지 않는다. L3이므로 병합 전에 오너 signoff와 V2가 필요하다.
+- verdict: `docs/engineering/strict-unify.verdict.json`

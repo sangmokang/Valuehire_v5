@@ -1,0 +1,30 @@
+{
+  "slug": "strict-unify",
+  "goal": "docs/engineering/strict-unify-goal-2026-11-12.md",
+  "generator": {
+    "head": "fa2dd6ec7e6021870aff2a08c1c35a7e933328aa",
+    "command": "./verify.sh",
+    "exit_code": 0,
+    "result": "3430 passed, 4 xfailed, 138 subtests passed",
+    "focused": "pytest tests/test_strict_unify.py tests/test_strict_v5_port.py tests/test_codex_skill_sync.py -> 71 passed",
+    "mutants_killed": ["gate fail-open(json/timeout)", "sync revision guard removed", "hash validation removed", "archive->worktree copy", "restore abort", "lstat OSError->absent", "untracked/-z parsing reverted", "DONE after backup move"]
+  },
+  "v1": {
+    "engine": "codex adversarial-review --base origin/main (fresh, read-only)",
+    "rounds": [
+      {"thread": "01a1cd2b-61e6-7ec2-bc3c-9d0912877503", "reviewed": "1557a48", "verdict": "FAIL", "findings": 5},
+      {"thread": "01a1cd32-03ff-7460-be4b-f373c8e03970", "reviewed": "a1aa9f7", "verdict": "FAIL", "findings": 5},
+      {"thread": "01a1cd3a-dfef-7742-99e0-c9b8160c6e3b", "reviewed": "ba946c7", "verdict": "FAIL", "findings": 3},
+      {"thread": "01a1cd40-9226-74f0-b922-39f560b8f7b3", "reviewed": "0f786d7", "verdict": "FAIL", "findings": 1},
+      {"thread": "01a1cd45-8754-7db0-a0fd-fa7baba4f44a", "reviewed": "fa2dd6e", "verdict": "PASS", "findings": 0,
+       "caveat": "Codex sandbox could not create temp repos — additional temp-repo reproductions not run by V1"}
+    ]
+  },
+  "v2": {"status": "pending", "note": "reset-context re-attack of V1 not run in this session"},
+  "failed_attempts": [
+    "V1 1차~4차 FAIL 14건 — 각 RED 커밋(925ddf3, 7ab86b8, 284926d, ef rounds) 후 수정",
+    "자체 발견: CLAUDE_PROJECT_DIR=worktree 오탐 FAIL(1557a48), core 통제 5개 누락(ba946c7)"
+  ],
+  "three_way_agree": false,
+  "status": "v1-pass-v2-pending-owner-signoff-required"
+}
