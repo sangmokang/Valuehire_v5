@@ -219,3 +219,12 @@ Codex가 앞선 지적 10건을 재검토했다. 마커 탐색, 접근 거부, �
   - DONE을 이동 후에 등록 → after_backup 테스트 failed.
   - 모두 원복했다.
 - 결과: 관련 69 passed. `./verify.sh` 3428 passed, 4 xfailed, `pytest exit=0`.
+
+### V1 4차 (Codex, fresh read-only, thread 01a1cd40-9226-74f0-b922-39f560b8f7b3, 리뷰 대상 0f786d7) — VERDICT FAIL
+- [high] 상속된 `GIT_DIR`/`GIT_WORK_TREE`가 `-C` 대상을 덮어써서, 깨끗한 다른 레포를 검사하고 거짓 PASS를 낸다(gate:30-32).
+- 같은 계열 결함을 직접 확인했다. sync 러너도 상속된 `GIT_DIR`이 있으면 **병합 전 레포에서도 다른 레포의 내용을 설치**했다. RED 테스트로 재현했다.
+
+**조치**
+- RED: 2 failed.
+- 게이트 `_git()`에서 GIT_* 환경변수를 전부 제거한다. sync 러너도 시작할 때 GIT_*를 unset한다.
+- 결과: 관련 71 passed. `./verify.sh` 3430 passed, 4 xfailed, `pytest exit=0`.

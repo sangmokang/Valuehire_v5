@@ -23,6 +23,9 @@
 #       5 설치 실패(복원 완료) · 6 설치 실패 + 복원 실패(미복원 대상·백업 위치를 stderr에 명시) · 7 신호로 중단(복원 시도)
 set -euo pipefail
 
+# 레포 선택을 바꾸는 상속 GIT_* 환경변수 제거 — GIT_DIR 등으로 다른 레포 내용을 설치·검사하는 것 방지(V1 4차)
+for _v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_v"; done; unset _v
+
 usage() { echo "usage: $0 --check | --install [--remove-legacy]" >&2; exit 2; }
 die() { echo "오류: $2" >&2; exit "$1"; }
 FAULT=",${STRICT_SYNC_FAULT:-},"

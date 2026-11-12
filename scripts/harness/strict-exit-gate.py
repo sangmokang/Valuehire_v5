@@ -27,9 +27,15 @@ def _timeout():
         return 15.0
 
 
+def _git_env():
+    """레포 선택을 바꾸는 상속 GIT_* 환경변수(GIT_DIR·GIT_WORK_TREE·GIT_INDEX_FILE·GIT_COMMON_DIR 등)를
+    전부 제거한다 — -C 대상이 아닌 다른 레포를 검사해 거짓 PASS 가 나는 것 방지(V1 4차)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def _git(args, timeout):
     """git 실행. rc≠0·타임아웃은 호출자가 FAIL로 처리한다(fail-closed)."""
-    return subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, env=_git_env())
 
 
 class GateError(Exception):
