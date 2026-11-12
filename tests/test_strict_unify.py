@@ -388,3 +388,105 @@ def test_gate_pass_when_project_dir_is_another_worktree_of_same_repo(tmp_path):
     _git(proj, "commit", "-qm", "ignore")
     r = _run_gate(proj, json.dumps({"slug": "s", "worktree": str(wt)}))
     assert r.returncode == 0, r.stderr
+
+
+# ---------------- V1 2차 지적 회귀 ----------------
+
+def test_gate_fail_outside_any_repo(tmp_path):
+    """V1 2차 #1: 레포 판독 실패는 PASS 가 아니라 FAIL."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    r = _run_gate_from(plain)
+    assert r.returncode != 0 and "PASS" not in r.stdout
+
+
+def test_gate_fail_when_marker_access_denied(tmp_path):
+    """V1 2차 #1: 접근 거부(lstat PermissionError)는 부재가 아니다."""
+    root = _init_repo(tmp_path / "repo")
+    cl = root / ".claude"
+    cl.mkdir()
+    (cl / "strict-active.json").write_text("{}")
+    cl.chmod(0o000)
+    try:
+        r = _run_gate_from(root)
+    finally:
+        cl.chmod(0o755)
+    assert r.returncode != 0 and "PASS" not in r.stdout
+
+
+def test_gate_sees_marker_written_by_real_task_sh_in_linked_checkout(tmp_path):
+    """V1 2차 #2: 실제 task.sh 를 연결 체크아웃에서 실행 → 그 체크아웃 .claude 의 마커를 게이트가 검사해야 한다."""
+    root = _init_repo(tmp_path / "repo")
+    (root / "scripts/harness").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts/harness/task.sh", root / "scripts/harness/task.sh")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "task.sh")
+    linked = _worktree(root, "linked")
+    subprocess.run(["bash", str(linked / "scripts/harness/task.sh"), "demo"], cwd=linked,
+                   check=True, capture_output=True, text=True)
+    marker = linked / ".claude/strict-active.json"
+    assert marker.is_file(), "task.sh 가 연결 체크아웃에 마커를 쓰지 않음(전제 붕괴)"
+    demo = pathlib.Path(json.loads(marker.read_text())["worktree"])
+    (demo / "dirty.txt").write_text("d")
+    for project in (root, linked):
+        r = _run_gate_from(project)
+        assert r.returncode != 0 and "PASS" not in r.stdout, f"{project} 에서 실행 시 마커 누락"
+    (demo / "dirty.txt").unlink()
+    r = _run_gate_from(root)
+    assert r.returncode == 0, r.stderr
+
+
+def _old_installed(tmp_path):
+    for h in ("claude", "codex"):
+        d = tmp_path / h / "skills/strict"
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(f"old {h}")
+
+
+def _assert_old(tmp_path):
+    for h in ("claude", "codex"):
+        assert (tmp_path / h / "skills/strict/SKILL.md").read_text() == f"old {h}", f"{h} 미복원"
+
+
+def test_sync_second_activation_failure_restores_both(tmp_path):
+    repo = _mini_repo(tmp_path, merged=True)
+    _old_installed(tmp_path)
+    r = _run_sync(repo, ["--install"], dict(_homes(tmp_path), STRICT_SYNC_FAULT="activate:1"))
+    assert r.returncode == 5, r.stdout + r.stderr
+    _assert_old(tmp_path)
+
+
+def test_sync_restore_failure_continues_and_reports(tmp_path):
+    """V1 2차 #3: 두 번째 엔진 복원 실패가 첫 번째 엔진 복원을 막으면 안 되고, 미복원 대상·백업을 명시."""
+    repo = _mini_repo(tmp_path, merged=True)
+    _old_installed(tmp_path)
+    r = _run_sync(repo, ["--install"], dict(_homes(tmp_path), STRICT_SYNC_FAULT="activate:1,restore:1"))
+    assert r.returncode == 6, r.stdout + r.stderr
+    assert (tmp_path / "claude/skills/strict/SKILL.md").read_text() == "old claude", "첫 엔진 미복원"
+    assert "codex" in r.stderr and ".strict-backups" in r.stderr, "미복원 대상·백업 위치 미표기"
+    assert list((tmp_path / "codex/.strict-backups").glob("*/strict/SKILL.md")), "codex 백업 유실"
+
+
+def test_sync_sigterm_mid_activation_restores(tmp_path):
+    repo = _mini_repo(tmp_path, merged=True)
+    _old_installed(tmp_path)
+    r = _run_sync(repo, ["--install"], dict(_homes(tmp_path), STRICT_SYNC_FAULT="sigterm:0"))
+    assert r.returncode == 7, r.stdout + r.stderr
+    _assert_old(tmp_path)
+
+
+def test_sync_stage_hash_failure_aborts_before_activation(tmp_path):
+    """V1 2차 #4: 준비 단계 해시 실패를 빈 해시끼리 같다고 통과시키면 안 된다."""
+    repo = _mini_repo(tmp_path, merged=True)
+    _old_installed(tmp_path)
+    r = _run_sync(repo, ["--install"], dict(_homes(tmp_path), STRICT_SYNC_FAULT="hash:stage"))
+    assert r.returncode == 4, r.stdout + r.stderr
+    _assert_old(tmp_path)
+    assert not list((tmp_path / "claude/skills").glob(".strict-staging-*"))
+
+
+def test_core_keeps_l3_direct_approval_controls():
+    """V1 2차 #5: 이전 Codex 사본의 L3 승인 통제(TTY 직접 확인)를 core 가 보존해야 한다."""
+    core = CORE_RE.search(CLAUDE_ENTRY.read_text(encoding="utf-8")).group(1)
+    for marker in ["TTY 직접 확인", "nonce", "payload hash", "현재 턴", "OWNER_SIGNOFF=true"]:
+        assert marker in core, f"L3 승인 통제 누락: {marker}"
