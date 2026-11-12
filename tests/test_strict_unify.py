@@ -499,3 +499,38 @@ def test_core_preserves_controls_from_every_prior_copy():
                    "사용자 변경을 되돌리지", "절대 발생하면 안 되는 결과", "counter-AC", "mutation",
                    "verdict.json", "6~8회", "skill-creator", "R7", "입력 영역 표", "현재 턴"]:
         assert marker in core, f"이전 사본 통제 누락: {marker}"
+
+
+# ---------------- V1 3차 지적 회귀 ----------------
+
+def test_gate_untracked_file_fails_even_with_hidden_untracked_config(tmp_path):
+    """V1 3차 #2: status.showUntrackedFiles=no 여도 새 파일은 미커밋 잔존이다."""
+    root = _init_repo(tmp_path / "repo")
+    wt = _worktree(root)
+    _git(wt, "config", "status.showUntrackedFiles", "no")
+    (wt / "new_source.py").write_text("x")
+    r = _run_gate(root, json.dumps({"slug": "s", "worktree": str(wt)}))
+    assert r.returncode != 0 and "PASS" not in r.stdout
+
+
+def test_gate_finds_marker_in_checkout_with_special_chars_path(tmp_path):
+    """V1 3차 #3: 탭·따옴표·줄바꿈이 든 체크아웃 경로도 정확히 읽어 그 마커를 검사한다(porcelain -z)."""
+    root = _init_repo(tmp_path / "repo")
+    odd = tmp_path / 'odd\tdir "q"\nline'
+    _git(root, "worktree", "add", "-q", "-b", "task/odd", str(odd))
+    target = _worktree(root, "target")
+    (odd / ".claude").mkdir()
+    (odd / ".claude/strict-active.json").write_text(json.dumps({"slug": "s", "worktree": str(target)}))
+    (target / "dirty.txt").write_text("d")
+    r = _run_gate_from(root)
+    assert r.returncode != 0 and "PASS" not in r.stdout, "특수문자 경로 체크아웃의 마커를 건너뜀"
+
+
+def test_sync_sigterm_right_after_backup_move_restores(tmp_path):
+    """V1 3차 #1: 백업 이동 직후·활성화 전 TERM 이어도 그 엔진을 복원한다."""
+    repo = _mini_repo(tmp_path, merged=True)
+    _old_installed(tmp_path)
+    for i in ("0", "1"):
+        r = _run_sync(repo, ["--install"], dict(_homes(tmp_path), STRICT_SYNC_FAULT=f"sigterm-after-backup:{i}"))
+        assert r.returncode == 7, r.stdout + r.stderr
+        _assert_old(tmp_path)
