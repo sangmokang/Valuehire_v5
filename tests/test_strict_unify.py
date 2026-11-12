@@ -224,8 +224,13 @@ def _mini_repo_at(repo, merged=True):
     _init_repo(repo)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "strict")
+    # 실제 원격(bare)을 origin 으로 둔다 — 설치기는 로컬 참조가 아니라 원격을 fetch 해 대조한다(V2 M1).
+    bare = repo.parent / (repo.name + "-origin.git")
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    _git(repo, "remote", "add", "origin", str(bare))
     if merged:
-        _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main")
+        _git(repo, "fetch", "-q", "origin")
     return repo
 
 
@@ -334,7 +339,7 @@ def test_sync_install_uses_commit_content_only(tmp_path):
     (repo / ".gitignore").write_text("skills/strict/.env\n")
     _git(repo, "add", ".gitignore")
     _git(repo, "commit", "-qm", "ignore")
-    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main"); _git(repo, "fetch", "-q", "origin")
     (repo / "skills/strict/.env").write_text("SECRET=1")
     _git(repo, "config", "status.showUntrackedFiles", "no")
     (repo / "skills/strict/untracked.md").write_text("u")
@@ -561,3 +566,40 @@ def test_sync_ignores_inherited_git_env_redirection(tmp_path):
                                              GIT_WORK_TREE=str(other)))
     assert r.returncode == 3, r.stdout + r.stderr
     assert not (tmp_path / "claude/skills").exists()
+
+
+def test_sync_install_refused_when_local_origin_ref_is_stale(tmp_path):
+    """V2 M1: 로컬 origin/main 참조가 HEAD와 같아도 원격 main이 앞서 있으면 거부한다."""
+    repo = _mini_repo(tmp_path, merged=True)
+    other = tmp_path / "other"
+    subprocess.run(["git", "clone", "-q", str(tmp_path / "mini-origin.git"), str(other)], check=True)
+    _git(other, "config", "user.email", "t@t"); _git(other, "config", "user.name", "t")
+    (other / "skills/strict/SKILL.md").write_text("newer on remote")
+    _git(other, "commit", "-qam", "newer")
+    _git(other, "push", "-q", "origin", "HEAD:main")
+    r = _run_sync(repo, ["--install"], _homes(tmp_path))
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert not (tmp_path / "claude").exists()
+
+
+def test_sync_install_refused_when_fetch_fails(tmp_path):
+    repo = _mini_repo(tmp_path, merged=True)
+    _git(repo, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
+    r = _run_sync(repo, ["--install"], _homes(tmp_path))
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert not (tmp_path / "claude").exists()
+
+
+def test_sync_legacy_move_failure_has_distinct_exit_and_keeps_install(tmp_path):
+    """V2 M2: legacy 이동 실패는 드리프트(1)와 구분되는 전용 코드(8)이고, strict 설치는 유지된다."""
+    repo = _mini_repo(tmp_path, merged=True)
+    legacy = tmp_path / "codex/skills/st"
+    legacy.mkdir(parents=True)
+    (legacy / "SKILL.md").write_text("legacy")
+    r = _run_sync(repo, ["--install", "--remove-legacy"],
+                  dict(_homes(tmp_path), STRICT_SYNC_FAULT="legacy:1"))
+    assert r.returncode == 8, r.stdout + r.stderr
+    assert "legacy" in r.stderr
+    assert (tmp_path / "claude/skills/strict/SKILL.md").read_bytes() == \
+        (repo / "skills/strict/SKILL.md").read_bytes()
+    assert (legacy / "SKILL.md").read_text() == "legacy", "이동 실패한 legacy 가 손상됨"
