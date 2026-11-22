@@ -16,6 +16,7 @@ JD를 "단어 카운트"로만 보고 고정 표를 뱉는다. 이 모듈은 그
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -337,8 +338,13 @@ def claude_keyword_client(
     def _call(prompt: str) -> str:
         if shutil.which("claude") is None:
             raise KeywordGenerationError("claude CLI를 찾지 못했습니다.")
+        # 비용 헌법: claude -p 는 Max 구독으로 도는 무료($0) 경로다. 부모 환경에
+        # ANTHROPIC_API_KEY 가 있으면 CLI 가 그 키를 집어 유료 API 과금 경로로 조용히
+        # 넘어간다(실패도 경고도 없다). 키만 빼고 나머지 환경변수는 그대로 넘긴다.
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         result = run_command(
             ["claude", "-p", "--model", model, prompt],
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
