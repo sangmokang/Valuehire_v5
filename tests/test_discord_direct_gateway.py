@@ -89,6 +89,19 @@ class FakeQueue:
     def recent(self, limit: int = 10) -> list[dict]:
         return list(reversed(self.enqueued))[:limit]
 
+    def linkedin_ready_machines(self) -> list[dict]:
+        return [{
+            "machine_id": "macmini",
+            "platform": "macos",
+            "hostname_aliases": ["mac-mini", "맥미니"],
+            "agent_version": "test",
+            "capabilities": ["linkedin_rps"],
+            "last_heartbeat_at": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "delegated_for_request_id": None,
+            "linkedin_rps_logged_in": True,
+        }]
+
 
 class FakeResponse:
     """discord.InteractionResponse 흉내 — defer 호출 순서·인자만 기록."""

@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from tools.multi_position_sourcing.access import DiscordAuthorizedUser
@@ -251,45 +253,99 @@ def _routing_queue(rows=None, raise_rpc=False):
     return q
 
 
+def _ready_row(machine="macmini", *, request_id=None, heartbeat=None, aliases=()):
+    return {
+        "machine_id": machine,
+        "platform": "windows" if machine == "winpc" else "macos",
+        "hostname_aliases": list(aliases),
+        "agent_version": "1.2.3",
+        "capabilities": ["linkedin_rps"],
+        "last_heartbeat_at": heartbeat or datetime.now(timezone.utc).isoformat(),
+        "delegated_for_request_id": request_id,
+        "linkedin_rps_logged_in": True,
+    }
+
+
 def test_url_job_without_machine_routes_to_logged_in_machine():
-    import time
-    now = int(time.time())
-    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
-                              "linkedin_rps_logged_in": True}])
+    q = _routing_queue(rows=[_ready_row("winpc", request_id="evt-7")])
     result = dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
+        _inv("fleet-run", options={
+            "skill": "url", "url": "https://career.wrtn.io/ko/o/1",
+            "_request_id": "evt-7",
+        }),
         authorized_users=_users(), config=_config(), queue=q)
     assert result["action"] == "enqueued"
     assert q.enqueued[0]["machine"] == "winpc"
     assert q.linkedin_calls, "라우팅 조회가 실제로 호출돼야 함"
 
 
-def test_url_job_routing_rpc_failure_falls_back_to_macmini():
+def test_url_job_routing_rpc_failure_fails_closed():
     q = _routing_queue(raise_rpc=True)
     result = dispatch_fleet_command(
         _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
         authorized_users=_users(), config=_config(), queue=q)
+    assert result["action"] == "error"
+    assert q.enqueued == []
+
+
+def test_minimal_gateway_rpc_is_wired_to_readiness_selector():
+    calls = []
+
+    class MinimalQueue(FakeQueue):
+        def _rpc(self, name, payload):
+            calls.append((name, payload))
+            return [_ready_row("macmini")]
+
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={
+            "skill": "url", "url": "https://career.wrtn.io/ko/o/1",
+        }),
+        authorized_users=_users(), config=_config(), queue=MinimalQueue(),
+    )
     assert result["action"] == "enqueued"
-    assert q.enqueued[0]["machine"] == "macmini"
+    assert calls == [("linkedin_ready_machines", {})]
 
 
-def test_url_job_explicit_machine_not_overridden():
-    import time
-    now = int(time.time())
-    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
-                              "linkedin_rps_logged_in": True}])
+def test_url_job_explicit_unregistered_machine_is_rejected():
+    q = _routing_queue(rows=[_ready_row("winpc", request_id="evt-7")])
     result = dispatch_fleet_command(
         _inv("fleet-run", options={"skill": "url", "machine": "macbook",
                                    "url": "https://career.wrtn.io/ko/o/1"}),
         authorized_users=_users(), config=_config(), queue=q)
+    assert result["action"] == "error"
+    assert q.enqueued == []
+    assert q.linkedin_calls, "명시 머신도 readiness를 우회할 수 없음"
+
+
+def test_owner_explicit_winpc_is_delegated_only_for_current_event():
+    q = _routing_queue(rows=[_ready_row("winpc")])
+    result = dispatch_fleet_command(
+        _inv("fleet-run", options={
+            "skill": "url", "machine": "winpc",
+            "url": "https://career.wrtn.io/ko/o/1",
+            "_request_id": "evt-current",
+        }),
+        authorized_users=_users(), config=_config(), queue=q,
+    )
     assert result["action"] == "enqueued"
-    assert q.enqueued[0]["machine"] == "macbook"
-    assert not q.linkedin_calls, "명시 머신이면 라우팅 조회 안 함"
+    assert q.enqueued[0]["machine"] == "winpc"
+
+    member = DiscordAuthorizedUser(
+        name="member", alias="m", email="m@x.kr", discord_id=MEMBER_ID)
+    blocked = dispatch_fleet_command(
+        _inv("fleet-run", user_id=MEMBER_ID, options={
+            "skill": "url", "machine": "winpc",
+            "url": "https://career.wrtn.io/ko/o/1",
+            "_request_id": "evt-other",
+        }),
+        authorized_users=(member,), config=_config(), queue=_routing_queue(
+            rows=[_ready_row("winpc")]),
+    )
+    assert blocked["action"] == "error"
 
 
 def test_non_url_skill_keeps_existing_default():
-    q = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": 9_999_999_999,
-                              "linkedin_rps_logged_in": True}])
+    q = _routing_queue(rows=[_ready_row("winpc", request_id="evt-7")])
     result = dispatch_fleet_command(
         _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}),
         authorized_users=_users(), config=_config(), queue=q)
@@ -301,15 +357,14 @@ def test_non_url_skill_keeps_existing_default():
 def test_url_jobs_share_single_linkedin_seat_lock():
     """V1(Codex) blocker 수용 — 라우팅으로 머신이 갈라져도 LinkedIn 좌석은 1개다.
     skill=url 잡은 머신 무관 공유 account_key 로 글로벌 락이 걸려야 동시 2머신 실행이 막힌다."""
-    import time
-    now = int(time.time())
-    q1 = _routing_queue(rows=[{"machine": "winpc", "beat_at_epoch": now - 5,
-                               "linkedin_rps_logged_in": True}])
+    q1 = _routing_queue(rows=[_ready_row("winpc", request_id="evt-1")])
     dispatch_fleet_command(
-        _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/1"}),
+        _inv("fleet-run", options={
+            "skill": "url", "url": "https://career.wrtn.io/ko/o/1",
+            "_request_id": "evt-1",
+        }),
         authorized_users=_users(), config=_config(), queue=q1)
-    q2 = _routing_queue(rows=[{"machine": "macmini", "beat_at_epoch": now - 5,
-                               "linkedin_rps_logged_in": True}])
+    q2 = _routing_queue(rows=[_ready_row("macmini")])
     dispatch_fleet_command(
         _inv("fleet-run", options={"skill": "url", "url": "https://career.wrtn.io/ko/o/2"}),
         authorized_users=_users(), config=_config(), queue=q2)
@@ -326,3 +381,123 @@ def test_non_url_jobs_keep_machine_bound_account_key():
         _inv("fleet-run", options={"skill": "aisearch", "url": "https://app.clickup.com/t/abc"}),
         authorized_users=_users(), config=_config(), queue=q)
     assert q.enqueued[0]["account_key"] == "portal:macmini"
+
+
+# ── App 02: registry + heartbeat readiness ────────────────────────────────
+
+NOW = datetime(2026, 7, 26, 3, 0, tzinfo=timezone.utc)
+
+
+def _contract_row(machine_id="macmini", **changes):
+    row = _ready_row(
+        machine_id,
+        heartbeat=(NOW - timedelta(seconds=10)).isoformat(),
+    )
+    row.update(changes)
+    return row
+
+
+def _evaluate(row, request_id="req-1"):
+    from tools.multi_position_sourcing.fleet_heartbeat import (
+        evaluate_machine_readiness,
+    )
+    return evaluate_machine_readiness(
+        row, required_capability="linkedin_rps", request_id=request_id, now=NOW,
+    )
+
+
+def test_machine_readiness_contract_and_capability_allowlist():
+    from tools.multi_position_sourcing.fleet_heartbeat import CAPABILITY_ALLOWLIST
+
+    result = _evaluate(_contract_row())
+    assert result == {
+        "registered": True, "online": True, "heartbeat_age_seconds": 10,
+        "capabilities": ["linkedin_rps"], "delegation_valid": True,
+        "reason": None,
+    }
+    assert CAPABILITY_ALLOWLIST == frozenset({"saramin", "jobkorea", "linkedin_rps"})
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"machine_id": "ghost"}, "UNREGISTERED_MACHINE"),
+        ({"platform": "linux"}, "UNREGISTERED_MACHINE"),
+        ({"agent_version": ""}, "UNREGISTERED_MACHINE"),
+        ({"last_heartbeat_at": (NOW - timedelta(seconds=301)).isoformat()},
+         "STALE_HEARTBEAT"),
+        ({"last_heartbeat_at": (NOW + timedelta(seconds=1)).isoformat()},
+         "CLOCK_SKEW"),
+        ({"last_heartbeat_at": "2026-07-26T02:59:50"}, "CLOCK_SKEW"),
+        ({"last_heartbeat_at": "2026-07-26T11:59:50+09:00"}, "CLOCK_SKEW"),
+        ({"capabilities": ["browser_cookie"]}, "CAPABILITY_MISSING"),
+        ({"capabilities": ["saramin"]}, "CAPABILITY_MISSING"),
+    ],
+)
+def test_machine_readiness_fail_closed(changes, reason):
+    result = _evaluate(_contract_row(**changes))
+    assert result["online"] is False
+    assert result["reason"] == reason
+
+
+def test_winpc_delegation_is_exact_and_not_reusable():
+    row = _contract_row(
+        "winpc", platform="windows", delegated_for_request_id="req-1")
+    assert _evaluate(row, "req-1")["online"] is True
+    assert _evaluate(row, "req-2")["reason"] == "WINPC_NOT_DELEGATED"
+    assert _evaluate(
+        {**row, "delegated_for_request_id": None}, "req-1"
+    )["reason"] == "WINPC_NOT_DELEGATED"
+
+
+def test_legacy_macbook_hostname_normalizes_without_changing_queue_id():
+    from tools.multi_position_sourcing.fleet_heartbeat import (
+        normalize_machine_hostname,
+        readiness_candidates,
+    )
+
+    row = _contract_row(
+        "macbook_pro", platform="macos", queue_machine="macbook")
+    assert normalize_machine_hostname("MacBook-Pro") == "macbook_pro"
+    assert _evaluate(row)["online"] is True
+    ready, _ = readiness_candidates(
+        [row], required_capability="linkedin_rps", request_id="req-1", now=NOW,
+    )
+    assert ready[0]["machine_id"] == "macbook_pro"
+    assert ready[0]["machine"] == "macbook"
+    assert _evaluate(_contract_row("macbook", platform="macos"))[
+        "reason"] == "UNREGISTERED_MACHINE"
+
+
+def test_alias_collision_blocks_all_owners_before_selector():
+    from tools.multi_position_sourcing.fleet_heartbeat import readiness_candidates
+
+    rows = [
+        _contract_row("macmini", hostname_aliases=["shared-host"]),
+        _contract_row("macbook_pro", hostname_aliases=["shared-host"]),
+    ]
+    ready, rejected = readiness_candidates(
+        rows, required_capability="linkedin_rps", request_id="req-1", now=NOW,
+    )
+    assert ready == []
+    assert [row["readiness"]["reason"] for row in rejected] == [
+        "MACHINE_ALIAS_CONFLICT", "MACHINE_ALIAS_CONFLICT",
+    ]
+
+
+def test_readiness_rpc_extends_existing_registry_without_second_registry():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    sql = (root / "supabase/migrations/20260726090000_machine_readiness_registry.sql"
+           ).read_text(encoding="utf-8").lower()
+    assert "create table" not in sql
+    assert "from public.fleet_machines fm" in sql
+    assert "left join public.machine_heartbeats" in sql
+    assert "when coalesce(hb.linkedin_rps_logged_in, false)" in sql
+    assert "to service_role, anon" in sql
+    for field in (
+        "machine_id", "queue_machine", "platform", "hostname_aliases", "agent_version",
+        "capabilities", "last_heartbeat_at", "delegated_for_request_id",
+    ):
+        assert field in sql
