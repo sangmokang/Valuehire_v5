@@ -115,6 +115,7 @@ class TestRequiredCta:
 
     def test_body_carries_r21_cta_verbatim(self):
         body = _draft()["body"]
+        assert body.count("https://valueconnect-care-call.sangmokang.chatgpt.site") == 1
         # R21 원문(linkedin-rps-jd-set-builder SKILL.md:34) 그대로
         assert "https://valuehire.cc/resume" in body
         assert "P.S. 지금 이 포지션이 딱 맞지 않으셔도 괜찮습니다." in body

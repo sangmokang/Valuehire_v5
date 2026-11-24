@@ -16,6 +16,7 @@ import unicodedata
 
 from .inmail_precheck import (
     BRIEFING_ELEMENT_KEYS,
+    CARE_CALL_INVITE,
     CHANNEL_CHAR_LIMITS,
     UNVERIFIED_MARKER,
     char_count,
@@ -234,6 +235,7 @@ def build_linkedin_inmail_jd(
         _VERIFIED_PULL[language],
         _CLOSING,
         _PS_CTA,
+        CARE_CALL_INVITE[language],
     ]
     if loc:
         sections.append(f"[근무지] {loc}")

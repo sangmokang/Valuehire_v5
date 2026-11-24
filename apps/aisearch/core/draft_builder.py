@@ -33,6 +33,7 @@ from __future__ import annotations
 from tools.multi_position_sourcing.inmail_precheck import (
     BRIEFING_ELEMENT_KEYS,
     BRIEFING_MIN_ELEMENTS,
+    CARE_CALL_INVITE,
     CHANNEL_CHAR_LIMITS,  # SOT 상한 dict 를 그대로 재사용 (사본 금지)
     char_count,
     count_briefing_elements,
@@ -198,6 +199,8 @@ def build_candidate_draft(
             "강상모 드림",
             "",
             "---",
+            CARE_CALL_INVITE["ko"],
+            "",
             REQUIRED_PS_CTA,  # R21 필수 인입 문구 — 빠지면 아래 precheck STOP
         ]
     )

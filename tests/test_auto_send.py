@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,8 @@ from tools.multi_position_sourcing.auto_send import (
     load_policy,
     plan_send_steps,
 )
-from tools.multi_position_sourcing.auto_send_runner import _execute_live, _pick_page
+from tools.multi_position_sourcing.auto_send_runner import _execute_live, _load_request, _pick_page
+from tools.multi_position_sourcing.inmail_precheck import CARE_CALL_URL
 from tools.multi_position_sourcing.jd_outreach import build_linkedin_inmail_jd
 from tools.multi_position_sourcing.selectors import DEFAULT_SELECTOR_MAP
 
@@ -65,6 +67,48 @@ def _request(**over) -> SendRequest:
     )
     base.update(over)
     return SendRequest(**base)
+
+
+SARAMIN_JD = "산업용 장비의 상태를 기록하고 제어 소프트웨어의 기능을 검증합니다. " * 12
+
+
+def test_saramin_fills_separate_offer_and_jd(tmp_path: Path) -> None:
+    body = _golden_body(channel="saramin")
+    source = tmp_path / "request.json"
+    payload = asdict(_request(channel="saramin", body=body, charge_work=SARAMIN_JD))
+    source.write_text(json.dumps(payload), encoding="utf-8")
+    req = _load_request(source)
+    assert evaluate_send(req, _policy(), _ledger(tmp_path), env={}, now=NOW).allowed
+    fills = {
+        step.selector_purpose: getattr(req, step.value_field)
+        for step in plan_send_steps("saramin") if step.action == "fill"
+    }
+    assert fills == {"offer_comment_input": body, "offer_charge_work_input": SARAMIN_JD}
+
+
+@pytest.mark.parametrize("channel", ["saramin", "jobkorea", "linkedin_rps"])
+def test_legacy_request_without_jd_only_blocks_saramin(tmp_path: Path, channel: str) -> None:
+    payload = asdict(_request(channel=channel, body=_golden_body(channel=channel)))
+    del payload["charge_work"]
+    source = tmp_path / "request.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+    result = evaluate_send(_load_request(source), _policy(), _ledger(tmp_path), env={}, now=NOW)
+    assert result.allowed == (channel != "saramin")
+
+
+@pytest.mark.parametrize("jd", [None, "", " ", 12, "가" * 299, "가" * 2001, "가" * 2000 + " ",
+                                SARAMIN_JD + CARE_CALL_URL])
+def test_saramin_invalid_jd_blocks_before_send(tmp_path: Path, jd) -> None:
+    req = _request(channel="saramin", body=_golden_body(channel="saramin"), charge_work=jd)
+    result = evaluate_send(req, _policy(), _ledger(tmp_path), env={}, now=NOW)
+    assert any(r.startswith("saramin_charge_work:") for r in result.reasons)
+
+
+def test_saramin_offer_cannot_be_copied_into_jd(tmp_path: Path) -> None:
+    body = _golden_body(channel="saramin")
+    req = _request(channel="saramin", body=body, charge_work=body)
+    result = evaluate_send(req, _policy(), _ledger(tmp_path), env={}, now=NOW)
+    assert any(r.startswith("saramin_charge_work:") for r in result.reasons)
 
 
 def _ledger(tmp_path: Path) -> SendLedger:
@@ -226,7 +270,7 @@ def test_ledger_daily_cap_blocks_and_dry_run_not_counted(tmp_path: Path) -> None
     assert not d.allowed and any(r.startswith("daily_cap_reached") for r in d.reasons)
     # 다른 채널은 상한과 무관
     d2 = evaluate_send(
-        _request(channel="saramin", body=_golden_body(channel="saramin")),
+        _request(channel="saramin", body=_golden_body(channel="saramin"), charge_work=SARAMIN_JD),
         policy, ledger, env={}, now=NOW,
     )
     assert d2.allowed, d2.reasons

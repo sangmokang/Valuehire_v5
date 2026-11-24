@@ -309,6 +309,7 @@ def test_ac3_verified_pull_and_ps_cta(golden_body):
     assert "이력서 피드백" in body, "VERIFIED-PULL 문단 부재"
     assert "P.S." in body
     assert "https://valuehire.cc/resume" in body, "R21 인입 CTA 부재"
+    assert body.count("https://valueconnect-care-call.sangmokang.chatgpt.site") == 1
 
 
 def test_ac3_english_verified_pull():
@@ -316,6 +317,7 @@ def test_ac3_english_verified_pull():
     kwargs["language"] = "en"
     body = build_linkedin_inmail_jd(**kwargs)
     assert "resume feedback" in body.lower(), "영어 본문 VERIFIED-PULL 부재"
+    assert body.count("https://valueconnect-care-call.sangmokang.chatgpt.site") == 1
     assert "https://valuehire.cc/resume" in body
 
 

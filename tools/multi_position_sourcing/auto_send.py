@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Mapping
 
-from .inmail_precheck import CHANNEL_CHAR_LIMITS, char_count, precheck_inmail
+from .inmail_precheck import CARE_CALL_URL, CHANNEL_CHAR_LIMITS, char_count, precheck_inmail
 
 __all__ = [
     "AutoSendPolicyError",
@@ -115,6 +115,7 @@ class SendRequest:
     score: int | None
     score_breakdown: Mapping[str, int] | None = None
     hard_exclude_flags: tuple[str, ...] = ()
+    charge_work: str | None = None  # 사람인의 입사 후 업무 필드에 넣을 공식 JD 원문
 
 
 @dataclass(frozen=True)
@@ -260,6 +261,15 @@ def evaluate_send(
     if reasons:
         return SendDecision(allowed=False, reasons=tuple(reasons))
 
+    if request.channel == "saramin":
+        # 사람인 스킬 §10.3–10.4: 두 번째 필드는 공식 JD이며 300~2,000자다.
+        jd = request.charge_work
+        if (not isinstance(jd, str) or char_count(jd.strip()) < 300
+                or char_count(jd) > CHANNEL_CHAR_LIMITS["saramin"]):
+            reasons.append("saramin_charge_work: 공식 JD 원문 300~2,000자가 필요합니다")
+        elif jd.strip() == request.body.strip() or CARE_CALL_URL in jd.casefold():
+            reasons.append("saramin_charge_work: 입사 후 업무에 개인 제안문이나 케어콜 안내가 포함됐습니다")
+
     if policy.get("kill_switch_env") in environ:
         reasons.append(f"kill_switch_on: env {policy['kill_switch_env']} 존재 — 전 채널 정지")
 
@@ -330,7 +340,7 @@ class SendStep:
 _SEND_PLANS: dict[str, tuple[SendStep, ...]] = {
     "saramin": (
         SendStep("fill", "saramin", "offer_comment_input", "body"),
-        SendStep("fill", "saramin", "offer_charge_work_input", "body"),
+        SendStep("fill", "saramin", "offer_charge_work_input", "charge_work"),
         SendStep("click", "saramin", "offer_send_button", guard_body=True),
     ),
     "jobkorea": (
