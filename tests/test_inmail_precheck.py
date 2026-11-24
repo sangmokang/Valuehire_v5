@@ -46,7 +46,29 @@ VERIFIED_PULL_EN = (
 PS_CTA = (
     "P.S. 지금 이 포지션이 딱 맞지 않으셔도 괜찮습니다. 밸류커넥트가 이력서를 직접 검증해, "
     "더 잘 맞는 기회까지 연결해 드립니다 — 무료 커리어 검증 신청: https://valuehire.cc/resume"
+    "\n원하시면 밸류커넥트 케어콜 안내도 살펴보실 수 있습니다.\nhttps://valueconnect-care-call.sangmokang.chatgpt.site"
 )
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    ["", "https://valueconnect-care-call.sangmokang.chatgpt.site.invalid",
+     "https://valueconnect-care-call.sangmokang.chatgpt.site " * 2],
+)
+def test_care_call_url_must_match_once(replacement: str) -> None:
+    body = _ok_body_ko().replace("https://valueconnect-care-call.sangmokang.chatgpt.site", replacement)
+    result = precheck_inmail(body, profile_name="조현용", channel="linkedin_rps")
+    assert any(reason.startswith("care_call_url:") for reason in result.stops)
+
+
+def test_gmail_golden_sample_requires_optional_invitation() -> None:
+    body = _ok_body_ko()
+    assert precheck_inmail(body, profile_name="조현용", channel="gmail").ok
+    for invalid in [
+        body.replace("원하시면 밸류커넥트 케어콜 안내도 살펴보실 수 있습니다.", ""),
+        body + "\n케어콜 예약은 지원 필수입니다.",
+    ]:
+        assert not precheck_inmail(invalid, profile_name="조현용", channel="gmail").ok
 
 
 def _ok_body_ko(name: str = "조현용") -> str:

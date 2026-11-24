@@ -59,6 +59,7 @@ def _load_request(path: Path) -> SendRequest:
         channel=data["channel"],
         position_id=data["position_id"],
         body=data["body"],
+        charge_work=data.get("charge_work"),
         score=data.get("score"),
         score_breakdown=data.get("score_breakdown"),
         hard_exclude_flags=tuple(data.get("hard_exclude_flags", ())),

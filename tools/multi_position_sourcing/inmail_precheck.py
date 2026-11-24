@@ -81,6 +81,19 @@ _VERIFIED_PULL_MARKERS: tuple[str, ...] = ("이력서 피드백", "레주메 피
 
 # P.S. 인입 CTA(R21) 필수 마커 — Movensys 결함 ③의 나머지 절반(codex V1 적발)
 _PS_CTA_MARKERS: tuple[str, ...] = ("p.s.", "valuehire.cc")
+CARE_CALL_URL = "https://valueconnect-care-call.sangmokang.chatgpt.site"
+CARE_CALL_INVITE = {
+    "ko": f"원하시면 밸류커넥트 케어콜 안내도 살펴보실 수 있습니다.\n{CARE_CALL_URL}",
+    "en": f"You can also explore ValueConnect Care Call if you wish.\n{CARE_CALL_URL}",
+}
+
+_REQUIRED_CARE_CALL = re.compile(
+    r"케어콜[^.!?\n]{0,60}?(?:필수(?:입니다|다)|필수\s*(?:조건|단계)(?:입니다|다)|반드시|의무입니다)"
+    r"|반드시[^.!?\n]{0,35}케어콜"
+    r"|care[ -]?call(?: appointment| booking| registration)? is (?:mandatory|required)"
+    r"|(?:you must|you are required to) (?:book|schedule|complete) (?:a |the )?care[ -]?call",
+    re.IGNORECASE,
+)
 
 _HANGUL = re.compile(r"[가-힣]")
 _LATIN = re.compile(r"[A-Za-z]")
@@ -259,9 +272,9 @@ def precheck_inmail(
     # ② 채널 한도 (미지의 채널 = fail-closed)
     n = char_count(body)
     limit = CHANNEL_CHAR_LIMITS.get(channel)
-    if limit is None:
+    if limit is None and channel != "gmail":
         stops.append(f"channel_unknown: '{channel}' — 허용 채널 {sorted(CHANNEL_CHAR_LIMITS)}")
-    elif n > limit:
+    elif limit is not None and n > limit:
         stops.append(f"char_limit: {n}자 > {limit}자 ({channel})")
 
     # ① 인사말 이름 일치 (추출 실패 포함 STOP)
@@ -292,6 +305,14 @@ def precheck_inmail(
         stops.append("verified_pull_missing: 무료 이력서 피드백(VERIFIED-PULL) 문단 부재")
     if not all(marker in folded for marker in _PS_CTA_MARKERS):
         stops.append("ps_cta_missing: P.S. 인입 CTA(R21, valuehire.cc/resume) 부재")
+    links = re.findall(r"https?://[^\s<>]+", body)
+    if sum(link.rstrip(").,]") == CARE_CALL_URL for link in links) != 1 or body.count(CARE_CALL_URL) != 1:
+        stops.append("care_call_url: 선택형 케어콜 원문 링크를 정확히 한 번 넣어 주세요")
+
+    elif not any(invite in body for invite in CARE_CALL_INVITE.values()):
+        stops.append("care_call_optional: 지정된 선택형 안내 문구를 링크와 함께 넣어 주세요")
+    if any(_REQUIRED_CARE_CALL.search(line) for line in folded.splitlines()):
+        stops.append("care_call_required: 케어콜을 지원 필수 조건으로 안내할 수 없습니다")
 
     # 언어 자동 선택 — 영문 프로필인데 본문(인사말·P.S. 제외)이 한국어면 경고(보고 후 진행)
     lang_warning = _language_warning(body, profile_name)
@@ -318,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="humansearch #8 InMail 발송 전 기계 체크리스트")
     parser.add_argument("--body-file", required=True, help="검사할 문구 파일(UTF-8)")
     parser.add_argument("--profile-name", required=True, help="수확 JSON 의 name 그대로")
-    parser.add_argument("--channel", required=True, help="linkedin_rps | saramin | jobkorea")
+    parser.add_argument("--channel", required=True, help="linkedin_rps | saramin | jobkorea | gmail (텍스트 초안 검사)")
     parser.add_argument("--briefing-elements", type=int, default=None, help="확인된 §1.5 요소 개수")
     args = parser.parse_args(argv)
 
